@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   const today = new Date().toISOString().slice(0, 10);
 
   try {
-    const anafRes = await fetch('https://webservicesp.anaf.ro/PlatitorTvaRest/api/v9/ws/tva', {
+    const anafRes = await fetch('https://webservicesp.anaf.ro/api/PlatitorTvaRest/v9/tva', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify([{ cui: Number(cui), data: today }]),
