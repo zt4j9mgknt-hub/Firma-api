@@ -40,11 +40,11 @@ async function saveKey(key, value) {
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const INVOICE_STATUSES = ['Neplătită', 'Plătită', 'Restantă'];
-const STATUS_COLOR = { 'Ciornă':'#8B93A0','Trimisă':'#2E8BD1','Acceptată':'#4CAF7D','Respinsă':'#E05252','Neplătită':'#2E8BD1','Plătită':'#4CAF7D','Restantă':'#E05252' };
+const STATUS_COLOR = { 'Ciornă':'#8B93A0','Trimisă':'#2E8BD1','Acceptată':'#4CAF7D','Respinsă':'#E05252','Neplătită':'#2E8BD1','Plătită':'#4CAF7D','Restantă':'#E05252','Emis':'#2E8BD1','Semnat':'#4CAF7D' };
 const Icon = ({ children, size = 14 }) => <span style={{ fontSize:size, lineHeight:1, display:'inline-block' }}>{children}</span>;
 
 function StatusSwitch({ status, onChange, options }) {
-  const on = status === 'Acceptată' || status === 'Plătită';
+  const on = status === 'Acceptată' || status === 'Plătită' || status === 'Semnat';
   const color = STATUS_COLOR[status] || '#8B93A0';
   return (
     <div className="inline-flex items-center gap-2">
@@ -87,13 +87,8 @@ function DocForm({ kind, clients, initial, onCancel, onSave }) {
   const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
   const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0 }]);
   const [tva, setTva] = useState(initial?.tva ?? 19);
-  const [nrContract, setNrContract] = useState(initial?.nrContract || '');
-  const [actAditional, setActAditional] = useState(initial?.actAditional || '');
-  const [adresaLucrare, setAdresaLucrare] = useState(initial?.adresaLucrare || '');
-  const [lucrare, setLucrare] = useState(initial?.lucrare || '');
   const subtotal = calcSubtotal(items);
   const total = subtotal * (1 + tva/100);
-  const isDeviz = kind === 'Ofertă';
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
       <div className="flex items-center justify-between mb-3">
@@ -114,14 +109,6 @@ function DocForm({ kind, clients, initial, onCancel, onSave }) {
               <span className="text-xs" style={{ color:'#8B93A0' }}>%</span>
             </div>
           </div>
-          {isDeviz && (
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <input placeholder="Nr. contract (opțional)" value={nrContract} onChange={(e)=>setNrContract(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-              <input placeholder="Act adițional (opțional)" value={actAditional} onChange={(e)=>setActAditional(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-              <input placeholder="Adresă șantier / lucrare" value={adresaLucrare} onChange={(e)=>setAdresaLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-              <input placeholder="Denumire lucrare (ex: Instalații electrice interioare)" value={lucrare} onChange={(e)=>setLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-            </div>
-          )}
           <LineItemsEditor items={items} setItems={setItems} />
           <div className="flex justify-end gap-6 mt-3 px-2 text-sm">
             <span style={{ color:'#8B93A0' }}>Subtotal: <span style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{money(subtotal)}</span></span>
@@ -129,7 +116,7 @@ function DocForm({ kind, clients, initial, onCancel, onSave }) {
           </div>
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
-            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'Neplătită'), offerId: initial?.offerId, nrContract, actAditional, adresaLucrare, lucrare })}
+            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'Neplătită'), offerId: initial?.offerId })}
               className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
           </div>
         </>
@@ -371,6 +358,136 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   );
 }
 
+const DEVIZ_STATUSES = ['Ciornă', 'Emis', 'Semnat'];
+
+function DevizForm({ clients, initial, onCancel, onSave }) {
+  const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
+  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0 }]);
+  const [tva, setTva] = useState(initial?.tva ?? 21);
+  const [nrContract, setNrContract] = useState(initial?.nrContract || '');
+  const [dataContract, setDataContract] = useState(initial?.dataContract || '');
+  const [actAditional, setActAditional] = useState(initial?.actAditional || '');
+  const [dataActAditional, setDataActAditional] = useState(initial?.dataActAditional || '');
+  const [adresaLucrare, setAdresaLucrare] = useState(initial?.adresaLucrare || '');
+  const [lucrare, setLucrare] = useState(initial?.lucrare || '');
+  const subtotal = calcSubtotal(items);
+  const total = subtotal * (1 + tva/100);
+
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{initial?.id ? 'Editare deviz' : 'Deviz nou'}</h3>
+        <button onClick={onCancel} style={{ color:'#8B93A0' }}><Icon>✕</Icon></button>
+      </div>
+      {clients.length === 0 ? (
+        <p className="text-sm" style={{ color:'#8B93A0' }}>Adaugă mai întâi un client (Beneficiar) în tab-ul „Clienți".</p>
+      ) : (
+        <>
+          <div className="flex gap-3 mb-3">
+            <select value={clientId} onChange={(e)=>setClientId(e.target.value)} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+              {clients.map((c)=><option key={c.id} value={c.id} style={{ background:'#1B2127' }}>{c.nume}</option>)}
+            </select>
+            <div className="flex items-center gap-2 rounded-lg px-3" style={inputStyle}>
+              <span className="text-xs" style={{ color:'#8B93A0' }}>TVA</span>
+              <input type="number" value={tva} onChange={(e)=>setTva(e.target.value)} className="w-12 bg-transparent outline-none text-sm py-2" style={{ color:'#E9E7E2' }} />
+              <span className="text-xs" style={{ color:'#8B93A0' }}>%</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <input placeholder="Nr. contract" value={nrContract} onChange={(e)=>setNrContract(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data contract
+              <input type="date" value={dataContract} onChange={(e)=>setDataContract(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            </label>
+            <input placeholder="Act adițional" value={actAditional} onChange={(e)=>setActAditional(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data act adițional
+              <input type="date" value={dataActAditional} onChange={(e)=>setDataActAditional(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            </label>
+            <input placeholder="Adresă șantier" value={adresaLucrare} onChange={(e)=>setAdresaLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            <input placeholder="Lucrare (ex: Instalații electrice interioare)" value={lucrare} onChange={(e)=>setLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          </div>
+
+          <LineItemsEditor items={items} setItems={setItems} />
+          <div className="flex justify-end gap-6 mt-3 px-2 text-sm">
+            <span style={{ color:'#8B93A0' }}>Total: <span style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{money(subtotal)}</span></span>
+            <span style={{ color:'#8B93A0' }}>Total cu TVA: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span></span>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button
+              onClick={()=>onSave({
+                id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10),
+                clientId, items, tva:Number(tva), status: initial?.status || 'Ciornă',
+                nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare,
+              })}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DevizTab({ devize, setDevize, clients, company, persist, printOne, printAll }) {
+  const [form, setForm] = useState(null);
+
+  const nextNumber = (list) => {
+    const year = new Date().getFullYear();
+    const n = list.filter((d)=>d.numar?.includes(`DEV-${year}`)).length + 1;
+    return `DEV-${year}-${String(n).padStart(3,'0')}`;
+  };
+
+  const save = (d) => {
+    const withNumber = { ...d, numar: d.numar || nextNumber(devize) };
+    const next = devize.some((x)=>x.id===d.id) ? devize.map((x)=>x.id===d.id?withNumber:x) : [...devize, withNumber];
+    setDevize(next); persist('devize', next); setForm(null);
+  };
+  const del = (id) => { const next = devize.filter((d)=>d.id!==id); setDevize(next); persist('devize', next); };
+  const setStatus = (id, status) => { const next = devize.map((d)=>d.id===id?{...d,status}:d); setDevize(next); persist('devize', next); };
+  const clientName = (id) => clients.find((c)=>c.id===id)?.nume || '—';
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Devize</h2>
+        <div className="flex items-center gap-2">
+          {devize.length>0 && <button onClick={()=>printAll(devize)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127', border:'1px solid #2A323B' }}>📚 Exportă toate în PDF</button>}
+          {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Deviz nou</button>}
+        </div>
+      </div>
+
+      {form && <DevizForm clients={clients} initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={save} />}
+
+      {devize.length === 0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun deviz încă. Apasă „Deviz nou" pentru a crea primul.</div>
+      ) : (
+        <div className="space-y-2">
+          {devize.slice().sort((a,b)=>a.numar<b.numar?1:-1).map((d)=>{
+            const total = calcSubtotal(d.items) * (1 + d.tva/100);
+            return (
+              <div key={d.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-sm font-medium truncate" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{d.numar}</span>
+                  <span className="text-xs truncate" style={{ color:'#8B93A0' }}>{clientName(d.clientId)} · {d.data}{d.lucrare ? ` · ${d.lucrare}` : ''}</span>
+                </div>
+                <span className="text-sm shrink-0" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span>
+                <div className="shrink-0"><StatusSwitch status={d.status} options={DEVIZ_STATUSES} onChange={(s)=>setStatus(d.id,s)} /></div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={()=>printOne(d)} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ color:'#8B93A0', background:'#171C21' }}><Icon>🖨</Icon> PDF</button>
+                  <button onClick={()=>setForm(d)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                  <button onClick={()=>del(d.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompanyTab({ company, setCompany, persist }) {
   const [form, setForm] = useState(company);
   useEffect(()=>setForm(company), [company]);
@@ -422,34 +539,74 @@ function pageHtml({ doc, kind, client, company }) {
   const subtotal = calcSubtotal(doc.items);
   const tvaVal = subtotal * (doc.tva/100);
   const total = subtotal + tvaVal;
-  const isDeviz = kind === 'Ofertă';
+  const rows = doc.items.map((it,i)=>`
+    <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(it.pretUnitar))}</td>
+    <td>${esc(money((Number(it.cantitate)||0)*(Number(it.pretUnitar)||0)))}</td></tr>`).join('');
+
+  return `<div class="print-page">
+    <div class="pp-title-row">
+      <img src="${window.location.origin}/logo.png" alt="Logo" style="height:36px;width:auto;margin-bottom:4mm;" />
+      <div class="pp-title">${kind === 'Ofertă' ? 'OFERTĂ' : 'FACTURĂ'}</div>
+      <div class="pp-number">Nr. ${esc(doc.numar)} din ${esc(doc.data)}</div>
+    </div>
+
+    <div class="pp-parties">
+      <div class="pp-party-col">
+        <div class="pp-label">Furnizor</div>
+        <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei)'}</div>
+        ${company?.cui?`<div>CUI: ${esc(company.cui)}</div>`:''}${company?.regCom?`<div>Reg. com.: ${esc(company.regCom)}</div>`:''}
+        ${company?.adresa?`<div>${esc(company.adresa)}</div>`:''}${company?.iban?`<div>IBAN: ${esc(company.iban)}</div>`:''}${company?.telefon?`<div>Tel: ${esc(company.telefon)}</div>`:''}
+      </div>
+      <div class="pp-party-col">
+        <div class="pp-label">Client</div>
+        <div class="pp-party-name">${esc(client?.nume) || '—'}</div>
+        ${client?.cui?`<div>${client.tip==='fizica'?'CNP':'CUI'}: ${esc(client.cui)}</div>`:''}${client?.adresa?`<div>${esc(client.adresa)}</div>`:''}${client?.contact?`<div>Tel: ${esc(client.contact)}</div>`:''}
+      </div>
+    </div>
+
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire</th><th>U.M</th><th>Cantitate</th><th>Valoare</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+
+    <div class="pp-totals">
+      <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
+      <div class="pp-totals-row"><span>TVA ${esc(doc.tva)}%</span><span>${esc(money(tvaVal))}</span></div>
+      <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
+    </div>
+
+    <div class="pp-status">Status: ${esc(doc.status)}</div>
+  </div>`;
+}
+
+function devizPageHtml({ doc, client, company }) {
+  const subtotal = calcSubtotal(doc.items);
+  const tvaVal = subtotal * (doc.tva/100);
+  const total = subtotal + tvaVal;
   const rows = doc.items.map((it,i)=>`
     <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(it.pretUnitar))}</td>
     <td>${esc(money((Number(it.cantitate)||0)*(Number(it.pretUnitar)||0)))}</td></tr>`).join('');
 
   const metaLines = [];
-  if (isDeviz && doc.nrContract) metaLines.push(`Contract Nr. ${esc(doc.nrContract)}`);
-  if (isDeviz && doc.actAditional) metaLines.push(`Act adițional: ${esc(doc.actAditional)}`);
-  if (isDeviz && doc.adresaLucrare) metaLines.push(`Adresă: ${esc(doc.adresaLucrare)}`);
-  if (isDeviz && doc.lucrare) metaLines.push(`Lucrare: ${esc(doc.lucrare)}`);
+  if (doc.nrContract) metaLines.push(`Contract Nr. ${esc(doc.nrContract)}${doc.dataContract ? ` din ${esc(doc.dataContract)}` : ''}`);
+  if (doc.actAditional) metaLines.push(`Act adițional${doc.dataActAditional ? ` din ${esc(doc.dataActAditional)}` : ''}: ${esc(doc.actAditional)}`);
+  if (doc.adresaLucrare) metaLines.push(`Adresă: ${esc(doc.adresaLucrare)}`);
+  if (doc.lucrare) metaLines.push(`Lucrare: ${esc(doc.lucrare)}`);
 
   return `<div class="print-page">
     <div class="pp-title-row">
       <img src="${window.location.origin}/logo.png" alt="Logo" style="height:36px;width:auto;margin-bottom:4mm;" />
-      <div class="pp-title">${isDeviz ? 'DEVIZ LUCRĂRI' : 'FACTURĂ'}</div>
+      <div class="pp-title">DEVIZ LUCRĂRI</div>
       <div class="pp-number">Nr. ${esc(doc.numar)} din ${esc(doc.data)}</div>
     </div>
     ${metaLines.length ? `<div class="pp-meta">${metaLines.join('<br/>')}</div>` : ''}
 
     <div class="pp-parties">
       <div class="pp-party-col">
-        <div class="pp-label">${isDeviz ? 'Executant' : 'Furnizor'}</div>
+        <div class="pp-label">Executant</div>
         <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei)'}</div>
         ${company?.cui?`<div>CUI: ${esc(company.cui)}</div>`:''}${company?.regCom?`<div>Reg. com.: ${esc(company.regCom)}</div>`:''}
         ${company?.adresa?`<div>${esc(company.adresa)}</div>`:''}${company?.iban?`<div>IBAN: ${esc(company.iban)}</div>`:''}${company?.telefon?`<div>Tel: ${esc(company.telefon)}</div>`:''}
       </div>
       <div class="pp-party-col">
-        <div class="pp-label">${isDeviz ? 'Beneficiar' : 'Client'}</div>
+        <div class="pp-label">Beneficiar</div>
         <div class="pp-party-name">${esc(client?.nume) || '—'}</div>
         ${client?.cui?`<div>${client.tip==='fizica'?'CNP':'CUI'}: ${esc(client.cui)}</div>`:''}${client?.adresa?`<div>${esc(client.adresa)}</div>`:''}${client?.contact?`<div>Tel: ${esc(client.contact)}</div>`:''}
       </div>
@@ -465,13 +622,13 @@ function pageHtml({ doc, kind, client, company }) {
 
     <div class="pp-signatures">
       <div class="pp-sign-col">
-        <div class="pp-sign-label">${isDeviz ? 'Executant' : 'Furnizor'}</div>
+        <div class="pp-sign-label">Executant</div>
         <div>${esc(company?.nume) || ''}</div>
         ${company?.administrator ? `<div>Adm. ${esc(company.administrator)}</div>` : ''}
         <div class="pp-sign-line"></div>
       </div>
       <div class="pp-sign-col">
-        <div class="pp-sign-label">${isDeviz ? 'Beneficiar' : 'Client'}</div>
+        <div class="pp-sign-label">Beneficiar</div>
         <div>${esc(client?.nume) || ''}</div>
         ${client?.administrator ? `<div>Adm. ${esc(client.administrator)}</div>` : ''}
         <div class="pp-sign-line"></div>
@@ -481,8 +638,9 @@ function pageHtml({ doc, kind, client, company }) {
     <div class="pp-status">Status: ${esc(doc.status)}</div>
   </div>`;
 }
+
 function openPrintWindow(items) {
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Export PDF</title><style>${PRINT_CSS}</style></head><body>${items.map(pageHtml).join('')}</body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Export PDF</title><style>${PRINT_CSS}</style></head><body>${items.map((it) => it.isDeviz ? devizPageHtml(it) : pageHtml(it)).join('')}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
@@ -496,6 +654,7 @@ function App() {
   const [clients, setClients] = useState([]);
   const [offers, setOffers] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [devize, setDevize] = useState([]);
   const [company, setCompany] = useState({});
   const [materials, setMaterials] = useState([]);
   const [stockMoves, setStockMoves] = useState([]);
@@ -508,6 +667,7 @@ function App() {
         setClients(await loadKey('clients', []));
         setOffers(await loadKey('offers', []));
         setInvoices(await loadKey('invoices', []));
+        setDevize(await loadKey('devize', []));
         setCompany(await loadKey('company', {}));
         setMaterials(await loadKey('materials', []));
         setStockMoves(await loadKey('stockMoves', []));
@@ -531,6 +691,8 @@ function App() {
 
   const printOne = (kind) => (doc) => openPrintWindow([{ doc, kind, client: clients.find((c)=>c.id===doc.clientId), company }]);
   const printAll = (docs, kind) => openPrintWindow(docs.map((doc)=>({ doc, kind, client: clients.find((c)=>c.id===doc.clientId), company })));
+  const printDevizOne = (doc) => openPrintWindow([{ doc, isDeviz: true, client: clients.find((c)=>c.id===doc.clientId), company }]);
+  const printDevizAll = (docs) => openPrintWindow(docs.map((doc)=>({ doc, isDeviz: true, client: clients.find((c)=>c.id===doc.clientId), company })));
 
   const nextNumber = (prefix, list) => {
     const year = new Date().getFullYear();
@@ -569,6 +731,7 @@ function App() {
         <div className="flex items-center gap-2 px-2 mb-6">
           <img src="/logo.png" alt="Logo" style={{ height: 32, width: 'auto' }} />
         </div>
+        <NavItem id="devize" label="🧮 Devize" />
         <NavItem id="oferte" label="📄 Oferte" />
         <NavItem id="facturi" label="🧾 Facturi" />
         <NavItem id="clienti" label="👥 Clienți" />
@@ -582,6 +745,10 @@ function App() {
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
+
+            {tab === 'devize' && (
+              <DevizTab devize={devize} setDevize={setDevize} clients={clients} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} />
+            )}
 
             {tab === 'oferte' && (
               <div>
