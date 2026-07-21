@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panou intern — Oferte &amp; Facturi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+  html, body, #root { height: 100%; }
+  body { margin:0; background:#14181C; font-family:'Inter', sans-serif; }
+  input::placeholder { color:#5C6570; }
+  select { color-scheme: dark; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+const uid = () => Math.random().toString(36).slice(2, 10);
+const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
+const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * (Number(it.pretUnitar) || 0), 0);
+
+async function loadKey(key, fallback) {
+  try {
+    const r = await fetch(`/api/data?key=${encodeURIComponent(key)}`);
+    const data = await r.json();
+    return data.value ?? fallback;
+  } catch { return fallback; }
+}
+async function saveKey(key, value) {
+  const r = await fetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value }) });
+  const data = await r.json();
+  if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
+}
+
+const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
+const INVOICE_STATUSES = ['Neplătită', 'Plătită', 'Restantă'];
+const STATUS_COLOR = { 'Ciornă':'#8B93A0','Trimisă':'#F5A623','Acceptată':'#4CAF7D','Respinsă':'#E05252','Neplătită':'#F5A623','Plătită':'#4CAF7D','Restantă':'#E05252' };
+const Icon = ({ children, size = 14 }) => <span style={{ fontSize:size, lineHeight:1, display:'inline-block' }}>{children}</span>;
+
+function StatusSwitch({ status, onChange, options }) {
+  const on = status === 'Acceptată' || status === 'Plătită';
+  const color = STATUS_COLOR[status] || '#8B93A0';
+  return (
+    <div className="inline-flex items-center gap-2">
+      <span style={{ width:28, height:16, borderRadius:8, background:'#0F1317', border:`1px solid ${color}66`, position:'relative', display:'inline-block', boxShadow: on ? `0 0 8px ${color}77` : 'none' }}>
+        <span style={{ position:'absolute', top:2, left: on ? 14 : 2, width:10, height:10, borderRadius:'50%', background:color }} />
+      </span>
+      <select value={status} onChange={(e)=>onChange(e.target.value)} className="bg-transparent text-xs outline-none cursor-pointer" style={{ color, fontFamily:"'JetBrains Mono', monospace" }}>
+        {options.map((s) => <option key={s} value={s} style={{ background:'#1B2127', color:'#E9E7E2' }}>{s}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function LineItemsEditor({ items, setItems }) {
+  const update = (id, f, v) => setItems(items.map((it) => it.id === id ? { ...it, [f]: v } : it));
+  const remove = (id) => setItems(items.filter((it) => it.id !== id));
+  const add = () => setItems([...items, { id: uid(), denumire:'', cantitate:1, um:'buc', pretUnitar:0 }]);
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 70px 70px 100px 100px 28px', color:'#8B93A0' }}>
+        <span>Denumire</span><span>Cant.</span><span>UM</span><span>Preț unitar</span><span>Total</span><span/>
+      </div>
+      {items.map((it) => (
+        <div key={it.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'1fr 70px 70px 100px 100px 28px', background:'#171C21' }}>
+          <input value={it.denumire} onChange={(e)=>update(it.id,'denumire',e.target.value)} placeholder="ex: Cablu MYYM 3x2.5" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
+          <input type="number" value={it.cantitate} onChange={(e)=>update(it.id,'cantitate',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+          <input value={it.um} onChange={(e)=>update(it.id,'um',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
+          <input type="number" value={it.pretUnitar} onChange={(e)=>update(it.id,'pretUnitar',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+          <span className="text-sm" style={{ color:'#F5A623', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(it.cantitate)||0)*(Number(it.pretUnitar)||0))}</span>
+          <button onClick={()=>remove(it.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+        </div>
+      ))}
+      <button onClick={add} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#F5A623', background:'#171C21' }}><Icon>+</Icon> Adaugă articol</button>
+    </div>
+  );
+}
+
+function DocForm({ kind, clients, initial, onCancel, onSave }) {
+  const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
+  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', cantitate:1, um:'buc', pretUnitar:0 }]);
+  const [tva, setTva] = useState(initial?.tva ?? 19);
+  const subtotal = calcSubtotal(items);
+  const total = subtotal * (1 + tva/100);
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{initial?.id ? `Editare ${kind}` : `${kind} nouă`}</h3>
+        <button onClick={onCancel} style={{ color:'#8B93A0' }}><Icon>✕</Icon></button>
+      </div>
+      {clients.length === 0 ? (
+        <p className="text-sm" style={{ color:'#8B93A0' }}>Adaugă mai întâi un client în tab-ul „Clienți".</p>
+      ) : (
+        <>
+          <div className="flex gap-3 mb-3">
+            <select value={clientId} onChange={(e)=>setClientId(e.target.value)} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }}>
+              {clients.map((c)=><option key={c.id} value={c.id} style={{ background:'#1B2127' }}>{c.nume}</option>)}
+            </select>
+            <div className="flex items-center gap-2 rounded-lg px-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+              <span className="text-xs" style={{ color:'#8B93A0' }}>TVA</span>
+              <input type="number" value={tva} onChange={(e)=>setTva(e.target.value)} className="w-12 bg-transparent outline-none text-sm py-2" style={{ color:'#E9E7E2' }} />
+              <span className="text-xs" style={{ color:'#8B93A0' }}>%</span>
+            </div>
+          </div>
+          <LineItemsEditor items={items} setItems={setItems} />
+          <div className="flex justify-end gap-6 mt-3 px-2 text-sm">
+            <span style={{ color:'#8B93A0' }}>Subtotal: <span style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{money(subtotal)}</span></span>
+            <span style={{ color:'#8B93A0' }}>Total (TVA inclus): <span style={{ color:'#F5A623', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span></span>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'Neplătită'), offerId: initial?.offerId })}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#F5A623' }}>Salvează</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusChange, onConvert, onPrint }) {
+  const clientName = (id) => clients.find((c)=>c.id===id)?.nume || '—';
+  if (docs.length === 0) return <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio {kind.toLowerCase()} încă. Apasă „Adaugă" pentru a crea prima.</div>;
+  return (
+    <div className="space-y-2">
+      {docs.slice().sort((a,b)=>a.numar<b.numar?1:-1).map((d)=>{
+        const total = calcSubtotal(d.items) * (1 + d.tva/100);
+        return (
+          <div key={d.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-sm font-medium truncate" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{d.numar}</span>
+              <span className="text-xs truncate" style={{ color:'#8B93A0' }}>{clientName(d.clientId)} · {d.data}</span>
+            </div>
+            <span className="text-sm shrink-0" style={{ color:'#F5A623', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span>
+            <div className="shrink-0"><StatusSwitch status={d.status} options={statuses} onChange={(s)=>onStatusChange(d.id,s)} /></div>
+            <div className="flex items-center gap-2 shrink-0">
+              {onConvert && <button onClick={()=>onConvert(d)} className="text-xs flex items-center gap-1 px-2 py-1 rounded-lg" style={{ color:'#4CAF7D', background:'#171C21' }}><Icon>→</Icon> Facturează</button>}
+              <button onClick={()=>onPrint(d)} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ color:'#8B93A0', background:'#171C21' }}><Icon>🖨</Icon> PDF</button>
+              <button onClick={()=>onEdit(d)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+              <button onClick={()=>onDelete(d.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ClientsTab({ clients, setClients, persist }) {
+  const [form, setForm] = useState(null);
+  const [lookup, setLookup] = useState({ status:'idle', message:'' });
+
+  const save = (c) => {
+    const next = clients.some((x)=>x.id===c.id) ? clients.map((x)=>x.id===c.id?c:x) : [...clients, c];
+    setClients(next); persist('clients', next); setForm(null);
+  };
+  const del = (id) => { const next = clients.filter((c)=>c.id!==id); setClients(next); persist('clients', next); };
+  const openForm = () => { setLookup({status:'idle',message:''}); setForm({ id: uid(), tip:'juridica', nume:'', cui:'', adresa:'', contact:'' }); };
+  const cuiSearchUrl = (cui) => `https://www.google.com/search?q=${encodeURIComponent(`CUI ${cui} ANAF firma denumire adresa`)}`;
+
+  const runAutoLookup = async () => {
+    const clean = String(form.cui).replace(/\D/g,'');
+    if (!clean) return;
+    setLookup({status:'loading',message:''});
+    try {
+      const res = await fetch(`/api/cui?cui=${clean}`);
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `Eroare ${res.status}`);
+      if (!data.denumire) throw new Error('Răspunsul nu conține denumirea firmei.');
+      setForm((f)=>({ ...f, nume: data.denumire, adresa: data.adresa || f.adresa }));
+      setLookup({status:'done', message:'Date preluate automat de la ANAF.'});
+    } catch (e) {
+      setLookup({status:'error', message:`Preluarea automată a eșuat (${e.message}).`});
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Clienți</h2>
+        <button onClick={openForm} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#F5A623' }}><Icon>+</Icon> Adaugă client</button>
+      </div>
+      {form && (
+        <div className="rounded-xl p-4 mb-4 space-y-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="flex gap-2 mb-1">
+            {[['juridica','Persoană juridică'],['fizica','Persoană fizică']].map(([val,label])=>(
+              <button key={val} onClick={()=>setForm({...form, tip:val})} className="text-xs px-2.5 py-1.5 rounded-lg"
+                style={{ color: form.tip===val?'#14181C':'#8B93A0', background: form.tip===val?'#F5A623':'#171C21', fontWeight: form.tip===val?600:400 }}>{label}</button>
+            ))}
+          </div>
+          {form.tip === 'juridica' && (
+            <div>
+              <div className="flex gap-2">
+                <input placeholder="CUI (ex: 14399840)" value={form.cui} onChange={(e)=>setForm({...form, cui:e.target.value})} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+                <button onClick={runAutoLookup} disabled={!form.cui || lookup.status==='loading'} className="text-xs px-3 py-2 rounded-lg font-medium disabled:opacity-40 whitespace-nowrap" style={{ color:'#14181C', background:'#F5A623' }}>Preia automat</button>
+                <a href={form.cui ? cuiSearchUrl(form.cui) : undefined} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-2 rounded-lg font-medium whitespace-nowrap" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #2A323B', pointerEvents: form.cui?'auto':'none' }}>↗ Caută manual</a>
+              </div>
+              {lookup.message && <p className="text-xs mt-1 px-1" style={{ color: lookup.status==='error'?'#E05252':'#4CAF7D' }}>{lookup.message}</p>}
+            </div>
+          )}
+          {['nume','adresa','contact'].map((f)=>(
+            <input key={f} placeholder={{nume: form.tip==='juridica'?'Denumire firmă':'Nume persoană', adresa:'Adresă', contact:'Telefon / email'}[f]}
+              value={form[f]} onChange={(e)=>setForm({...form, [f]:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+          ))}
+          {form.tip === 'fizica' && <input placeholder="CNP (opțional)" value={form.cui} onChange={(e)=>setForm({...form, cui:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />}
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button onClick={()=>save(form)} disabled={!form.nume} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#F5A623' }}>Salvează</button>
+          </div>
+        </div>
+      )}
+      {clients.length === 0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun client încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {clients.map((c)=>(
+            <div key={c.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div>
+                <div className="text-sm" style={{ color:'#E9E7E2' }}>{c.nume}</div>
+                <div className="text-xs" style={{ color:'#8B93A0' }}>{[c.cui,c.adresa,c.contact].filter(Boolean).join(' · ')}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={()=>setForm(c)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                <button onClick={()=>del(c.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MaterialForm({ initial, onCancel, onSave }) {
+  const [form, setForm] = useState(initial || { id: uid(), denumire:'', categorie:'', um:'buc', stoc:0, stocMinim:0, pret:0 });
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <input placeholder="Denumire material" value={form.denumire} onChange={(e)=>setForm({...form, denumire:e.target.value})} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        <input placeholder="Categorie" value={form.categorie} onChange={(e)=>setForm({...form, categorie:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        <input placeholder="UM" value={form.um} onChange={(e)=>setForm({...form, um:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Stoc inițial
+          <input type="number" value={form.stoc} onChange={(e)=>setForm({...form, stoc:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Stoc minim
+          <input type="number" value={form.stocMinim} onChange={(e)=>setForm({...form, stocMinim:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        </label>
+        <label className="text-xs flex flex-col gap-1 col-span-2" style={{ color:'#8B93A0' }}>Preț unitar
+          <input type="number" value={form.pret} onChange={(e)=>setForm({...form, pret:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        </label>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+        <button onClick={()=>onSave({...form, stoc:Number(form.stoc)||0, stocMinim:Number(form.stocMinim)||0, pret:Number(form.pret)||0})} disabled={!form.denumire} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#F5A623' }}>Salvează</button>
+      </div>
+    </div>
+  );
+}
+
+function MoveInput({ tip, onConfirm, onCancel }) {
+  const [cantitate, setCantitate] = useState('');
+  const [nota, setNota] = useState('');
+  const color = tip === 'intrare' ? '#4CAF7D' : '#E05252';
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+      <input type="number" autoFocus placeholder="cant." value={cantitate} onChange={(e)=>setCantitate(e.target.value)} className="w-16 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:`1px solid ${color}66` }} />
+      <input placeholder={tip==='intrare'?'furnizor':'șantier'} value={nota} onChange={(e)=>setNota(e.target.value)} className="w-32 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+      <button onClick={()=>cantitate && onConfirm(Number(cantitate), nota)} disabled={!cantitate} className="text-xs px-2 py-1 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:color }}>OK</button>
+      <button onClick={onCancel} style={{ color:'#8B93A0' }}><Icon>✕</Icon></button>
+    </div>
+  );
+}
+
+function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist }) {
+  const [form, setForm] = useState(null);
+  const [moveState, setMoveState] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [filter, setFilter] = useState('');
+
+  const saveMaterial = (m) => {
+    const next = materials.some((x)=>x.id===m.id) ? materials.map((x)=>x.id===m.id?m:x) : [...materials, m];
+    setMaterials(next); persist('materials', next); setForm(null);
+  };
+  const deleteMaterial = (id) => { const next = materials.filter((m)=>m.id!==id); setMaterials(next); persist('materials', next); };
+  const confirmMove = (material, tip, cantitate, nota) => {
+    const delta = tip==='intrare' ? cantitate : -cantitate;
+    const nextMaterials = materials.map((m)=>m.id===material.id ? {...m, stoc:(Number(m.stoc)||0)+delta} : m);
+    setMaterials(nextMaterials); persist('materials', nextMaterials);
+    const move = { id: uid(), materialId: material.id, tip, cantitate, nota, data: new Date().toISOString().slice(0,10) };
+    const nextMoves = [move, ...stockMoves];
+    setStockMoves(nextMoves); persist('stockMoves', nextMoves);
+    setMoveState(null);
+  };
+  const filtered = materials.filter((m)=> !filter || m.denumire.toLowerCase().includes(filter.toLowerCase()) || m.categorie?.toLowerCase().includes(filter.toLowerCase()));
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4 gap-3">
+        <h2 className="text-lg shrink-0" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Materiale & Stocuri</h2>
+        <input placeholder="Caută..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#F5A623' }}><Icon>+</Icon> Adaugă material</button>}
+      </div>
+      {form && <MaterialForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
+      {materials.length===0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((m)=>{
+            const low = Number(m.stoc) < Number(m.stocMinim);
+            const moves = stockMoves.filter((mv)=>mv.materialId===m.id).slice(0,8);
+            return (
+              <div key={m.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:`1px solid ${low?'#E0525266':'#2A323B'}` }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm truncate" style={{ color:'#E9E7E2' }}>{m.denumire}{m.categorie && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{m.categorie}</span>}</div>
+                    <button onClick={()=>setExpanded(expanded===m.id?null:m.id)} className="text-xs mt-0.5" style={{ color:'#5C6570' }}>{moves.length>0 ? (expanded===m.id?'Ascunde istoricul':'Vezi istoricul') : 'Fără mișcări'}</button>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0">
+                    <div className="text-right">
+                      <div className="text-sm font-medium" style={{ color: low?'#E05252':'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{m.stoc} {m.um}</div>
+                      <div className="text-[11px]" style={{ color:'#5C6570' }}>min {m.stocMinim} · {money(m.pret)}/{m.um}</div>
+                    </div>
+                    {moveState?.materialId===m.id ? (
+                      <MoveInput tip={moveState.tip} onConfirm={(c,n)=>confirmMove(m, moveState.tip, c, n)} onCancel={()=>setMoveState(null)} />
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={()=>setMoveState({materialId:m.id, tip:'intrare'})} className="text-xs px-2 py-1 rounded-lg font-medium" style={{ color:'#4CAF7D', background:'#171C21' }}>+ Intrare</button>
+                        <button onClick={()=>setMoveState({materialId:m.id, tip:'iesire'})} className="text-xs px-2 py-1 rounded-lg font-medium" style={{ color:'#E05252', background:'#171C21' }}>− Ieșire</button>
+                        <button onClick={()=>setForm(m)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                        <button onClick={()=>deleteMaterial(m.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {expanded===m.id && moves.length>0 && (
+                  <div className="mt-2 space-y-1">
+                    {moves.map((mv)=>(
+                      <div key={mv.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                        <span style={{ color:'#8B93A0' }}>{mv.data} {mv.nota && `· ${mv.nota}`}</span>
+                        <span style={{ color: mv.tip==='intrare'?'#4CAF7D':'#E05252', fontFamily:"'JetBrains Mono', monospace" }}>{mv.tip==='intrare'?'+':'−'}{mv.cantitate}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompanyTab({ company, setCompany, persist }) {
+  const [form, setForm] = useState(company);
+  useEffect(()=>setForm(company), [company]);
+  const save = () => { setCompany(form); persist('company', form); };
+  const fields = [['nume','Denumire firmă'],['cui','CUI'],['regCom','Nr. Registrul Comerțului'],['adresa','Adresă sediu'],['iban','IBAN'],['telefon','Telefon / email']];
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Firma mea</h2>
+      <p className="text-xs mb-4" style={{ color:'#8B93A0' }}>Aceste date apar ca emitent pe fiecare document exportat în PDF.</p>
+      <div className="rounded-xl p-4 space-y-2 max-w-md" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        {fields.map(([f,label])=>(
+          <input key={f} placeholder={label} value={form[f]||''} onChange={(e)=>setForm({...form, [f]:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        ))}
+        <div className="flex justify-end pt-2">
+          <button onClick={save} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#F5A623' }}>Salvează</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const PRINT_CSS = `
+  * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; background:#fff; color:#1a1a1a; }
+  .print-page { width:190mm; margin:0 auto; padding:14mm; page-break-after:always; }
+  .print-page:last-child { page-break-after:auto; }
+  .pp-header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #1a1a1a; padding-bottom:10mm; margin-bottom:8mm; }
+  .pp-title { font-size:22px; font-weight:700; letter-spacing:1px; }
+  .pp-number { font-size:13px; font-family:monospace; margin-top:2mm; }
+  .pp-date { font-size:11px; color:#555; margin-top:1mm; }
+  .pp-company { text-align:right; font-size:11px; line-height:1.6; }
+  .pp-company-name { font-weight:600; font-size:13px; margin-bottom:1mm; }
+  .pp-party { margin-bottom:8mm; font-size:12px; line-height:1.6; }
+  .pp-label { font-size:10px; text-transform:uppercase; color:#888; margin-bottom:1mm; }
+  .pp-client-name { font-weight:600; font-size:14px; }
+  .pp-table { width:100%; border-collapse:collapse; font-size:11px; margin-bottom:6mm; }
+  .pp-table th { text-align:center; border-bottom:1.5px solid #1a1a1a; padding:2mm; font-size:10px; text-transform:uppercase; }
+  .pp-table td { text-align:center; border-bottom:1px solid #ddd; padding:2mm; }
+  .pp-totals { margin-left:auto; width:60mm; font-size:12px; }
+  .pp-totals-row { display:flex; justify-content:space-between; padding:1.5mm 0; }
+  .pp-totals-final { border-top:1.5px solid #1a1a1a; font-weight:700; font-size:14px; margin-top:1mm; padding-top:2mm; }
+  .pp-status { margin-top:10mm; font-size:10px; color:#888; }
+  @page { size:A4; margin:0; }
+`;
+function pageHtml({ doc, kind, client, company }) {
+  const subtotal = calcSubtotal(doc.items);
+  const tvaVal = subtotal * (doc.tva/100);
+  const total = subtotal + tvaVal;
+  const rows = doc.items.map((it)=>`
+    <tr><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.cantitate)}</td><td>${esc(it.um)}</td><td>${esc(money(it.pretUnitar))}</td>
+    <td>${esc(money((Number(it.cantitate)||0)*(Number(it.pretUnitar)||0)))}</td></tr>`).join('');
+  return `<div class="print-page">
+    <div class="pp-header">
+      <div><div class="pp-title">${kind==='Ofertă'?'OFERTĂ':'FACTURĂ'}</div><div class="pp-number">${esc(doc.numar)}</div><div class="pp-date">Data emiterii: ${esc(doc.data)}</div></div>
+      <div class="pp-company"><div class="pp-company-name">${esc(company?.nume) || '(completează datele firmei)'}</div>
+        ${company?.cui?`<div>CUI: ${esc(company.cui)}</div>`:''}${company?.regCom?`<div>Reg. com.: ${esc(company.regCom)}</div>`:''}
+        ${company?.adresa?`<div>${esc(company.adresa)}</div>`:''}${company?.iban?`<div>IBAN: ${esc(company.iban)}</div>`:''}${company?.telefon?`<div>${esc(company.telefon)}</div>`:''}
+      </div>
+    </div>
+    <div class="pp-party"><div class="pp-label">Client</div><div class="pp-client-name">${esc(client?.nume) || '—'}</div>
+      ${client?.cui?`<div>${client.tip==='fizica'?'CNP':'CUI'}: ${esc(client.cui)}</div>`:''}${client?.adresa?`<div>${esc(client.adresa)}</div>`:''}${client?.contact?`<div>${esc(client.contact)}</div>`:''}
+    </div>
+    <table class="pp-table"><thead><tr><th style="text-align:left">Denumire</th><th>Cant.</th><th>UM</th><th>Preț unitar</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="pp-totals">
+      <div class="pp-totals-row"><span>Subtotal</span><span>${esc(money(subtotal))}</span></div>
+      <div class="pp-totals-row"><span>TVA (${esc(doc.tva)}%)</span><span>${esc(money(tvaVal))}</span></div>
+      <div class="pp-totals-row pp-totals-final"><span>Total</span><span>${esc(money(total))}</span></div>
+    </div>
+    <div class="pp-status">Status: ${esc(doc.status)}</div>
+  </div>`;
+}
+function openPrintWindow(items) {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Export PDF</title><style>${PRINT_CSS}</style></head><body>${items.map(pageHtml).join('')}</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); }, 300);
+}
+
+function App() {
+  const [tab, setTab] = useState('oferte');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [offers, setOffers] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [company, setCompany] = useState({});
+  const [materials, setMaterials] = useState([]);
+  const [stockMoves, setStockMoves] = useState([]);
+  const [offerForm, setOfferForm] = useState(null);
+  const [invoiceForm, setInvoiceForm] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setClients(await loadKey('clients', []));
+        setOffers(await loadKey('offers', []));
+        setInvoices(await loadKey('invoices', []));
+        setCompany(await loadKey('company', {}));
+        setMaterials(await loadKey('materials', []));
+        setStockMoves(await loadKey('stockMoves', []));
+      } catch (e) {
+        setError('Nu am putut încărca datele.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const persist = async (key, value, isRetry) => {
+    try {
+      await saveKey(key, value);
+      setError(null);
+    } catch (e) {
+      if (!isRetry) { await new Promise(r=>setTimeout(r,800)); return persist(key, value, true); }
+      setError(`Salvarea pentru „${key}" a eșuat: ${e.message}`);
+    }
+  };
+
+  const printOne = (kind) => (doc) => openPrintWindow([{ doc, kind, client: clients.find((c)=>c.id===doc.clientId), company }]);
+  const printAll = (docs, kind) => openPrintWindow(docs.map((doc)=>({ doc, kind, client: clients.find((c)=>c.id===doc.clientId), company })));
+
+  const nextNumber = (prefix, list) => {
+    const year = new Date().getFullYear();
+    const n = list.filter((d)=>d.numar?.includes(`${prefix}-${year}`)).length + 1;
+    return `${prefix}-${year}-${String(n).padStart(3,'0')}`;
+  };
+
+  const saveOffer = (o) => {
+    const withNumber = { ...o, numar: o.numar || nextNumber('OF', offers) };
+    const next = offers.some((x)=>x.id===o.id) ? offers.map((x)=>x.id===o.id?withNumber:x) : [...offers, withNumber];
+    setOffers(next); persist('offers', next); setOfferForm(null);
+  };
+  const deleteOffer = (id) => { const next = offers.filter((o)=>o.id!==id); setOffers(next); persist('offers', next); };
+  const offerStatus = (id, status) => { const next = offers.map((o)=>o.id===id?{...o,status}:o); setOffers(next); persist('offers', next); };
+
+  const saveInvoice = (inv) => {
+    const withNumber = { ...inv, numar: inv.numar || nextNumber('FA', invoices) };
+    const next = invoices.some((x)=>x.id===inv.id) ? invoices.map((x)=>x.id===inv.id?withNumber:x) : [...invoices, withNumber];
+    setInvoices(next); persist('invoices', next); setInvoiceForm(null);
+  };
+  const deleteInvoice = (id) => { const next = invoices.filter((i)=>i.id!==id); setInvoices(next); persist('invoices', next); };
+  const invoiceStatus = (id, status) => { const next = invoices.map((i)=>i.id===id?{...i,status}:i); setInvoices(next); persist('invoices', next); };
+
+  const convertToInvoice = (offer) => {
+    setTab('facturi');
+    setInvoiceForm({ id: uid(), clientId: offer.clientId, items: offer.items.map((it)=>({...it, id: uid()})), tva: offer.tva, offerId: offer.id });
+  };
+
+  const NavItem = ({ id, label }) => (
+    <button onClick={()=>setTab(id)} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: tab===id?'#14181C':'#B8BFC9', background: tab===id?'#F5A623':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
+  );
+
+  return (
+    <div className="min-h-screen w-full flex" style={{ background:'#14181C', fontFamily:"'Inter', sans-serif" }}>
+      <aside className="w-56 shrink-0 p-4 flex flex-col gap-1" style={{ borderRight:'1px solid #2A323B' }}>
+        <div className="flex items-center gap-2 px-2 mb-6">
+          <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background:'#F5A623' }}><span style={{ color:'#14181C' }}>⚡</span></div>
+          <span style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600 }}>Panou intern</span>
+        </div>
+        <NavItem id="oferte" label="📄 Oferte" />
+        <NavItem id="facturi" label="🧾 Facturi" />
+        <NavItem id="clienti" label="👥 Clienți" />
+        <NavItem id="materiale" label="📦 Materiale & Stocuri" />
+        <div style={{ height:1, background:'#2A323B', margin:'8px 4px' }} />
+        <NavItem id="firma" label="⚙ Firma mea" />
+      </aside>
+      <main className="flex-1 p-6 max-w-4xl">
+        {loading ? (
+          <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
+        ) : (
+          <>
+            {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
+
+            {tab === 'oferte' && (
+              <div>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Oferte</h2>
+                  <div className="flex items-center gap-2">
+                    {offers.length>0 && <button onClick={()=>printAll(offers,'Ofertă')} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127', border:'1px solid #2A323B' }}>📚 Exportă toate în PDF</button>}
+                    {!offerForm && <button onClick={()=>setOfferForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#F5A623' }}>+ Adaugă ofertă</button>}
+                  </div>
+                </div>
+                {offerForm && <DocForm kind="Ofertă" clients={clients} initial={offerForm.id?offerForm:null} onCancel={()=>setOfferForm(null)} onSave={saveOffer} />}
+                <DocTable kind="Ofertă" docs={offers} clients={clients} statuses={OFFER_STATUSES} onEdit={setOfferForm} onDelete={deleteOffer} onStatusChange={offerStatus} onConvert={convertToInvoice} onPrint={printOne('Ofertă')} />
+              </div>
+            )}
+
+            {tab === 'facturi' && (
+              <div>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Facturi</h2>
+                  <div className="flex items-center gap-2">
+                    {invoices.length>0 && <button onClick={()=>printAll(invoices,'Factură')} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127', border:'1px solid #2A323B' }}>📚 Exportă toate în PDF</button>}
+                    {!invoiceForm && <button onClick={()=>setInvoiceForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#F5A623' }}>+ Adaugă factură</button>}
+                  </div>
+                </div>
+                {invoiceForm && <DocForm kind="Factură" clients={clients} initial={invoiceForm.id?invoiceForm:null} onCancel={()=>setInvoiceForm(null)} onSave={saveInvoice} />}
+                <DocTable kind="Factură" docs={invoices} clients={clients} statuses={INVOICE_STATUSES} onEdit={setInvoiceForm} onDelete={deleteInvoice} onStatusChange={invoiceStatus} onPrint={printOne('Factură')} />
+              </div>
+            )}
+
+            {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
+            {tab === 'materiale' && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} />}
+            {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
