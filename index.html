@@ -180,6 +180,9 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
             {sb?.message && (
               <div className="text-xs mt-2" style={{ color: sb.status==='error' ? '#E05252' : '#4CAF7D' }}>{sb.message}</div>
             )}
+            {d.stocMesaj && (
+              <div className="text-xs mt-2" style={{ color: d.stocMesaj.startsWith('Nepotrivite') ? '#E9A23B' : '#4CAF7D' }}>{d.stocMesaj}</div>
+            )}
           </div>
         );
       })}
@@ -744,7 +747,7 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
   );
 }
 
-function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll }) {
+function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll, onEmis }) {
   const [form, setForm] = useState(null);
 
   const nextNumber = (list) => {
@@ -759,7 +762,16 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
     setDevize(next); persist('devize', next); setForm(null);
   };
   const del = (id) => { const next = devize.filter((d)=>d.id!==id); setDevize(next); persist('devize', next); };
-  const setStatus = (id, status) => { const next = devize.map((d)=>d.id===id?{...d,status}:d); setDevize(next); persist('devize', next); };
+  const setStatus = (id, status) => {
+    const doc = devize.find((d)=>d.id===id);
+    let extra = {};
+    if (status === 'Emis' && doc && !doc.stocDedus) {
+      const unmatched = onEmis(doc);
+      extra = { stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+    }
+    const next = devize.map((d)=>d.id===id?{...d,status,...extra}:d);
+    setDevize(next); persist('devize', next);
+  };
   const clientName = (id) => clients.find((c)=>c.id===id)?.nume || '—';
 
   return (
@@ -781,18 +793,23 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
           {devize.slice().sort((a,b)=>a.numar<b.numar?1:-1).map((d)=>{
             const total = calcSubtotal(d.items) * (1 + d.tva/100);
             return (
-              <div key={d.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="text-sm font-medium truncate" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{d.numar}</span>
-                  <span className="text-xs truncate" style={{ color:'#8B93A0' }}>{clientName(d.clientId)} · {d.data}{d.lucrare ? ` · ${d.lucrare}` : ''}</span>
+              <div key={d.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-sm font-medium truncate" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{d.numar}</span>
+                    <span className="text-xs truncate" style={{ color:'#8B93A0' }}>{clientName(d.clientId)} · {d.data}{d.lucrare ? ` · ${d.lucrare}` : ''}</span>
+                  </div>
+                  <span className="text-sm shrink-0" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span>
+                  <div className="shrink-0"><StatusSwitch status={d.status} options={DEVIZ_STATUSES} onChange={(s)=>setStatus(d.id,s)} /></div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={()=>printOne(d)} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ color:'#8B93A0', background:'#171C21' }}><Icon>🖨</Icon> PDF</button>
+                    <button onClick={()=>setForm(d)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                    <button onClick={()=>del(d.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                  </div>
                 </div>
-                <span className="text-sm shrink-0" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span>
-                <div className="shrink-0"><StatusSwitch status={d.status} options={DEVIZ_STATUSES} onChange={(s)=>setStatus(d.id,s)} /></div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button onClick={()=>printOne(d)} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ color:'#8B93A0', background:'#171C21' }}><Icon>🖨</Icon> PDF</button>
-                  <button onClick={()=>setForm(d)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
-                  <button onClick={()=>del(d.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
-                </div>
+                {d.stocMesaj && (
+                  <div className="text-xs mt-2" style={{ color: d.stocMesaj.startsWith('Nepotrivite') ? '#E9A23B' : '#4CAF7D' }}>{d.stocMesaj}</div>
+                )}
               </div>
             );
           })}
@@ -1026,6 +1043,28 @@ function App() {
   const printDevizOne = (doc) => openPrintWindow([{ doc, isDeviz: true, client: clients.find((c)=>c.id===doc.clientId), company }]);
   const printDevizAll = (docs) => openPrintWindow(docs.map((doc)=>({ doc, isDeviz: true, client: clients.find((c)=>c.id===doc.clientId), company })));
 
+  // Scade automat materialele (după denumire) din stoc, când un deviz e emis sau o factură e creată.
+  const deductStock = (items, refLabel) => {
+    const unmatched = [];
+    let nextMaterials = materials;
+    const moves = [];
+    (items || []).forEach((it) => {
+      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire);
+      const cant = Number(it.cantitate) || 0;
+      if (idx === -1 || !cant) { if (idx === -1) unmatched.push(it.denumire); return; }
+      nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) - cant } : m);
+      moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'iesire', cantitate: cant, nota: refLabel, data: new Date().toISOString().slice(0,10) });
+    });
+    if (moves.length > 0) {
+      setMaterials(nextMaterials);
+      persist('materials', nextMaterials);
+      const nextMoves = [...moves, ...stockMoves];
+      setStockMoves(nextMoves);
+      persist('stockMoves', nextMoves);
+    }
+    return unmatched;
+  };
+
   const nextNumber = (prefix, list) => {
     const year = new Date().getFullYear();
     const n = list.filter((d)=>d.numar?.includes(`${prefix}-${year}`)).length + 1;
@@ -1041,8 +1080,14 @@ function App() {
   const offerStatus = (id, status) => { const next = offers.map((o)=>o.id===id?{...o,status}:o); setOffers(next); persist('offers', next); };
 
   const saveInvoice = (inv) => {
+    const isNew = !invoices.some((x)=>x.id===inv.id);
     const withNumber = { ...inv, numar: inv.numar || nextNumber('FA', invoices) };
-    const next = invoices.some((x)=>x.id===inv.id) ? invoices.map((x)=>x.id===inv.id?withNumber:x) : [...invoices, withNumber];
+    let finalDoc = withNumber;
+    if (isNew) {
+      const unmatched = deductStock(inv.items, `Factură ${withNumber.numar}`);
+      finalDoc = { ...withNumber, stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+    }
+    const next = invoices.some((x)=>x.id===inv.id) ? invoices.map((x)=>x.id===inv.id?finalDoc:x) : [...invoices, finalDoc];
     setInvoices(next); persist('invoices', next); setInvoiceForm(null);
   };
   const deleteInvoice = (id) => { const next = invoices.filter((i)=>i.id!==id); setInvoices(next); persist('invoices', next); };
@@ -1079,7 +1124,7 @@ function App() {
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
 
             {tab === 'devize' && (
-              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} />
+              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} />
             )}
 
             {tab === 'oferte' && (
