@@ -424,15 +424,19 @@ function MaterialForm({ initial, onCancel, onSave }) {
   );
 }
 
-function MoveInput({ tip, onConfirm, onCancel }) {
+function MoveInput({ tip, defaultPret, onConfirm, onCancel }) {
   const [cantitate, setCantitate] = useState('');
   const [nota, setNota] = useState('');
+  const [pret, setPret] = useState(tip === 'intrare' ? (defaultPret ?? '') : '');
   const color = tip === 'intrare' ? '#4CAF7D' : '#E05252';
   return (
     <div className="flex items-center gap-1.5 flex-wrap justify-end">
       <input type="number" autoFocus placeholder="cant." value={cantitate} onChange={(e)=>setCantitate(e.target.value)} className="w-16 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:`1px solid ${color}66` }} />
+      {tip === 'intrare' && (
+        <input type="number" placeholder="cost/buc" value={pret} onChange={(e)=>setPret(e.target.value)} className="w-20 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:`1px solid ${color}66` }} />
+      )}
       <input placeholder={tip==='intrare'?'furnizor':'șantier'} value={nota} onChange={(e)=>setNota(e.target.value)} className="w-32 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-      <button onClick={()=>cantitate && onConfirm(Number(cantitate), nota)} disabled={!cantitate} className="text-xs px-2 py-1 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:color }}>OK</button>
+      <button onClick={()=>cantitate && onConfirm(Number(cantitate), nota, tip==='intrare' ? (Number(pret)||0) : undefined)} disabled={!cantitate} className="text-xs px-2 py-1 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:color }}>OK</button>
       <button onClick={onCancel} style={{ color:'#8B93A0' }}><Icon>✕</Icon></button>
     </div>
   );
@@ -556,7 +560,7 @@ const MATERIAL_IMPORT_SEED = [
   ['Taxă verde categoria 5.39','Smart','bucata',4.0,0.67],
 ];
 
-function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist }) {
+function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist, company }) {
   const [subTab, setSubTab] = useState('gestiune');
   const [form, setForm] = useState(null);
   const [moveState, setMoveState] = useState(null);
@@ -571,11 +575,20 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     setMaterials(next); persist('materials', next); setForm(null);
   };
   const deleteMaterial = (id) => { const next = materials.filter((m)=>m.id!==id); setMaterials(next); persist('materials', next); };
-  const confirmMove = (material, tip, cantitate, nota) => {
-    const delta = tip==='intrare' ? cantitate : -cantitate;
-    const nextMaterials = materials.map((m)=>m.id===material.id ? {...m, stoc:(Number(m.stoc)||0)+delta} : m);
+  const confirmMove = (material, tip, cantitate, nota, pret) => {
+    let nextMaterials;
+    if (tip === 'intrare' && pret > 0) {
+      const stocVechi = Number(material.stoc) || 0;
+      const pretVechi = Number(material.pret) || 0;
+      const stocNouTotal = stocVechi + cantitate;
+      const pretMediuNou = stocNouTotal > 0 ? ((stocVechi * pretVechi) + (cantitate * pret)) / stocNouTotal : pret;
+      nextMaterials = materials.map((m)=>m.id===material.id ? { ...m, stoc: stocNouTotal, pret: Math.round(pretMediuNou*100)/100 } : m);
+    } else {
+      const delta = tip==='intrare' ? cantitate : -cantitate;
+      nextMaterials = materials.map((m)=>m.id===material.id ? {...m, stoc:(Number(m.stoc)||0)+delta} : m);
+    }
     setMaterials(nextMaterials); persist('materials', nextMaterials);
-    const move = { id: uid(), materialId: material.id, tip, cantitate, nota, data: new Date().toISOString().slice(0,10) };
+    const move = { id: uid(), materialId: material.id, tip, cantitate, nota, pret: tip==='intrare' ? pret : undefined, data: new Date().toISOString().slice(0,10) };
     const nextMoves = [move, ...stockMoves];
     setStockMoves(nextMoves); persist('stockMoves', nextMoves);
     setMoveState(null);
@@ -622,10 +635,15 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
       const inPeriod = movesForMaterial.filter((mv) =>
         (!exportFrom || mv.data >= exportFrom) && (!exportTo || mv.data <= exportTo)
       );
-      const intrari = inPeriod.filter((mv) => mv.tip === 'intrare').reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
-      const iesiri = inPeriod.filter((mv) => mv.tip === 'iesire').reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
+      const intrariMoves = inPeriod.filter((mv) => mv.tip === 'intrare');
+      const iesiriMoves = inPeriod.filter((mv) => mv.tip === 'iesire');
+      const intrari = intrariMoves.reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
+      const iesiri = iesiriMoves.reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
       const stocInitial = stocFinal - intrari + iesiri;
       const pret = Number(m.pret) || 0;
+      // Valoarea intrărilor se calculează cu costul real înregistrat la fiecare intrare
+      // (dacă o mișcare mai veche nu are cost înregistrat, se folosește prețul curent al materialului).
+      const valoareIntrari = intrariMoves.reduce((s, mv) => s + (Number(mv.cantitate)||0) * (mv.pret != null && mv.pret !== '' ? Number(mv.pret) : pret), 0);
 
       return {
         'Gestiune': m.categorie || '',
@@ -636,7 +654,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
         'Ieșiri': iesiri,
         'Stoc final': stocFinal,
         'Sold inițial': Math.round(stocInitial * pret * 100) / 100,
-        'Valoare intrări': Math.round(intrari * pret * 100) / 100,
+        'Valoare intrări': Math.round(valoareIntrari * 100) / 100,
         'Valoare ieșiri': Math.round(iesiri * pret * 100) / 100,
         'Sold final': Math.round(stocFinal * pret * 100) / 100,
       };
@@ -770,7 +788,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                           <div className="text-[11px]" style={{ color:'#5C6570' }}>min {m.stocMinim}</div>
                         </div>
                         {moveState?.materialId===m.id ? (
-                          <MoveInput tip={moveState.tip} onConfirm={(c,n)=>confirmMove(m, moveState.tip, c, n)} onCancel={()=>setMoveState(null)} />
+                          <MoveInput tip={moveState.tip} defaultPret={m.pret} onConfirm={(c,n,p)=>confirmMove(m, moveState.tip, c, n, p)} onCancel={()=>setMoveState(null)} />
                         ) : (
                           <div className="flex items-center gap-1.5">
                             <button onClick={()=>setMoveState({materialId:m.id, tip:'intrare'})} className="text-xs px-2 py-1 rounded-lg font-medium" style={{ color:'#4CAF7D', background:'#171C21' }}>+ Intrare</button>
@@ -784,7 +802,9 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                         {moves.map((mv)=>(
                           <div key={mv.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
                             <span style={{ color:'#8B93A0' }}>{mv.data} {mv.nota && `· ${mv.nota}`}</span>
-                            <span style={{ color: mv.tip==='intrare'?'#4CAF7D':'#E05252', fontFamily:"'JetBrains Mono', monospace" }}>{mv.tip==='intrare'?'+':'−'}{mv.cantitate}</span>
+                            <span style={{ color: mv.tip==='intrare'?'#4CAF7D':'#E05252', fontFamily:"'JetBrains Mono', monospace" }}>
+                              {mv.tip==='intrare'?'+':'−'}{mv.cantitate}{mv.tip==='intrare' && mv.pret ? ` @ ${money(mv.pret)}` : ''}
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -1319,7 +1339,7 @@ function App() {
             )}
 
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
-            {tab === 'materiale' && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} />}
+            {tab === 'materiale' && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
           </>
         )}
