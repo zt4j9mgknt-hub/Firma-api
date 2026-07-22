@@ -1008,6 +1008,271 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
   );
 }
 
+const STARE_SCULA = ['Funcțională', 'Defectă', 'În service'];
+
+function garantieInfo(tool) {
+  if (!tool.dataAchizitie || !tool.garantieLuni) return null;
+  const start = new Date(tool.dataAchizitie);
+  const expira = new Date(start);
+  expira.setMonth(expira.getMonth() + Number(tool.garantieLuni));
+  const azi = new Date();
+  const zileRamase = Math.ceil((expira - azi) / (1000*60*60*24));
+  return { expiraStr: expira.toISOString().slice(0,10), zileRamase };
+}
+
+function ToolForm({ initial, onCancel, onSave }) {
+  const [form, setForm] = useState(initial || { id: uid(), denumire:'', marca:'', categorie:'', dataAchizitie:'', garantieLuni:24, pret:0, atribuitLa:'', stare:'Funcțională' });
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <input placeholder="Denumire sculă (ex: Bormașină Bosch)" value={form.denumire} onChange={(e)=>setForm({...form, denumire:e.target.value})} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input placeholder="Marcă" value={form.marca} onChange={(e)=>setForm({...form, marca:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input placeholder="Categorie (opțional)" value={form.categorie} onChange={(e)=>setForm({...form, categorie:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data achiziției
+          <input type="date" value={form.dataAchizitie} onChange={(e)=>setForm({...form, dataAchizitie:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Garanție (luni)
+          <input type="number" value={form.garantieLuni} onChange={(e)=>setForm({...form, garantieLuni:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Preț achiziție
+          <input type="number" value={form.pret} onChange={(e)=>setForm({...form, pret:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        </label>
+        <input placeholder="Atribuită la (persoană / șantier)" value={form.atribuitLa} onChange={(e)=>setForm({...form, atribuitLa:e.target.value})} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <div className="col-span-2 flex gap-2">
+          {STARE_SCULA.map((s)=>(
+            <button key={s} onClick={()=>setForm({...form, stare:s})} className="text-xs px-2.5 py-1.5 rounded-lg"
+              style={{ color: form.stare===s?'#14181C':'#8B93A0', background: form.stare===s?'#2E8BD1':'#171C21' }}>{s}</button>
+          ))}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+        <button onClick={()=>onSave({...form, garantieLuni:Number(form.garantieLuni)||0, pret:Number(form.pret)||0})} disabled={!form.denumire} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+      </div>
+    </div>
+  );
+}
+
+function ToolsTab({ scule, setScule, persist }) {
+  const [form, setForm] = useState(null);
+  const [filter, setFilter] = useState('');
+
+  const save = (t) => {
+    const next = scule.some((x)=>x.id===t.id) ? scule.map((x)=>x.id===t.id?t:x) : [...scule, t];
+    setScule(next); persist('scule', next); setForm(null);
+  };
+  const del = (id) => { const next = scule.filter((t)=>t.id!==id); setScule(next); persist('scule', next); };
+
+  const filtered = scule.filter((t)=> !filter || t.denumire.toLowerCase().includes(filter.toLowerCase()) || (t.atribuitLa||'').toLowerCase().includes(filter.toLowerCase()));
+
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Gestiune scule</h2>
+      <p className="text-xs mb-3" style={{ color:'#5C6570' }}>Inventar scule și unelte, cu cine le are și cât mai e din garanție.</p>
+      <div className="flex justify-between items-center mb-4 gap-3">
+        <input placeholder="Caută după nume sau persoană..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă sculă</button>}
+      </div>
+      {form && <ToolForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={save} />}
+      {scule.length===0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio sculă înregistrată încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((t)=>{
+            const g = garantieInfo(t);
+            const expiredOrSoon = g && g.zileRamase <= 30;
+            return (
+              <div key={t.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3" style={{ background:'#1B2127', border:`1px solid ${expiredOrSoon?'#E0525266':'#2A323B'}` }}>
+                <div className="min-w-0">
+                  <div className="text-sm truncate" style={{ color:'#E9E7E2' }}>{t.denumire}{t.marca && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{t.marca}</span>}</div>
+                  <div className="text-xs" style={{ color:'#8B93A0' }}>
+                    {t.atribuitLa ? `La: ${t.atribuitLa}` : 'Neatribuită'} · {t.stare}
+                    {g && (
+                      <span style={{ color: g.zileRamase < 0 ? '#E05252' : expiredOrSoon ? '#E9A23B' : '#5C6570' }}>
+                        {' · '}{g.zileRamase < 0 ? `Garanție expirată (${g.expiraStr})` : `Garanție până la ${g.expiraStr} (${g.zileRamase} zile)`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={()=>setForm(t)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                  <button onClick={()=>del(t.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SANTIER_STATUSES = ['Activ', 'Finalizat'];
+
+function SantierForm({ initial, onCancel, onSave }) {
+  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ' });
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="space-y-2 mb-2">
+        <input placeholder="Denumire șantier (ex: Bloc Florești, Str. Traian)" value={form.nume} onChange={(e)=>setForm({...form, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input placeholder="Adresă (opțional)" value={form.adresa} onChange={(e)=>setForm({...form, adresa:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <div className="flex gap-2">
+          {SANTIER_STATUSES.map((s)=>(
+            <button key={s} onClick={()=>setForm({...form, status:s})} className="text-xs px-2.5 py-1.5 rounded-lg"
+              style={{ color: form.status===s?'#14181C':'#8B93A0', background: form.status===s?'#2E8BD1':'#171C21' }}>{s}</button>
+          ))}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+        <button onClick={()=>onSave(form)} disabled={!form.nume} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+      </div>
+    </div>
+  );
+}
+
+function PersonHoursEditor({ persoane, setPersoane }) {
+  const update = (id, f, v) => setPersoane(persoane.map((p)=> p.id===id ? {...p, [f]:v} : p));
+  const remove = (id) => setPersoane(persoane.filter((p)=>p.id!==id));
+  const add = () => setPersoane([...persoane, { id: uid(), nume:'', ore:8 }]);
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 70px 28px', color:'#8B93A0' }}>
+        <span>Persoană</span><span>Ore</span><span/>
+      </div>
+      {persoane.map((p)=>(
+        <div key={p.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'1fr 70px 28px', background:'#171C21' }}>
+          <input value={p.nume} onChange={(e)=>update(p.id,'nume',e.target.value)} placeholder="Nume persoană" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
+          <input type="number" value={p.ore} onChange={(e)=>update(p.id,'ore',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+          <button onClick={()=>remove(p.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+        </div>
+      ))}
+      <button onClick={add} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă persoană</button>
+    </div>
+  );
+}
+
+function RaportForm({ initial, onCancel, onSave }) {
+  const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
+  const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', ore:8 }]);
+  const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const totalOre = persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <label className="text-xs flex flex-col gap-1 mb-3" style={{ color:'#8B93A0' }}>Data
+        <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-48" style={inputStyle} />
+      </label>
+      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} />
+      <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
+      <div className="flex justify-between items-center mt-3">
+        <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}</span></span>
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+          <button onClick={()=>onSave({ id: initial?.id || uid(), data, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist }) {
+  const [form, setForm] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [reportForm, setReportForm] = useState(null);
+
+  const saveSantier = (s) => {
+    const next = santiere.some((x)=>x.id===s.id) ? santiere.map((x)=>x.id===s.id?s:x) : [...santiere, s];
+    setSantiere(next); persist('santiere', next); setForm(null);
+  };
+  const delSantier = (id) => {
+    setSantiere((prev)=>{ const next = prev.filter((s)=>s.id!==id); persist('santiere', next); return next; });
+    setRapoarte((prev)=>{ const next = prev.filter((r)=>r.santierId!==id); persist('rapoarte', next); return next; });
+    if (selected === id) setSelected(null);
+  };
+  const saveReport = (r) => {
+    const withSite = { ...r, santierId: selected };
+    const next = rapoarte.some((x)=>x.id===r.id) ? rapoarte.map((x)=>x.id===r.id?withSite:x) : [...rapoarte, withSite];
+    setRapoarte(next); persist('rapoarte', next); setReportForm(null);
+  };
+  const delReport = (id) => { const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next); };
+
+  if (selected) {
+    const santier = santiere.find((s)=>s.id===selected);
+    const rapoarteSantier = rapoarte.filter((r)=>r.santierId===selected).slice().sort((a,b)=> a.data<b.data?1:-1);
+    const totalOreSantier = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+(Number(p.ore)||0),0),0);
+    return (
+      <div>
+        <button onClick={()=>setSelected(null)} className="text-xs mb-3" style={{ color:'#5C6570' }}>← Toate șantierele</button>
+        <div className="flex justify-between items-center mb-1">
+          <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
+          {!reportForm && <button onClick={()=>setReportForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
+        </div>
+        <p className="text-xs mb-4" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOreSantier}</span></p>
+        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {rapoarteSantier.length === 0 && !reportForm ? (
+          <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
+        ) : (
+          <div className="space-y-2">
+            {rapoarteSantier.map((r)=>{
+              const totalOre = r.persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
+              return (
+                <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{r.data}</div>
+                      <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.map((p)=>`${p.nume} (${p.ore}h)`).filter((s)=>s.trim()!=='(h)').join(', ') || 'Fără persoane'}</div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}h</span>
+                      <button onClick={()=>setReportForm(r)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                      <button onClick={()=>delReport(r.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                    </div>
+                  </div>
+                  {r.explicatii && <div className="text-xs mt-2" style={{ color:'#8B93A0' }}>{r.explicatii}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Șantiere</h2>
+        {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
+      </div>
+      {form && <SantierForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={saveSantier} />}
+      {santiere.length===0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun șantier încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {santiere.map((s)=>{
+            const nrRapoarte = rapoarte.filter((r)=>r.santierId===s.id).length;
+            return (
+              <div key={s.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 cursor-pointer" onClick={()=>setSelected(s.id)} style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                <div className="min-w-0">
+                  <div className="text-sm" style={{ color:'#E9E7E2' }}>{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></div>
+                  <div className="text-xs" style={{ color:'#8B93A0' }}>{s.adresa} · {nrRapoarte} rapoarte</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0" onClick={(e)=>e.stopPropagation()}>
+                  <button onClick={()=>setForm(s)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                  <button onClick={()=>delSantier(s.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompanyTab({ company, setCompany, persist }) {
   const [form, setForm] = useState(company);
   useEffect(()=>setForm(company), [company]);
@@ -1189,6 +1454,9 @@ function App() {
   const [company, setCompany] = useState({});
   const [materials, setMaterials] = useState([]);
   const [stockMoves, setStockMoves] = useState([]);
+  const [scule, setScule] = useState([]);
+  const [santiere, setSantiere] = useState([]);
+  const [rapoarte, setRapoarte] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
@@ -1203,6 +1471,9 @@ function App() {
         setCompany(await loadKey('company', {}));
         setMaterials(await loadKey('materials', []));
         setStockMoves(await loadKey('stockMoves', []));
+        setScule(await loadKey('scule', []));
+        setSantiere(await loadKey('santiere', []));
+        setRapoarte(await loadKey('rapoarte', []));
       } catch (e) {
         setError('Nu am putut încărca datele.');
       } finally {
@@ -1356,6 +1627,8 @@ function App() {
             <NavItem id="stocuri" label="📈 Stocuri" />
           </div>
         )}
+        <NavItem id="scule" label="🔧 Scule" />
+        <NavItem id="santiere" label="🏗 Șantiere" />
         <div style={{ height:1, background:'#2A323B', margin:'8px 4px' }} />
         <NavItem id="firma" label="⚙ Firma mea" />
       </aside>
@@ -1400,6 +1673,10 @@ function App() {
 
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
+
+            {tab === 'scule' && <ToolsTab scule={scule} setScule={setScule} persist={persist} />}
+
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} persist={persist} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
           </>
         )}
