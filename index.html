@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   html, body, #root { height: 100%; }
@@ -512,6 +513,8 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   const [form, setForm] = useState(null);
   const [moveState, setMoveState] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const [exportFrom, setExportFrom] = useState('');
+  const [exportTo, setExportTo] = useState('');
   const [filter, setFilter] = useState('');
 
   const saveMaterial = (m) => {
@@ -552,6 +555,28 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     setMaterials(next);
     persist('materials', next);
     setSbImportMsg(`Am adăugat ${toAdd.length} materiale din gestiunea SmartBill.`);
+  };
+
+  const exportExcel = () => {
+    const matName = (id) => materials.find((m)=>m.id===id)?.denumire || '(material șters)';
+    const matUM = (id) => materials.find((m)=>m.id===id)?.um || '';
+    const inRange = stockMoves.filter((mv) => (!exportFrom || mv.data >= exportFrom) && (!exportTo || mv.data <= exportTo));
+    const rows = inRange.slice().sort((a,b)=> a.data < b.data ? -1 : 1).map((mv) => ({
+      'Data': mv.data,
+      'Material': matName(mv.materialId),
+      'U.M.': matUM(mv.materialId),
+      'Tip mișcare': mv.tip === 'intrare' ? 'Intrare' : 'Ieșire',
+      'Cantitate intrare': mv.tip === 'intrare' ? mv.cantitate : '',
+      'Cantitate ieșire': mv.tip === 'iesire' ? mv.cantitate : '',
+      'Notă': mv.nota || '',
+    }));
+    if (rows.length === 0) { window.alert('Nu există mișcări de stoc în perioada selectată.'); return; }
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{wch:12},{wch:40},{wch:8},{wch:12},{wch:16},{wch:16},{wch:24}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Miscari stoc');
+    const label = `${exportFrom || 'inceput'}_${exportTo || 'azi'}`;
+    XLSX.writeFile(wb, `gestiune_${label}.xlsx`);
   };
 
   const SubNav = () => (
@@ -622,8 +647,14 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
 
       {subTab === 'stocuri' && (
         <div>
-          <div className="flex justify-between items-center mb-4 gap-3">
+          <div className="flex justify-between items-center mb-4 gap-3 flex-wrap">
             <input placeholder="Caută..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+            <div className="flex items-center gap-2">
+              <input type="date" value={exportFrom} onChange={(e)=>setExportFrom(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+              <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
+              <input type="date" value={exportTo} onChange={(e)=>setExportTo(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+              <button onClick={exportExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
+            </div>
           </div>
           {materials.length===0 ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material — adaugă mai întâi din tab-ul „Gestiune".</div>
@@ -747,7 +778,7 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
   );
 }
 
-function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll, onEmis }) {
+function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll, onEmis, onReverse }) {
   const [form, setForm] = useState(null);
 
   const nextNumber = (list) => {
@@ -758,16 +789,30 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
 
   const save = (d) => {
     const withNumber = { ...d, numar: d.numar || nextNumber(devize) };
-    const next = devize.some((x)=>x.id===d.id) ? devize.map((x)=>x.id===d.id?withNumber:x) : [...devize, withNumber];
+    const original = devize.find((x)=>x.id===d.id);
+    let finalDoc = withNumber;
+    if (original && original.stocDedus) {
+      onReverse(original);
+      const unmatched = onEmis(withNumber);
+      finalDoc = { ...withNumber, stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+    }
+    const next = devize.some((x)=>x.id===d.id) ? devize.map((x)=>x.id===d.id?finalDoc:x) : [...devize, finalDoc];
     setDevize(next); persist('devize', next); setForm(null);
   };
-  const del = (id) => { const next = devize.filter((d)=>d.id!==id); setDevize(next); persist('devize', next); };
+  const del = (id) => {
+    const doc = devize.find((d)=>d.id===id);
+    if (doc && doc.stocDedus) onReverse(doc);
+    const next = devize.filter((d)=>d.id!==id); setDevize(next); persist('devize', next);
+  };
   const setStatus = (id, status) => {
     const doc = devize.find((d)=>d.id===id);
     let extra = {};
     if (status === 'Emis' && doc && !doc.stocDedus) {
       const unmatched = onEmis(doc);
       extra = { stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+    } else if (status === 'Ciornă' && doc && doc.stocDedus) {
+      onReverse(doc);
+      extra = { stocDedus: false, stocMesaj: 'Stoc restaurat (revenire la ciornă).' };
     }
     const next = devize.map((d)=>d.id===id?{...d,status,...extra}:d);
     setDevize(next); persist('devize', next);
@@ -1065,6 +1110,26 @@ function App() {
     return unmatched;
   };
 
+  // Reface stocul (mișcare de intrare) pentru articole scăzute anterior — la ștergere, revenire la ciornă, sau editare.
+  const reverseStock = (items, refLabel) => {
+    let nextMaterials = materials;
+    const moves = [];
+    (items || []).forEach((it) => {
+      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire);
+      const cant = Number(it.cantitate) || 0;
+      if (idx === -1 || !cant) return;
+      nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) + cant } : m);
+      moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'intrare', cantitate: cant, nota: refLabel, data: new Date().toISOString().slice(0,10) });
+    });
+    if (moves.length > 0) {
+      setMaterials(nextMaterials);
+      persist('materials', nextMaterials);
+      const nextMoves = [...moves, ...stockMoves];
+      setStockMoves(nextMoves);
+      persist('stockMoves', nextMoves);
+    }
+  };
+
   const nextNumber = (prefix, list) => {
     const year = new Date().getFullYear();
     const n = list.filter((d)=>d.numar?.includes(`${prefix}-${year}`)).length + 1;
@@ -1090,7 +1155,11 @@ function App() {
     const next = invoices.some((x)=>x.id===inv.id) ? invoices.map((x)=>x.id===inv.id?finalDoc:x) : [...invoices, finalDoc];
     setInvoices(next); persist('invoices', next); setInvoiceForm(null);
   };
-  const deleteInvoice = (id) => { const next = invoices.filter((i)=>i.id!==id); setInvoices(next); persist('invoices', next); };
+  const deleteInvoice = (id) => {
+    const inv = invoices.find((i)=>i.id===id);
+    if (inv && inv.stocDedus) reverseStock(inv.items, `Ștergere factură ${inv.numar}`);
+    const next = invoices.filter((i)=>i.id!==id); setInvoices(next); persist('invoices', next);
+  };
   const invoiceStatus = (id, status) => { const next = invoices.map((i)=>i.id===id?{...i,status}:i); setInvoices(next); persist('invoices', next); };
 
   const convertToInvoice = (offer) => {
@@ -1124,7 +1193,7 @@ function App() {
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
 
             {tab === 'devize' && (
-              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} />
+              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} />
             )}
 
             {tab === 'oferte' && (
