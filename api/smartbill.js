@@ -90,7 +90,8 @@ export default async function handler(req, res) {
     try { data = JSON.parse(text); } catch (e2) { data = { raw: text }; }
 
     if (!sbRes.ok) {
-      return res.status(sbRes.status).json({ error: data.errorText || data.message || "SmartBill a respins factura.", details: data });
+      const detail = data.errorText || data.message || data.raw || JSON.stringify(data);
+      return res.status(sbRes.status).json({ error: `SmartBill (${sbRes.status}): ${detail}`, details: data });
     }
 
     return res.status(200).json({ ok: true, number: data.number, series: data.series, url: data.url, raw: data });
