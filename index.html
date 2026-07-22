@@ -1156,32 +1156,45 @@ function PersonHoursEditor({ persoane, setPersoane }) {
 
 function RaportForm({ initial, onCancel, onSave }) {
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
+  const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
+  const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
   const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', ore:8 }]);
   const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const totalOre = persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-      <label className="text-xs flex flex-col gap-1 mb-3" style={{ color:'#8B93A0' }}>Data
-        <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-48" style={inputStyle} />
-      </label>
+      <div className="flex gap-3 mb-3 flex-wrap">
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data
+          <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora început
+          <input type="time" value={oraInceput} onChange={(e)=>setOraInceput(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-32" style={inputStyle} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora sfârșit
+          <input type="time" value={oraSfarsit} onChange={(e)=>setOraSfarsit(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-32" style={inputStyle} />
+        </label>
+      </div>
       <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} />
       <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
       <div className="flex justify-between items-center mt-3">
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}</span></span>
         <div className="flex gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
-          <button onClick={()=>onSave({ id: initial?.id || uid(), data, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
         </div>
       </div>
     </div>
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist, company }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
+  const [exportFrom, setExportFrom] = useState('');
+  const [exportTo, setExportTo] = useState('');
+  const [exportSantiere, setExportSantiere] = useState(new Set());
 
   const saveSantier = (s) => {
     const next = santiere.some((x)=>x.id===s.id) ? santiere.map((x)=>x.id===s.id?s:x) : [...santiere, s];
@@ -1198,6 +1211,55 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist }) 
     setRapoarte(next); persist('rapoarte', next); setReportForm(null);
   };
   const delReport = (id) => { const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next); };
+
+  const exportExcel = () => {
+    const santierNume = (id) => santiere.find((s)=>s.id===id)?.nume || '(șantier șters)';
+    const inRange = rapoarte.filter((r) => {
+      const okDate = (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo);
+      const okSantier = exportSantiere.size === 0 || exportSantiere.has(r.santierId);
+      return okDate && okSantier;
+    });
+    const rows = [];
+    inRange.slice().sort((a,b)=> a.data<b.data?-1:1).forEach((r)=>{
+      (r.persoane.length ? r.persoane : [{nume:'',ore:0}]).forEach((p)=>{
+        rows.push({
+          'Șantier': santierNume(r.santierId),
+          'Data': r.data,
+          'Ora început': r.oraInceput || '',
+          'Ora sfârșit': r.oraSfarsit || '',
+          'Persoană': p.nume,
+          'Ore': Number(p.ore) || 0,
+          'Explicații': r.explicatii || '',
+        });
+      });
+    });
+    const totalOre = rows.reduce((s,row)=>s+(Number(row['Ore'])||0),0);
+    const totalRow = { 'Șantier':'TOTAL', 'Data':'', 'Ora început':'', 'Ora sfârșit':'', 'Persoană':'', 'Ore': totalOre, 'Explicații':'' };
+    const sheetRows = rows.length
+      ? [...rows, totalRow]
+      : [{ 'Șantier':'', 'Data':'', 'Ora început':'', 'Ora sfârșit':'', 'Persoană':'', 'Ore':'', 'Explicații':'Niciun raport în perioada/șantierele selectate.' }];
+
+    const fmtRo = (d) => { if (!d) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
+    const azi = new Date();
+    const extrasLa = `${String(azi.getDate()).padStart(2,'0')}/${String(azi.getMonth()+1).padStart(2,'0')}/${azi.getFullYear()}`;
+    const headerRows = [
+      [company?.nume || 'Firma mea'],
+      [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
+      [],
+      ['Raport șantiere'],
+      [`Data început perioadă: ${fmtRo(exportFrom) || '(nespecificată)'}`],
+      [`Data sfârșit perioadă: ${fmtRo(exportTo) || '(nespecificată)'}`],
+      [`Extras la: ${extrasLa}`],
+      [],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(headerRows);
+    XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
+    ws['!cols'] = [{wch:22},{wch:12},{wch:11},{wch:11},{wch:20},{wch:8},{wch:40}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Raport santiere');
+    const label = `${exportFrom || 'inceput'}_${exportTo || 'azi'}`;
+    XLSX.writeFile(wb, `raport_santiere_${label}.xlsx`);
+  };
 
   if (selected) {
     const santier = santiere.find((s)=>s.id===selected);
@@ -1222,7 +1284,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist }) 
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{r.data}</div>
+                      <div className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{r.data}{(r.oraInceput||r.oraSfarsit) && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{r.oraInceput||'?'}–{r.oraSfarsit||'?'}</span>}</div>
                       <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.map((p)=>`${p.nume} (${p.ore}h)`).filter((s)=>s.trim()!=='(h)').join(', ') || 'Fără persoane'}</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
@@ -1247,6 +1309,30 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist }) 
         <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Șantiere</h2>
         {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
       </div>
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <span className="text-xs" style={{ color:'#5C6570' }}>Raport pentru perioada:</span>
+        <RoDatePicker value={exportFrom} onChange={setExportFrom} />
+        <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
+        <RoDatePicker value={exportTo} onChange={setExportTo} />
+        <button onClick={exportExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
+      </div>
+      {santiere.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+          <span className="text-xs mr-1" style={{ color:'#5C6570' }}>Șantiere de exportat (nimic bifat = toate):</span>
+          {santiere.map((s)=>{
+            const active = exportSantiere.has(s.id);
+            return (
+              <button key={s.id} onClick={()=>{
+                  const next = new Set(exportSantiere);
+                  active ? next.delete(s.id) : next.add(s.id);
+                  setExportSantiere(next);
+                }}
+                className="text-xs px-2.5 py-1 rounded-lg"
+                style={{ color: active?'#14181C':'#8B93A0', background: active?'#2E8BD1':'#171C21' }}>{s.nume}</button>
+            );
+          })}
+        </div>
+      )}
       {form && <SantierForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={saveSantier} />}
       {santiere.length===0 && !form ? (
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun șantier încă.</div>
@@ -1676,7 +1762,7 @@ function App() {
 
             {tab === 'scule' && <ToolsTab scule={scule} setScule={setScule} persist={persist} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} persist={persist} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} persist={persist} company={company} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
           </>
         )}
