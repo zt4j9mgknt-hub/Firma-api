@@ -25,6 +25,17 @@ const { useState, useEffect } = React;
 const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
 const pretFinal = (it) => (Number(it.pretUnitar) || 0) * (1 + (Number(it.adaos) || 0) / 100);
+
+// Calculează orele lucrate dintr-un interval oră-început/oră-sfârșit, scăzând 1 oră de pauză (program normal).
+function calcOreDinInterval(inceput, sfarsit) {
+  if (!inceput || !sfarsit) return null;
+  const [h1, m1] = inceput.split(':').map(Number);
+  const [h2, m2] = sfarsit.split(':').map(Number);
+  let minute = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (minute <= 0) minute += 24 * 60;
+  minute -= 60; // pauza de masă
+  return Math.max(0, Math.round((minute / 60) * 100) / 100);
+}
 const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * pretFinal(it), 0);
 
 async function loadKey(key, fallback) {
@@ -1206,10 +1217,10 @@ function SantierForm({ initial, onCancel, onSave }) {
   );
 }
 
-function PersonHoursEditor({ persoane, setPersoane }) {
+function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
   const update = (id, f, v) => setPersoane(persoane.map((p)=> p.id===id ? {...p, [f]:v} : p));
   const remove = (id) => setPersoane(persoane.filter((p)=>p.id!==id));
-  const add = () => setPersoane([...persoane, { id: uid(), nume:'', ore:8 }]);
+  const add = () => setPersoane([...persoane, { id: uid(), nume:'', ore: oreImplicite ?? 8 }]);
   return (
     <div className="space-y-2">
       <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 70px 28px', color:'#8B93A0' }}>
@@ -1236,9 +1247,11 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
   const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const totalOre = persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
+  const oreCalculate = calcOreDinInterval(oraInceput, oraSfarsit);
+  const aplicaLaToti = () => setPersoane(persoane.map((p)=>({...p, ore: oreCalculate})));
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-      <div className="flex gap-3 mb-3 flex-wrap">
+      <div className="flex gap-3 mb-2 flex-wrap items-end">
         <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data
           <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle} />
         </label>
@@ -1257,7 +1270,13 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
           </label>
         )}
       </div>
-      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} />
+      {oreCalculate !== null && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs" style={{ color:'#8B93A0' }}>Ore calculate (interval − 1h pauză): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{oreCalculate}h</span></span>
+          <button onClick={aplicaLaToti} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>Aplică la toate persoanele</button>
+        </div>
+      )}
+      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} oreImplicite={oreCalculate ?? 8} />
       <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
       <div className="flex justify-between items-center mt-3">
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}</span></span>
