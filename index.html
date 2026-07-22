@@ -1094,6 +1094,119 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
 
 const SANTIER_STATUSES = ['Activ', 'Finalizat'];
 
+function SiteMaterialsTab({ santierId, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  // --- Scule la șantier ---
+  const [sculaNoua, setSculaNoua] = useState('');
+  const [sculaAdusaDe, setSculaAdusaDe] = useState('');
+  const sculeAici = sculeSantier.filter((s)=>s.santierId===santierId);
+  const addScula = () => {
+    if (!sculaNoua.trim()) return;
+    const next = [...sculeSantier, { id: uid(), santierId, denumire: sculaNoua.trim(), adusaDe: sculaAdusaDe.trim(), data: new Date().toISOString().slice(0,10) }];
+    setSculeSantier(next); persist('sculeSantier', next); setSculaNoua(''); setSculaAdusaDe('');
+  };
+  const delScula = (id) => { const next = sculeSantier.filter((s)=>s.id!==id); setSculeSantier(next); persist('sculeSantier', next); };
+
+  // --- Cerere materiale ---
+  const [cerereForm, setCerereForm] = useState({ denumire:'', cantitate:1, um:'buc' });
+  const cereriAici = cereriSantier.filter((c)=>c.santierId===santierId);
+  const addCerere = () => {
+    if (!cerereForm.denumire.trim()) return;
+    const next = [...cereriSantier, { id: uid(), santierId, denumire: cerereForm.denumire.trim(), cantitate: Number(cerereForm.cantitate)||0, um: cerereForm.um, data: new Date().toISOString().slice(0,10), status:'Cerută' }];
+    setCereriSantier(next); persist('cereriSantier', next); setCerereForm({ denumire:'', cantitate:1, um:'buc' });
+  };
+  const delCerere = (id) => { const next = cereriSantier.filter((c)=>c.id!==id); setCereriSantier(next); persist('cereriSantier', next); };
+  const marcheazaLivrata = (cerere) => {
+    const next = cereriSantier.map((c)=>c.id===cerere.id?{...c, status:'Livrată'}:c);
+    setCereriSantier(next); persist('cereriSantier', next);
+    const miscare = { id: uid(), santierId, denumire: cerere.denumire, um: cerere.um, tip:'intrare', cantitate: cerere.cantitate, data: new Date().toISOString().slice(0,10), nota:'Din cerere livrată' };
+    const nextMiscari = [miscare, ...miscariSantier];
+    setMiscariSantier(nextMiscari); persist('miscariSantier', nextMiscari);
+  };
+
+  // --- Stoc materiale la șantier (calculat din mișcări) + consum ---
+  const miscariAici = miscariSantier.filter((m)=>m.santierId===santierId);
+  const stocPeMaterial = {};
+  miscariAici.forEach((m)=>{
+    if (!stocPeMaterial[m.denumire]) stocPeMaterial[m.denumire] = { denumire:m.denumire, um:m.um, stoc:0 };
+    stocPeMaterial[m.denumire].stoc += (m.tip==='intrare' ? 1 : -1) * (Number(m.cantitate)||0);
+  });
+  const stocList = Object.values(stocPeMaterial);
+  const [consumState, setConsumState] = useState(null);
+  const confirmConsum = (denumire, um, cantitate) => {
+    const miscare = { id: uid(), santierId, denumire, um, tip:'iesire', cantitate: Number(cantitate)||0, data: new Date().toISOString().slice(0,10), nota:'Consum șantier' };
+    const next = [miscare, ...miscariSantier];
+    setMiscariSantier(next); persist('miscariSantier', next); setConsumState(null);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🔧 Scule la șantier</div>
+        <div className="flex gap-2 mb-2">
+          <input placeholder="Sculă (ex: Bormașină Bosch)" value={sculaNoua} onChange={(e)=>setSculaNoua(e.target.value)} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+          <input placeholder="Adusă de" value={sculaAdusaDe} onChange={(e)=>setSculaAdusaDe(e.target.value)} className="w-32 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+          <button onClick={addScula} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă</button>
+        </div>
+        {sculeAici.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Nicio sculă adăugată.</div> : (
+          <div className="space-y-1">
+            {sculeAici.map((s)=>(
+              <div key={s.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                <span style={{ color:'#E9E7E2' }}>{s.denumire}{s.adusaDe && <span style={{ color:'#8B93A0' }}> · {s.adusaDe}</span>}</span>
+                <button onClick={()=>delScula(s.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>📥 Cerere materiale</div>
+        <div className="flex gap-2 mb-2 flex-wrap">
+          <input list="materiale-catalog-santier" placeholder="Material" value={cerereForm.denumire} onChange={(e)=>setCerereForm({...cerereForm, denumire:e.target.value})} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none min-w-[140px]" style={inputStyle} />
+          <datalist id="materiale-catalog-santier">{materials.map((m)=><option key={m.id} value={m.denumire} />)}</datalist>
+          <input type="number" value={cerereForm.cantitate} onChange={(e)=>setCerereForm({...cerereForm, cantitate:e.target.value})} className="w-20 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+          <input placeholder="UM" value={cerereForm.um} onChange={(e)=>setCerereForm({...cerereForm, um:e.target.value})} className="w-20 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+          <button onClick={addCerere} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Cere</button>
+        </div>
+        {cereriAici.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Nicio cerere.</div> : (
+          <div className="space-y-1">
+            {cereriAici.map((c)=>(
+              <div key={c.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                <span style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um}</span>
+                <div className="flex items-center gap-2">
+                  <span style={{ color: c.status==='Livrată'?'#4CAF7D':'#E9A23B' }}>{c.status}</span>
+                  {c.status==='Cerută' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>Livrată</button>}
+                  <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>📦 Stoc materiale la șantier</div>
+        {stocList.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Niciun material adus încă la șantier.</div> : (
+          <div className="space-y-1">
+            {stocList.map((m)=>(
+              <div key={m.denumire} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.stoc} {m.um}</span></span>
+                {consumState===m.denumire ? (
+                  <MoveInput tip="iesire" onConfirm={(cant)=>confirmConsum(m.denumire, m.um, cant)} onCancel={()=>setConsumState(null)} />
+                ) : (
+                  <button onClick={()=>setConsumState(m.denumire)} className="px-2 py-1 rounded-lg" style={{ color:'#E05252', background:'#1B2127' }}>− Consum</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SantierForm({ initial, onCancel, onSave }) {
   const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ' });
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
@@ -1189,7 +1302,7 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -1197,6 +1310,8 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [exportTo, setExportTo] = useState('');
   const [etapaTab, setEtapaTab] = useState('toate');
   const [etapaNoua, setEtapaNoua] = useState('');
+  const [siteSearch, setSiteSearch] = useState('');
+  const [siteView, setSiteView] = useState('rapoarte');
 
   const saveSantier = (s) => {
     const next = santiere.some((x)=>x.id===s.id) ? santiere.map((x)=>x.id===s.id?s:x) : [...santiere, s];
@@ -1288,6 +1403,19 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         </div>
         <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOreSantier}</span></p>
 
+        <div className="flex gap-2 mb-4">
+          <button onClick={()=>setSiteView('rapoarte')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='rapoarte'?'#14181C':'#8B93A0', background: siteView==='rapoarte'?'#2E8BD1':'#171C21' }}>Rapoarte zilnice</button>
+          <button onClick={()=>setSiteView('materiale')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='materiale'?'#14181C':'#8B93A0', background: siteView==='materiale'?'#2E8BD1':'#171C21' }}>Materiale & Scule</button>
+        </div>
+
+        {siteView === 'materiale' ? (
+          <SiteMaterialsTab santierId={selected} materials={materials}
+            sculeSantier={sculeSantier} setSculeSantier={setSculeSantier}
+            cereriSantier={cereriSantier} setCereriSantier={setCereriSantier}
+            miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier}
+            persist={persist} />
+        ) : (
+        <>
         <div className="rounded-xl p-3 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
           <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Etape de lucru (ex: Scară Et.1, Subsol, Corp B)</div>
           <div className="flex items-center gap-1.5 flex-wrap mb-2">
@@ -1345,25 +1473,28 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             })}
           </div>
         )}
+        </>
+        )}
       </div>
     );
   }
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Șantiere</h2>
-        {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
+      <div className="flex justify-between items-center mb-4 gap-3">
+        <h2 className="text-lg shrink-0" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Șantiere</h2>
+        <input placeholder="Caută șantier..." value={siteSearch} onChange={(e)=>setSiteSearch(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
       </div>
       {form && <SantierForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={saveSantier} />}
       {santiere.length===0 && !form ? (
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun șantier încă.</div>
       ) : (
         <div className="space-y-2">
-          {santiere.map((s)=>{
+          {santiere.filter((s)=> !siteSearch || s.nume.toLowerCase().includes(siteSearch.toLowerCase())).map((s)=>{
             const nrRapoarte = rapoarte.filter((r)=>r.santierId===s.id).length;
             return (
-              <div key={s.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 cursor-pointer" onClick={()=>setSelected(s.id)} style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div key={s.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 cursor-pointer" onClick={()=>{setSelected(s.id); setSiteView('rapoarte');}} style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                 <div className="min-w-0">
                   <div className="text-sm" style={{ color:'#E9E7E2' }}>{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></div>
                   <div className="text-xs" style={{ color:'#8B93A0' }}>{s.adresa} · {nrRapoarte} rapoarte</div>
@@ -1565,6 +1696,9 @@ function App() {
   const [santiere, setSantiere] = useState([]);
   const [rapoarte, setRapoarte] = useState([]);
   const [etape, setEtape] = useState([]);
+  const [sculeSantier, setSculeSantier] = useState([]);
+  const [cereriSantier, setCereriSantier] = useState([]);
+  const [miscariSantier, setMiscariSantier] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
@@ -1582,6 +1716,9 @@ function App() {
         setSantiere(await loadKey('santiere', []));
         setRapoarte(await loadKey('rapoarte', []));
         setEtape(await loadKey('etape', []));
+        setSculeSantier(await loadKey('sculeSantier', []));
+        setCereriSantier(await loadKey('cereriSantier', []));
+        setMiscariSantier(await loadKey('miscariSantier', []));
       } catch (e) {
         setError('Nu am putut încărca datele.');
       } finally {
@@ -1781,7 +1918,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
           </>
         )}
