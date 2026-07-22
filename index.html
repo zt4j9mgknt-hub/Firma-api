@@ -51,6 +51,11 @@ async function saveKey(key, value) {
   if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
 }
 
+const ROLES = [
+  { id: 'Manager', icon: '👔' },
+  { id: 'Electrician', icon: '🔌' },
+];
+
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const INVOICE_STATUSES = ['Neplătită', 'Plătită', 'Restantă'];
 const STATUS_COLOR = { 'Ciornă':'#8B93A0','Trimisă':'#2E8BD1','Acceptată':'#4CAF7D','Respinsă':'#E05252','Neplătită':'#2E8BD1','Plătită':'#4CAF7D','Restantă':'#E05252','Emis':'#2E8BD1','Semnat':'#4CAF7D' };
@@ -1181,7 +1186,7 @@ function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
   );
 }
 
-function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist, onExportToDeviz, onCerereMaterial }) {
+function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist, onExportToDeviz, onCerereMaterial, currentUser }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
 
   // --- Cerere materiale ---
@@ -1322,11 +1327,14 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
                 <span style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um}</span>
                 <div className="flex items-center gap-2">
                   <span style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
-                  {c.status==='Cerută' && (
+                  {c.status==='Cerută' && currentUser?.rol === 'Manager' && (
                     <>
                       <button onClick={()=>setCerereStatus(c.id,'Aprobată')} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă</button>
                       <button onClick={()=>setCerereStatus(c.id,'Respinsă')} className="px-2 py-0.5 rounded" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #E0525266' }}>✕ Respinge</button>
                     </>
+                  )}
+                  {c.status==='Cerută' && currentUser?.rol !== 'Manager' && (
+                    <span className="text-xs" style={{ color:'#5C6570' }}>Așteaptă aprobare manager</span>
                   )}
                   {c.status==='Aprobată' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📦 Livrată</button>}
                   <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
@@ -1456,7 +1464,7 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, onExportToDeviz, onCerereMaterial }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, onExportToDeviz, onCerereMaterial, currentUser }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -1567,7 +1575,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           <SiteMaterialsTab santierId={selected} santierNume={santier?.nume || ''} company={company} materials={materials}
             cereriSantier={cereriSantier} setCereriSantier={setCereriSantier}
             miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier}
-            persist={persist} onExportToDeviz={onExportToDeviz} onCerereMaterial={onCerereMaterial} />
+            persist={persist} onExportToDeviz={onExportToDeviz} onCerereMaterial={onCerereMaterial} currentUser={currentUser} />
         )}
         {siteView === 'scule' && (
           <SiteToolsTab santierId={selected} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} persist={persist} />
@@ -1670,7 +1678,124 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   );
 }
 
-function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, setTab }) {
+function LoginScreen({ onLogin }) {
+  const [mode, setMode] = useState('login');
+  const [nume, setNume] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [rol, setRol] = useState('Electrician');
+  const [status, setStatus] = useState({ loading:false, error:'' });
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  const submit = async () => {
+    setStatus({ loading:true, error:'' });
+    try {
+      if (mode === 'login') {
+        await onLogin({ action:'login', username, password });
+      } else {
+        if (!nume.trim() || !username.trim() || !password) throw new Error('Completează toate câmpurile.');
+        await onLogin({ action:'register', nume: nume.trim(), username: username.trim(), password, rol });
+      }
+    } catch (e) {
+      setStatus({ loading:false, error: e.message || 'A eșuat.' });
+      return;
+    }
+    setStatus({ loading:false, error:'' });
+  };
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center" style={{ background:'#14181C' }}>
+      <div className="rounded-xl p-6 w-full max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="flex flex-col items-center mb-5">
+          <img src="/logo.png" alt="Logo" style={{ height:40, width:'auto', marginBottom:10 }} />
+          <div className="flex gap-2">
+            <button onClick={()=>setMode('login')} className="text-sm px-3 py-1 rounded-lg font-medium" style={{ color: mode==='login'?'#14181C':'#8B93A0', background: mode==='login'?'#2E8BD1':'#171C21' }}>Autentificare</button>
+            <button onClick={()=>setMode('register')} className="text-sm px-3 py-1 rounded-lg font-medium" style={{ color: mode==='register'?'#14181C':'#8B93A0', background: mode==='register'?'#2E8BD1':'#171C21' }}>Cont nou</button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {mode === 'register' && (
+            <input placeholder="Nume complet" value={nume} onChange={(e)=>setNume(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          )}
+          <input placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input type="password" placeholder="Parolă" value={password} onChange={(e)=>setPassword(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && submit()} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          {mode === 'register' && (
+            <div className="flex gap-2">
+              {ROLES.map((r)=>(
+                <button key={r.id} onClick={()=>setRol(r.id)} className="flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5"
+                  style={{ color: rol===r.id?'#14181C':'#8B93A0', background: rol===r.id?'#2E8BD1':'#171C21' }}>
+                  <span>{r.icon}</span> {r.id}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {status.error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{status.error}</p>}
+
+        <button onClick={submit} disabled={status.loading} className="w-full mt-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>
+          {status.loading ? '...' : mode==='login' ? 'Intră în aplicație' : 'Creează cont'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UsersTab({ currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) });
+      const data = await res.json();
+      setUsers(data.users || []);
+    } catch { setUsers([]); }
+    setLoading(false);
+  };
+  useEffect(() => { loadUsers(); }, []);
+
+  const delUser = async (id) => {
+    if (id === currentUser.id) { window.alert('Nu îți poți șterge propriul cont din listă.'); return; }
+    await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', id }) });
+    loadUsers();
+  };
+
+  const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
+
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Utilizatori</h2>
+      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Conturile care pot intra în aplicație. Conturi noi se creează din ecranul de login („Cont nou").</p>
+      {loading ? (
+        <div className="text-sm" style={{ color:'#8B93A0' }}>Se încarcă...</div>
+      ) : users.length === 0 ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun utilizator încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {users.map((u)=>(
+            <div key={u.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div className="flex items-center gap-2">
+                <span>{iconFor(u.rol)}</span>
+                <div>
+                  <div className="text-sm" style={{ color:'#E9E7E2' }}>{u.nume}{u.id===currentUser.id && <span className="text-xs ml-1" style={{ color:'#5C6570' }}>(tu)</span>}</div>
+                  <div className="text-xs" style={{ color:'#8B93A0' }}>@{u.username} · {u.rol}</div>
+                </div>
+              </div>
+              <button onClick={()=>delUser(u.id)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, setTab, currentUser }) {
+  const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
+
   const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
   const oferteTrimise = offers.filter((o)=>o.status==='Trimisă').length;
   const facturiNeplatite = invoices.filter((i)=>i.status==='Neplătită');
@@ -1699,7 +1824,9 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         <img src="/logo.png" alt="Logo" style={{ height:36, width:'auto' }} />
         <div>
           <div className="text-base" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600 }}>{company?.nume || 'Panou intern'}</div>
-          <div className="text-xs" style={{ color:'#5C6570' }}>Bun venit înapoi</div>
+          <div className="text-xs" style={{ color:'#5C6570' }}>
+            Bun venit înapoi, {currentUser?.nume} {roleIcon}
+          </div>
         </div>
       </div>
 
@@ -1909,6 +2036,20 @@ function openPrintWindow(items) {
 
 function App() {
   const [tab, setTab] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try { const raw = localStorage.getItem('currentUser'); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  });
+  const handleAuth = async (payload) => {
+    const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
+    setCurrentUser(data.user);
+    try { localStorage.setItem('currentUser', JSON.stringify(data.user)); } catch {}
+  };
+  const logout = () => {
+    setCurrentUser(null);
+    try { localStorage.removeItem('currentUser'); } catch {}
+  };
   const CONTAB_TABS = ['devize', 'oferte', 'facturi', 'clienti'];
   const [contabOpen, setContabOpen] = useState(false);
   const MATERIALE_TABS = ['gestiune', 'stocuri'];
@@ -2103,6 +2244,10 @@ function App() {
     <button onClick={()=>setTab(id)} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: tab===id?'#14181C':'#B8BFC9', background: tab===id?'#2E8BD1':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
   );
 
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleAuth} />;
+  }
+
   return (
     <div className="min-h-screen w-full flex" style={{ background:'#14181C', fontFamily:"'Inter', sans-serif" }}>
       <aside className="w-56 shrink-0 p-4 flex flex-col gap-1" style={{ borderRight:'1px solid #2A323B' }}>
@@ -2134,12 +2279,19 @@ function App() {
         <NavItem id="santiere" label="🏗 Șantiere" />
         <div style={{ height:1, background:'#2A323B', margin:'8px 4px' }} />
         <NavItem id="firma" label="⚙ Firma mea" />
+        {currentUser.rol === 'Manager' && <NavItem id="utilizatori" label="🔑 Utilizatori" />}
+        <div className="mt-auto pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          <div className="flex items-center justify-between px-3 py-2 text-xs" style={{ color:'#8B93A0' }}>
+            <span>{ROLES.find((r)=>r.id===currentUser.rol)?.icon} {currentUser.nume}</span>
+            <button onClick={logout} style={{ color:'#E05252' }}>Ieși</button>
+          </div>
+        </div>
       </aside>
       <main className="flex-1 p-6 max-w-4xl">
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
         ) : !tab ? (
-          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} setTab={setTab} />
+          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} setTab={setTab} currentUser={currentUser} />
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
@@ -2179,8 +2331,10 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={currentUser} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
+
+            {tab === 'utilizatori' && currentUser.rol === 'Manager' && <UsersTab currentUser={currentUser} />}
           </>
         )}
       </main>
