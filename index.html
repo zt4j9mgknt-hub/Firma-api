@@ -1181,7 +1181,7 @@ function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
   );
 }
 
-function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist, onExportToDeviz }) {
+function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist, onExportToDeviz, onCerereMaterial }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
 
   // --- Cerere materiale ---
@@ -1189,8 +1189,11 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
   const cereriAici = cereriSantier.filter((c)=>c.santierId===santierId);
   const addCerere = () => {
     if (!cerereForm.denumire.trim()) return;
-    const next = [...cereriSantier, { id: uid(), santierId, denumire: cerereForm.denumire.trim(), cantitate: Number(cerereForm.cantitate)||0, um: cerereForm.um, data: new Date().toISOString().slice(0,10), status:'Cerută' }];
+    const denumireFinala = cerereForm.denumire.trim();
+    const cantitateFinala = Number(cerereForm.cantitate)||0;
+    const next = [...cereriSantier, { id: uid(), santierId, denumire: denumireFinala, cantitate: cantitateFinala, um: cerereForm.um, data: new Date().toISOString().slice(0,10), status:'Cerută' }];
     setCereriSantier(next); persist('cereriSantier', next); setCerereForm({ denumire:'', cantitate:1, um:'buc' });
+    if (onCerereMaterial) onCerereMaterial(denumireFinala, cerereForm.um, cantitateFinala, santierNume);
   };
   const delCerere = (id) => { const next = cereriSantier.filter((c)=>c.id!==id); setCereriSantier(next); persist('cereriSantier', next); };
   const setCerereStatus = (id, status) => {
@@ -1453,7 +1456,7 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, onExportToDeviz }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, onExportToDeviz, onCerereMaterial }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -1564,7 +1567,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           <SiteMaterialsTab santierId={selected} santierNume={santier?.nume || ''} company={company} materials={materials}
             cereriSantier={cereriSantier} setCereriSantier={setCereriSantier}
             miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier}
-            persist={persist} onExportToDeviz={onExportToDeviz} />
+            persist={persist} onExportToDeviz={onExportToDeviz} onCerereMaterial={onCerereMaterial} />
         )}
         {siteView === 'scule' && (
           <SiteToolsTab santierId={selected} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} persist={persist} />
@@ -1663,6 +1666,77 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, setTab }) {
+  const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
+  const oferteTrimise = offers.filter((o)=>o.status==='Trimisă').length;
+  const facturiNeplatite = invoices.filter((i)=>i.status==='Neplătită');
+  const sumaNeplatita = facturiNeplatite.reduce((s,i)=>s+calcSubtotal(i.items)*(1+(Number(i.tva)||0)/100),0);
+  const santiereActive = santiere.filter((s)=>s.status==='Activ').length;
+  const materialeSubStoc = materials.filter((m)=>Number(m.stoc) < Number(m.stocMinim));
+  const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
+
+  const cards = [
+    { label:'Devize active', value: devizeActive, tab:'devize' },
+    { label:'Oferte trimise', value: oferteTrimise, tab:'oferte' },
+    { label:'Facturi neplătite', value: `${facturiNeplatite.length} · ${money(sumaNeplatita)}`, tab:'facturi' },
+    { label:'Șantiere active', value: santiereActive, tab:'santiere' },
+  ];
+
+  const actions = [
+    { label:'+ Deviz nou', tab:'devize' },
+    { label:'+ Ofertă nouă', tab:'oferte' },
+    { label:'+ Client nou', tab:'clienti' },
+    { label:'+ Raport șantier', tab:'santiere' },
+  ];
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-8">
+        <img src="/logo.png" alt="Logo" style={{ height:36, width:'auto' }} />
+        <div>
+          <div className="text-base" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600 }}>{company?.nume || 'Panou intern'}</div>
+          <div className="text-xs" style={{ color:'#5C6570' }}>Bun venit înapoi</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        {cards.map((c)=>(
+          <button key={c.label} onClick={()=>setTab(c.tab)} className="text-left rounded-xl p-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <div className="text-xs mb-1" style={{ color:'#8B93A0' }}>{c.label}</div>
+            <div className="text-lg font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{c.value}</div>
+          </button>
+        ))}
+      </div>
+
+      {(materialeSubStoc.length > 0 || cereriInAsteptare.length > 0) && (
+        <div className="mb-6">
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Atenționări</div>
+          <div className="space-y-2">
+            {materialeSubStoc.length > 0 && (
+              <button onClick={()=>setTab('gestiune')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
+                <span className="text-sm" style={{ color:'#E9E7E2' }}>{materialeSubStoc.length} materiale sub stocul minim</span>
+                <span style={{ color:'#E05252' }}>→</span>
+              </button>
+            )}
+            {cereriInAsteptare.length > 0 && (
+              <button onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
+                <span className="text-sm" style={{ color:'#E9E7E2' }}>{cereriInAsteptare.length} cereri de materiale în așteptare de aprobare</span>
+                <span style={{ color:'#E9A23B' }}>→</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2 flex-wrap">
+        {actions.map((a)=>(
+          <button key={a.label} onClick={()=>setTab(a.tab)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{a.label}</button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1981,6 +2055,26 @@ function App() {
     setDevizPrefill({ clientId: clients[0]?.id || '', items: itemsWithPrice, tva: 21, lucrare: santierNume ? `Materiale consumate — ${santierNume}` : '' });
   };
 
+  // La o cerere nouă de materiale dintr-un șantier: creează materialul în Gestiune dacă nu există,
+  // și scade cantitatea din stocul central (ca ieșire, către șantier).
+  const proceseazaCerereMaterial = (denumire, um, cantitate, santierNume) => {
+    let mat = materials.find((m) => m.denumire === denumire);
+    let nextMaterials;
+    if (!mat) {
+      mat = { id: uid(), denumire, categorie: '', um, stoc: 0, stocMinim: 0, pret: 0 };
+      nextMaterials = [...materials, mat];
+    } else {
+      nextMaterials = materials.slice();
+    }
+    nextMaterials = nextMaterials.map((m) => m.id === mat.id ? { ...m, stoc: (Number(m.stoc) || 0) - (Number(cantitate) || 0) } : m);
+    setMaterials(nextMaterials);
+    persist('materials', nextMaterials);
+    const move = { id: uid(), materialId: mat.id, tip: 'iesire', cantitate: Number(cantitate) || 0, nota: `Cerere șantier: ${santierNume}`, data: new Date().toISOString().slice(0,10) };
+    const nextMoves = [move, ...stockMoves];
+    setStockMoves(nextMoves);
+    persist('stockMoves', nextMoves);
+  };
+
 
   const saveInvoice = (inv) => {
     const isNew = !invoices.some((x)=>x.id===inv.id);
@@ -2045,9 +2139,7 @@ function App() {
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
         ) : !tab ? (
-          <div className="flex items-center justify-center" style={{ minHeight:'70vh' }}>
-            <img src="/logo.png" alt="Logo" style={{ height: 72, width: 'auto', opacity: 0.9 }} />
-          </div>
+          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} setTab={setTab} />
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
@@ -2087,7 +2179,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
           </>
         )}
