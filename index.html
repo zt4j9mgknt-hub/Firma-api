@@ -1094,7 +1094,7 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
 
 const SANTIER_STATUSES = ['Activ', 'Finalizat'];
 
-function SiteMaterialsTab({ santierId, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist }) {
+function SiteMaterialsTab({ santierId, santierNume, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist, onExportToDeviz }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
 
   // --- Scule la șantier ---
@@ -1117,12 +1117,81 @@ function SiteMaterialsTab({ santierId, materials, sculeSantier, setSculeSantier,
     setCereriSantier(next); persist('cereriSantier', next); setCerereForm({ denumire:'', cantitate:1, um:'buc' });
   };
   const delCerere = (id) => { const next = cereriSantier.filter((c)=>c.id!==id); setCereriSantier(next); persist('cereriSantier', next); };
+  const setCerereStatus = (id, status) => {
+    const next = cereriSantier.map((c)=>c.id===id?{...c, status}:c);
+    setCereriSantier(next); persist('cereriSantier', next);
+  };
   const marcheazaLivrata = (cerere) => {
     const next = cereriSantier.map((c)=>c.id===cerere.id?{...c, status:'Livrată'}:c);
     setCereriSantier(next); persist('cereriSantier', next);
     const miscare = { id: uid(), santierId, denumire: cerere.denumire, um: cerere.um, tip:'intrare', cantitate: cerere.cantitate, data: new Date().toISOString().slice(0,10), nota:'Din cerere livrată' };
     const nextMiscari = [miscare, ...miscariSantier];
     setMiscariSantier(nextMiscari); persist('miscariSantier', nextMiscari);
+  };
+
+  const fmtRoDate = (d) => { if (!d) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
+  const azi = new Date();
+  const extrasLa = `${String(azi.getDate()).padStart(2,'0')}/${String(azi.getMonth()+1).padStart(2,'0')}/${azi.getFullYear()}`;
+
+  const exportCereriExcel = () => {
+    const rows = cereriAici.map((c)=>({ 'Data': c.data, 'Material': c.denumire, 'Cantitate': c.cantitate, 'U.M.': c.um, 'Status': c.status }));
+    const sheetRows = rows.length ? rows : [{ 'Data':'', 'Material':'Nicio cerere înregistrată.', 'Cantitate':'', 'U.M.':'', 'Status':'' }];
+    const headerRows = [
+      [company?.nume || 'Firma mea'],
+      [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
+      [],
+      [`Cerere materiale — ${santierNume}`],
+      [`Extras la: ${extrasLa}`],
+      [],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(headerRows);
+    XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
+    ws['!cols'] = [{wch:12},{wch:35},{wch:11},{wch:8},{wch:12}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Cerere materiale');
+    XLSX.writeFile(wb, `cerere_materiale_${santierNume.replace(/\s+/g,'_')}.xlsx`);
+  };
+
+  const exportCererePDF = () => {
+    const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const rows = cereriAici.map((c,i)=>`
+      <tr><td>${i+1}</td><td style="text-align:left">${esc(c.denumire)}</td><td>${esc(c.cantitate)}</td><td>${esc(c.um)}</td><td>${esc(c.data)}</td><td>${esc(c.status)}</td></tr>`).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Cerere materiale</title><style>
+      * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; }
+      .page { width:190mm; margin:0 auto; padding:14mm; }
+      .header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8mm; }
+      .logo { height:30px; }
+      .title-block { text-align:right; }
+      .title { font-size:18px; font-weight:700; }
+      table { width:100%; border-collapse:collapse; font-size:11px; margin-top:6mm; }
+      th { text-align:center; border:1px solid #999; padding:2mm; font-size:10px; text-transform:uppercase; background:#f2f2f2; }
+      td { text-align:center; border:1px solid #ccc; padding:2mm; }
+      .sign { display:flex; justify-content:space-between; margin-top:20mm; font-size:11px; }
+      .sign-line { margin-top:14mm; border-top:1px solid #999; width:70%; }
+    </style></head><body>
+      <div class="page">
+        <div class="header-row">
+          <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
+          <div class="title-block">
+            <div class="title">CERERE MATERIALE</div>
+            <div style="font-size:11px;color:#555;margin-top:2mm;">Șantier: ${esc(santierNume)}</div>
+            <div style="font-size:11px;color:#555;">Data: ${esc(extrasLa)}</div>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Nr.</th><th style="text-align:left">Material</th><th>Cantitate</th><th>U.M.</th><th>Data cerere</th><th>Status</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6">Nicio cerere înregistrată.</td></tr>'}</tbody>
+        </table>
+        <div class="sign">
+          <div>Solicitat de:<div class="sign-line"></div></div>
+          <div>Aprobat de (manager):<div class="sign-line"></div></div>
+        </div>
+      </div>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(()=>{ w.focus(); w.print(); }, 300);
   };
 
   // --- Stoc materiale la șantier (calculat din mișcări) + consum ---
@@ -1138,6 +1207,17 @@ function SiteMaterialsTab({ santierId, materials, sculeSantier, setSculeSantier,
     const miscare = { id: uid(), santierId, denumire, um, tip:'iesire', cantitate: Number(cantitate)||0, data: new Date().toISOString().slice(0,10), nota:'Consum șantier' };
     const next = [miscare, ...miscariSantier];
     setMiscariSantier(next); persist('miscariSantier', next); setConsumState(null);
+  };
+
+  const consumPeMaterial = {};
+  miscariAici.filter((m)=>m.tip==='iesire').forEach((m)=>{
+    if (!consumPeMaterial[m.denumire]) consumPeMaterial[m.denumire] = { denumire:m.denumire, um:m.um, cantitate:0 };
+    consumPeMaterial[m.denumire].cantitate += Number(m.cantitate)||0;
+  });
+  const consumList = Object.values(consumPeMaterial);
+  const trimiteConsumInDeviz = () => {
+    if (consumList.length === 0) return;
+    onExportToDeviz(consumList, santierNume);
   };
 
   return (
@@ -1162,7 +1242,13 @@ function SiteMaterialsTab({ santierId, materials, sculeSantier, setSculeSantier,
       </div>
 
       <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>📥 Cerere materiale</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📥 Cerere materiale</div>
+          <div className="flex gap-1.5">
+            <button onClick={exportCereriExcel} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>📊 Excel</button>
+            <button onClick={exportCererePDF} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>🖨 PDF</button>
+          </div>
+        </div>
         <div className="flex gap-2 mb-2 flex-wrap">
           <input list="materiale-catalog-santier" placeholder="Material" value={cerereForm.denumire} onChange={(e)=>setCerereForm({...cerereForm, denumire:e.target.value})} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none min-w-[140px]" style={inputStyle} />
           <datalist id="materiale-catalog-santier">{materials.map((m)=><option key={m.id} value={m.denumire} />)}</datalist>
@@ -1176,8 +1262,14 @@ function SiteMaterialsTab({ santierId, materials, sculeSantier, setSculeSantier,
               <div key={c.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
                 <span style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um}</span>
                 <div className="flex items-center gap-2">
-                  <span style={{ color: c.status==='Livrată'?'#4CAF7D':'#E9A23B' }}>{c.status}</span>
-                  {c.status==='Cerută' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>Livrată</button>}
+                  <span style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
+                  {c.status==='Cerută' && (
+                    <>
+                      <button onClick={()=>setCerereStatus(c.id,'Aprobată')} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă</button>
+                      <button onClick={()=>setCerereStatus(c.id,'Respinsă')} className="px-2 py-0.5 rounded" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #E0525266' }}>✕ Respinge</button>
+                    </>
+                  )}
+                  {c.status==='Aprobată' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📦 Livrată</button>}
                   <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
                 </div>
               </div>
@@ -1187,7 +1279,10 @@ function SiteMaterialsTab({ santierId, materials, sculeSantier, setSculeSantier,
       </div>
 
       <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>📦 Stoc materiale la șantier</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📦 Stoc materiale la șantier</div>
+          {consumList.length > 0 && <button onClick={trimiteConsumInDeviz} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>🧾 Exportă consum în Deviz</button>}
+        </div>
         {stocList.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Niciun material adus încă la șantier.</div> : (
           <div className="space-y-1">
             {stocList.map((m)=>(
@@ -1302,7 +1397,7 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, onExportToDeviz }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -1409,11 +1504,11 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         </div>
 
         {siteView === 'materiale' ? (
-          <SiteMaterialsTab santierId={selected} materials={materials}
+          <SiteMaterialsTab santierId={selected} santierNume={santier?.nume || ''} company={company} materials={materials}
             sculeSantier={sculeSantier} setSculeSantier={setSculeSantier}
             cereriSantier={cereriSantier} setCereriSantier={setCereriSantier}
             miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier}
-            persist={persist} />
+            persist={persist} onExportToDeviz={onExportToDeviz} />
         ) : (
         <>
         <div className="rounded-xl p-3 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -1817,6 +1912,16 @@ function App() {
     }
   };
 
+  const exportConsumToDeviz = (items, santierNume) => {
+    const itemsWithPrice = items.map((it) => {
+      const mat = materials.find((m)=>m.denumire === it.denumire);
+      return { id: uid(), denumire: it.denumire, um: it.um, cantitate: it.cantitate, pretUnitar: mat?.pret || 0, adaos: 0 };
+    });
+    setTab('devize');
+    setDevizPrefill({ clientId: clients[0]?.id || '', items: itemsWithPrice, tva: 21, lucrare: santierNume ? `Materiale consumate — ${santierNume}` : '' });
+  };
+
+
   const saveInvoice = (inv) => {
     const isNew = !invoices.some((x)=>x.id===inv.id);
     const withNumber = { ...inv, numar: inv.numar || nextNumber('FA', invoices) };
@@ -1918,7 +2023,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
           </>
         )}
