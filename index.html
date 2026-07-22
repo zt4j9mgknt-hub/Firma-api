@@ -350,6 +350,46 @@ function ClientsTab({ clients, setClients, persist }) {
   );
 }
 
+const LUNI_RO = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+
+function RoDatePicker({ value, onChange }) {
+  const parts = value ? value.split('-').map(Number) : [null, null, null];
+  const [y, m, d] = parts;
+  const now = new Date();
+  const years = [];
+  for (let yy = now.getFullYear() - 5; yy <= now.getFullYear() + 1; yy++) years.push(yy);
+  const daysInMonth = (yy, mm) => (yy && mm) ? new Date(yy, mm, 0).getDate() : 31;
+  const days = Array.from({ length: daysInMonth(y, m) }, (_, i) => i + 1);
+
+  const emit = (ny, nm, nd) => {
+    if (ny && nm && nd) {
+      const clampedDay = Math.min(nd, daysInMonth(ny, nm));
+      onChange(`${ny}-${String(nm).padStart(2,'0')}-${String(clampedDay).padStart(2,'0')}`);
+    } else {
+      onChange('');
+    }
+  };
+
+  const selStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  return (
+    <div className="flex items-center gap-1">
+      <select value={d||''} onChange={(e)=>emit(y, m, Number(e.target.value)||null)} className="rounded-lg px-1.5 py-1.5 text-xs outline-none" style={selStyle}>
+        <option value="">Zi</option>
+        {days.map((dd)=><option key={dd} value={dd} style={{ background:'#1B2127' }}>{dd}</option>)}
+      </select>
+      <select value={m||''} onChange={(e)=>emit(y, Number(e.target.value)||null, d)} className="rounded-lg px-1.5 py-1.5 text-xs outline-none" style={selStyle}>
+        <option value="">Lună</option>
+        {LUNI_RO.map((lu,i)=><option key={lu} value={i+1} style={{ background:'#1B2127' }}>{lu}</option>)}
+      </select>
+      <select value={y||''} onChange={(e)=>emit(Number(e.target.value)||null, m, d)} className="rounded-lg px-1.5 py-1.5 text-xs outline-none" style={selStyle}>
+        <option value="">An</option>
+        {years.map((yy)=><option key={yy} value={yy} style={{ background:'#1B2127' }}>{yy}</option>)}
+      </select>
+      {value && <button onClick={()=>onChange('')} className="text-xs px-1.5" style={{ color:'#5C6570' }}><Icon size={12}>✕</Icon></button>}
+    </div>
+  );
+}
+
 function MaterialForm({ initial, onCancel, onSave }) {
   const [form, setForm] = useState(initial || { id: uid(), denumire:'', categorie:'', um:'buc', stoc:0, stocMinim:0, pret:0 });
   return (
@@ -515,6 +555,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   const [expanded, setExpanded] = useState(null);
   const [exportFrom, setExportFrom] = useState('');
   const [exportTo, setExportTo] = useState('');
+  const [exportGestiuni, setExportGestiuni] = useState(new Set());
   const [filter, setFilter] = useState('');
 
   const saveMaterial = (m) => {
@@ -561,7 +602,11 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     const matName = (id) => materials.find((m)=>m.id===id)?.denumire || '(material șters)';
     const matUM = (id) => materials.find((m)=>m.id===id)?.um || '';
     const matGestiune = (id) => materials.find((m)=>m.id===id)?.categorie || '';
-    const inRange = stockMoves.filter((mv) => (!exportFrom || mv.data >= exportFrom) && (!exportTo || mv.data <= exportTo));
+    const inRange = stockMoves.filter((mv) => {
+      const okDate = (!exportFrom || mv.data >= exportFrom) && (!exportTo || mv.data <= exportTo);
+      const okGestiune = exportGestiuni.size === 0 || exportGestiuni.has(matGestiune(mv.materialId));
+      return okDate && okGestiune;
+    });
     const rows = inRange.slice().sort((a,b)=> a.data < b.data ? -1 : 1).map((mv) => ({
       'Data': mv.data,
       'Gestiune': matGestiune(mv.materialId),
@@ -572,8 +617,11 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
       'Cantitate ieșire': mv.tip === 'iesire' ? mv.cantitate : '',
       'Notă': mv.nota || '',
     }));
-    if (rows.length === 0) { window.alert('Nu există mișcări de stoc în perioada selectată.'); return; }
-    const ws = XLSX.utils.json_to_sheet(rows);
+    const sheetRows = rows.length ? rows : [{
+      'Data': '', 'Gestiune': '', 'Material': '', 'U.M.': '', 'Tip mișcare': '',
+      'Cantitate intrare': '', 'Cantitate ieșire': '', 'Notă': 'Nicio mișcare în perioada/gestiunile selectate.',
+    }];
+    const ws = XLSX.utils.json_to_sheet(sheetRows);
     ws['!cols'] = [{wch:12},{wch:16},{wch:40},{wch:8},{wch:12},{wch:16},{wch:16},{wch:24}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Miscari stoc');
@@ -608,13 +656,30 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
             <button onClick={importCatalog} className="text-sm px-3 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>📥 Importă catalog referință</button>
             {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă material</button>}
           </div>
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
             <span className="text-xs" style={{ color:'#5C6570' }}>Export mișcări:</span>
-            <input type="date" value={exportFrom} onChange={(e)=>setExportFrom(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+            <RoDatePicker value={exportFrom} onChange={setExportFrom} />
             <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
-            <input type="date" value={exportTo} onChange={(e)=>setExportTo(e.target.value)} className="rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+            <RoDatePicker value={exportTo} onChange={setExportTo} />
             <button onClick={exportExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
           </div>
+          {gestiuni.length > 0 && (
+            <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+              <span className="text-xs mr-1" style={{ color:'#5C6570' }}>Gestiuni de exportat (nimic bifat = toate):</span>
+              {gestiuni.map((g)=>{
+                const active = exportGestiuni.has(g);
+                return (
+                  <button key={g} onClick={()=>{
+                      const next = new Set(exportGestiuni);
+                      active ? next.delete(g) : next.add(g);
+                      setExportGestiuni(next);
+                    }}
+                    className="text-xs px-2.5 py-1 rounded-lg"
+                    style={{ color: active?'#14181C':'#8B93A0', background: active?'#2E8BD1':'#171C21' }}>{g}</button>
+                );
+              })}
+            </div>
+          )}
           {sbImportMsg && <p className="text-xs mb-3" style={{ color:'#4CAF7D' }}>{sbImportMsg}</p>}
           {gestiuni.length > 0 && (
             <div className="flex gap-1.5 mb-4 flex-wrap">
