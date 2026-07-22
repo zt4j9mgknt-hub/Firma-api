@@ -1154,10 +1154,11 @@ function PersonHoursEditor({ persoane, setPersoane }) {
   );
 }
 
-function RaportForm({ initial, onCancel, onSave }) {
+function RaportForm({ initial, etape, onCancel, onSave }) {
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
+  const [etapaId, setEtapaId] = useState(initial?.etapaId || '');
   const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', ore:8 }]);
   const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
@@ -1174,6 +1175,14 @@ function RaportForm({ initial, onCancel, onSave }) {
         <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora sfârșit
           <input type="time" value={oraSfarsit} onChange={(e)=>setOraSfarsit(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-32" style={inputStyle} />
         </label>
+        {etape && etape.length > 0 && (
+          <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Etapă
+            <select value={etapaId} onChange={(e)=>setEtapaId(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle}>
+              <option value="">(fără etapă)</option>
+              {etape.map((e)=><option key={e.id} value={e.id} style={{ background:'#1B2127' }}>{e.nume}</option>)}
+            </select>
+          </label>
+        )}
       </div>
       <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} />
       <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
@@ -1181,20 +1190,21 @@ function RaportForm({ initial, onCancel, onSave }) {
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}</span></span>
         <div className="flex gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
-          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
         </div>
       </div>
     </div>
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist, company }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
   const [exportFrom, setExportFrom] = useState('');
   const [exportTo, setExportTo] = useState('');
-  const [exportSantiere, setExportSantiere] = useState(new Set());
+  const [etapaTab, setEtapaTab] = useState('toate');
+  const [etapaNoua, setEtapaNoua] = useState('');
 
   const saveSantier = (s) => {
     const next = santiere.some((x)=>x.id===s.id) ? santiere.map((x)=>x.id===s.id?s:x) : [...santiere, s];
@@ -1203,6 +1213,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist, co
   const delSantier = (id) => {
     setSantiere((prev)=>{ const next = prev.filter((s)=>s.id!==id); persist('santiere', next); return next; });
     setRapoarte((prev)=>{ const next = prev.filter((r)=>r.santierId!==id); persist('rapoarte', next); return next; });
+    setEtape((prev)=>{ const next = prev.filter((e)=>e.santierId!==id); persist('etape', next); return next; });
     if (selected === id) setSelected(null);
   };
   const saveReport = (r) => {
@@ -1212,41 +1223,49 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist, co
   };
   const delReport = (id) => { const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next); };
 
-  const exportExcel = () => {
-    const santierNume = (id) => santiere.find((s)=>s.id===id)?.nume || '(șantier șters)';
-    const inRange = rapoarte.filter((r) => {
-      const okDate = (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo);
-      const okSantier = exportSantiere.size === 0 || exportSantiere.has(r.santierId);
-      return okDate && okSantier;
+  const addEtapa = () => {
+    if (!etapaNoua.trim()) return;
+    const next = [...etape, { id: uid(), santierId: selected, nume: etapaNoua.trim() }];
+    setEtape(next); persist('etape', next); setEtapaNoua('');
+  };
+  const delEtapa = (id) => {
+    const next = etape.filter((e)=>e.id!==id);
+    setEtape(next); persist('etape', next);
+    if (etapaTab === id) setEtapaTab('toate');
+  };
+
+  const exportExcel = (santierId, listaRapoarte, etapeSantier) => {
+    const etapaNume = (id) => etapeSantier.find((e)=>e.id===id)?.nume || '';
+    const inRange = listaRapoarte.filter((r) => (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo));
+    const rows = inRange.slice().sort((a,b)=> a.data<b.data?-1:1).map((r)=>{
+      const totalOre = r.persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
+      return {
+        'Data': r.data,
+        'Etapă': etapaNume(r.etapaId),
+        'Ora început': r.oraInceput || '',
+        'Ora sfârșit': r.oraSfarsit || '',
+        'Nr. persoane': r.persoane.filter((p)=>p.nume.trim()).length,
+        'Persoane': r.persoane.map((p)=>`${p.nume} (${p.ore}h)`).filter((s)=>s.trim()!=='(h)').join(', '),
+        'Total ore': totalOre,
+        'Ce s-a făcut': r.explicatii || '',
+      };
     });
-    const rows = [];
-    inRange.slice().sort((a,b)=> a.data<b.data?-1:1).forEach((r)=>{
-      (r.persoane.length ? r.persoane : [{nume:'',ore:0}]).forEach((p)=>{
-        rows.push({
-          'Șantier': santierNume(r.santierId),
-          'Data': r.data,
-          'Ora început': r.oraInceput || '',
-          'Ora sfârșit': r.oraSfarsit || '',
-          'Persoană': p.nume,
-          'Ore': Number(p.ore) || 0,
-          'Explicații': r.explicatii || '',
-        });
-      });
-    });
-    const totalOre = rows.reduce((s,row)=>s+(Number(row['Ore'])||0),0);
-    const totalRow = { 'Șantier':'TOTAL', 'Data':'', 'Ora început':'', 'Ora sfârșit':'', 'Persoană':'', 'Ore': totalOre, 'Explicații':'' };
+    const totalOreGeneral = rows.reduce((s,row)=>s+(Number(row['Total ore'])||0),0);
+    const totalPersoane = rows.reduce((s,row)=>s+(Number(row['Nr. persoane'])||0),0);
+    const totalRow = { 'Data':'TOTAL', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane': totalPersoane, 'Persoane':'', 'Total ore': totalOreGeneral, 'Ce s-a făcut':'' };
     const sheetRows = rows.length
       ? [...rows, totalRow]
-      : [{ 'Șantier':'', 'Data':'', 'Ora început':'', 'Ora sfârșit':'', 'Persoană':'', 'Ore':'', 'Explicații':'Niciun raport în perioada/șantierele selectate.' }];
+      : [{ 'Data':'', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane':'', 'Persoane':'', 'Total ore':'', 'Ce s-a făcut':'Niciun raport în perioada selectată.' }];
 
     const fmtRo = (d) => { if (!d) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
     const azi = new Date();
     const extrasLa = `${String(azi.getDate()).padStart(2,'0')}/${String(azi.getMonth()+1).padStart(2,'0')}/${azi.getFullYear()}`;
+    const santierNume = santiere.find((s)=>s.id===santierId)?.nume || 'Șantier';
     const headerRows = [
       [company?.nume || 'Firma mea'],
       [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
       [],
-      ['Raport șantiere'],
+      [`Raport șantier — ${santierNume}`],
       [`Data început perioadă: ${fmtRo(exportFrom) || '(nespecificată)'}`],
       [`Data sfârșit perioadă: ${fmtRo(exportTo) || '(nespecificată)'}`],
       [`Extras la: ${extrasLa}`],
@@ -1254,16 +1273,19 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist, co
     ];
     const ws = XLSX.utils.aoa_to_sheet(headerRows);
     XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
-    ws['!cols'] = [{wch:22},{wch:12},{wch:11},{wch:11},{wch:20},{wch:8},{wch:40}];
+    ws['!cols'] = [{wch:12},{wch:16},{wch:11},{wch:11},{wch:11},{wch:30},{wch:10},{wch:40}];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Raport santiere');
+    XLSX.utils.book_append_sheet(wb, ws, 'Raport santier');
     const label = `${exportFrom || 'inceput'}_${exportTo || 'azi'}`;
-    XLSX.writeFile(wb, `raport_santiere_${label}.xlsx`);
+    XLSX.writeFile(wb, `raport_${santierNume.replace(/\s+/g,'_')}_${label}.xlsx`);
   };
 
   if (selected) {
     const santier = santiere.find((s)=>s.id===selected);
-    const rapoarteSantier = rapoarte.filter((r)=>r.santierId===selected).slice().sort((a,b)=> a.data<b.data?1:-1);
+    const etapeSantier = etape.filter((e)=>e.santierId===selected);
+    const rapoarteSantier = rapoarte.filter((r)=>r.santierId===selected)
+      .filter((r)=> etapaTab === 'toate' || r.etapaId === etapaTab)
+      .slice().sort((a,b)=> a.data<b.data?1:-1);
     const totalOreSantier = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+(Number(p.ore)||0),0),0);
     return (
       <div>
@@ -1272,22 +1294,54 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist, co
           <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
           {!reportForm && <button onClick={()=>setReportForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
         </div>
-        <p className="text-xs mb-4" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOreSantier}</span></p>
-        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOreSantier}</span></p>
+
+        <div className="rounded-xl p-3 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Etape de lucru (ex: Scară Et.1, Subsol, Corp B)</div>
+          <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            <button onClick={()=>setEtapaTab('toate')} className="text-xs px-2.5 py-1 rounded-lg" style={{ color: etapaTab==='toate'?'#14181C':'#8B93A0', background: etapaTab==='toate'?'#2E8BD1':'#171C21' }}>Toate</button>
+            {etapeSantier.map((e)=>(
+              <span key={e.id} className="inline-flex items-center gap-1 text-xs pl-2.5 pr-1 py-1 rounded-lg" style={{ color: etapaTab===e.id?'#14181C':'#8B93A0', background: etapaTab===e.id?'#2E8BD1':'#171C21' }}>
+                <button onClick={()=>setEtapaTab(e.id)}>{e.nume}</button>
+                <button onClick={()=>delEtapa(e.id)} style={{ opacity:0.7 }}>✕</button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input placeholder="Etapă nouă..." value={etapaNoua} onChange={(e)=>setEtapaNoua(e.target.value)} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+            <button onClick={addEtapa} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă</button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <span className="text-xs" style={{ color:'#5C6570' }}>Raport pentru perioada:</span>
+          <RoDatePicker value={exportFrom} onChange={setExportFrom} />
+          <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
+          <RoDatePicker value={exportTo} onChange={setExportTo} />
+          <button onClick={()=>exportExcel(selected, rapoarte.filter((r)=>r.santierId===selected), etapeSantier)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
+        </div>
+
+        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : (
           <div className="space-y-2">
             {rapoarteSantier.map((r)=>{
               const totalOre = r.persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
+              const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
+              const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               return (
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{r.data}{(r.oraInceput||r.oraSfarsit) && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{r.oraInceput||'?'}–{r.oraSfarsit||'?'}</span>}</div>
+                      <div className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>
+                        {r.data}{(r.oraInceput||r.oraSfarsit) && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{r.oraInceput||'?'}–{r.oraSfarsit||'?'}</span>}
+                        {etapaN && <span className="text-xs ml-2" style={{ color:'#2E8BD1' }}>{etapaN}</span>}
+                      </div>
                       <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.map((p)=>`${p.nume} (${p.ore}h)`).filter((s)=>s.trim()!=='(h)').join(', ') || 'Fără persoane'}</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs" style={{ color:'#8B93A0' }}>{nrPersoane} pers.</span>
                       <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}h</span>
                       <button onClick={()=>setReportForm(r)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
                       <button onClick={()=>delReport(r.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
@@ -1309,30 +1363,6 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, persist, co
         <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Șantiere</h2>
         {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
       </div>
-      <div className="flex items-center gap-2 mb-2 flex-wrap">
-        <span className="text-xs" style={{ color:'#5C6570' }}>Raport pentru perioada:</span>
-        <RoDatePicker value={exportFrom} onChange={setExportFrom} />
-        <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
-        <RoDatePicker value={exportTo} onChange={setExportTo} />
-        <button onClick={exportExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
-      </div>
-      {santiere.length > 0 && (
-        <div className="flex items-center gap-1.5 mb-4 flex-wrap">
-          <span className="text-xs mr-1" style={{ color:'#5C6570' }}>Șantiere de exportat (nimic bifat = toate):</span>
-          {santiere.map((s)=>{
-            const active = exportSantiere.has(s.id);
-            return (
-              <button key={s.id} onClick={()=>{
-                  const next = new Set(exportSantiere);
-                  active ? next.delete(s.id) : next.add(s.id);
-                  setExportSantiere(next);
-                }}
-                className="text-xs px-2.5 py-1 rounded-lg"
-                style={{ color: active?'#14181C':'#8B93A0', background: active?'#2E8BD1':'#171C21' }}>{s.nume}</button>
-            );
-          })}
-        </div>
-      )}
       {form && <SantierForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={saveSantier} />}
       {santiere.length===0 && !form ? (
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun șantier încă.</div>
@@ -1543,6 +1573,7 @@ function App() {
   const [scule, setScule] = useState([]);
   const [santiere, setSantiere] = useState([]);
   const [rapoarte, setRapoarte] = useState([]);
+  const [etape, setEtape] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
@@ -1560,6 +1591,7 @@ function App() {
         setScule(await loadKey('scule', []));
         setSantiere(await loadKey('santiere', []));
         setRapoarte(await loadKey('rapoarte', []));
+        setEtape(await loadKey('etape', []));
       } catch (e) {
         setError('Nu am putut încărca datele.');
       } finally {
@@ -1762,7 +1794,7 @@ function App() {
 
             {tab === 'scule' && <ToolsTab scule={scule} setScule={setScule} persist={persist} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} persist={persist} company={company} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
           </>
         )}
