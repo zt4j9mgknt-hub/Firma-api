@@ -607,34 +607,52 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   };
 
   const exportExcel = () => {
-    const matName = (id) => materials.find((m)=>m.id===id)?.denumire || '(material șters)';
-    const matUM = (id) => materials.find((m)=>m.id===id)?.um || '';
-    const matGestiune = (id) => materials.find((m)=>m.id===id)?.categorie || '';
-    const inRange = stockMoves.filter((mv) => {
-      const okDate = (!exportFrom || mv.data >= exportFrom) && (!exportTo || mv.data <= exportTo);
-      const okGestiune = exportGestiuni.size === 0 || exportGestiuni.has(matGestiune(mv.materialId));
-      return okDate && okGestiune;
+    const filteredMaterials = exportGestiuni.size === 0
+      ? materials
+      : materials.filter((m) => exportGestiuni.has(m.categorie));
+
+    const rows = filteredMaterials.map((m) => {
+      const movesForMaterial = stockMoves.filter((mv) => mv.materialId === m.id);
+
+      // Mișcări de după perioadă — le "dăm înapoi" ca să aflăm stocul de la finalul perioadei.
+      const after = exportTo ? movesForMaterial.filter((mv) => mv.data > exportTo) : [];
+      const netAfter = after.reduce((s, mv) => s + (mv.tip === 'intrare' ? mv.cantitate : -mv.cantitate), 0);
+      const stocFinal = (Number(m.stoc) || 0) - netAfter;
+
+      const inPeriod = movesForMaterial.filter((mv) =>
+        (!exportFrom || mv.data >= exportFrom) && (!exportTo || mv.data <= exportTo)
+      );
+      const intrari = inPeriod.filter((mv) => mv.tip === 'intrare').reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
+      const iesiri = inPeriod.filter((mv) => mv.tip === 'iesire').reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
+      const stocInitial = stocFinal - intrari + iesiri;
+      const pret = Number(m.pret) || 0;
+
+      return {
+        'Gestiune': m.categorie || '',
+        'Produs': m.denumire,
+        'U.M.': m.um,
+        'Stoc inițial': stocInitial,
+        'Intrări': intrari,
+        'Ieșiri': iesiri,
+        'Stoc final': stocFinal,
+        'Sold inițial': Math.round(stocInitial * pret * 100) / 100,
+        'Valoare intrări': Math.round(intrari * pret * 100) / 100,
+        'Valoare ieșiri': Math.round(iesiri * pret * 100) / 100,
+        'Sold final': Math.round(stocFinal * pret * 100) / 100,
+      };
     });
-    const rows = inRange.slice().sort((a,b)=> a.data < b.data ? -1 : 1).map((mv) => ({
-      'Data': mv.data,
-      'Gestiune': matGestiune(mv.materialId),
-      'Material': matName(mv.materialId),
-      'U.M.': matUM(mv.materialId),
-      'Tip mișcare': mv.tip === 'intrare' ? 'Intrare' : 'Ieșire',
-      'Cantitate intrare': mv.tip === 'intrare' ? mv.cantitate : '',
-      'Cantitate ieșire': mv.tip === 'iesire' ? mv.cantitate : '',
-      'Notă': mv.nota || '',
-    }));
+
     const sheetRows = rows.length ? rows : [{
-      'Data': '', 'Gestiune': '', 'Material': '', 'U.M.': '', 'Tip mișcare': '',
-      'Cantitate intrare': '', 'Cantitate ieșire': '', 'Notă': 'Nicio mișcare în perioada/gestiunile selectate.',
+      'Gestiune': '', 'Produs': 'Niciun material în gestiunile selectate.', 'U.M.': '',
+      'Stoc inițial': '', 'Intrări': '', 'Ieșiri': '', 'Stoc final': '',
+      'Sold inițial': '', 'Valoare intrări': '', 'Valoare ieșiri': '', 'Sold final': '',
     }];
     const ws = XLSX.utils.json_to_sheet(sheetRows);
-    ws['!cols'] = [{wch:12},{wch:16},{wch:40},{wch:8},{wch:12},{wch:16},{wch:16},{wch:24}];
+    ws['!cols'] = [{wch:16},{wch:40},{wch:8},{wch:11},{wch:9},{wch:9},{wch:11},{wch:12},{wch:13},{wch:13},{wch:12}];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Miscari stoc');
+    XLSX.utils.book_append_sheet(wb, ws, 'Balanta stocului');
     const label = `${exportFrom || 'inceput'}_${exportTo || 'azi'}`;
-    XLSX.writeFile(wb, `gestiune_${label}.xlsx`);
+    XLSX.writeFile(wb, `balanta_stocului_${label}.xlsx`);
   };
 
   const SubNav = () => (
@@ -665,7 +683,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
             {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă material</button>}
           </div>
           <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <span className="text-xs" style={{ color:'#5C6570' }}>Export mișcări:</span>
+            <span className="text-xs" style={{ color:'#5C6570' }}>Balanța stocului pentru perioada:</span>
             <RoDatePicker value={exportFrom} onChange={setExportFrom} />
             <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
             <RoDatePicker value={exportTo} onChange={setExportTo} />
