@@ -24,7 +24,8 @@ const { useState, useEffect } = React;
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
-const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * (Number(it.pretUnitar) || 0), 0);
+const pretFinal = (it) => (Number(it.pretUnitar) || 0) * (1 + (Number(it.adaos) || 0) / 100);
+const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * pretFinal(it), 0);
 
 async function loadKey(key, fallback) {
   try {
@@ -62,7 +63,7 @@ function StatusSwitch({ status, onChange, options }) {
 function LineItemsEditor({ items, setItems, materials }) {
   const update = (id, f, v) => setItems(items.map((it) => it.id === id ? { ...it, [f]: v } : it));
   const remove = (id) => setItems(items.filter((it) => it.id !== id));
-  const add = () => setItems([...items, { id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0 }]);
+  const add = () => setItems([...items, { id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
   const pickMaterial = (id, denumire) => {
     const m = (materials || []).find((mm) => mm.denumire === denumire);
     if (m) {
@@ -76,17 +77,19 @@ function LineItemsEditor({ items, setItems, materials }) {
       <datalist id="materiale-catalog">
         {(materials || []).map((m) => <option key={m.id} value={m.denumire} />)}
       </datalist>
-      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'28px 1fr 60px 70px 100px 100px 28px', color:'#8B93A0' }}>
-        <span>Nr.</span><span>Denumire</span><span>U.M</span><span>Cant.</span><span>Valoare</span><span>Total</span><span/>
+      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'28px 1fr 50px 60px 85px 65px 85px 90px 28px', color:'#8B93A0' }}>
+        <span>Nr.</span><span>Denumire</span><span>U.M</span><span>Cant.</span><span>Preț cost</span><span>Adaos %</span><span>Preț final</span><span>Total</span><span/>
       </div>
       {items.map((it, i) => (
-        <div key={it.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'28px 1fr 60px 70px 100px 100px 28px', background:'#171C21' }}>
+        <div key={it.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'28px 1fr 50px 60px 85px 65px 85px 90px 28px', background:'#171C21' }}>
           <span className="text-xs text-center" style={{ color:'#5C6570', fontFamily:"'JetBrains Mono', monospace" }}>{i+1}</span>
           <input list="materiale-catalog" value={it.denumire} onChange={(e)=>pickMaterial(it.id, e.target.value)} placeholder="ex: Cablu N2XH 3x2,5 mmp — caută din catalog" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
           <input value={it.um} onChange={(e)=>update(it.id,'um',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
           <input type="number" value={it.cantitate} onChange={(e)=>update(it.id,'cantitate',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
           <input type="number" value={it.pretUnitar} onChange={(e)=>update(it.id,'pretUnitar',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
-          <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(it.cantitate)||0)*(Number(it.pretUnitar)||0))}</span>
+          <input type="number" value={it.adaos||0} onChange={(e)=>update(it.id,'adaos',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }} />
+          <span className="text-sm" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{money(pretFinal(it))}</span>
+          <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(it.cantitate)||0)*pretFinal(it))}</span>
           <button onClick={()=>remove(it.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
         </div>
       ))}
@@ -97,7 +100,7 @@ function LineItemsEditor({ items, setItems, materials }) {
 
 function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
   const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
-  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0 }]);
+  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
   const [tva, setTva] = useState(initial?.tva ?? 19);
   const subtotal = calcSubtotal(items);
   const total = subtotal * (1 + tva/100);
@@ -853,7 +856,7 @@ const DEVIZ_STATUSES = ['Ciornă', 'Emis', 'Semnat'];
 
 function DevizForm({ clients, materials, initial, onCancel, onSave }) {
   const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
-  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0 }]);
+  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
   const [tva, setTva] = useState(initial?.tva ?? 21);
   const [nrContract, setNrContract] = useState(initial?.nrContract || '');
   const [dataContract, setDataContract] = useState(initial?.dataContract || '');
@@ -921,8 +924,15 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
   );
 }
 
-function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll, onEmis, onReverse }) {
+function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill }) {
   const [form, setForm] = useState(null);
+
+  useEffect(() => {
+    if (prefill) {
+      setForm(prefill);
+      onConsumePrefill();
+    }
+  }, [prefill]);
 
   const nextNumber = (list) => {
     const year = new Date().getFullYear();
@@ -1062,8 +1072,8 @@ function pageHtml({ doc, kind, client, company }) {
   const tvaVal = subtotal * (doc.tva/100);
   const total = subtotal + tvaVal;
   const rows = doc.items.map((it,i)=>`
-    <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(it.pretUnitar))}</td>
-    <td>${esc(money((Number(it.cantitate)||0)*(Number(it.pretUnitar)||0)))}</td></tr>`).join('');
+    <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(pretFinal(it)))}</td>
+    <td>${esc(money((Number(it.cantitate)||0)*pretFinal(it)))}</td></tr>`).join('');
 
   return `<div class="print-page">
     <div class="pp-header-row">
@@ -1105,8 +1115,8 @@ function devizPageHtml({ doc, client, company }) {
   const tvaVal = subtotal * (doc.tva/100);
   const total = subtotal + tvaVal;
   const rows = doc.items.map((it,i)=>`
-    <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(it.pretUnitar))}</td>
-    <td>${esc(money((Number(it.cantitate)||0)*(Number(it.pretUnitar)||0)))}</td></tr>`).join('');
+    <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(pretFinal(it)))}</td>
+    <td>${esc(money((Number(it.cantitate)||0)*pretFinal(it)))}</td></tr>`).join('');
 
   const metaLines = [];
   if (doc.nrContract) metaLines.push(`<b>Contract:</b> Nr. ${esc(doc.nrContract)}${doc.dataContract ? ` din ${esc(doc.dataContract)}` : ''}`);
@@ -1186,6 +1196,7 @@ function App() {
   const [stockMoves, setStockMoves] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
+  const [devizPrefill, setDevizPrefill] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -1285,7 +1296,15 @@ function App() {
     setOffers(next); persist('offers', next); setOfferForm(null);
   };
   const deleteOffer = (id) => { const next = offers.filter((o)=>o.id!==id); setOffers(next); persist('offers', next); };
-  const offerStatus = (id, status) => { const next = offers.map((o)=>o.id===id?{...o,status}:o); setOffers(next); persist('offers', next); };
+  const offerStatus = (id, status) => {
+    const next = offers.map((o)=>o.id===id?{...o,status}:o);
+    setOffers(next); persist('offers', next);
+    if (status === 'Acceptată') {
+      const offer = next.find((o)=>o.id===id);
+      setTab('devize');
+      setDevizPrefill({ clientId: offer.clientId, items: offer.items.map((it)=>({...it, id: uid()})), tva: offer.tva, offerId: offer.id });
+    }
+  };
 
   const saveInvoice = (inv) => {
     const isNew = !invoices.some((x)=>x.id===inv.id);
@@ -1336,7 +1355,7 @@ function App() {
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
 
             {tab === 'devize' && (
-              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} />
+              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} prefill={devizPrefill} onConsumePrefill={()=>setDevizPrefill(null)} />
             )}
 
             {tab === 'oferte' && (
