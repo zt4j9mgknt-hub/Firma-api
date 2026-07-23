@@ -47,12 +47,15 @@ export default async function handler(req, res) {
     const action = body.action;
 
     if (action === 'register') {
-      const { nume, username, password, rol } = body;
+      const nume = String(body.nume || '').trim();
+      const username = String(body.username || '').trim();
+      const password = String(body.password || '').trim();
+      const rol = body.rol;
       if (!nume || !username || !password || !rol) {
         return res.status(400).json({ error: 'Completeaza toate campurile.' });
       }
       const users = await getUsers();
-      if (users.some((u) => u.username.toLowerCase() === String(username).toLowerCase())) {
+      if (users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
         return res.status(400).json({ error: 'Acest utilizator exista deja.' });
       }
       const salt = crypto.randomBytes(16).toString('hex');
@@ -64,9 +67,10 @@ export default async function handler(req, res) {
     }
 
     if (action === 'login') {
-      const { username, password } = body;
+      const username = String(body.username || '').trim();
+      const password = String(body.password || '').trim();
       const users = await getUsers();
-      const user = users.find((u) => u.username.toLowerCase() === String(username || '').toLowerCase());
+      const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
       if (!user) return res.status(401).json({ error: 'Username sau parola gresite.' });
       const hash = hashPassword(password, user.salt);
       if (hash !== user.passwordHash) return res.status(401).json({ error: 'Username sau parola gresite.' });
@@ -87,7 +91,9 @@ export default async function handler(req, res) {
     }
 
     if (action === 'changePassword') {
-      const { id, oldPassword, newPassword } = body;
+      const { id } = body;
+      const oldPassword = String(body.oldPassword || '').trim();
+      const newPassword = String(body.newPassword || '').trim();
       if (!id || !oldPassword || !newPassword) {
         return res.status(400).json({ error: 'Completeaza toate campurile.' });
       }
@@ -105,14 +111,17 @@ export default async function handler(req, res) {
     }
 
     if (action === 'update') {
-      const { id, nume, username, rol, newPassword } = body;
+      const { id, rol } = body;
+      const nume = String(body.nume || '').trim();
+      const username = String(body.username || '').trim();
+      const newPassword = String(body.newPassword || '').trim();
       if (!id || !nume || !username || !rol) {
         return res.status(400).json({ error: 'Completeaza toate campurile.' });
       }
       const users = await getUsers();
       const idx = users.findIndex((u) => u.id === id);
       if (idx === -1) return res.status(404).json({ error: 'Utilizator negasit.' });
-      const dupe = users.find((u) => u.id !== id && u.username.toLowerCase() === String(username).toLowerCase());
+      const dupe = users.find((u) => u.id !== id && u.username.toLowerCase() === username.toLowerCase());
       if (dupe) return res.status(400).json({ error: 'Acest username este deja folosit.' });
       const user = users[idx];
       let updated = { ...user, nume, username, rol };
