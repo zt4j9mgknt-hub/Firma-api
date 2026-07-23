@@ -817,8 +817,16 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   };
 
   const gestiuni = [...new Set(materials.map((m)=>m.categorie).filter(Boolean))].sort();
-  const [catTab, setCatTab] = useState('toate');
-  const filteredByCat = catTab === 'toate' ? filtered : filtered.filter((m)=>m.categorie === catTab);
+  const [catTab, setCatTab] = useState(null);
+  const [stocCatTab, setStocCatTab] = useState(null);
+  const searchingGestiune = filter.trim() !== '';
+  const showGestiuneList = searchingGestiune || catTab !== null;
+  const filteredByCat = searchingGestiune
+    ? filtered
+    : catTab === '__fara__' ? materials.filter((m)=>!m.categorie)
+    : catTab ? filtered.filter((m)=>m.categorie === catTab)
+    : filtered;
+  const materialeFaraGestiune = materials.filter((m)=>!m.categorie);
 
   return (
     <div>
@@ -858,22 +866,33 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
             </div>
           )}
           {sbImportMsg && <p className="text-xs mb-3" style={{ color:'#4CAF7D' }}>{sbImportMsg}</p>}
-          {gestiuni.length > 0 && (
-            <div className="flex gap-1.5 mb-4 flex-wrap">
-              <button onClick={()=>setCatTab('toate')} className="text-xs px-2.5 py-1 rounded-lg"
-                style={{ color: catTab==='toate'?'#14181C':'#8B93A0', background: catTab==='toate'?'#2E8BD1':'#171C21' }}>Toate</button>
-              {gestiuni.map((g)=>(
-                <button key={g} onClick={()=>setCatTab(g)} className="text-xs px-2.5 py-1 rounded-lg"
-                  style={{ color: catTab===g?'#14181C':'#8B93A0', background: catTab===g?'#2E8BD1':'#171C21' }}>{g}</button>
-              ))}
-            </div>
-          )}
           {form && !form.id && <MaterialForm initial={null} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
           {form && form.id && <MaterialForm initial={form} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
           {materials.length===0 && !form ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material încă.</div>
+          ) : !showGestiuneList ? (
+            <div className="space-y-2">
+              {gestiuni.map((g)=>{
+                const count = materials.filter((m)=>m.categorie===g).length;
+                return (
+                  <button key={g} onClick={()=>setCatTab(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
+                    <span className="text-xs" style={{ color:'#8B93A0' }}>{count} materiale →</span>
+                  </button>
+                );
+              })}
+              {materialeFaraGestiune.length > 0 && (
+                <button onClick={()=>setCatTab('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
+                  <span className="text-xs" style={{ color:'#8B93A0' }}>{materialeFaraGestiune.length} materiale →</span>
+                </button>
+              )}
+            </div>
           ) : (
             <>
+              {!searchingGestiune && (
+                <button onClick={()=>setCatTab(null)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
+              )}
               <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
                 Valoare totală ({filteredByCat.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(filteredByCat.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span>
               </div>
@@ -904,9 +923,31 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
           </div>
           {materials.length===0 ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material — adaugă mai întâi din tab-ul „Gestiune".</div>
-          ) : (
+          ) : !searchingGestiune && !stocCatTab ? (
             <div className="space-y-2">
-              {filtered.map((m)=>{
+              {gestiuni.map((g)=>{
+                const count = materials.filter((m)=>m.categorie===g).length;
+                return (
+                  <button key={g} onClick={()=>setStocCatTab(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
+                    <span className="text-xs" style={{ color:'#8B93A0' }}>{count} materiale →</span>
+                  </button>
+                );
+              })}
+              {materialeFaraGestiune.length > 0 && (
+                <button onClick={()=>setStocCatTab('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
+                  <span className="text-xs" style={{ color:'#8B93A0' }}>{materialeFaraGestiune.length} materiale →</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              {!searchingGestiune && (
+                <button onClick={()=>setStocCatTab(null)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
+              )}
+              <div className="space-y-2">
+              {(searchingGestiune ? filtered : stocCatTab==='__fara__' ? materials.filter((m)=>!m.categorie) : filtered.filter((m)=>m.categorie===stocCatTab)).map((m)=>{
                 const low = Number(m.stoc) < Number(m.stocMinim);
                 const moves = stockMoves.filter((mv)=>mv.materialId===m.id).slice(0,8);
                 return (
@@ -946,7 +987,8 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                   </div>
                 );
               })}
-            </div>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1756,6 +1798,54 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+function ProfileTab({ currentUser }) {
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [status, setStatus] = useState({ loading:false, error:'', success:'' });
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
+
+  const submit = async () => {
+    setStatus({ loading:true, error:'', success:'' });
+    if (!oldPassword || !newPassword) { setStatus({ loading:false, error:'Completează toate câmpurile.', success:'' }); return; }
+    if (newPassword !== confirmPassword) { setStatus({ loading:false, error:'Parola nouă nu se potrivește cu confirmarea.', success:'' }); return; }
+    try {
+      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'changePassword', id: currentUser.id, oldPassword, newPassword }) });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
+      setStatus({ loading:false, error:'', success:'Parola a fost schimbată.' });
+      setOldPassword(''); setNewPassword(''); setConfirmPassword('');
+    } catch (e) {
+      setStatus({ loading:false, error: e.message || 'A eșuat.', success:'' });
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Profilul meu</h2>
+      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>{roleIcon} {currentUser?.nume} · @{currentUser?.username} · {currentUser?.rol}</p>
+      <div className="rounded-xl p-4 space-y-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-sm font-medium mb-1" style={{ color:'#E9E7E2' }}>Schimbă parola</div>
+        <input type={showPw?'text':'password'} placeholder="Parola actuală" value={oldPassword} onChange={(e)=>setOldPassword(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input type={showPw?'text':'password'} placeholder="Parola nouă" value={newPassword} onChange={(e)=>setNewPassword(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input type={showPw?'text':'password'} placeholder="Confirmă parola nouă" value={confirmPassword} onChange={(e)=>setConfirmPassword(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && submit()} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <label className="flex items-center gap-1.5 text-xs" style={{ color:'#8B93A0' }}>
+          <input type="checkbox" checked={showPw} onChange={(e)=>setShowPw(e.target.checked)} /> Arată parolele
+        </label>
+        {status.error && <p className="text-xs" style={{ color:'#E05252' }}>{status.error}</p>}
+        {status.success && <p className="text-xs" style={{ color:'#4CAF7D' }}>{status.success}</p>}
+        <div className="flex justify-end pt-1">
+          <button onClick={submit} disabled={status.loading} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>
+            {status.loading ? '...' : 'Salvează parola nouă'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UsersTab({ currentUser }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2307,6 +2397,7 @@ function App() {
         <NavItem id="santiere" label="🏗 Șantiere" />
         <div style={{ height:1, background:'#2A323B', margin:'8px 4px' }} />
         <NavItem id="firma" label="⚙ Firma mea" />
+        <NavItem id="profil" label="👤 Profilul meu" />
         {currentUser.rol === 'Manager' && <NavItem id="utilizatori" label="🔑 Utilizatori" />}
         <div className="mt-auto pt-3" style={{ borderTop:'1px solid #2A323B' }}>
           <div className="flex items-center justify-between px-3 py-2 text-xs" style={{ color:'#8B93A0' }}>
@@ -2361,6 +2452,8 @@ function App() {
 
             {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={currentUser} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
+
+            {tab === 'profil' && <ProfileTab currentUser={currentUser} />}
 
             {tab === 'utilizatori' && currentUser.rol === 'Manager' && <UsersTab currentUser={currentUser} />}
           </>
