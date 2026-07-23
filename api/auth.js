@@ -1,111 +1,2654 @@
-// Functie server (Vercel) pentru autentificare si gestiune utilizatori.
-// Foloseste Upstash Redis (deja conectat la acest proiect) pentru a stoca
-// lista de utilizatori. Parolele NU sunt stocate in clar, ci hash-uite
-// server-side (scrypt + salt unic per utilizator), folosind modulul
-// "crypto" nativ din Node - fara dependinte externe.
-//
-// Actiuni (trimise ca { action: '...' } in body-ul POST):
-//   register - creeaza un cont nou { nume, username, password, rol }
-//   login    - autentificare { username, password }
-//   list     - lista utilizatorilor (fara parole)
-//   delete   - sterge un utilizator { id }
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panou intern — Oferte &amp; Facturi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+  html, body, #root { height: 100%; }
+  body { margin:0; background:#14181C; font-family:'Inter', sans-serif; }
+  input::placeholder { color:#5C6570; }
+  select { color-scheme: dark; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
 
-import crypto from 'crypto';
+const uid = () => Math.random().toString(36).slice(2, 10);
+const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
+const pretFinal = (it) => (Number(it.pretUnitar) || 0) * (1 + (Number(it.adaos) || 0) / 100);
 
-function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
+// Calculează orele lucrate dintr-un interval oră-început/oră-sfârșit, scăzând 1 oră de pauză (program normal).
+function calcOreDinInterval(inceput, sfarsit) {
+  if (!inceput || !sfarsit) return null;
+  const [h1, m1] = inceput.split(':').map(Number);
+  const [h2, m2] = sfarsit.split(':').map(Number);
+  let minute = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (minute <= 0) minute += 24 * 60;
+  minute -= 60; // pauza de masă
+  return Math.max(0, minute); // în minute
 }
-
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Metoda nepermisa.' });
-
-  const base = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!base || !token) {
-    return res.status(500).json({ error: 'Baza de date nu este configurata (KV_REST_API_URL/TOKEN).' });
+// Acceptă fie un text "8:45", fie un număr vechi (decimal) — și îl transformă în minute întregi.
+function oreToMinutes(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  if (typeof v === 'number') return Math.round(v * 60);
+  const s = String(v).trim();
+  if (s.includes(':')) {
+    const [h, m] = s.split(':');
+    return (Number(h) || 0) * 60 + (Number(m) || 0);
   }
+  const n = Number(s);
+  return isNaN(n) ? 0 : Math.round(n * 60);
+}
+function minutesToHM(total) {
+  const t = Math.max(0, Math.round(total || 0));
+  const h = Math.floor(t / 60);
+  const m = t % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+}
+const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * pretFinal(it), 0);
 
-  const getUsers = async () => {
-    const r = await fetch(`${base}/get/firma:users`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await r.json();
-    return data.result ? JSON.parse(data.result) : [];
-  };
-  const saveUsers = async (users) => {
-    await fetch(`${base}/set/firma:users`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
-      body: JSON.stringify(users),
-    });
-  };
-
+async function loadKey(key, fallback) {
   try {
-    const body = req.body || {};
-    const action = body.action;
-
-    if (action === 'register') {
-      const { nume, username, password, rol } = body;
-      if (!nume || !username || !password || !rol) {
-        return res.status(400).json({ error: 'Completeaza toate campurile.' });
-      }
-      const users = await getUsers();
-      if (users.some((u) => u.username.toLowerCase() === String(username).toLowerCase())) {
-        return res.status(400).json({ error: 'Acest utilizator exista deja.' });
-      }
-      const salt = crypto.randomBytes(16).toString('hex');
-      const passwordHash = hashPassword(password, salt);
-      const newUser = { id: crypto.randomUUID(), nume, username, rol, salt, passwordHash };
-      users.push(newUser);
-      await saveUsers(users);
-      return res.status(200).json({ ok: true, user: { id: newUser.id, nume, username, rol } });
-    }
-
-    if (action === 'login') {
-      const { username, password } = body;
-      const users = await getUsers();
-      const user = users.find((u) => u.username.toLowerCase() === String(username || '').toLowerCase());
-      if (!user) return res.status(401).json({ error: 'Username sau parola gresite.' });
-      const hash = hashPassword(password, user.salt);
-      if (hash !== user.passwordHash) return res.status(401).json({ error: 'Username sau parola gresite.' });
-      return res.status(200).json({ ok: true, user: { id: user.id, nume: user.nume, username: user.username, rol: user.rol } });
-    }
-
-    if (action === 'list') {
-      const users = await getUsers();
-      return res.status(200).json({ ok: true, users: users.map((u) => ({ id: u.id, nume: u.nume, username: u.username, rol: u.rol })) });
-    }
-
-    if (action === 'delete') {
-      const { id } = body;
-      const users = await getUsers();
-      const next = users.filter((u) => u.id !== id);
-      await saveUsers(next);
-      return res.status(200).json({ ok: true });
-    }
-
-    if (action === 'changePassword') {
-      const { id, oldPassword, newPassword } = body;
-      if (!id || !oldPassword || !newPassword) {
-        return res.status(400).json({ error: 'Completeaza toate campurile.' });
-      }
-      const users = await getUsers();
-      const idx = users.findIndex((u) => u.id === id);
-      if (idx === -1) return res.status(404).json({ error: 'Utilizator negasit.' });
-      const user = users[idx];
-      const oldHash = hashPassword(oldPassword, user.salt);
-      if (oldHash !== user.passwordHash) return res.status(401).json({ error: 'Parola actuala este gresita.' });
-      const newSalt = crypto.randomBytes(16).toString('hex');
-      const newHash = hashPassword(newPassword, newSalt);
-      users[idx] = { ...user, salt: newSalt, passwordHash: newHash };
-      await saveUsers(users);
-      return res.status(200).json({ ok: true });
-    }
-
-    return res.status(400).json({ error: 'Actiune necunoscuta.' });
-  } catch (e) {
-    return res.status(500).json({ error: e.message || 'Eroare necunoscuta.' });
-  }
+    const r = await fetch(`/api/data?key=${encodeURIComponent(key)}`);
+    const data = await r.json();
+    return data.value ?? fallback;
+  } catch { return fallback; }
 }
+async function saveKey(key, value) {
+  const r = await fetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value }) });
+  const data = await r.json();
+  if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
+}
+
+const ROLES = [
+  { id: 'Manager', icon: '👔' },
+  { id: 'Electrician', icon: '🔌' },
+];
+
+const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
+const INVOICE_STATUSES = ['Neplătită', 'Plătită', 'Restantă'];
+const STATUS_COLOR = { 'Ciornă':'#8B93A0','Trimisă':'#2E8BD1','Acceptată':'#4CAF7D','Respinsă':'#E05252','Neplătită':'#2E8BD1','Plătită':'#4CAF7D','Restantă':'#E05252','Emis':'#2E8BD1','Semnat':'#4CAF7D' };
+const Icon = ({ children, size = 14 }) => <span style={{ fontSize:size, lineHeight:1, display:'inline-block' }}>{children}</span>;
+
+function StatusSwitch({ status, onChange, options }) {
+  const on = status === 'Acceptată' || status === 'Plătită' || status === 'Semnat';
+  const color = STATUS_COLOR[status] || '#8B93A0';
+  return (
+    <div className="inline-flex items-center gap-2">
+      <span style={{ width:28, height:16, borderRadius:8, background:'#0F1317', border:`1px solid ${color}66`, position:'relative', display:'inline-block', boxShadow: on ? `0 0 8px ${color}77` : 'none' }}>
+        <span style={{ position:'absolute', top:2, left: on ? 14 : 2, width:10, height:10, borderRadius:'50%', background:color }} />
+      </span>
+      <select value={status} onChange={(e)=>onChange(e.target.value)} className="bg-transparent text-xs outline-none cursor-pointer" style={{ color, fontFamily:"'JetBrains Mono', monospace" }}>
+        {options.map((s) => <option key={s} value={s} style={{ background:'#1B2127', color:'#E9E7E2' }}>{s}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function LineItemsEditor({ items, setItems, materials }) {
+  const update = (id, f, v) => setItems(items.map((it) => it.id === id ? { ...it, [f]: v } : it));
+  const remove = (id) => setItems(items.filter((it) => it.id !== id));
+  const add = () => setItems([...items, { id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
+  const pickMaterial = (id, denumire) => {
+    const m = (materials || []).find((mm) => mm.denumire === denumire);
+    if (m) {
+      setItems(items.map((it) => it.id === id ? { ...it, denumire: m.denumire, um: m.um, pretUnitar: m.pret } : it));
+    } else {
+      update(id, 'denumire', denumire);
+    }
+  };
+  return (
+    <div className="space-y-2">
+      <datalist id="materiale-catalog">
+        {(materials || []).map((m) => <option key={m.id} value={m.denumire} />)}
+      </datalist>
+      <div className="overflow-x-auto">
+      <div style={{ minWidth: 560 }}>
+      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'28px 1fr 50px 60px 85px 65px 85px 90px 28px', color:'#8B93A0' }}>
+        <span>Nr.</span><span>Denumire</span><span>U.M</span><span>Cant.</span><span>Preț cost</span><span>Adaos %</span><span>Preț final</span><span>Total</span><span/>
+      </div>
+      {items.map((it, i) => (
+        <div key={it.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5 mt-2" style={{ gridTemplateColumns:'28px 1fr 50px 60px 85px 65px 85px 90px 28px', background:'#171C21' }}>
+          <span className="text-xs text-center" style={{ color:'#5C6570', fontFamily:"'JetBrains Mono', monospace" }}>{i+1}</span>
+          <input list="materiale-catalog" value={it.denumire} onChange={(e)=>pickMaterial(it.id, e.target.value)} placeholder="ex: Cablu N2XH 3x2,5 mmp — caută din catalog" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
+          <input value={it.um} onChange={(e)=>update(it.id,'um',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
+          <input type="number" value={it.cantitate} onChange={(e)=>update(it.id,'cantitate',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+          <input type="number" value={it.pretUnitar} onChange={(e)=>update(it.id,'pretUnitar',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+          <input type="number" value={it.adaos ?? 0} onChange={(e)=>update(it.id,'adaos',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }} />
+          <span className="text-sm" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{money(pretFinal(it))}</span>
+          <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(it.cantitate)||0)*pretFinal(it))}</span>
+          <button onClick={()=>remove(it.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+        </div>
+      ))}
+      </div>
+      </div>
+      <button onClick={add} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă articol</button>
+    </div>
+  );
+}
+
+function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
+  const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
+  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
+  const [tva, setTva] = useState(initial?.tva ?? 19);
+  const subtotal = calcSubtotal(items);
+  const total = subtotal * (1 + tva/100);
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{initial?.id ? `Editare ${kind}` : `${kind} nouă`}</h3>
+        <button onClick={onCancel} style={{ color:'#8B93A0' }}><Icon>✕</Icon></button>
+      </div>
+      {clients.length === 0 ? (
+        <p className="text-sm" style={{ color:'#8B93A0' }}>Adaugă mai întâi un client în tab-ul „Clienți".</p>
+      ) : (
+        <>
+          <div className="flex gap-3 mb-3">
+            <select value={clientId} onChange={(e)=>setClientId(e.target.value)} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }}>
+              {clients.map((c)=><option key={c.id} value={c.id} style={{ background:'#1B2127' }}>{c.nume}</option>)}
+            </select>
+            <div className="flex items-center gap-2 rounded-lg px-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+              <span className="text-xs" style={{ color:'#8B93A0' }}>TVA</span>
+              <input type="number" value={tva} onChange={(e)=>setTva(e.target.value)} className="w-12 bg-transparent outline-none text-sm py-2" style={{ color:'#E9E7E2' }} />
+              <span className="text-xs" style={{ color:'#8B93A0' }}>%</span>
+            </div>
+          </div>
+          <LineItemsEditor items={items} setItems={setItems} materials={materials} />
+          <div className="flex justify-end gap-6 mt-3 px-2 text-sm">
+            <span style={{ color:'#8B93A0' }}>Subtotal: <span style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{money(subtotal)}</span></span>
+            <span style={{ color:'#8B93A0' }}>Total (TVA inclus): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span></span>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'Neplătită'), offerId: initial?.offerId })}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusChange, onConvert, onPrint, onSmartBill }) {
+  const [sbState, setSbState] = useState({});
+  const clientName = (id) => clients.find((c)=>c.id===id)?.nume || '—';
+  if (docs.length === 0) return <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio {kind.toLowerCase()} încă. Apasă „Adaugă" pentru a crea prima.</div>;
+
+  const sendToSmartBill = async (d) => {
+    setSbState((s)=>({ ...s, [d.id]: { status:'loading', message:'' } }));
+    try {
+      const result = await onSmartBill(d);
+      setSbState((s)=>({ ...s, [d.id]: { status:'done', message: `Trimisă (${result.series || ''}${result.number || ''})` } }));
+    } catch (e) {
+      setSbState((s)=>({ ...s, [d.id]: { status:'error', message: e.message || 'Eroare la trimitere.' } }));
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {docs.slice().sort((a,b)=>a.numar<b.numar?1:-1).map((d)=>{
+        const total = calcSubtotal(d.items) * (1 + d.tva/100);
+        const sb = sbState[d.id];
+        return (
+          <div key={d.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-sm font-medium truncate" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{d.numar}</span>
+                <span className="text-xs truncate" style={{ color:'#8B93A0' }}>{clientName(d.clientId)} · {d.data}</span>
+              </div>
+              <span className="text-sm shrink-0" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span>
+              <div className="shrink-0"><StatusSwitch status={d.status} options={statuses} onChange={(s)=>onStatusChange(d.id,s)} /></div>
+              <div className="flex items-center gap-2 shrink-0">
+                {onConvert && <button onClick={()=>onConvert(d)} className="text-xs flex items-center gap-1 px-2 py-1 rounded-lg" style={{ color:'#4CAF7D', background:'#171C21' }}><Icon>→</Icon> Facturează</button>}
+                {onSmartBill && (
+                  <button onClick={()=>sendToSmartBill(d)} disabled={sb?.status==='loading'} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1 disabled:opacity-40" style={{ color:'#4CAF7D', background:'#171C21' }}>
+                    <Icon>☁</Icon> {sb?.status==='loading' ? '...' : 'SmartBill'}
+                  </button>
+                )}
+                <button onClick={()=>onPrint(d)} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ color:'#8B93A0', background:'#171C21' }}><Icon>🖨</Icon> PDF</button>
+                <button onClick={()=>onEdit(d)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                <button onClick={()=>onDelete(d.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+              </div>
+            </div>
+            {sb?.message && (
+              <div className="text-xs mt-2" style={{ color: sb.status==='error' ? '#E05252' : '#4CAF7D' }}>{sb.message}</div>
+            )}
+            {d.stocMesaj && (
+              <div className="text-xs mt-2" style={{ color: d.stocMesaj.startsWith('Nepotrivite') ? '#E9A23B' : '#4CAF7D' }}>{d.stocMesaj}</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const CLIENT_IMPORT_SEED = [
+  ['1 ST RESIDENCE SRL','juridica','RO43688087','Str. Avram Iancu, Nr. 423b, C.P. 407280, Floresti, Cluj','',''],
+  ['1ST RESIDENCIAL CONSTRUCT S.R.L.','juridica','RO36463502','Str. Zavoiului 3a, Cluj-Napoca, Cluj','Florin Zirbo','0723185484'],
+  ['ADEVAL CONSULTING SRL','juridica','RO29638148','Sat Floresti Com. Floresti, Str. Avram Iancu, Nr.454c, Parter, Sc.2, Ap.52, Floresti, Cluj','',''],
+  ['Alin Nechita','fizica','1791006120752','Alea Slatina ,Nr.2 ,Ap.22, Cluj-Napoca, Cluj','Alin Nechita','+40760233044'],
+  ['ALTA CERA S.R.L.','juridica','RO46666334','Sat Visan Com. Barnova, Str. Castelul Grecilor, Nr.5b, Visan, Iasi','',''],
+  ['ASOCIATIA DE PROPRIETARI  BELLA VISTA C5  CLUJ - NAPOCA','juridica','41812781','Str. Buna Ziua, Nr.35d, Imobil 1, Cluj-Napoca, Cluj','',''],
+  ['ASOCIATIA DE PROPRIETARI  SOPHIA RESIDENCE BLOC M6C  CLUJ - NAPOCA','juridica','41838927','Str. Buna Ziua, Nr.41, Cluj-napoca, Cluj','',''],
+  ['ASOCIATIA DE PROPRIETARI SOPHIA RESIDENCE BLOC M7D','juridica','40015094','Str. Buna Ziua, Nr.41 B, Cluj-Napoca, Cluj','',''],
+  ['ASOCIATIA DE PROPRIETARI STR. RAZOARE , NR. 11 , BLOC A  FLORESTI','juridica','40347336','Sat Floresti Com. Floresti, Str. Razoare, Nr.11, Bl.A, Floresti, Cluj','',''],
+  ['ASOCIATIA DE PROPRIETARI  STR. TRAIAN NR. 2 , BLOC CORP B  FLORESTI','juridica','42747797','Sat Floresti Com. Floresti, Str. Traian, Nr.2, Bl.Corp B, Floresti, Cluj','',''],
+  ['ASOCIATIA DE PROPRIETARI  STR. TRAIAN NR. 3, BL. CORP C  FLORESTI','juridica','46116080','Sat Floresti Com. Floresti, Str. Traian, Nr.3, Bl.Corp C, Floresti, Cluj','',''],
+  ['ASOCIATIA DE PROPRIETARI STR. TRAIAN, NR. 4, BLOC CORP D, FLORESTI','juridica','44369850','Sat Floresti Com. Floresti, Str. Traian, Nr.4, Bl.Corp D, Floresti, Cluj','',''],
+  ['B&B IMOBIL TRADE SRL','juridica','RO22298871','Pta. Timotei Cipariu, Nr.15, Ap. Spatiu Comercial, Bloc Iii A, Et.Mezanin, Cluj-Napoca, Cluj','',''],
+  ['BB MANAGER SRL','juridica','RO23077569','Str. Gheorghe Sincai, Nr.25, Turda, Cluj','',''],
+  ['BIG STAR SOLUTIONS S.R.L.','juridica','RO46774093','Str. Pompiliu Teodor, Nr.1a, Et.1, Ap.5, Cluj-Napoca, Cluj','',''],
+  ['BISTRO ATELIER S.R.L.','juridica','RO26210553','Pta. Unirii, Nr.16, Cluj-Napoca, Cluj','',''],
+  ['Bodea Rares','fizica','1900424124934','Zmeurisului 13, Cluj-Napoca, Cluj','',''],
+  ['Botog Alexandru-Silviu','fizica','1890513260108','Str. Oasului , Nr.86-90 , Bloc H1 , Et.2 , Ap.33, Cluj-Napoca, Cluj','',''],
+  ['BUGET AUTO S.R.L.','juridica','RO39289479','Str. Romana, Nr.17, Bistrita, Bistrita-Nasaud','',''],
+  ['CAD ELECTRIC SOLUTIONS S.R.L.','juridica','RO49430159','Str. Crisan, Nr.1, Sc.A, Ap.3, Zalau, Salaj','',''],
+  ['CRISTE I. LUCIAN AXENTE -  CABINET DE AVOCAT','juridica','RO29604897','Str. Becas, Nr.11 B, Ap.1, Cluj-Napoca, Cluj','',''],
+  ['Csöregi Kinga','fizica','2690920120641','Str. Alverna ,Nr.40, Cluj-Napoca, Cluj','',''],
+  ['DAS ENGINEERING GRUP SRL','juridica','RO14933344','Str. Rachitei, Nr.18, Cluj-Napoca, Cluj','',''],
+  ['DIRECTIA JUDETEANA DE STATISTICA CLUJ','juridica','4565318','Str. Samuiel Brassai, Nr.13, Cluj-napoca, Cluj','',''],
+  ['DMN INVEST BUILD S.R.L.','juridica','RO43147537','Str. G-Ral Eremia Grigorescu, Nr.126, Et.Iv, Ap.38, Cluj-Napoca, Cluj','',''],
+  ['FIRST TECHNOLOGY SRL','juridica','RO16841182','Str. Molidului, Nr. 1, Corp Ii, Cluj-napoca, Cluj','',''],
+  ['FUNDATIA SIGISMUND TODUTA','juridica','8578213','Str. Sigismund Toduta, Nr.13, Ap.3, Cluj-Napoca, Cluj','',''],
+  ['GIA BUSINESS SRL','juridica','RO33468300','Jud. Alba, Sat Unirea Com. Unirea, Str. Traian, Nr.602, Unirea Com. Unirea, Alba','',''],
+  ['GIGHIBANDA SRL','juridica','RO17227084','Str. George Valentin Bibescu, Nr.48, Imobil B, Et.Parter, Ap.1, Cluj-Napoca, Cluj','',''],
+  ['GLUGLUMUSIC SRL','juridica','RO43449926','Jud. Cluj, Mun. Cluj-napoca, Cal. Dorobantilor, Nr.21, Ap.1, C.P. 400117, Cluj-napoca, Cluj','',''],
+  ['IMSAT SERVICE CLUJ SA','juridica','RO5178727','Bld. Muncii, Nr.279, Cluj-Napoca, Cluj','',''],
+  ['INTERCOM ENERGY SRL','juridica','RO33425601','Sat Cacova Ierii Com. Iara, Cacova Ierii, Nr.267, Cacova Ierii, Cluj','',''],
+  ['KLAUSEN EXIM SRL','juridica','RO6839312','Str. Colinei, Nr.2, Complex Via Office, Sc.2, Et.4, Cluj-Napoca, Cluj','',''],
+  ['KRZ CAPITAL INVEST S.R.L.','juridica','RO42463736','Sat Floresti Com. Floresti, Str. Traian, Nr.1, Bl.A, Sc.1, Et.7, Ap.34, Floresti, Cluj','',''],
+  ['LA COSTE PROPERTY S.R.L.','juridica','RO46697764','Sat Floresti Com. Floresti, Str. Traian, Nr.2, Bl.Corp B, Sc.1, Et.7, Ap.36, Floresti, Cluj','',''],
+  ['LUPO CALIN -CIPRIAN','fizica','1860225245028','Str. Buna Ziua , Nr. 41B , Bl.M7D , Sc. 2 , Et.9 , Ap. 120, Cluj-Napoca, Cluj','',''],
+  ['NEOAPP S.R.L.','juridica','RO48951604','Str. Alexandru Papiu Ilarian, Nr.17, Cluj-Napoca, Cluj','',''],
+  ['OLTEAN MIHAELA-OLIMPIA','fizica','2771002120714','Str. Giordano Bruno ,Nr. 70, Cluj-Napoca, Cluj','','0740 279 514'],
+  ['OP DESIGN SRL','juridica','RO15121370','Str. Prof. Dr. Daniel Barcianu, Nr.6a, Sibiu, Sibiu','',''],
+  ['POLUS RESIDENCE SRL','juridica','RO34562771','Sat Floresti Com. Floresti, Str. Traian, Nr.1, Bl.A, Sc.1, Et.Parter, Ap.1, Floresti, Cluj','',''],
+  ['PROPERTY PARTNERS S.R.L.','juridica','RO45749059','Sat Unirea Com. Unirea, Str. Traian, Nr.602, Unirea, Alba','',''],
+  ['REMARUL 16 FEBRUARIE SA','juridica','RO201373','Str. Tudor Vladimirescu, Nr.2-4, Cluj-Napoca, Cluj','',''],
+  ['Rus Adrian- Vasile','fizica','1940212125770','Nr 222, Panticeu, Cluj','',''],
+  ['Sabau Dan-Razvan','fizica','1880612055111','Str. Ganea , Bl. CG48 , Ap.10, Satu Mare, Satu Mare','',''],
+  ['SAFE SECURITY SRL','juridica','RO38163714','Cal. Dorobantilor, Nr.21, Ap.1, Cluj-Napoca, Cluj','',''],
+  ['SILVANIA EXPERT SRL','juridica','RO16141324','Str. Vasile Alecsandri, Nr.9, Cluj-Napoca, Cluj','',''],
+  ['SKYLINE ENGINEERING S.R.L.','juridica','RO30835569','Str. Buftea, Nr.1, Ap. Birou Nr. 2, Cluj-Napoca, Cluj','',''],
+  ['SOCIETATE PROFESIONALA NOTARIALA - NOTARI PUBLICI ASOCIATI  REPEDE','juridica','RO23189392','Cal. Dorobantilor, Nr.9, Ap.12, Cluj-napoca, Cluj','',''],
+  ['Stranszky-Nedelcu  Cristina-Laura','fizica','2770507120731','Str. Donath , Nr.264 , Ap.21, Cluj-Napoca, Cluj','',''],
+  ['STRUCTUREFIX SRL','juridica','RO33010272','Sat Baciu Com. Baciu, Str. Mercur, Nr.4, Baciu, Cluj','',''],
+  ['TRANSFEROVIAR HOLDING S.A.','juridica','RO33628681','Str. D. D. Rosca, Nr.31 A, Provizoriu, Cluj-Napoca, Cluj','',''],
+  ['ULTRA SMART LINK S.R.L.','juridica','RO39122704','JUD. CLUJ, MUN. CLUJ-NAPOCA, CAL. MĂNĂŞTUR, NR.97, SC.2, ET.8, AP.65','',''],
+  ['YOZZY SHOP SRL','juridica','RO21357155','Str. Apei, Nr.1, Huedin, Cluj','',''],
+  ['ZIGGIOTTO INDUSTRIES SRL','juridica','RO26335921','Str. Banul Udrea, Nr.14, Cluj-Napoca, Cluj','',''],
+];
+
+function ClientsTab({ clients, setClients, persist }) {
+  const [form, setForm] = useState(null);
+  const [lookup, setLookup] = useState({ status:'idle', message:'' });
+  const [filter, setFilter] = useState('');
+
+  const save = (c) => {
+    const next = clients.some((x)=>x.id===c.id) ? clients.map((x)=>x.id===c.id?c:x) : [...clients, c];
+    setClients(next); persist('clients', next); setForm(null);
+  };
+  const del = (id) => { const next = clients.filter((c)=>c.id!==id); setClients(next); persist('clients', next); };
+  const openForm = () => { setLookup({status:'idle',message:''}); setForm({ id: uid(), tip:'juridica', nume:'', cui:'', adresa:'', contact:'' }); };
+  const cuiSearchUrl = (cui) => `https://www.google.com/search?q=${encodeURIComponent(`CUI ${cui} ANAF firma denumire adresa`)}`;
+
+  const runAutoLookup = async () => {
+    const clean = String(form.cui).replace(/\D/g,'');
+    if (!clean) return;
+    setLookup({status:'loading',message:''});
+    try {
+      const res = await fetch(`/api/cui?cui=${clean}`);
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `Eroare ${res.status}`);
+      if (!data.denumire) throw new Error('Răspunsul nu conține denumirea firmei.');
+      setForm((f)=>({ ...f, nume: data.denumire, adresa: data.adresa || f.adresa }));
+      setLookup({status:'done', message:'Date preluate automat de la ANAF.'});
+    } catch (e) {
+      setLookup({status:'error', message:`Preluarea automată a eșuat (${e.message}).`});
+    }
+  };
+
+  const [importMsg, setImportMsg] = useState('');
+  const importSmartBillClients = () => {
+    const existing = new Set(clients.map((c)=>c.cui));
+    const toAdd = CLIENT_IMPORT_SEED
+      .filter(([, , cui]) => !existing.has(cui))
+      .map(([nume, tip, cui, adresa, administrator, contact]) => ({ id: uid(), nume, tip, cui, adresa, administrator, contact }));
+    if (toAdd.length === 0) { setImportMsg('Toți clienții din export sunt deja în listă.'); return; }
+    const next = [...clients, ...toAdd];
+    setClients(next);
+    persist('clients', next);
+    setImportMsg(`Am adăugat ${toAdd.length} clienți din exportul SmartBill.`);
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4 gap-3">
+        <h2 className="text-lg shrink-0" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Clienți</h2>
+        <input placeholder="Caută după nume sau CUI..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={importSmartBillClients} className="text-sm px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>📥 Importă din SmartBill ({CLIENT_IMPORT_SEED.length})</button>
+          <button onClick={openForm} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă client</button>
+        </div>
+      </div>
+      {importMsg && <p className="text-xs mb-3" style={{ color:'#4CAF7D' }}>{importMsg}</p>}
+      {form && (
+        <div className="rounded-xl p-4 mb-4 space-y-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="flex gap-2 mb-1">
+            {[['juridica','Persoană juridică'],['fizica','Persoană fizică']].map(([val,label])=>(
+              <button key={val} onClick={()=>setForm({...form, tip:val})} className="text-xs px-2.5 py-1.5 rounded-lg"
+                style={{ color: form.tip===val?'#14181C':'#8B93A0', background: form.tip===val?'#2E8BD1':'#171C21', fontWeight: form.tip===val?600:400 }}>{label}</button>
+            ))}
+          </div>
+          {form.tip === 'juridica' && (
+            <div>
+              <div className="flex gap-2">
+                <input placeholder="CUI (ex: 14399840)" value={form.cui} onChange={(e)=>setForm({...form, cui:e.target.value})} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+                <button onClick={runAutoLookup} disabled={!form.cui || lookup.status==='loading'} className="text-xs px-3 py-2 rounded-lg font-medium disabled:opacity-40 whitespace-nowrap" style={{ color:'#14181C', background:'#2E8BD1' }}>Preia automat</button>
+                <a href={form.cui ? cuiSearchUrl(form.cui) : undefined} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-2 rounded-lg font-medium whitespace-nowrap" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #2A323B', pointerEvents: form.cui?'auto':'none' }}>↗ Caută manual</a>
+              </div>
+              {lookup.message && <p className="text-xs mt-1 px-1" style={{ color: lookup.status==='error'?'#E05252':'#4CAF7D' }}>{lookup.message}</p>}
+            </div>
+          )}
+          {['nume','adresa','administrator','contact'].map((f)=>(
+            <input key={f} placeholder={{nume: form.tip==='juridica'?'Denumire firmă':'Nume persoană', adresa:'Adresă', administrator:'Administrator (nume, opțional)', contact:'Telefon / email'}[f]}
+              value={form[f]||''} onChange={(e)=>setForm({...form, [f]:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+          ))}
+          {form.tip === 'fizica' && <input placeholder="CNP (opțional)" value={form.cui} onChange={(e)=>setForm({...form, cui:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />}
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button onClick={()=>save(form)} disabled={!form.nume} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          </div>
+        </div>
+      )}
+      {clients.length === 0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun client încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {clients.filter((c)=> !filter || c.nume.toLowerCase().includes(filter.toLowerCase()) || (c.cui||'').toLowerCase().includes(filter.toLowerCase())).map((c)=>(
+            <div key={c.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div>
+                <div className="text-sm" style={{ color:'#E9E7E2' }}>{c.nume}</div>
+                <div className="text-xs" style={{ color:'#8B93A0' }}>{[c.cui,c.adresa,c.contact].filter(Boolean).join(' · ')}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={()=>setForm(c)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                <button onClick={()=>del(c.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const LUNI_RO = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+
+function RoDatePicker({ value, onChange }) {
+  const initParts = value ? value.split('-').map(Number) : [null, null, null];
+  const [ly, setLy] = useState(initParts[0]);
+  const [lm, setLm] = useState(initParts[1]);
+  const [ld, setLd] = useState(initParts[2]);
+
+  useEffect(() => {
+    if (!value) { setLy(null); setLm(null); setLd(null); }
+  }, [value]);
+
+  const now = new Date();
+  const years = [];
+  for (let yy = now.getFullYear() - 5; yy <= now.getFullYear() + 1; yy++) years.push(yy);
+  const daysInMonth = (yy, mm) => (yy && mm) ? new Date(yy, mm, 0).getDate() : 31;
+  const days = Array.from({ length: daysInMonth(ly, lm) }, (_, i) => i + 1);
+
+  const update = (ny, nm, nd) => {
+    setLy(ny); setLm(nm); setLd(nd);
+    if (ny && nm && nd) {
+      const clampedDay = Math.min(nd, daysInMonth(ny, nm));
+      onChange(`${ny}-${String(nm).padStart(2,'0')}-${String(clampedDay).padStart(2,'0')}`);
+    } else {
+      onChange('');
+    }
+  };
+
+  const selStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  return (
+    <div className="flex items-center gap-1">
+      <select value={ld||''} onChange={(e)=>update(ly, lm, Number(e.target.value)||null)} className="rounded-lg px-1.5 py-1.5 text-xs outline-none" style={selStyle}>
+        <option value="">Zi</option>
+        {days.map((dd)=><option key={dd} value={dd} style={{ background:'#1B2127' }}>{dd}</option>)}
+      </select>
+      <select value={lm||''} onChange={(e)=>update(ly, Number(e.target.value)||null, ld)} className="rounded-lg px-1.5 py-1.5 text-xs outline-none" style={selStyle}>
+        <option value="">Lună</option>
+        {LUNI_RO.map((lu,i)=><option key={lu} value={i+1} style={{ background:'#1B2127' }}>{lu}</option>)}
+      </select>
+      <select value={ly||''} onChange={(e)=>update(Number(e.target.value)||null, lm, ld)} className="rounded-lg px-1.5 py-1.5 text-xs outline-none" style={selStyle}>
+        <option value="">An</option>
+        {years.map((yy)=><option key={yy} value={yy} style={{ background:'#1B2127' }}>{yy}</option>)}
+      </select>
+      {value && <button onClick={()=>update(null,null,null)} className="text-xs px-1.5" style={{ color:'#5C6570' }}><Icon size={12}>✕</Icon></button>}
+    </div>
+  );
+}
+
+const ZILE_RO = ['Lu','Ma','Mi','Jo','Vi','Sâ','Du'];
+
+function RoCalendarPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const base = value ? new Date(value + 'T00:00:00') : new Date();
+  const [viewYear, setViewYear] = useState(base.getFullYear());
+  const [viewMonth, setViewMonth] = useState(base.getMonth());
+
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDayIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
+  const cells = [];
+  for (let i = 0; i < firstDayIdx; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const fmtDisplay = (v) => { if (!v) return 'Alege data'; const [y,m,d] = v.split('-'); return `${d}/${m}/${y}`; };
+  const cellDate = (d) => `${viewYear}-${String(viewMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+
+  const selectDay = (d) => { onChange(cellDate(d)); setOpen(false); };
+  const prevMonth = () => { if (viewMonth===0) { setViewMonth(11); setViewYear(viewYear-1); } else setViewMonth(viewMonth-1); };
+  const nextMonth = () => { if (viewMonth===11) { setViewMonth(0); setViewYear(viewYear+1); } else setViewMonth(viewMonth+1); };
+
+  return (
+    <div style={{ position:'relative', display:'inline-block' }}>
+      <button onClick={()=>setOpen(!open)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex items-center gap-1.5" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }}>
+        📅 {fmtDisplay(value)}
+      </button>
+      {open && (
+        <>
+          <div onClick={()=>setOpen(false)} style={{ position:'fixed', inset:0, zIndex:40 }} />
+          <div style={{ position:'absolute', top:'110%', left:0, zIndex:50, width:230, background:'#1B2127', border:'1px solid #2A323B' }} className="rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <button onClick={prevMonth} style={{ color:'#8B93A0' }}>‹</button>
+              <span className="text-sm" style={{ color:'#E9E7E2' }}>{LUNI_RO[viewMonth]} {viewYear}</span>
+              <button onClick={nextMonth} style={{ color:'#8B93A0' }}>›</button>
+            </div>
+            <div className="grid grid-cols-7 gap-1 mb-1">
+              {ZILE_RO.map((z)=><div key={z} className="text-center text-[10px]" style={{ color:'#5C6570' }}>{z}</div>)}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {cells.map((d,i)=> d ? (
+                <button key={i} onClick={()=>selectDay(d)} className="text-xs rounded py-1"
+                  style={{
+                    color: value === cellDate(d) ? '#14181C' : '#E9E7E2',
+                    background: value === cellDate(d) ? '#2E8BD1' : 'transparent',
+                  }}>{d}</button>
+              ) : <div key={i} />)}
+            </div>
+            {value && <button onClick={()=>{ onChange(''); setOpen(false); }} className="text-xs mt-2 w-full text-center" style={{ color:'#5C6570' }}>Șterge data</button>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function RoTimePicker({ value, onChange }) {
+  const [h, m] = (value || '08:00').split(':');
+  const hours = Array.from({ length:24 }, (_,i)=>String(i).padStart(2,'0'));
+  const minutes = Array.from({ length:60 }, (_, i) => String(i).padStart(2,'0'));
+  const selStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  return (
+    <div className="flex items-center gap-1">
+      <select value={h} onChange={(e)=>onChange(`${e.target.value}:${m}`)} className="rounded-lg px-2 py-2 text-sm outline-none" style={selStyle}>
+        {hours.map((hh)=><option key={hh} value={hh} style={{ background:'#1B2127' }}>{hh}</option>)}
+      </select>
+      <span style={{ color:'#8B93A0' }}>:</span>
+      <select value={m} onChange={(e)=>onChange(`${h}:${e.target.value}`)} className="rounded-lg px-2 py-2 text-sm outline-none" style={selStyle}>
+        {minutes.map((mm)=><option key={mm} value={mm} style={{ background:'#1B2127' }}>{mm}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function MaterialForm({ initial, onCancel, onSave }) {
+  const [form, setForm] = useState(initial || { id: uid(), denumire:'', categorie:'', um:'buc', stoc:0, stocMinim:0, pret:0 });
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <input placeholder="Denumire material" value={form.denumire} onChange={(e)=>setForm({...form, denumire:e.target.value})} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        <input placeholder="Categorie" value={form.categorie} onChange={(e)=>setForm({...form, categorie:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        <input placeholder="UM" value={form.um} onChange={(e)=>setForm({...form, um:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Stoc inițial
+          <input type="number" value={form.stoc} onChange={(e)=>setForm({...form, stoc:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Stoc minim
+          <input type="number" value={form.stocMinim} onChange={(e)=>setForm({...form, stocMinim:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        </label>
+        <label className="text-xs flex flex-col gap-1 col-span-2" style={{ color:'#8B93A0' }}>Preț unitar
+          <input type="number" value={form.pret} onChange={(e)=>setForm({...form, pret:e.target.value})} className="rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        </label>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+        <button onClick={()=>onSave({...form, stoc:Number(form.stoc)||0, stocMinim:Number(form.stocMinim)||0, pret:Number(form.pret)||0})} disabled={!form.denumire} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+      </div>
+    </div>
+  );
+}
+
+function MoveInput({ tip, defaultPret, onConfirm, onCancel }) {
+  const [cantitate, setCantitate] = useState('');
+  const [nota, setNota] = useState('');
+  const [pret, setPret] = useState(tip === 'intrare' ? (defaultPret ?? '') : '');
+  const color = tip === 'intrare' ? '#4CAF7D' : '#E05252';
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+      <input type="number" autoFocus placeholder="cant." value={cantitate} onChange={(e)=>setCantitate(e.target.value)} className="w-16 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:`1px solid ${color}66` }} />
+      {tip === 'intrare' && (
+        <input type="number" placeholder="cost/buc" value={pret} onChange={(e)=>setPret(e.target.value)} className="w-20 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:`1px solid ${color}66` }} />
+      )}
+      <input placeholder={tip==='intrare'?'furnizor':'șantier'} value={nota} onChange={(e)=>setNota(e.target.value)} className="w-32 rounded-lg px-2 py-1 text-xs outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+      <button onClick={()=>cantitate && onConfirm(Number(cantitate), nota, tip==='intrare' ? (Number(pret)||0) : undefined)} disabled={!cantitate} className="text-xs px-2 py-1 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:color }}>OK</button>
+      <button onClick={onCancel} style={{ color:'#8B93A0' }}><Icon>✕</Icon></button>
+    </div>
+  );
+}
+
+// Catalog de referință — prețuri găsite pe piață (cu TVA), orientative.
+// Verifică și ajustează la furnizorii tăi reali înainte de a le folosi în oferte,
+// mai ales la cabluri, unde prețul cuprului fluctuează des.
+const MATERIAL_CATALOG_SEED = [
+  ['Cablu N2XH 2x1.5 mmp', 'Cabluri', 'm', 4.59],
+  ['Cablu N2XH 3x1.5 mmp', 'Cabluri', 'm', 5.79],
+  ['Cablu N2XH 3x2.5 mmp', 'Cabluri', 'm', 8.39],
+  ['Cablu N2XH 3x4 mmp', 'Cabluri', 'm', 13.49],
+  ['Cablu N2XH 4x1.5 mmp', 'Cabluri', 'm', 7.59],
+  ['Cablu N2XH 4x2.5 mmp', 'Cabluri', 'm', 10.99],
+  ['Cablu N2XH 5x1.5 mmp', 'Cabluri', 'm', 8.99],
+  ['Cablu N2XH 5x2.5 mmp', 'Cabluri', 'm', 12.51],
+  ['Cablu N2XH 5x4 mmp', 'Cabluri', 'm', 20.99],
+  ['Cablu N2XH 5x6 mmp', 'Cabluri', 'm', 31.99],
+  ['Cablu N2XH 5x10 mmp', 'Cabluri', 'm', 50.99],
+  ['Cablu N2XH 5x16 mmp', 'Cabluri', 'm', 76.99],
+  ['Cablu N2XH 5x25 mmp', 'Cabluri', 'm', 109.99],
+  ['Cablu N2XH 5x35 mmp', 'Cabluri', 'm', 167.99],
+  ['Cablu S/FTP cat.6a', 'Cabluri', 'm', 2.80],
+  ['Jgheab metalic perforat 100x60mm', 'Jgheaburi', 'm', 20.00],
+  ['Jgheab metalic perforat 150x60mm', 'Jgheaburi', 'm', 27.00],
+  ['Jgheab metalic perforat 200x60mm', 'Jgheaburi', 'm', 30.00],
+  ['Tub HFT flexibil D16', 'Tuburi', 'm', 0.60],
+  ['Tub HFT flexibil D20', 'Tuburi', 'm', 0.62],
+  ['Tub HFT flexibil D25', 'Tuburi', 'm', 0.78],
+  ['Clemă Wago 221-412 (2 conductori, 4mm)', 'Cleme', 'buc', 2.50],
+  ['Clemă Wago 221-413 (3 conductori, 4mm)', 'Cleme', 'buc', 3.00],
+  ['Clemă Wago 221-415 (5 conductori, 4mm)', 'Cleme', 'buc', 5.00],
+  ['Clemă Wago 222-412 (2 conductori, doză)', 'Cleme', 'buc', 2.00],
+  ['Clemă Wago 2273-202 (slim, 2 conductori)', 'Cleme', 'buc', 1.50],
+  ['Doză aparat 68mm (îngropat)', 'Doze', 'buc', 1.50],
+  ['Priză schuko simplă cu ramă', 'Aparataj', 'buc', 15.00],
+  ['Priză schuko dublă cu ramă', 'Aparataj', 'buc', 22.00],
+  ['Întrerupător simplu cu ramă', 'Aparataj', 'buc', 15.00],
+  ['Întrerupător cap scară cu ramă', 'Aparataj', 'buc', 18.00],
+  ['Priză RJ45 cat.6', 'Aparataj', 'buc', 25.00],
+];
+
+const MATERIAL_IMPORT_SEED = [
+  ['Cuie rezistente 19 MM TKA (pentru ForceOne)','Andrei Arhitect','bucata',1600.0,0.28],
+  ['ASPIRATOR GEAM WV1 PLUS 100ML KARCHER','Columna','unitate',1.0,184.3],
+  ['BURGHIU 8X100X160','Columna','bucata',6.0,11.68],
+  ['DISC DIAMANTAT ECO UNIVERSAL 125MM BOSCH','Columna','pachetul',4.0,28.06],
+  ['DISC MULTICONST 115X1MM','Columna','pachetul',10.0,4.4],
+  ['DYMO COMPATIB ID1 VINIL 12MM X 5.5M NEGRU/ALB','Columna','bucata',10.0,29.38],
+  ['ECOTAXA','Columna','bucata',5.0,0.15],
+  ['Grip suport metalic pentru cabluri CH-55  63x40x32 M15','Columna','bucata',300.0,1.95],
+  ['PENSULA PLATA UNIVERSALA 20MM','Columna','unitate',2.0,1.74],
+  ['PIULI??A SIGURAN??A','Columna','kilogram',0.07,61.15],
+  ['PUNGA MAIEU,  32X60, ALB INSC.','Columna','bucata',1.0,1.36],
+  ['PUNGA PLASTIC','Columna','bucata',5.0,0.41],
+  ['SARMA FLUDOR 200 G','Columna','unitate',1.0,71.43],
+  ['Taxa verde categoria 5.4 LG','Columna','bucata',12.0,0.08],
+  ['Taxa verde categoria 5.5','Columna','bucata',17.0,0.18],
+  ['Taxă verde categoria 5.26','Columna','bucata',132.0,0.21],
+  ['Taxă verde categoria 5.32','Columna','bucata',9.0,0.37],
+  ['Taxă verde categoria 5.34','Columna','bucata',5.0,0.42],
+  ['Taxă verde categoria 5.35','Columna','bucata',7.0,0.44],
+  ['Taxă verde categoria 5.39','Columna','bucata',3.0,0.67],
+  ['Taxă verde categoria 5.40','Columna','bucata',8.0,0.83],
+  ['24VDC, Led Strip Extrem 4000K, SMD2835, LM281B, IP20, 25W/m, 128led/m, Tesa tape, 20202','offident','bucata',24.0,20.1],
+  ['PROFILE LED LMX-1616 15 5*15 5MM INTERIOR ANGLE 10 5MM 2M/SET','offident','bucata',14.0,25.15],
+  ['VENITURI SERVICII DE LIVRARE','offident','valoarea monetara',1.0,82.64],
+  ['VOLTAJ ADAPTOR SLIM CV 100W, 24VDC, IP67, CLPS100-W1V24, 19688','offident','bucata',1.0,100.6],
+  ['VOLTAJ ADAPTOR SLIM CV 150W, 24VDC, IP67, CLPS150-W1V24, 26613','offident','bucata',5.0,110.72],
+  ['VOLTAJ ADAPTOR SLIM CV 200W, 24VDC, IP67, CLPS200-W1V24, 21709','offident','bucata',2.0,169.36],
+  ['Voltaj Adaptor Slim CV 250W, 24VDC, IP67, CLPS250-H1V24, 26616','offident','bucata',2.0,173.69],
+  ['TUB BERGMAN 25  PVC LA BARA DE 3M 25BUC/LEGATURA','Parcare columna','bucata',3.0,4.24],
+  ['10 LAME CUTTER 18MM 1PX','Paris','bucata',5.0,2.31],
+  ['BURGHIU 10X150X210','Paris','bucata',1.0,14.2],
+  ['BURGHIU 10X250X310','Paris','bucata',1.0,20.5],
+  ['BURGHIU BETON SDS-PLUS Ø12x310 mm','Paris','bucata',1.0,70.41],
+  ['BURGHIU METAL HSS-SPRINT 13 x 151 mm','Paris','bucata',1.0,14.45],
+  ['CHEIE COMB.CLICHET 10MM','Paris','bucata',1.0,15.04],
+  ['CHEIE COMB.CLICHET 13MM','Paris','bucata',1.0,18.49],
+  ['CHEIE COMB.CLICHET 17MM','Paris','bucata',1.0,19.33],
+  ['CHEIE FIXĂ AUTO 18x19mm STANDARD','Paris','bucata',1.0,17.23],
+  ['DALTA BETON 40X250 DEX','Paris','bucata',1.0,17.65],
+  ['LANT OT ZN ZALE LUNG 2MM','Paris','metru',6.0,4.7],
+  ['SET 32 BITI + ADAPTATOR BOSCH','Paris','bucata',1.0,36.05],
+  ['TOYA SFOARA ZIDARI 100M','Paris','bucata',1.0,12.52],
+  ['BANDA SPIRALATA FIXARE CABLURI D=10MM ALB TRANSPARENT L=10M A 32-803','Smart','set',1.0,15.31],
+  ['BARA DE PAMANTARE MONTAJ PE SINA  4 GAURI 2.5-16MMP IZOLATA VERDE NPE-G6-4','Smart','bucata',1.0,5.07],
+  ['BRIDA PLASTIC 142*2.5 ALB (100BUC/SET) 01-604','Smart','set',1.0,3.52],
+  ['BRIDA PLASTIC 200*4.8 NEGRU (100BUC/SET) VT-11177','Smart','bucata',1.0,13.39],
+  ['CABLU DATE FTP CAT 6 350MBIT/SEC D=6.05MM ECRANAT','Smart','metru',45.0,3.26],
+  ['CABLU N2XH-J 3*1.5 HALOGEN FREE NEGRU UNIFILAR','Smart','metru',16.0,4.5],
+  ['Cofret din plastic, IP40, montaj ST, usa transp, 3x18 module','Smart','bucata',1.0,158.4],
+  ['Conductor flexibil H07V-K (MYF) 2.5 albastru','Smart','metru liniar',100.0,1.39],
+  ['Conductor flexibil H07V-K (MYF) 2.5 galben-verde','Smart','metru liniar',100.0,1.39],
+  ['Conductor flexibil H07V-K (MYF) 2.5 rosu','Smart','metru liniar',100.0,1.39],
+  ['CONECTOR 2 POLI 2*0.2-4MM 32A PT MYF SI FY WAG 221-412/100 SET 100BUC','Smart','set',1.0,144.39],
+  ['CONECTOR 3 POLI 3*0.2-4MM 32A PT MYF SI FY WAG 221-413/50 SET 50BUC','Smart','set',2.0,90.56],
+  ['CONECTOR 5 POLI 5*0.2-4MM PT MYF SI FY WAG 221-415/25 SET 25BUC','Smart','set',2.0,71.59],
+  ['DISJUNCTOR 1P+N C 16A  4.5KA EZ9P32616','Smart','bucata',2.0,24.37],
+  ['DISJUNCTOR DIFERENTIAL 1P+N C 25A  30MA CLASA AC  4.5KA L36MM RCBO EZ9D32625','Smart','bucata',1.0,124.77],
+  ['DOZA APARAT MODULARA RIGIPS 4M HALOGEN FREE GWT850GRD GW24404PM','Smart','bucata',1.0,10.14],
+  ['DOZA APARAT MODULARA RIGIPS 6M HALOGEN FREE GWT850GRD GW24406PM','Smart','bucata',3.0,15.56],
+  ['DOZA DE DISTRIB. HFT, UV, IP65, J200B,200x155x85,GRIDES','Smart','bucata',1.0,17.97],
+  ['DOZA RAMIFICATIE PT/JGHEAB 84*45MM PVC BUDA1','Smart','bucata',3.0,2.64],
+  ['ECOTAXA','Smart','bucata',1.0,0.15],
+  ['PIULITA  M 4  DIN934 8 ZA 031601 SET 10BUC','Smart','set',1.0,1.13],
+  ['PRIZA INCASTRATA 230V 16A 2P+PE 70/87MM IP54 570.4062 SCAME','Smart','bucata',1.0,30.24],
+  ['PRIZA INCASTRATA 230V 16A 2P+PE OBLICA 65/85MM IP44 PKF16F423','Smart','bucata',1.0,26.51],
+  ['SACOSA MAIOU BR','Smart','bucata',1.0,0.84],
+  ['SAIBA PLATA  A  4 DIN125 ZA 006986 SET 10BUC','Smart','set',1.0,0.75],
+  ['SERVICII DE LIVRARE','Smart','valoarea monetara',1.0,42.02],
+  ['Silicone Tube Neon Flex Square, 24VDC, 3000K, SQUS-N038, 32419','Smart','bucata',30.0,27.27],
+  ['Square Silicon Tube Neon FLEX 4000K, SQ-US-N2020, IP65, 24VDC,m, 23870','Smart','bucata',15.0,66.12],
+  ['SUPORT FIXARE BRIDA AUTOADEZIV 30*30*8.7 PT BRIDA 6.4MM 500043/10','Smart','set',1.0,3.57],
+  ['SURUB CAP INECAT LOCAS CRUCIFORM M4*25 BNK0309182/5 SET 5BUC DIN965 4.8 ZA 012885','Smart','set',2.0,1.13],
+  ['TABLOU ABS  330* 250*140MM CU PANOU SI USA MATA IP65 800.700.002','Smart','bucata',1.0,63.41],
+  ['Taxa verde categoria 5.4','Smart','bucata',4.0,0.08],
+  ['Taxă verde categoria 5.26','Smart','bucata',32.0,0.21],
+  ['Taxă verde categoria 5.32','Smart','bucata',4.0,0.37],
+  ['Taxă verde categoria 5.39','Smart','bucata',4.0,0.67],
+];
+
+function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist, company, subTab }) {
+  const [form, setForm] = useState(null);
+  const [moveState, setMoveState] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [exportFrom, setExportFrom] = useState('');
+  const [exportTo, setExportTo] = useState('');
+  const [exportGestiuni, setExportGestiuni] = useState(new Set());
+  const [filter, setFilter] = useState('');
+
+  const saveMaterial = (m) => {
+    const next = materials.some((x)=>x.id===m.id) ? materials.map((x)=>x.id===m.id?m:x) : [...materials, m];
+    setMaterials(next); persist('materials', next); setForm(null);
+  };
+  const deleteMaterial = (id) => { const next = materials.filter((m)=>m.id!==id); setMaterials(next); persist('materials', next); };
+  const confirmMove = (material, tip, cantitate, nota, pret) => {
+    let nextMaterials;
+    if (tip === 'intrare' && pret > 0) {
+      const stocVechi = Number(material.stoc) || 0;
+      const pretVechi = Number(material.pret) || 0;
+      const stocNouTotal = stocVechi + cantitate;
+      const pretMediuNou = stocNouTotal > 0 ? ((stocVechi * pretVechi) + (cantitate * pret)) / stocNouTotal : pret;
+      nextMaterials = materials.map((m)=>m.id===material.id ? { ...m, stoc: stocNouTotal, pret: Math.round(pretMediuNou*100)/100 } : m);
+    } else {
+      const delta = tip==='intrare' ? cantitate : -cantitate;
+      nextMaterials = materials.map((m)=>m.id===material.id ? {...m, stoc:(Number(m.stoc)||0)+delta} : m);
+    }
+    setMaterials(nextMaterials); persist('materials', nextMaterials);
+    const move = { id: uid(), materialId: material.id, tip, cantitate, nota, pret: tip==='intrare' ? pret : undefined, data: new Date().toISOString().slice(0,10) };
+    const nextMoves = [move, ...stockMoves];
+    setStockMoves(nextMoves); persist('stockMoves', nextMoves);
+    setMoveState(null);
+  };
+  const normalizeSearch = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
+  const filtered = materials.filter((m)=> !filter || normalizeSearch(m.denumire).includes(normalizeSearch(filter)) || normalizeSearch(m.categorie).includes(normalizeSearch(filter)));
+
+  const importCatalog = () => {
+    const existing = new Set(materials.map((m)=>m.denumire));
+    const toAdd = MATERIAL_CATALOG_SEED
+      .filter(([denumire]) => !existing.has(denumire))
+      .map(([denumire, categorie, um, pret]) => ({ id: uid(), denumire, categorie, um, stoc: 0, stocMinim: 0, pret }));
+    if (toAdd.length === 0) return;
+    const next = [...materials, ...toAdd];
+    setMaterials(next);
+    persist('materials', next);
+  };
+
+  const [sbImportMsg, setSbImportMsg] = useState('');
+  const importSmartBillStock = () => {
+    const existing = new Set(materials.map((m)=>m.denumire));
+    const toAdd = MATERIAL_IMPORT_SEED
+      .filter(([denumire]) => !existing.has(denumire))
+      .map(([denumire, categorie, um, stoc, pret]) => ({ id: uid(), denumire, categorie, um, stoc, stocMinim: 0, pret }));
+    if (toAdd.length === 0) { setSbImportMsg('Toate materialele din gestiune sunt deja în listă.'); return; }
+    const next = [...materials, ...toAdd];
+    setMaterials(next);
+    persist('materials', next);
+    setSbImportMsg(`Am adăugat ${toAdd.length} materiale din gestiunea SmartBill.`);
+  };
+
+  const exportExcel = () => {
+    const filteredMaterials = exportGestiuni.size === 0
+      ? materials
+      : materials.filter((m) => exportGestiuni.has(m.categorie));
+
+    const rows = filteredMaterials.map((m) => {
+      const movesForMaterial = stockMoves.filter((mv) => mv.materialId === m.id);
+
+      // Mișcări de după perioadă — le "dăm înapoi" ca să aflăm stocul de la finalul perioadei.
+      const after = exportTo ? movesForMaterial.filter((mv) => mv.data > exportTo) : [];
+      const netAfter = after.reduce((s, mv) => s + (mv.tip === 'intrare' ? mv.cantitate : -mv.cantitate), 0);
+      const stocFinal = (Number(m.stoc) || 0) - netAfter;
+
+      const inPeriod = movesForMaterial.filter((mv) =>
+        (!exportFrom || mv.data >= exportFrom) && (!exportTo || mv.data <= exportTo)
+      );
+      const intrariMoves = inPeriod.filter((mv) => mv.tip === 'intrare');
+      const iesiriMoves = inPeriod.filter((mv) => mv.tip === 'iesire');
+      const intrari = intrariMoves.reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
+      const iesiri = iesiriMoves.reduce((s, mv) => s + (Number(mv.cantitate) || 0), 0);
+      const stocInitial = stocFinal - intrari + iesiri;
+      const pret = Number(m.pret) || 0;
+      // Valoarea intrărilor se calculează cu costul real înregistrat la fiecare intrare
+      // (dacă o mișcare mai veche nu are cost înregistrat, se folosește prețul curent al materialului).
+      const valoareIntrari = intrariMoves.reduce((s, mv) => s + (Number(mv.cantitate)||0) * (mv.pret != null && mv.pret !== '' ? Number(mv.pret) : pret), 0);
+
+      return {
+        'Gestiune': m.categorie || '',
+        'Produs': m.denumire,
+        'U.M.': m.um,
+        'Stoc inițial': stocInitial,
+        'Intrări': intrari,
+        'Ieșiri': iesiri,
+        'Stoc final': stocFinal,
+        'Sold inițial': Math.round(stocInitial * pret * 100) / 100,
+        'Valoare intrări': Math.round(valoareIntrari * 100) / 100,
+        'Valoare ieșiri': Math.round(iesiri * pret * 100) / 100,
+        'Sold final': Math.round(stocFinal * pret * 100) / 100,
+      };
+    });
+
+    const totalRow = {
+      'Gestiune': 'TOTAL', 'Produs': '', 'U.M.': '',
+      'Stoc inițial': '', 'Intrări': '', 'Ieșiri': '', 'Stoc final': '',
+      'Sold inițial': Math.round(rows.reduce((s,r)=>s+(Number(r['Sold inițial'])||0),0)*100)/100,
+      'Valoare intrări': Math.round(rows.reduce((s,r)=>s+(Number(r['Valoare intrări'])||0),0)*100)/100,
+      'Valoare ieșiri': Math.round(rows.reduce((s,r)=>s+(Number(r['Valoare ieșiri'])||0),0)*100)/100,
+      'Sold final': Math.round(rows.reduce((s,r)=>s+(Number(r['Sold final'])||0),0)*100)/100,
+    };
+    const sheetRows = rows.length
+      ? [...rows, totalRow]
+      : [{
+          'Gestiune': '', 'Produs': 'Niciun material în gestiunile selectate.', 'U.M.': '',
+          'Stoc inițial': '', 'Intrări': '', 'Ieșiri': '', 'Stoc final': '',
+          'Sold inițial': '', 'Valoare intrări': '', 'Valoare ieșiri': '', 'Sold final': '',
+        }];
+
+    const fmtRo = (d) => { if (!d) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
+    const gestiuniLabel = exportGestiuni.size === 0 ? 'Toate' : [...exportGestiuni].join(', ');
+    const azi = new Date();
+    const extrasLa = `${String(azi.getDate()).padStart(2,'0')}/${String(azi.getMonth()+1).padStart(2,'0')}/${azi.getFullYear()}`;
+
+    const headerRows = [
+      [company?.nume || 'Firma mea'],
+      [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
+      [],
+      ['Balanța stocului'],
+      [`Data început perioadă: ${fmtRo(exportFrom) || '(nespecificată)'}`],
+      [`Data sfârșit perioadă: ${fmtRo(exportTo) || '(nespecificată)'}`],
+      [`Extras la: ${extrasLa}`],
+      [],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(headerRows);
+    XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
+    ws['!cols'] = [{wch:16},{wch:40},{wch:8},{wch:11},{wch:9},{wch:9},{wch:11},{wch:12},{wch:13},{wch:13},{wch:12}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Balanta stocului');
+    const label = `${exportFrom || 'inceput'}_${exportTo || 'azi'}`;
+    XLSX.writeFile(wb, `balanta_stocului_${label}.xlsx`);
+  };
+
+  const gestiuni = [...new Set(materials.map((m)=>m.categorie).filter(Boolean))].sort();
+  const [stocShowAll, setStocShowAll] = useState(false);
+  const [gestShowAll, setGestShowAll] = useState(false);
+  const [gestFlatAll, setGestFlatAll] = useState(false);
+  const [gestGroup, setGestGroup] = useState(null);
+  const searchingGestiune = filter.trim() !== '';
+
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{subTab === 'gestiune' ? 'Materiale — Gestiune' : 'Materiale — Stocuri'}</h2>
+      <p className="text-xs mb-3" style={{ color:'#5C6570' }}>Gestiune — lista de materiale (adaugă, editează, importă). Stocuri — cantități curente și mișcări de intrare/ieșire.</p>
+
+      {subTab === 'gestiune' && (
+        <div>
+          <div className="flex justify-between items-center mb-2 gap-3 flex-wrap">
+            <input placeholder="Caută gestiune sau material..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+            {!searchingGestiune && !gestShowAll && <button onClick={()=>setGestShowAll(true)} className="text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}>🗂 Afișează toate gestiunile</button>}
+            {!searchingGestiune && gestShowAll && <button onClick={()=>{ setGestShowAll(false); setGestGroup(null); setGestFlatAll(false); }} className="text-xs px-3 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>Ascunde</button>}
+            <button onClick={importSmartBillStock} className="text-xs px-2.5 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>📥 SmartBill</button>
+            <button onClick={importCatalog} className="text-xs px-2.5 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>📥 Catalog</button>
+            {!form && <button onClick={()=>{ setForm({}); setAddMode('manual'); }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă material</button>}
+          </div>
+
+          <details className="mb-3">
+            <summary className="text-xs cursor-pointer select-none" style={{ color:'#5C6570' }}>📊 Export balanță stoc</summary>
+            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+              <RoCalendarPicker value={exportFrom} onChange={setExportFrom} />
+              <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
+              <RoCalendarPicker value={exportTo} onChange={setExportTo} />
+              <button onClick={exportExcel} className="text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Exportă Excel</button>
+            </div>
+            {gestiuni.length > 0 && (
+              <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                <span className="text-[11px] mr-1" style={{ color:'#5C6570' }}>Gestiuni (nimic bifat = toate):</span>
+                <button onClick={()=>setExportGestiuni(new Set(gestiuni))} className="text-[11px] px-2 py-0.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>Selectează toate</button>
+                {exportGestiuni.size > 0 && (
+                  <button onClick={()=>setExportGestiuni(new Set())} className="text-[11px] px-2 py-0.5 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Deselectează</button>
+                )}
+                {gestiuni.map((g)=>{
+                  const active = exportGestiuni.has(g);
+                  return (
+                    <button key={g} onClick={()=>{
+                        const next = new Set(exportGestiuni);
+                        active ? next.delete(g) : next.add(g);
+                        setExportGestiuni(next);
+                      }}
+                      className="text-[11px] px-2 py-0.5 rounded-lg"
+                      style={{ color: active?'#14181C':'#8B93A0', background: active?'#2E8BD1':'#171C21' }}>{g}</button>
+                  );
+                })}
+              </div>
+            )}
+          </details>
+
+          {sbImportMsg && <p className="text-xs mb-3" style={{ color:'#4CAF7D' }}>{sbImportMsg}</p>}
+          {form && !form.id && <MaterialForm initial={null} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
+          {form && form.id && <MaterialForm initial={form} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
+
+          {materials.length===0 && !form ? (
+            <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material încă.</div>
+          ) : (searchingGestiune || gestFlatAll) ? (
+            <>
+              {gestFlatAll && !searchingGestiune && (
+                <button onClick={()=>setGestFlatAll(false)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
+              )}
+              <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
+                Valoare totală ({filtered.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(filtered.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span>
+              </div>
+              <div className="space-y-2">
+                {filtered.map((m)=>(
+                  <div key={m.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                    <div className="min-w-0">
+                      <div className="text-sm truncate" style={{ color:'#E9E7E2' }}>{m.denumire}{m.categorie && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{m.categorie}</span>}</div>
+                      <div className="text-[11px]" style={{ color:'#5C6570' }}>{m.stoc} {m.um} × {money(m.pret)}/{m.um}</div>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0">
+                      <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(m.stoc)||0)*(Number(m.pret)||0))}</span>
+                      <button onClick={()=>setForm(m)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                      <button onClick={()=>deleteMaterial(m.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : !gestShowAll ? (
+            <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Caută o gestiune sau un material, sau apasă „Afișează toate gestiunile".</div>
+          ) : gestGroup === null ? (
+            <>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm" style={{ color:'#8B93A0' }}>Valoare totală, toate gestiunile ({materials.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(materials.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span></span>
+                <button onClick={()=>setGestFlatAll(true)} className="text-xs px-2.5 py-1.5 rounded-lg shrink-0" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>Arată toate materialele</button>
+              </div>
+              <div className="space-y-2">
+                {gestiuni.map((g)=>{
+                  const count = materials.filter((m)=>m.categorie===g).length;
+                  return (
+                    <button key={g} onClick={()=>setGestGroup(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                      <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
+                      <span className="text-xs" style={{ color:'#8B93A0' }}>{count} materiale →</span>
+                    </button>
+                  );
+                })}
+                {materials.some((m)=>!m.categorie) && (
+                  <button onClick={()=>setGestGroup('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
+                    <span className="text-xs" style={{ color:'#8B93A0' }}>{materials.filter((m)=>!m.categorie).length} materiale →</span>
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <button onClick={()=>setGestGroup(null)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
+              {(() => {
+                const groupItems = gestGroup === '__fara__' ? materials.filter((m)=>!m.categorie) : materials.filter((m)=>m.categorie===gestGroup);
+                return (
+                  <>
+                    <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
+                      Valoare totală ({groupItems.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(groupItems.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {groupItems.map((m)=>(
+                        <div key={m.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                          <div className="min-w-0">
+                            <div className="text-sm truncate" style={{ color:'#E9E7E2' }}>{m.denumire}</div>
+                            <div className="text-[11px]" style={{ color:'#5C6570' }}>{m.stoc} {m.um} × {money(m.pret)}/{m.um}</div>
+                          </div>
+                          <div className="flex items-center gap-4 shrink-0">
+                            <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(m.stoc)||0)*(Number(m.pret)||0))}</span>
+                            <button onClick={()=>setForm(m)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                            <button onClick={()=>deleteMaterial(m.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+            </>
+          )}
+        </div>
+      )}
+
+      {subTab === 'stocuri' && (
+        <div>
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <input placeholder="Caută material..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+            {!stocShowAll && !searchingGestiune && (
+              <button onClick={()=>setStocShowAll(true)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📦 Afișează stoc integral</button>
+            )}
+            {stocShowAll && !searchingGestiune && (
+              <button onClick={()=>setStocShowAll(false)} className="text-xs px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>Ascunde lista</button>
+            )}
+          </div>
+          {materials.length===0 ? (
+            <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material — adaugă mai întâi din tab-ul „Gestiune".</div>
+          ) : !stocShowAll && !searchingGestiune ? (
+            <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Caută un material, sau apasă „Afișează stoc integral".</div>
+          ) : (
+              <div className="space-y-2">
+              {filtered.map((m)=>{
+                const low = Number(m.stoc) < Number(m.stocMinim);
+                const moves = stockMoves.filter((mv)=>mv.materialId===m.id).slice(0,8);
+                return (
+                  <div key={m.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:`1px solid ${low?'#E0525266':'#2A323B'}` }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm truncate" style={{ color:'#E9E7E2' }}>{m.denumire}</div>
+                        <button onClick={()=>setExpanded(expanded===m.id?null:m.id)} className="text-xs mt-0.5" style={{ color:'#5C6570' }}>{moves.length>0 ? (expanded===m.id?'Ascunde istoricul':'Vezi istoricul') : 'Fără mișcări'}</button>
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-right">
+                          <div className="text-sm font-medium" style={{ color: low?'#E05252':'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{m.stoc} {m.um}</div>
+                          <div className="text-[11px]" style={{ color:'#5C6570' }}>min {m.stocMinim}</div>
+                        </div>
+                        {moveState?.materialId===m.id ? (
+                          <MoveInput tip={moveState.tip} defaultPret={m.pret} onConfirm={(c,n,p)=>confirmMove(m, moveState.tip, c, n, p)} onCancel={()=>setMoveState(null)} />
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={()=>setMoveState({materialId:m.id, tip:'intrare'})} className="text-xs px-2 py-1 rounded-lg font-medium" style={{ color:'#4CAF7D', background:'#171C21' }}>+ Intrare</button>
+                            <button onClick={()=>setMoveState({materialId:m.id, tip:'iesire'})} className="text-xs px-2 py-1 rounded-lg font-medium" style={{ color:'#E05252', background:'#171C21' }}>− Ieșire</button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {expanded===m.id && moves.length>0 && (
+                      <div className="mt-2 space-y-1">
+                        {moves.map((mv)=>(
+                          <div key={mv.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                            <span style={{ color:'#8B93A0' }}>{mv.data} {mv.nota && `· ${mv.nota}`}</span>
+                            <span style={{ color: mv.tip==='intrare'?'#4CAF7D':'#E05252', fontFamily:"'JetBrains Mono', monospace" }}>
+                              {mv.tip==='intrare'?'+':'−'}{mv.cantitate}{mv.tip==='intrare' && mv.pret ? ` @ ${money(mv.pret)}` : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DEVIZ_STATUSES = ['Ciornă', 'Emis', 'Semnat'];
+
+function DevizForm({ clients, materials, initial, onCancel, onSave }) {
+  const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
+  const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
+  const [tva, setTva] = useState(initial?.tva ?? 21);
+  const [nrContract, setNrContract] = useState(initial?.nrContract || '');
+  const [dataContract, setDataContract] = useState(initial?.dataContract || '');
+  const [actAditional, setActAditional] = useState(initial?.actAditional || '');
+  const [dataActAditional, setDataActAditional] = useState(initial?.dataActAditional || '');
+  const [adresaLucrare, setAdresaLucrare] = useState(initial?.adresaLucrare || '');
+  const [lucrare, setLucrare] = useState(initial?.lucrare || '');
+  const subtotal = calcSubtotal(items);
+  const total = subtotal * (1 + tva/100);
+
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{initial?.numar ? 'Editare deviz' : 'Deviz nou'}</h3>
+        <button onClick={onCancel} style={{ color:'#8B93A0' }}><Icon>✕</Icon></button>
+      </div>
+      {clients.length === 0 ? (
+        <p className="text-sm" style={{ color:'#8B93A0' }}>Adaugă mai întâi un client (Beneficiar) în tab-ul „Clienți".</p>
+      ) : (
+        <>
+          <div className="flex gap-3 mb-3">
+            <select value={clientId} onChange={(e)=>setClientId(e.target.value)} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+              {clients.map((c)=><option key={c.id} value={c.id} style={{ background:'#1B2127' }}>{c.nume}</option>)}
+            </select>
+            <div className="flex items-center gap-2 rounded-lg px-3" style={inputStyle}>
+              <span className="text-xs" style={{ color:'#8B93A0' }}>TVA</span>
+              <input type="number" value={tva} onChange={(e)=>setTva(e.target.value)} className="w-12 bg-transparent outline-none text-sm py-2" style={{ color:'#E9E7E2' }} />
+              <span className="text-xs" style={{ color:'#8B93A0' }}>%</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <input placeholder="Nr. contract" value={nrContract} onChange={(e)=>setNrContract(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data contract
+              <input type="date" value={dataContract} onChange={(e)=>setDataContract(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            </label>
+            <input placeholder="Act adițional" value={actAditional} onChange={(e)=>setActAditional(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data act adițional
+              <input type="date" value={dataActAditional} onChange={(e)=>setDataActAditional(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            </label>
+            <input placeholder="Adresă șantier" value={adresaLucrare} onChange={(e)=>setAdresaLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            <input placeholder="Lucrare (ex: Instalații electrice interioare)" value={lucrare} onChange={(e)=>setLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          </div>
+
+          <LineItemsEditor items={items} setItems={setItems} materials={materials} />
+          <div className="flex justify-end gap-6 mt-3 px-2 text-sm">
+            <span style={{ color:'#8B93A0' }}>Total: <span style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{money(subtotal)}</span></span>
+            <span style={{ color:'#8B93A0' }}>Total cu TVA: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span></span>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button
+              onClick={()=>onSave({
+                id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10),
+                clientId, items, tva:Number(tva), status: initial?.status || 'Ciornă',
+                nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare,
+              })}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill }) {
+  const [form, setForm] = useState(prefill || null);
+
+  useEffect(() => {
+    if (prefill) {
+      setForm(prefill);
+      onConsumePrefill();
+    }
+  }, [prefill]);
+
+  const nextNumber = (list) => {
+    const year = new Date().getFullYear();
+    const n = list.filter((d)=>d.numar?.includes(`DEV-${year}`)).length + 1;
+    return `DEV-${year}-${String(n).padStart(3,'0')}`;
+  };
+
+  const save = (d) => {
+    const withNumber = { ...d, numar: d.numar || nextNumber(devize) };
+    const original = devize.find((x)=>x.id===d.id);
+    let finalDoc = withNumber;
+    if (original && original.stocDedus) {
+      onReverse(original);
+      const unmatched = onEmis(withNumber);
+      finalDoc = { ...withNumber, stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+    }
+    const next = devize.some((x)=>x.id===d.id) ? devize.map((x)=>x.id===d.id?finalDoc:x) : [...devize, finalDoc];
+    setDevize(next); persist('devize', next); setForm(null);
+  };
+  const del = (id) => {
+    const doc = devize.find((d)=>d.id===id);
+    if (doc && doc.stocDedus) onReverse(doc);
+    const next = devize.filter((d)=>d.id!==id); setDevize(next); persist('devize', next);
+  };
+  const setStatus = (id, status) => {
+    const doc = devize.find((d)=>d.id===id);
+    let extra = {};
+    if (status === 'Emis' && doc && !doc.stocDedus) {
+      const unmatched = onEmis(doc);
+      extra = { stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+    } else if (status === 'Ciornă' && doc && doc.stocDedus) {
+      onReverse(doc);
+      extra = { stocDedus: false, stocMesaj: 'Stoc restaurat (revenire la ciornă).' };
+    }
+    const next = devize.map((d)=>d.id===id?{...d,status,...extra}:d);
+    setDevize(next); persist('devize', next);
+  };
+  const clientName = (id) => clients.find((c)=>c.id===id)?.nume || '—';
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Devize</h2>
+        <div className="flex items-center gap-2">
+          {devize.length>0 && <button onClick={()=>printAll(devize)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127', border:'1px solid #2A323B' }}>📚 Exportă toate în PDF</button>}
+          {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Deviz nou</button>}
+        </div>
+      </div>
+
+      {form && <DevizForm clients={clients} materials={materials} initial={form} onCancel={()=>setForm(null)} onSave={save} />}
+
+      {devize.length === 0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun deviz încă. Apasă „Deviz nou" pentru a crea primul.</div>
+      ) : (
+        <div className="space-y-2">
+          {devize.slice().sort((a,b)=>a.numar<b.numar?1:-1).map((d)=>{
+            const total = calcSubtotal(d.items) * (1 + d.tva/100);
+            return (
+              <div key={d.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-sm font-medium truncate" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{d.numar}</span>
+                    <span className="text-xs truncate" style={{ color:'#8B93A0' }}>{clientName(d.clientId)} · {d.data}{d.lucrare ? ` · ${d.lucrare}` : ''}</span>
+                  </div>
+                  <span className="text-sm shrink-0" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span>
+                  <div className="shrink-0"><StatusSwitch status={d.status} options={DEVIZ_STATUSES} onChange={(s)=>setStatus(d.id,s)} /></div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={()=>printOne(d)} className="text-xs px-2 py-1 rounded-lg flex items-center gap-1" style={{ color:'#8B93A0', background:'#171C21' }}><Icon>🖨</Icon> PDF</button>
+                    <button onClick={()=>setForm(d)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                    <button onClick={()=>del(d.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                  </div>
+                </div>
+                {d.stocMesaj && (
+                  <div className="text-xs mt-2" style={{ color: d.stocMesaj.startsWith('Nepotrivite') ? '#E9A23B' : '#4CAF7D' }}>{d.stocMesaj}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SANTIER_STATUSES = ['Activ', 'Finalizat'];
+
+function SiteAlertsPanel({ santierId, categorie, categorieLabel, alerte, setAlerte, persist, itemOptions }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [denumire, setDenumire] = useState('');
+  const [descriere, setDescriere] = useState('');
+  const alerteAici = alerte.filter((a)=>a.santierId===santierId && a.categorie===categorie);
+  const alerteActive = alerteAici.filter((a)=>a.status==='Nouă');
+
+  const addAlerta = () => {
+    if (!denumire.trim() || !descriere.trim()) return;
+    const next = [...alerte, { id: uid(), santierId, categorie, denumire: denumire.trim(), descriere: descriere.trim(), data: new Date().toISOString().slice(0,10), status:'Nouă' }];
+    setAlerte(next); persist('alerteSantier', next); setDenumire(''); setDescriere('');
+  };
+  const rezolva = (id) => {
+    const next = alerte.map((a)=>a.id===id?{...a, status:'Rezolvată'}:a);
+    setAlerte(next); persist('alerteSantier', next);
+  };
+  const delAlerta = (id) => { const next = alerte.filter((a)=>a.id!==id); setAlerte(next); persist('alerteSantier', next); };
+
+  return (
+    <div className="rounded-xl p-3" style={{ background: alerteActive.length ? '#2A1518' : '#1B2127', border:`1px solid ${alerteActive.length?'#E0525266':'#2A323B'}` }}>
+      <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>⚠ Sesizări {categorieLabel}{alerteActive.length>0 && <span style={{ color:'#E05252' }}> ({alerteActive.length} deschise)</span>}</div>
+      <div className="flex gap-2 mb-2 flex-wrap">
+        {itemOptions && itemOptions.length > 0 ? (
+          <select value={denumire} onChange={(e)=>setDenumire(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle}>
+            <option value="">Alege...</option>
+            {itemOptions.map((o)=><option key={o} value={o} style={{ background:'#1B2127' }}>{o}</option>)}
+          </select>
+        ) : (
+          <input placeholder="Denumire" value={denumire} onChange={(e)=>setDenumire(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none w-40" style={inputStyle} />
+        )}
+        <input placeholder="Ce s-a întâmplat?" value={descriere} onChange={(e)=>setDescriere(e.target.value)} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none min-w-[140px]" style={inputStyle} />
+        <button onClick={addAlerta} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#E05252' }}>🚨 Sesizează</button>
+      </div>
+      {alerteAici.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Nicio problemă raportată.</div> : (
+        <div className="space-y-1">
+          {alerteAici.slice().sort((a,b)=> (a.status==='Nouă'?0:1) - (b.status==='Nouă'?0:1)).map((a)=>(
+            <div key={a.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+              <span style={{ color: a.status==='Nouă' ? '#E9E7E2' : '#5C6570' }}>
+                <b>{a.denumire}</b> — {a.descriere} <span style={{ color:'#5C6570' }}>({a.data})</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <span style={{ color: a.status==='Nouă'?'#E05252':'#4CAF7D' }}>{a.status}</span>
+                {a.status==='Nouă' && <button onClick={()=>rezolva(a.id)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>Rezolvată</button>}
+                <button onClick={()=>delAlerta(a.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [sculaNoua, setSculaNoua] = useState('');
+  const [sculaAdusaDe, setSculaAdusaDe] = useState('');
+  const sculeAici = sculeSantier.filter((s)=>s.santierId===santierId);
+  const addScula = () => {
+    if (!sculaNoua.trim()) return;
+    const next = [...sculeSantier, { id: uid(), santierId, denumire: sculaNoua.trim(), adusaDe: sculaAdusaDe.trim(), data: new Date().toISOString().slice(0,10) }];
+    setSculeSantier(next); persist('sculeSantier', next); setSculaNoua(''); setSculaAdusaDe('');
+  };
+  const delScula = (id) => { const next = sculeSantier.filter((s)=>s.id!==id); setSculeSantier(next); persist('sculeSantier', next); };
+
+  return (
+    <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🔧 Scule la șantier</div>
+      <div className="flex gap-2 mb-2">
+        <input placeholder="Sculă (ex: Bormașină Bosch)" value={sculaNoua} onChange={(e)=>setSculaNoua(e.target.value)} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+        <input placeholder="Adusă de" value={sculaAdusaDe} onChange={(e)=>setSculaAdusaDe(e.target.value)} className="w-32 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+        <button onClick={addScula} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă</button>
+      </div>
+      {sculeAici.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Nicio sculă adăugată.</div> : (
+        <div className="space-y-1">
+          {sculeAici.map((s)=>(
+            <div key={s.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+              <span style={{ color:'#E9E7E2' }}>{s.denumire}{s.adusaDe && <span style={{ color:'#8B93A0' }}> · {s.adusaDe}</span>}</span>
+              <button onClick={()=>delScula(s.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist, onExportToDeviz, onCerereMaterial, currentUser }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  // --- Cerere materiale ---
+  const [cerereForm, setCerereForm] = useState({ denumire:'', cantitate:1, um:'buc' });
+  const cereriAici = cereriSantier.filter((c)=>c.santierId===santierId);
+  const addCerere = () => {
+    if (!cerereForm.denumire.trim()) return;
+    const denumireFinala = cerereForm.denumire.trim();
+    const cantitateFinala = Number(cerereForm.cantitate)||0;
+    const next = [...cereriSantier, { id: uid(), santierId, denumire: denumireFinala, cantitate: cantitateFinala, um: cerereForm.um, data: new Date().toISOString().slice(0,10), status:'Cerută' }];
+    setCereriSantier(next); persist('cereriSantier', next); setCerereForm({ denumire:'', cantitate:1, um:'buc' });
+    if (onCerereMaterial) onCerereMaterial(denumireFinala, cerereForm.um, cantitateFinala, santierNume);
+  };
+  const delCerere = (id) => { const next = cereriSantier.filter((c)=>c.id!==id); setCereriSantier(next); persist('cereriSantier', next); };
+  const setCerereStatus = (id, status) => {
+    const next = cereriSantier.map((c)=>c.id===id?{...c, status}:c);
+    setCereriSantier(next); persist('cereriSantier', next);
+  };
+  const marcheazaLivrata = (cerere) => {
+    const next = cereriSantier.map((c)=>c.id===cerere.id?{...c, status:'Livrată'}:c);
+    setCereriSantier(next); persist('cereriSantier', next);
+    const miscare = { id: uid(), santierId, denumire: cerere.denumire, um: cerere.um, tip:'intrare', cantitate: cerere.cantitate, data: new Date().toISOString().slice(0,10), nota:'Din cerere livrată' };
+    const nextMiscari = [miscare, ...miscariSantier];
+    setMiscariSantier(nextMiscari); persist('miscariSantier', nextMiscari);
+  };
+
+  const azi = new Date();
+  const extrasLa = `${String(azi.getDate()).padStart(2,'0')}/${String(azi.getMonth()+1).padStart(2,'0')}/${azi.getFullYear()}`;
+
+  const exportCereriExcel = () => {
+    const rows = cereriAici.map((c)=>({ 'Data': c.data, 'Material': c.denumire, 'Cantitate': c.cantitate, 'U.M.': c.um, 'Status': c.status }));
+    const sheetRows = rows.length ? rows : [{ 'Data':'', 'Material':'Nicio cerere înregistrată.', 'Cantitate':'', 'U.M.':'', 'Status':'' }];
+    const headerRows = [
+      [company?.nume || 'Firma mea'],
+      [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
+      [],
+      [`Cerere materiale — ${santierNume}`],
+      [`Extras la: ${extrasLa}`],
+      [],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(headerRows);
+    XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
+    ws['!cols'] = [{wch:12},{wch:35},{wch:11},{wch:8},{wch:12}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Cerere materiale');
+    XLSX.writeFile(wb, `cerere_materiale_${santierNume.replace(/\s+/g,'_')}.xlsx`);
+  };
+
+  const exportCererePDF = () => {
+    const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const rows = cereriAici.map((c,i)=>`
+      <tr><td>${i+1}</td><td style="text-align:left">${esc(c.denumire)}</td><td>${esc(c.cantitate)}</td><td>${esc(c.um)}</td><td>${esc(c.data)}</td><td>${esc(c.status)}</td></tr>`).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Cerere materiale</title><style>
+      * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; }
+      .page { width:190mm; margin:0 auto; padding:14mm; }
+      .header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8mm; }
+      .logo { height:30px; }
+      .title-block { text-align:right; }
+      .title { font-size:18px; font-weight:700; }
+      table { width:100%; border-collapse:collapse; font-size:11px; margin-top:6mm; }
+      th { text-align:center; border:1px solid #999; padding:2mm; font-size:10px; text-transform:uppercase; background:#f2f2f2; }
+      td { text-align:center; border:1px solid #ccc; padding:2mm; }
+      .sign { display:flex; justify-content:space-between; margin-top:20mm; font-size:11px; }
+      .sign-line { margin-top:14mm; border-top:1px solid #999; width:70%; }
+    </style></head><body>
+      <div class="page">
+        <div class="header-row">
+          <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
+          <div class="title-block">
+            <div class="title">CERERE MATERIALE</div>
+            <div style="font-size:11px;color:#555;margin-top:2mm;">Șantier: ${esc(santierNume)}</div>
+            <div style="font-size:11px;color:#555;">Data: ${esc(extrasLa)}</div>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Nr.</th><th style="text-align:left">Material</th><th>Cantitate</th><th>U.M.</th><th>Data cerere</th><th>Status</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6">Nicio cerere înregistrată.</td></tr>'}</tbody>
+        </table>
+        <div class="sign">
+          <div>Solicitat de:<div class="sign-line"></div></div>
+          <div>Aprobat de (manager):<div class="sign-line"></div></div>
+        </div>
+      </div>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(()=>{ w.focus(); w.print(); }, 300);
+  };
+
+  // --- Stoc materiale la șantier (calculat din mișcări) + consum ---
+  const miscariAici = miscariSantier.filter((m)=>m.santierId===santierId);
+  const stocPeMaterial = {};
+  miscariAici.forEach((m)=>{
+    if (!stocPeMaterial[m.denumire]) stocPeMaterial[m.denumire] = { denumire:m.denumire, um:m.um, stoc:0 };
+    stocPeMaterial[m.denumire].stoc += (m.tip==='intrare' ? 1 : -1) * (Number(m.cantitate)||0);
+  });
+  const stocList = Object.values(stocPeMaterial);
+  const [consumState, setConsumState] = useState(null);
+  const confirmConsum = (denumire, um, cantitate) => {
+    const miscare = { id: uid(), santierId, denumire, um, tip:'iesire', cantitate: Number(cantitate)||0, data: new Date().toISOString().slice(0,10), nota:'Consum șantier' };
+    const next = [miscare, ...miscariSantier];
+    setMiscariSantier(next); persist('miscariSantier', next); setConsumState(null);
+  };
+
+  const consumPeMaterial = {};
+  miscariAici.filter((m)=>m.tip==='iesire').forEach((m)=>{
+    if (!consumPeMaterial[m.denumire]) consumPeMaterial[m.denumire] = { denumire:m.denumire, um:m.um, cantitate:0 };
+    consumPeMaterial[m.denumire].cantitate += Number(m.cantitate)||0;
+  });
+  const consumList = Object.values(consumPeMaterial);
+  const trimiteConsumInDeviz = () => {
+    if (consumList.length === 0) return;
+    onExportToDeviz(consumList, santierNume);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📥 Cerere materiale</div>
+          <div className="flex gap-1.5">
+            <button onClick={exportCereriExcel} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>📊 Excel</button>
+            <button onClick={exportCererePDF} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>🖨 PDF</button>
+          </div>
+        </div>
+        <div className="flex gap-2 mb-2 flex-wrap">
+          <input list="materiale-catalog-santier" placeholder="Material" value={cerereForm.denumire} onChange={(e)=>setCerereForm({...cerereForm, denumire:e.target.value})} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none min-w-[140px]" style={inputStyle} />
+          <datalist id="materiale-catalog-santier">{materials.map((m)=><option key={m.id} value={m.denumire} />)}</datalist>
+          <input type="number" value={cerereForm.cantitate} onChange={(e)=>setCerereForm({...cerereForm, cantitate:e.target.value})} className="w-20 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+          <input placeholder="UM" value={cerereForm.um} onChange={(e)=>setCerereForm({...cerereForm, um:e.target.value})} className="w-20 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+          <button onClick={addCerere} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Cere</button>
+        </div>
+        {cereriAici.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Nicio cerere.</div> : (
+          <div className="space-y-1">
+            {cereriAici.map((c)=>(
+              <div key={c.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                <span style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um}</span>
+                <div className="flex items-center gap-2">
+                  <span style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
+                  {c.status==='Cerută' && currentUser?.rol === 'Manager' && (
+                    <>
+                      <button onClick={()=>setCerereStatus(c.id,'Aprobată')} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă</button>
+                      <button onClick={()=>setCerereStatus(c.id,'Respinsă')} className="px-2 py-0.5 rounded" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #E0525266' }}>✕ Respinge</button>
+                    </>
+                  )}
+                  {c.status==='Cerută' && currentUser?.rol !== 'Manager' && (
+                    <span className="text-xs" style={{ color:'#5C6570' }}>Așteaptă aprobare manager</span>
+                  )}
+                  {c.status==='Aprobată' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📦 Livrată</button>}
+                  <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📦 Stoc materiale la șantier</div>
+          {consumList.length > 0 && <button onClick={trimiteConsumInDeviz} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>🧾 Exportă consum în Deviz</button>}
+        </div>
+        {stocList.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Niciun material adus încă la șantier.</div> : (
+          <div className="space-y-1">
+            {stocList.map((m)=>(
+              <div key={m.denumire} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.stoc} {m.um}</span></span>
+                {consumState===m.denumire ? (
+                  <MoveInput tip="iesire" onConfirm={(cant)=>confirmConsum(m.denumire, m.um, cant)} onCancel={()=>setConsumState(null)} />
+                ) : (
+                  <button onClick={()=>setConsumState(m.denumire)} className="px-2 py-1 rounded-lg" style={{ color:'#E05252', background:'#1B2127' }}>− Consum</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SantierForm({ initial, onCancel, onSave }) {
+  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ', echipa:[] });
+  const [users, setUsers] = useState([]);
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  useEffect(() => {
+    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setUsers((data.users || []).filter((u)=>u.rol==='Electrician'))).catch(()=>setUsers([]));
+  }, []);
+
+  const echipa = form.echipa || [];
+  const toggleEchipa = (userId) => {
+    const next = echipa.includes(userId) ? echipa.filter((id)=>id!==userId) : [...echipa, userId];
+    setForm({...form, echipa: next});
+  };
+
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="space-y-2 mb-2">
+        <input placeholder="Denumire șantier (ex: Bloc Florești, Str. Traian)" value={form.nume} onChange={(e)=>setForm({...form, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input placeholder="Adresă (opțional)" value={form.adresa} onChange={(e)=>setForm({...form, adresa:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <div className="flex gap-2">
+          {SANTIER_STATUSES.map((s)=>(
+            <button key={s} onClick={()=>setForm({...form, status:s})} className="text-xs px-2.5 py-1.5 rounded-lg"
+              style={{ color: form.status===s?'#14181C':'#8B93A0', background: form.status===s?'#2E8BD1':'#171C21' }}>{s}</button>
+          ))}
+        </div>
+        <div>
+          <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Echipă asignată (doar aceștia pot accesa șantierul):</div>
+          {users.length === 0 ? (
+            <div className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician înregistrat încă.</div>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {users.map((u)=>(
+                <button key={u.id} onClick={()=>toggleEchipa(u.id)} className="text-xs px-2.5 py-1.5 rounded-lg"
+                  style={{ color: echipa.includes(u.id)?'#14181C':'#8B93A0', background: echipa.includes(u.id)?'#2E8BD1':'#171C21' }}>🔌 {u.nume}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+        <button onClick={()=>onSave(form)} disabled={!form.nume} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+      </div>
+    </div>
+  );
+}
+
+function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
+  const [users, setUsers] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+
+  useEffect(() => {
+    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setUsers(data.users || [])).catch(()=>setUsers([]));
+  }, []);
+
+  const update = (id, f, v) => setPersoane(persoane.map((p)=> p.id===id ? {...p, [f]:v} : p));
+  const remove = (id) => setPersoane(persoane.filter((p)=>p.id!==id));
+  const addManual = () => setPersoane([...persoane, { id: uid(), nume:'', ore: oreImplicite ?? '8:00' }]);
+
+  const numeDejaAdaugate = new Set(persoane.map((p)=>p.nume));
+  const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
+
+  const toggleSelected = (userId) => {
+    const next = new Set(selected);
+    next.has(userId) ? next.delete(userId) : next.add(userId);
+    setSelected(next);
+  };
+
+  const adaugaSelectati = () => {
+    const noi = users.filter((u)=>selected.has(u.id)).map((u)=>({ id: uid(), nume: u.nume, ore: oreImplicite ?? '8:00' }));
+    setPersoane([...persoane, ...noi]);
+    setSelected(new Set());
+    setPickerOpen(false);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 70px 28px', color:'#8B93A0' }}>
+        <span>Persoană</span><span>Ore (h:mm)</span><span/>
+      </div>
+      {persoane.map((p)=>(
+        <div key={p.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'1fr 70px 28px', background:'#171C21' }}>
+          <input value={p.nume} onChange={(e)=>update(p.id,'nume',e.target.value)} placeholder="Nume persoană" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
+          <input type="text" placeholder="8:00" value={p.ore} onChange={(e)=>update(p.id,'ore',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+          <button onClick={()=>remove(p.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+        </div>
+      ))}
+
+      {pickerOpen ? (
+        <div className="rounded-lg p-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+          <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Selectează persoanele care au lucrat:</div>
+          {users.length === 0 ? (
+            <div className="text-xs" style={{ color:'#5C6570' }}>Niciun utilizator înregistrat încă.</div>
+          ) : (
+            <div className="space-y-1 mb-2">
+              {users.filter((u)=>!numeDejaAdaugate.has(u.nume)).map((u)=>(
+                <label key={u.id} className="flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg cursor-pointer" style={{ background: selected.has(u.id)?'#2E8BD122':'transparent', color:'#E9E7E2' }}>
+                  <input type="checkbox" checked={selected.has(u.id)} onChange={()=>toggleSelected(u.id)} />
+                  <span>{iconFor(u.rol)}</span> {u.nume}
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={()=>{ setPickerOpen(false); setSelected(new Set()); }} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>Renunță</button>
+            <button onClick={adaugaSelectati} disabled={selected.size===0} className="text-xs px-2 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă selectați ({selected.size})</button>
+            <button onClick={addManual} className="text-xs px-2 py-1.5 rounded-lg ml-auto" style={{ color:'#8B93A0', background:'#1B2127' }}>+ Nume manual</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={()=>setPickerOpen(true)} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă persoană</button>
+      )}
+    </div>
+  );
+}
+
+function RaportForm({ initial, etape, onCancel, onSave }) {
+  const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
+  const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
+  const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
+  const [etapaId, setEtapaId] = useState(initial?.etapaId || '');
+  const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', ore:'8:00' }]);
+  const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const totalOreMin = persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
+  const oreCalculateMin = calcOreDinInterval(oraInceput, oraSfarsit);
+  const aplicaLaToti = () => setPersoane(persoane.map((p)=>({...p, ore: minutesToHM(oreCalculateMin)})));
+  useEffect(() => {
+    if (oreCalculateMin !== null) setPersoane((prev)=>prev.map((p)=>({...p, ore: minutesToHM(oreCalculateMin)})));
+  }, [oraInceput, oraSfarsit]);
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+      <div className="flex gap-3 mb-2 flex-wrap items-end">
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data
+          <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora început
+          <RoTimePicker value={oraInceput} onChange={setOraInceput} />
+        </label>
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora sfârșit
+          <RoTimePicker value={oraSfarsit} onChange={setOraSfarsit} />
+        </label>
+        {etape && etape.length > 0 && (
+          <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Etapă
+            <select value={etapaId} onChange={(e)=>setEtapaId(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle}>
+              <option value="">(fără etapă)</option>
+              {etape.map((e)=><option key={e.id} value={e.id} style={{ background:'#1B2127' }}>{e.nume}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+      {oreCalculateMin !== null && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs" style={{ color:'#8B93A0' }}>Ore calculate (interval − 1h pauză): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(oreCalculateMin)}</span></span>
+          <button onClick={aplicaLaToti} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>Aplică la toate persoanele</button>
+        </div>
+      )}
+      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} oreImplicite={oreCalculateMin!=null ? minutesToHM(oreCalculateMin) : '8:00'} />
+      <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
+      <div className="flex justify-between items-center mt-3">
+        <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMin)}</span></span>
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, onExportToDeviz, onCerereMaterial, currentUser }) {
+  const [form, setForm] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [reportForm, setReportForm] = useState(null);
+  const [exportFrom, setExportFrom] = useState('');
+  const [exportTo, setExportTo] = useState('');
+  const [etapaTab, setEtapaTab] = useState('toate');
+  const [etapaNoua, setEtapaNoua] = useState('');
+  const [siteSearch, setSiteSearch] = useState('');
+  const [siteView, setSiteView] = useState('rapoarte');
+
+  const saveSantier = (s) => {
+    const next = santiere.some((x)=>x.id===s.id) ? santiere.map((x)=>x.id===s.id?s:x) : [...santiere, s];
+    setSantiere(next); persist('santiere', next); setForm(null);
+  };
+  const delSantier = (id) => {
+    setSantiere((prev)=>{ const next = prev.filter((s)=>s.id!==id); persist('santiere', next); return next; });
+    setRapoarte((prev)=>{ const next = prev.filter((r)=>r.santierId!==id); persist('rapoarte', next); return next; });
+    setEtape((prev)=>{ const next = prev.filter((e)=>e.santierId!==id); persist('etape', next); return next; });
+    if (selected === id) setSelected(null);
+  };
+  const saveReport = (r) => {
+    const withSite = { ...r, santierId: selected };
+    const next = rapoarte.some((x)=>x.id===r.id) ? rapoarte.map((x)=>x.id===r.id?withSite:x) : [...rapoarte, withSite];
+    setRapoarte(next); persist('rapoarte', next); setReportForm(null);
+  };
+  const delReport = (id) => { const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next); };
+
+  const addEtapa = () => {
+    if (!etapaNoua.trim()) return;
+    const next = [...etape, { id: uid(), santierId: selected, nume: etapaNoua.trim() }];
+    setEtape(next); persist('etape', next); setEtapaNoua('');
+  };
+  const delEtapa = (id) => {
+    const next = etape.filter((e)=>e.id!==id);
+    setEtape(next); persist('etape', next);
+    if (etapaTab === id) setEtapaTab('toate');
+  };
+
+  const exportExcel = (santierId, listaRapoarte, etapeSantier) => {
+    const etapaNume = (id) => etapeSantier.find((e)=>e.id===id)?.nume || '';
+    const inRange = listaRapoarte.filter((r) => (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo));
+    const rows = inRange.slice().sort((a,b)=> a.data<b.data?-1:1).map((r)=>{
+      const totalOreMinRow = r.persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
+      return {
+        'Data': r.data,
+        'Etapă': etapaNume(r.etapaId),
+        'Ora început': r.oraInceput || '',
+        'Ora sfârșit': r.oraSfarsit || '',
+        'Nr. persoane': r.persoane.filter((p)=>p.nume.trim()).length,
+        'Persoane': r.persoane.map((p)=>`${p.nume} (${p.ore})`).filter((s)=>s.trim()!=='()').join(', '),
+        'Total ore': minutesToHM(totalOreMinRow),
+        'Ce s-a făcut': r.explicatii || '',
+      };
+    });
+    const totalOreGeneralMin = inRange.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+oreToMinutes(p.ore),0),0);
+    const totalPersoane = inRange.reduce((s,r)=>s+r.persoane.filter((p)=>p.nume.trim()).length,0);
+    const totalRow = { 'Data':'TOTAL', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane': totalPersoane, 'Persoane':'', 'Total ore': minutesToHM(totalOreGeneralMin), 'Ce s-a făcut':'' };
+    const sheetRows = rows.length
+      ? [...rows, totalRow]
+      : [{ 'Data':'', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane':'', 'Persoane':'', 'Total ore':'', 'Ce s-a făcut':'Niciun raport în perioada selectată.' }];
+
+    const fmtRo = (d) => { if (!d) return ''; const [y,m,day] = d.split('-'); return `${day}/${m}/${y}`; };
+    const azi = new Date();
+    const extrasLa = `${String(azi.getDate()).padStart(2,'0')}/${String(azi.getMonth()+1).padStart(2,'0')}/${azi.getFullYear()}`;
+    const santierNume = santiere.find((s)=>s.id===santierId)?.nume || 'Șantier';
+    const headerRows = [
+      [company?.nume || 'Firma mea'],
+      [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
+      [],
+      [`Raport șantier — ${santierNume}`],
+      [`Data început perioadă: ${fmtRo(exportFrom) || '(nespecificată)'}`],
+      [`Data sfârșit perioadă: ${fmtRo(exportTo) || '(nespecificată)'}`],
+      [`Extras la: ${extrasLa}`],
+      [],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(headerRows);
+    XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
+    ws['!cols'] = [{wch:12},{wch:16},{wch:11},{wch:11},{wch:11},{wch:30},{wch:10},{wch:40}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Raport santier');
+    const label = `${exportFrom || 'inceput'}_${exportTo || 'azi'}`;
+    XLSX.writeFile(wb, `raport_${santierNume.replace(/\s+/g,'_')}_${label}.xlsx`);
+  };
+
+  if (selected) {
+    const santier = santiere.find((s)=>s.id===selected);
+    const etapeSantier = etape.filter((e)=>e.santierId===selected);
+    const rapoarteSantier = rapoarte.filter((r)=>r.santierId===selected)
+      .filter((r)=> etapaTab === 'toate' || r.etapaId === etapaTab)
+      .slice().sort((a,b)=> a.data<b.data?1:-1);
+    const totalOreSantierMin = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+oreToMinutes(p.ore),0),0);
+    return (
+      <div>
+        <button onClick={()=>setSelected(null)} className="text-xs mb-3" style={{ color:'#5C6570' }}>← Toate șantierele</button>
+        <div className="flex justify-between items-center mb-1">
+          <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
+          {!reportForm && <button onClick={()=>setReportForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
+        </div>
+        <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreSantierMin)}</span></p>
+
+        <div className="flex gap-2 mb-4">
+          <button onClick={()=>setSiteView('rapoarte')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='rapoarte'?'#14181C':'#8B93A0', background: siteView==='rapoarte'?'#2E8BD1':'#171C21' }}>Rapoarte zilnice</button>
+          <button onClick={()=>setSiteView('materiale')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='materiale'?'#14181C':'#8B93A0', background: siteView==='materiale'?'#2E8BD1':'#171C21' }}>Materiale</button>
+          <button onClick={()=>setSiteView('scule')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='scule'?'#14181C':'#8B93A0', background: siteView==='scule'?'#2E8BD1':'#171C21' }}>Scule</button>
+        </div>
+
+        {siteView === 'materiale' && (
+          <SiteMaterialsTab santierId={selected} santierNume={santier?.nume || ''} company={company} materials={materials}
+            cereriSantier={cereriSantier} setCereriSantier={setCereriSantier}
+            miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier}
+            persist={persist} onExportToDeviz={onExportToDeviz} onCerereMaterial={onCerereMaterial} currentUser={currentUser} />
+        )}
+        {siteView === 'scule' && (
+          <SiteToolsTab santierId={selected} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} persist={persist} />
+        )}
+        {siteView === 'rapoarte' && (
+        <>
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <span className="text-xs" style={{ color:'#5C6570' }}>Raport pentru perioada:</span>
+          <RoCalendarPicker value={exportFrom} onChange={setExportFrom} />
+          <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
+          <RoCalendarPicker value={exportTo} onChange={setExportTo} />
+          <button onClick={()=>exportExcel(selected, rapoarte.filter((r)=>r.santierId===selected), etapeSantier)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
+        </div>
+
+        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {rapoarteSantier.length === 0 && !reportForm ? (
+          <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
+        ) : (
+          <div className="space-y-2">
+            {rapoarteSantier.map((r)=>{
+              const totalOreMinRow = r.persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
+              const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
+              const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
+              return (
+                <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>
+                        {r.data}{(r.oraInceput||r.oraSfarsit) && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{r.oraInceput||'?'}–{r.oraSfarsit||'?'}</span>}
+                        {etapaN && <span className="text-xs ml-2" style={{ color:'#2E8BD1' }}>{etapaN}</span>}
+                      </div>
+                      <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.map((p)=>`${p.nume} (${p.ore})`).filter((s)=>s.trim()!=='()').join(', ') || 'Fără persoane'}</div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs" style={{ color:'#8B93A0' }}>{nrPersoane} pers.</span>
+                      <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMinRow)}</span>
+                      <button onClick={()=>setReportForm(r)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                      <button onClick={()=>delReport(r.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                    </div>
+                  </div>
+                  {r.explicatii && <div className="text-xs mt-2" style={{ color:'#8B93A0' }}>{r.explicatii}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        </>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4 gap-3">
+        <h2 className="text-lg shrink-0" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Șantiere</h2>
+        <input placeholder="Caută șantier..." value={siteSearch} onChange={(e)=>setSiteSearch(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        {!form && currentUser?.rol === 'Manager' && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
+      </div>
+      {form && <SantierForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={saveSantier} />}
+      {santiere.length===0 && !form ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun șantier încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {santiere.filter((s)=> !siteSearch || s.nume.toLowerCase().includes(siteSearch.toLowerCase())).map((s)=>{
+            const nrRapoarte = rapoarte.filter((r)=>r.santierId===s.id).length;
+            const areAcces = currentUser?.rol === 'Manager' || (s.echipa || []).includes(currentUser?.id);
+            return (
+              <div key={s.id} className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${areAcces ? 'cursor-pointer' : ''}`} onClick={()=>{ if (areAcces) { setSelected(s.id); setSiteView('rapoarte'); } }} style={{ background:'#1B2127', border:'1px solid #2A323B', opacity: areAcces?1:0.5 }}>
+                <div className="min-w-0">
+                  <div className="text-sm" style={{ color:'#E9E7E2' }}>{!areAcces && '🔒 '}{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></div>
+                  <div className="text-xs" style={{ color:'#8B93A0' }}>{s.adresa} · {nrRapoarte} rapoarte{!areAcces && ' · Nu ești asignat aici'}</div>
+                </div>
+                {currentUser?.rol === 'Manager' && (
+                  <div className="flex items-center gap-2 shrink-0" onClick={(e)=>e.stopPropagation()}>
+                    <button onClick={()=>setForm(s)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                    <button onClick={()=>delSantier(s.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }) {
+  const [mode, setMode] = useState('login');
+  const [nume, setNume] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [rol, setRol] = useState('Electrician');
+  const [status, setStatus] = useState({ loading:false, error:'' });
+  const [showPassword, setShowPassword] = useState(false);
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  const submit = async () => {
+    setStatus({ loading:true, error:'' });
+    try {
+      if (mode === 'login') {
+        await onLogin({ action:'login', username, password });
+      } else {
+        if (!nume.trim() || !username.trim() || !password) throw new Error('Completează toate câmpurile.');
+        await onLogin({ action:'register', nume: nume.trim(), username: username.trim(), password, rol });
+      }
+    } catch (e) {
+      setStatus({ loading:false, error: e.message || 'A eșuat.' });
+      return;
+    }
+    setStatus({ loading:false, error:'' });
+  };
+
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center" style={{ background:'#14181C' }}>
+      <div className="rounded-xl p-6 w-full max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="flex flex-col items-center mb-5">
+          <img src="/logo.png" alt="Logo" style={{ height:40, width:'auto', marginBottom:10 }} />
+          <div className="flex gap-2">
+            <button onClick={()=>setMode('login')} className="text-sm px-3 py-1 rounded-lg font-medium" style={{ color: mode==='login'?'#14181C':'#8B93A0', background: mode==='login'?'#2E8BD1':'#171C21' }}>Autentificare</button>
+            <button onClick={()=>setMode('register')} className="text-sm px-3 py-1 rounded-lg font-medium" style={{ color: mode==='register'?'#14181C':'#8B93A0', background: mode==='register'?'#2E8BD1':'#171C21' }}>Cont nou</button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          {mode === 'register' && (
+            <input placeholder="Nume complet" value={nume} onChange={(e)=>setNume(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          )}
+          <input placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <div style={{ position:'relative' }}>
+            <input type={showPassword ? 'text' : 'password'} placeholder="Parolă" value={password} onChange={(e)=>setPassword(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && submit()} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, paddingRight:36 }} />
+            <button type="button" onClick={()=>setShowPassword(!showPassword)} style={{ position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', color:'#5C6570' }}>
+              {showPassword ? '🙈' : '👁'}
+            </button>
+          </div>
+          {mode === 'register' && (
+            <div className="flex gap-2">
+              {ROLES.map((r)=>(
+                <button key={r.id} onClick={()=>setRol(r.id)} className="flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5"
+                  style={{ color: rol===r.id?'#14181C':'#8B93A0', background: rol===r.id?'#2E8BD1':'#171C21' }}>
+                  <span>{r.icon}</span> {r.id}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {status.error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{status.error}</p>}
+
+        <button onClick={submit} disabled={status.loading} className="w-full mt-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>
+          {status.loading ? '...' : mode==='login' ? 'Intră în aplicație' : 'Creează cont'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProfileTab({ currentUser, onLogout }) {
+  const [expandedForm, setExpandedForm] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [status, setStatus] = useState({ loading:false, error:'', success:'' });
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
+
+  const submit = async () => {
+    setStatus({ loading:true, error:'', success:'' });
+    if (!oldPassword || !newPassword) { setStatus({ loading:false, error:'Completează toate câmpurile.', success:'' }); return; }
+    if (newPassword !== confirmPassword) { setStatus({ loading:false, error:'Parola nouă nu se potrivește cu confirmarea.', success:'' }); return; }
+    try {
+      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'changePassword', id: currentUser.id, oldPassword, newPassword }) });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
+      setStatus({ loading:false, error:'', success:'Parola a fost schimbată.' });
+      setOldPassword(''); setNewPassword(''); setConfirmPassword('');
+    } catch (e) {
+      setStatus({ loading:false, error: e.message || 'A eșuat.', success:'' });
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Profilul meu</h2>
+      <p className="text-xs mb-5" style={{ color:'#5C6570' }}>{roleIcon} {currentUser?.nume} · @{currentUser?.username} · {currentUser?.rol}</p>
+
+      {!expandedForm ? (
+        <div className="flex gap-2">
+          <button onClick={()=>setExpandedForm(true)} className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>
+            <span>🔒</span> Schimbă parola
+          </button>
+          <button onClick={onLogout} className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg font-medium" style={{ color:'#E05252', background:'#171C21', border:'1px solid #E0525266' }}>
+            <span>🚪</span> Ieși din cont
+          </button>
+        </div>
+      ) : (
+      <div className="rounded-xl p-4 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="flex items-center justify-between mb-3 pb-3" style={{ borderBottom:'1px solid #2A323B' }}>
+          <div className="flex items-center gap-2">
+            <span>🔒</span>
+            <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>Schimbă parola</div>
+          </div>
+          <button onClick={()=>{ setExpandedForm(false); setOldPassword(''); setNewPassword(''); setConfirmPassword(''); setStatus({loading:false,error:'',success:''}); }} style={{ color:'#5C6570' }}><Icon size={14}>✕</Icon></button>
+        </div>
+        <div className="space-y-2">
+        <input type={showPw?'text':'password'} placeholder="Parola actuală" value={oldPassword} onChange={(e)=>setOldPassword(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input type={showPw?'text':'password'} placeholder="Parola nouă" value={newPassword} onChange={(e)=>setNewPassword(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <input type={showPw?'text':'password'} placeholder="Confirmă parola nouă" value={confirmPassword} onChange={(e)=>setConfirmPassword(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && submit()} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        <label className="flex items-center gap-1.5 text-xs" style={{ color:'#8B93A0' }}>
+          <input type="checkbox" checked={showPw} onChange={(e)=>setShowPw(e.target.checked)} /> Arată parolele
+        </label>
+        {status.error && <p className="text-xs" style={{ color:'#E05252' }}>{status.error}</p>}
+        {status.success && <p className="text-xs" style={{ color:'#4CAF7D' }}>{status.success}</p>}
+        <div className="flex justify-end pt-1">
+          <button onClick={submit} disabled={status.loading} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>
+            {status.loading ? '...' : 'Salvează parola nouă'}
+          </button>
+        </div>
+        </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
+function UsersTab({ currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState(null);
+  const [formStatus, setFormStatus] = useState({ loading:false, error:'' });
+
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) });
+      const data = await res.json();
+      setUsers(data.users || []);
+    } catch { setUsers([]); }
+    setLoading(false);
+  };
+  useEffect(() => { loadUsers(); }, []);
+
+  const delUser = async (id) => {
+    if (id === currentUser.id) { window.alert('Nu îți poți șterge propriul cont din listă.'); return; }
+    await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', id }) });
+    loadUsers();
+  };
+
+  const addUser = async () => {
+    if (!form.nume.trim() || !form.username.trim() || !form.password) {
+      setFormStatus({ loading:false, error:'Completează toate câmpurile.' });
+      return;
+    }
+    setFormStatus({ loading:true, error:'' });
+    try {
+      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'register', nume: form.nume.trim(), username: form.username.trim(), password: form.password, rol: form.rol }) });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
+      setForm(null);
+      setFormStatus({ loading:false, error:'' });
+      loadUsers();
+    } catch (e) {
+      setFormStatus({ loading:false, error: e.message || 'A eșuat.' });
+    }
+  };
+
+  const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Utilizatori</h2>
+        {!form && <button onClick={()=>{ setForm({ nume:'', username:'', password:'', rol:'Electrician' }); setFormStatus({ loading:false, error:'' }); }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă utilizator</button>}
+      </div>
+      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Conturile care pot intra în aplicație.</p>
+
+      {form && (
+        <div className="rounded-xl p-4 mb-4 space-y-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <input placeholder="Nume complet" value={form.nume} onChange={(e)=>setForm({...form, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input placeholder="Username" value={form.username} onChange={(e)=>setForm({...form, username:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input type="text" placeholder="Parolă standard" value={form.password} onChange={(e)=>setForm({...form, password:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <div className="flex gap-2">
+            {ROLES.map((r)=>(
+              <button key={r.id} onClick={()=>setForm({...form, rol:r.id})} className="flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5"
+                style={{ color: form.rol===r.id?'#14181C':'#8B93A0', background: form.rol===r.id?'#2E8BD1':'#171C21' }}>
+                <span>{r.icon}</span> {r.id}
+              </button>
+            ))}
+          </div>
+          {formStatus.error && <p className="text-xs" style={{ color:'#E05252' }}>{formStatus.error}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button onClick={addUser} disabled={formStatus.loading} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>{formStatus.loading ? '...' : 'Creează cont'}</button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-sm" style={{ color:'#8B93A0' }}>Se încarcă...</div>
+      ) : users.length === 0 ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun utilizator încă.</div>
+      ) : (
+        <div className="space-y-2">
+          {users.map((u)=>(
+            <div key={u.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div className="flex items-center gap-2">
+                <span>{iconFor(u.rol)}</span>
+                <div>
+                  <div className="text-sm" style={{ color:'#E9E7E2' }}>{u.nume}{u.id===currentUser.id && <span className="text-xs ml-1" style={{ color:'#5C6570' }}>(tu)</span>}</div>
+                  <div className="text-xs" style={{ color:'#8B93A0' }}>@{u.username} · {u.rol}</div>
+                </div>
+              </div>
+              <button onClick={()=>delUser(u.id)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, setTab, currentUser }) {
+  const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
+
+  const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
+  const oferteTrimise = offers.filter((o)=>o.status==='Trimisă').length;
+  const facturiNeplatite = invoices.filter((i)=>i.status==='Neplătită');
+  const sumaNeplatita = facturiNeplatite.reduce((s,i)=>s+calcSubtotal(i.items)*(1+(Number(i.tva)||0)/100),0);
+  const santiereActive = santiere.filter((s)=>s.status==='Activ').length;
+  const materialeSubStoc = materials.filter((m)=>Number(m.stoc) < Number(m.stocMinim));
+  const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
+
+  const isManager = currentUser?.rol === 'Manager';
+  const cards = isManager ? [
+    { label:'Devize active', value: devizeActive, tab:'devize' },
+    { label:'Oferte trimise', value: oferteTrimise, tab:'oferte' },
+    { label:'Facturi neplătite', value: `${facturiNeplatite.length} · ${money(sumaNeplatita)}`, tab:'facturi' },
+    { label:'Șantiere active', value: santiereActive, tab:'santiere' },
+  ] : [
+    { label:'Șantiere active', value: santiereActive, tab:'santiere' },
+  ];
+
+  const actions = isManager ? [
+    { label:'+ Deviz nou', tab:'devize' },
+    { label:'+ Ofertă nouă', tab:'oferte' },
+    { label:'+ Client nou', tab:'clienti' },
+    { label:'+ Raport șantier', tab:'santiere' },
+  ] : [
+    { label:'+ Raport șantier', tab:'santiere' },
+  ];
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-8">
+        <img src="/logo.png" alt="Logo" style={{ height:36, width:'auto' }} />
+        <div>
+          <div className="text-base" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600 }}>{company?.nume || 'Panou intern'}</div>
+          <div className="text-xs" style={{ color:'#5C6570' }}>
+            Bun venit înapoi, {currentUser?.nume} {roleIcon}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        {cards.map((c)=>(
+          <button key={c.label} onClick={()=>setTab(c.tab)} className="text-left rounded-xl p-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <div className="text-xs mb-1" style={{ color:'#8B93A0' }}>{c.label}</div>
+            <div className="text-lg font-medium" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{c.value}</div>
+          </button>
+        ))}
+      </div>
+
+      {(materialeSubStoc.length > 0 || cereriInAsteptare.length > 0) && (
+        <div className="mb-6">
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Atenționări</div>
+          <div className="space-y-2">
+            {isManager && materialeSubStoc.length > 0 && (
+              <button onClick={()=>setTab('gestiune')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
+                <span className="text-sm" style={{ color:'#E9E7E2' }}>{materialeSubStoc.length} materiale sub stocul minim</span>
+                <span style={{ color:'#E05252' }}>→</span>
+              </button>
+            )}
+            {cereriInAsteptare.length > 0 && (
+              <button onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
+                <span className="text-sm" style={{ color:'#E9E7E2' }}>{cereriInAsteptare.length} cereri de materiale în așteptare de aprobare</span>
+                <span style={{ color:'#E9A23B' }}>→</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2 flex-wrap">
+        {actions.map((a)=>(
+          <button key={a.label} onClick={()=>setTab(a.tab)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{a.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompanyTab({ company, setCompany, persist }) {
+  const [form, setForm] = useState(company);
+  useEffect(()=>setForm(company), [company]);
+  const save = () => { setCompany(form); persist('company', form); };
+  const fields = [['nume','Denumire firmă'],['cui','CUI'],['regCom','Nr. Registrul Comerțului'],['adresa','Adresă sediu'],['iban','IBAN'],['telefon','Telefon / email'],['administrator','Administrator (nume)']];
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Firma mea</h2>
+      <p className="text-xs mb-4" style={{ color:'#8B93A0' }}>Aceste date apar ca emitent pe fiecare document exportat în PDF.</p>
+      <div className="rounded-xl p-4 space-y-2 max-w-md" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        {fields.map(([f,label])=>(
+          <input key={f} placeholder={label} value={form[f]||''} onChange={(e)=>setForm({...form, [f]:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+        ))}
+        <div className="flex justify-end pt-2">
+          <button onClick={save} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const PRINT_CSS = `
+  * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; background:#fff; color:#1a1a1a; }
+  .print-page { width:190mm; margin:0 auto; padding:14mm; page-break-after:always; }
+  .print-page:last-child { page-break-after:auto; }
+  .pp-header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8mm; }
+  .pp-logo { height:30px; width:auto; }
+  .pp-title-block { text-align:right; }
+  .pp-title { font-size:18px; font-weight:700; letter-spacing:0.5px; }
+  .pp-number { font-size:11px; color:#555; margin-top:1.5mm; }
+  .pp-meta { font-size:11px; color:#333; line-height:1.8; margin-bottom:6mm; padding-bottom:5mm; border-bottom:1px solid #ccc; }
+  .pp-meta b { color:#000; }
+  .pp-parties { display:flex; justify-content:space-between; gap:10mm; margin-bottom:6mm; border-bottom:1px solid #ccc; padding-bottom:5mm; }
+  .pp-party-col { flex:1; font-size:11px; line-height:1.6; }
+  .pp-label { font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#888; margin-bottom:1mm; font-weight:700; }
+  .pp-party-name { font-weight:700; font-size:13px; margin-bottom:1mm; }
+  .pp-table { width:100%; border-collapse:collapse; font-size:10.5px; margin-bottom:6mm; }
+  .pp-table th { text-align:center; border:1px solid #999; padding:2mm; font-size:9.5px; text-transform:uppercase; background:#f2f2f2; }
+  .pp-table td { text-align:center; border:1px solid #ccc; padding:2mm; }
+  .pp-totals { margin-left:auto; width:65mm; font-size:12px; margin-bottom:10mm; }
+  .pp-totals-row { display:flex; justify-content:space-between; padding:1.5mm 0; }
+  .pp-totals-final { border-top:1.5px solid #1a1a1a; font-weight:700; font-size:14px; margin-top:1mm; padding-top:2mm; }
+  .pp-signatures { display:flex; justify-content:space-between; gap:10mm; margin-top:14mm; font-size:11px; }
+  .pp-sign-col { flex:1; }
+  .pp-sign-label { font-size:10px; text-transform:uppercase; color:#888; margin-bottom:1mm; font-weight:700; }
+  .pp-sign-line { margin-top:14mm; border-top:1px solid #999; width:70%; }
+  .pp-status { margin-top:6mm; font-size:10px; color:#888; }
+  @page { size:A4; margin:0; }
+`;
+function pageHtml({ doc, kind, client, company }) {
+  const subtotal = calcSubtotal(doc.items);
+  const tvaVal = subtotal * (doc.tva/100);
+  const total = subtotal + tvaVal;
+  const rows = doc.items.map((it,i)=>`
+    <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(pretFinal(it)))}</td>
+    <td>${esc(money((Number(it.cantitate)||0)*pretFinal(it)))}</td></tr>`).join('');
+
+  return `<div class="print-page">
+    <div class="pp-header-row">
+      <img class="pp-logo" src="${window.location.origin}/logo.png" alt="Logo" />
+      <div class="pp-title-block">
+        <div class="pp-title">${kind === 'Ofertă' ? 'OFERTĂ' : 'FACTURĂ'}</div>
+        <div class="pp-number">Nr. ${esc(doc.numar)} din ${esc(doc.data)}</div>
+      </div>
+    </div>
+
+    <div class="pp-parties">
+      <div class="pp-party-col">
+        <div class="pp-label">Furnizor</div>
+        <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei)'}</div>
+        ${company?.cui?`<div>CUI: ${esc(company.cui)}</div>`:''}${company?.regCom?`<div>Reg. com.: ${esc(company.regCom)}</div>`:''}
+        ${company?.adresa?`<div>${esc(company.adresa)}</div>`:''}${company?.iban?`<div>IBAN: ${esc(company.iban)}</div>`:''}${company?.telefon?`<div>Tel: ${esc(company.telefon)}</div>`:''}
+      </div>
+      <div class="pp-party-col">
+        <div class="pp-label">Client</div>
+        <div class="pp-party-name">${esc(client?.nume) || '—'}</div>
+        ${client?.cui?`<div>${client.tip==='fizica'?'CNP':'CUI'}: ${esc(client.cui)}</div>`:''}${client?.adresa?`<div>${esc(client.adresa)}</div>`:''}${client?.contact?`<div>Tel: ${esc(client.contact)}</div>`:''}
+      </div>
+    </div>
+
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire</th><th>U.M</th><th>Cantitate</th><th>Valoare</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+
+    <div class="pp-totals">
+      <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
+      <div class="pp-totals-row"><span>TVA ${esc(doc.tva)}%</span><span>${esc(money(tvaVal))}</span></div>
+      <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
+    </div>
+
+    <div class="pp-status">Status: ${esc(doc.status)}</div>
+  </div>`;
+}
+
+function devizPageHtml({ doc, client, company }) {
+  const subtotal = calcSubtotal(doc.items);
+  const tvaVal = subtotal * (doc.tva/100);
+  const total = subtotal + tvaVal;
+  const rows = doc.items.map((it,i)=>`
+    <tr><td>${i+1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(pretFinal(it)))}</td>
+    <td>${esc(money((Number(it.cantitate)||0)*pretFinal(it)))}</td></tr>`).join('');
+
+  const metaLines = [];
+  if (doc.nrContract) metaLines.push(`<b>Contract:</b> Nr. ${esc(doc.nrContract)}${doc.dataContract ? ` din ${esc(doc.dataContract)}` : ''}`);
+  if (doc.actAditional) metaLines.push(`<b>Act adițional:</b> ${esc(doc.actAditional)}${doc.dataActAditional ? ` din ${esc(doc.dataActAditional)}` : ''}`);
+  if (doc.adresaLucrare) metaLines.push(`<b>Adresă:</b> ${esc(doc.adresaLucrare)}`);
+  if (doc.lucrare) metaLines.push(`<b>Lucrare:</b> ${esc(doc.lucrare)}`);
+
+  return `<div class="print-page">
+    <div class="pp-header-row">
+      <img class="pp-logo" src="${window.location.origin}/logo.png" alt="Logo" />
+      <div class="pp-title-block">
+        <div class="pp-title">DEVIZ LUCRĂRI</div>
+        <div class="pp-number">Nr. ${esc(doc.numar)} din ${esc(doc.data)}</div>
+      </div>
+    </div>
+    ${metaLines.length ? `<div class="pp-meta">${metaLines.join('<br/>')}</div>` : ''}
+
+    <div class="pp-parties">
+      <div class="pp-party-col">
+        <div class="pp-label">Executant</div>
+        <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei)'}</div>
+        ${company?.cui?`<div>CUI: ${esc(company.cui)}</div>`:''}${company?.regCom?`<div>Reg. com.: ${esc(company.regCom)}</div>`:''}
+        ${company?.adresa?`<div>${esc(company.adresa)}</div>`:''}${company?.iban?`<div>IBAN: ${esc(company.iban)}</div>`:''}${company?.telefon?`<div>Tel: ${esc(company.telefon)}</div>`:''}
+      </div>
+      <div class="pp-party-col">
+        <div class="pp-label">Beneficiar</div>
+        <div class="pp-party-name">${esc(client?.nume) || '—'}</div>
+        ${client?.cui?`<div>${client.tip==='fizica'?'CNP':'CUI'}: ${esc(client.cui)}</div>`:''}${client?.adresa?`<div>${esc(client.adresa)}</div>`:''}${client?.contact?`<div>Tel: ${esc(client.contact)}</div>`:''}
+      </div>
+    </div>
+
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire</th><th>U.M</th><th>Cantitate</th><th>Valoare</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+
+    <div class="pp-totals">
+      <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
+      <div class="pp-totals-row"><span>TVA ${esc(doc.tva)}%</span><span>${esc(money(tvaVal))}</span></div>
+      <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
+    </div>
+
+    <div class="pp-signatures">
+      <div class="pp-sign-col">
+        <div class="pp-sign-label">Executant</div>
+        <div>${esc(company?.nume) || ''}</div>
+        ${company?.administrator ? `<div>Adm. ${esc(company.administrator)}</div>` : ''}
+        <div class="pp-sign-line"></div>
+      </div>
+      <div class="pp-sign-col">
+        <div class="pp-sign-label">Beneficiar</div>
+        <div>${esc(client?.nume) || ''}</div>
+        ${client?.administrator ? `<div>Adm. ${esc(client.administrator)}</div>` : ''}
+        <div class="pp-sign-line"></div>
+      </div>
+    </div>
+
+    <div class="pp-status">Status: ${esc(doc.status)}</div>
+  </div>`;
+}
+
+function openPrintWindow(items) {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Export PDF</title><style>${PRINT_CSS}</style></head><body>${items.map((it) => it.isDeviz ? devizPageHtml(it) : pageHtml(it)).join('')}</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); }, 300);
+}
+
+function App() {
+  const [tab, setTab] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try { const raw = localStorage.getItem('currentUser'); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  });
+  const handleAuth = async (payload) => {
+    const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
+    setCurrentUser(data.user);
+    try { localStorage.setItem('currentUser', JSON.stringify(data.user)); } catch {}
+  };
+  const logout = () => {
+    setCurrentUser(null);
+    try { localStorage.removeItem('currentUser'); } catch {}
+  };
+  const CONTAB_TABS = ['devize', 'oferte', 'facturi', 'clienti'];
+  const [contabOpen, setContabOpen] = useState(false);
+  const MATERIALE_TABS = ['gestiune', 'stocuri'];
+  const [materialeOpen, setMaterialeOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [offers, setOffers] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [devize, setDevize] = useState([]);
+  const [company, setCompany] = useState({});
+  const [materials, setMaterials] = useState([]);
+  const [stockMoves, setStockMoves] = useState([]);
+  const [santiere, setSantiere] = useState([]);
+  const [rapoarte, setRapoarte] = useState([]);
+  const [etape, setEtape] = useState([]);
+  const [sculeSantier, setSculeSantier] = useState([]);
+  const [cereriSantier, setCereriSantier] = useState([]);
+  const [miscariSantier, setMiscariSantier] = useState([]);
+  const [offerForm, setOfferForm] = useState(null);
+  const [invoiceForm, setInvoiceForm] = useState(null);
+  const [devizPrefill, setDevizPrefill] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setClients(await loadKey('clients', []));
+        setOffers(await loadKey('offers', []));
+        setInvoices(await loadKey('invoices', []));
+        setDevize(await loadKey('devize', []));
+        setCompany(await loadKey('company', {}));
+        setMaterials(await loadKey('materials', []));
+        setStockMoves(await loadKey('stockMoves', []));
+        setSantiere(await loadKey('santiere', []));
+        setRapoarte(await loadKey('rapoarte', []));
+        setEtape(await loadKey('etape', []));
+        setSculeSantier(await loadKey('sculeSantier', []));
+        setCereriSantier(await loadKey('cereriSantier', []));
+        setMiscariSantier(await loadKey('miscariSantier', []));
+      } catch (e) {
+        setError('Nu am putut încărca datele.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const persist = async (key, value, isRetry) => {
+    try {
+      await saveKey(key, value);
+      setError(null);
+    } catch (e) {
+      if (!isRetry) { await new Promise(r=>setTimeout(r,800)); return persist(key, value, true); }
+      setError(`Salvarea pentru „${key}" a eșuat: ${e.message}`);
+    }
+  };
+
+  const printOne = (kind) => (doc) => openPrintWindow([{ doc, kind, client: clients.find((c)=>c.id===doc.clientId), company }]);
+  const sendInvoiceToSmartBill = async (invoice) => {
+    const client = clients.find((c)=>c.id===invoice.clientId);
+    const res = await fetch('/api/smartbill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoice, client }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Trimiterea a eșuat.');
+    return data;
+  };
+  const printAll = (docs, kind) => openPrintWindow(docs.map((doc)=>({ doc, kind, client: clients.find((c)=>c.id===doc.clientId), company })));
+  const printDevizOne = (doc) => openPrintWindow([{ doc, isDeviz: true, client: clients.find((c)=>c.id===doc.clientId), company }]);
+  const printDevizAll = (docs) => openPrintWindow(docs.map((doc)=>({ doc, isDeviz: true, client: clients.find((c)=>c.id===doc.clientId), company })));
+
+  // Scade automat materialele (după denumire) din stoc, când un deviz e emis sau o factură e creată.
+  const deductStock = (items, refLabel) => {
+    const unmatched = [];
+    let nextMaterials = materials;
+    const moves = [];
+    (items || []).forEach((it) => {
+      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire);
+      const cant = Number(it.cantitate) || 0;
+      if (idx === -1 || !cant) { if (idx === -1) unmatched.push(it.denumire); return; }
+      nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) - cant } : m);
+      moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'iesire', cantitate: cant, nota: refLabel, data: new Date().toISOString().slice(0,10) });
+    });
+    if (moves.length > 0) {
+      setMaterials(nextMaterials);
+      persist('materials', nextMaterials);
+      const nextMoves = [...moves, ...stockMoves];
+      setStockMoves(nextMoves);
+      persist('stockMoves', nextMoves);
+    }
+    return unmatched;
+  };
+
+  // Reface stocul (mișcare de intrare) pentru articole scăzute anterior — la ștergere, revenire la ciornă, sau editare.
+  const reverseStock = (items, refLabel) => {
+    let nextMaterials = materials;
+    const moves = [];
+    (items || []).forEach((it) => {
+      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire);
+      const cant = Number(it.cantitate) || 0;
+      if (idx === -1 || !cant) return;
+      nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) + cant } : m);
+      moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'intrare', cantitate: cant, nota: refLabel, data: new Date().toISOString().slice(0,10) });
+    });
+    if (moves.length > 0) {
+      setMaterials(nextMaterials);
+      persist('materials', nextMaterials);
+      const nextMoves = [...moves, ...stockMoves];
+      setStockMoves(nextMoves);
+      persist('stockMoves', nextMoves);
+    }
+  };
+
+  const nextNumber = (prefix, list) => {
+    const year = new Date().getFullYear();
+    const n = list.filter((d)=>d.numar?.includes(`${prefix}-${year}`)).length + 1;
+    return `${prefix}-${year}-${String(n).padStart(3,'0')}`;
+  };
+
+  const saveOffer = (o) => {
+    const withNumber = { ...o, numar: o.numar || nextNumber('OF', offers) };
+    const next = offers.some((x)=>x.id===o.id) ? offers.map((x)=>x.id===o.id?withNumber:x) : [...offers, withNumber];
+    setOffers(next); persist('offers', next); setOfferForm(null);
+  };
+  const deleteOffer = (id) => { const next = offers.filter((o)=>o.id!==id); setOffers(next); persist('offers', next); };
+  const offerStatus = (id, status) => {
+    const next = offers.map((o)=>o.id===id?{...o,status}:o);
+    setOffers(next); persist('offers', next);
+    if (status === 'Acceptată') {
+      const offer = next.find((o)=>o.id===id);
+      setTab('devize');
+      setDevizPrefill({ clientId: offer.clientId, items: offer.items.map((it)=>({...it, id: uid()})), tva: offer.tva, offerId: offer.id });
+    }
+  };
+
+  const exportConsumToDeviz = (items, santierNume) => {
+    const itemsWithPrice = items.map((it) => {
+      const mat = materials.find((m)=>m.denumire === it.denumire);
+      return { id: uid(), denumire: it.denumire, um: it.um, cantitate: it.cantitate, pretUnitar: mat?.pret || 0, adaos: 0 };
+    });
+    setTab('devize');
+    setDevizPrefill({ clientId: clients[0]?.id || '', items: itemsWithPrice, tva: 21, lucrare: santierNume ? `Materiale consumate — ${santierNume}` : '' });
+  };
+
+  // La o cerere nouă de materiale dintr-un șantier: creează materialul în Gestiune dacă nu există,
+  // și scade cantitatea din stocul central (ca ieșire, către șantier).
+  const proceseazaCerereMaterial = (denumire, um, cantitate, santierNume) => {
+    let mat = materials.find((m) => m.denumire === denumire);
+    let nextMaterials;
+    if (!mat) {
+      mat = { id: uid(), denumire, categorie: '', um, stoc: 0, stocMinim: 0, pret: 0 };
+      nextMaterials = [...materials, mat];
+    } else {
+      nextMaterials = materials.slice();
+    }
+    nextMaterials = nextMaterials.map((m) => m.id === mat.id ? { ...m, stoc: (Number(m.stoc) || 0) - (Number(cantitate) || 0) } : m);
+    setMaterials(nextMaterials);
+    persist('materials', nextMaterials);
+    const move = { id: uid(), materialId: mat.id, tip: 'iesire', cantitate: Number(cantitate) || 0, nota: `Cerere șantier: ${santierNume}`, data: new Date().toISOString().slice(0,10) };
+    const nextMoves = [move, ...stockMoves];
+    setStockMoves(nextMoves);
+    persist('stockMoves', nextMoves);
+  };
+
+
+  const saveInvoice = (inv) => {
+    const isNew = !invoices.some((x)=>x.id===inv.id);
+    const withNumber = { ...inv, numar: inv.numar || nextNumber('FA', invoices) };
+    let finalDoc = withNumber;
+    if (isNew) {
+      const unmatched = deductStock(inv.items, `Factură ${withNumber.numar}`);
+      finalDoc = { ...withNumber, stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+    }
+    const next = invoices.some((x)=>x.id===inv.id) ? invoices.map((x)=>x.id===inv.id?finalDoc:x) : [...invoices, finalDoc];
+    setInvoices(next); persist('invoices', next); setInvoiceForm(null);
+  };
+  const deleteInvoice = (id) => {
+    const inv = invoices.find((i)=>i.id===id);
+    if (inv && inv.stocDedus) reverseStock(inv.items, `Ștergere factură ${inv.numar}`);
+    const next = invoices.filter((i)=>i.id!==id); setInvoices(next); persist('invoices', next);
+  };
+  const invoiceStatus = (id, status) => { const next = invoices.map((i)=>i.id===id?{...i,status}:i); setInvoices(next); persist('invoices', next); };
+
+  const convertToInvoice = (offer) => {
+    setTab('facturi');
+    setInvoiceForm({ id: uid(), clientId: offer.clientId, items: offer.items.map((it)=>({...it, id: uid()})), tva: offer.tva, offerId: offer.id });
+  };
+
+  const NavItem = ({ id, label }) => (
+    <button onClick={()=>{ setTab(id); setSidebarOpen(false); }} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: tab===id?'#14181C':'#B8BFC9', background: tab===id?'#2E8BD1':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
+  );
+
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleAuth} />;
+  }
+
+  return (
+    <div className="min-h-screen w-full" style={{ background:'#14181C', fontFamily:"'Inter', sans-serif" }}>
+      <div className="md:hidden flex items-center justify-between px-3 py-2.5" style={{ borderBottom:'1px solid #2A323B' }}>
+        <button onClick={()=>setSidebarOpen(true)} className="text-xl px-1" style={{ color:'#E9E7E2' }}>☰</button>
+        <img src="/logo.png" alt="Logo" style={{ height:24, width:'auto' }} />
+        <div style={{ width:28 }} />
+      </div>
+
+      {sidebarOpen && (
+        <div onClick={()=>setSidebarOpen(false)} className="md:hidden fixed inset-0" style={{ background:'rgba(0,0,0,0.6)', zIndex:40 }} />
+      )}
+
+      <div className="w-full flex">
+      <aside className={`w-64 md:w-56 shrink-0 p-4 flex flex-col gap-1 fixed md:static inset-y-0 left-0 transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`} style={{ borderRight:'1px solid #2A323B', background:'#14181C', zIndex:50, overflowY:'auto' }}>
+        <button onClick={()=>{ setTab(null); setSidebarOpen(false); }} className="flex items-center gap-2 px-2 mb-4">
+          <img src="/logo.png" alt="Logo" style={{ height: 32, width: 'auto' }} />
+        </button>
+        <NavItem id={null} label="🏠 Dashboard" />
+        <div style={{ height:1, background:'#2A323B', margin:'4px 4px 8px' }} />
+        {currentUser.rol === 'Manager' && (
+        <>
+        <button onClick={()=>setContabOpen(!contabOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: CONTAB_TABS.includes(tab) ? '#2E8BD1' : '#B8BFC9', fontWeight:600 }}>
+          <span>📊 Contabilitate</span>
+          <span style={{ fontSize:10, transform: contabOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
+        </button>
+        {contabOpen && (
+          <div className="flex flex-col gap-1 pl-3">
+            <NavItem id="devize" label="🧮 Devize" />
+            <NavItem id="oferte" label="📄 Oferte" />
+            <NavItem id="facturi" label="🧾 Facturi" />
+            <NavItem id="clienti" label="👥 Clienți" />
+          </div>
+        )}
+        </>
+        )}
+        <button onClick={()=>setMaterialeOpen(!materialeOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: MATERIALE_TABS.includes(tab) ? '#2E8BD1' : '#B8BFC9', fontWeight:600 }}>
+          <span>📦 Materiale</span>
+          <span style={{ fontSize:10, transform: materialeOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
+        </button>
+        {materialeOpen && (
+          <div className="flex flex-col gap-1 pl-3">
+            {currentUser.rol === 'Manager' && <NavItem id="gestiune" label="🗂 Gestiune" />}
+            <NavItem id="stocuri" label="📈 Stocuri" />
+          </div>
+        )}
+        <NavItem id="santiere" label="🏗 Șantiere" />
+        <div style={{ height:1, background:'#2A323B', margin:'8px 4px' }} />
+        {currentUser.rol === 'Manager' && <NavItem id="firma" label="⚙ Firma mea" />}
+        <NavItem id="profil" label="👤 Profilul meu" />
+        {currentUser.rol === 'Manager' && <NavItem id="utilizatori" label="🔑 Utilizatori" />}
+        <div className="mt-auto pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          <div className="flex items-center justify-between px-3 py-2 text-xs" style={{ color:'#8B93A0' }}>
+            <span>{ROLES.find((r)=>r.id===currentUser.rol)?.icon} {currentUser.nume}</span>
+            <button onClick={logout} style={{ color:'#E05252' }}>Ieși</button>
+          </div>
+        </div>
+      </aside>
+      <main className="flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0">
+        {loading ? (
+          <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
+        ) : !tab ? (
+          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} setTab={setTab} currentUser={currentUser} />
+        ) : (
+          <>
+            {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
+
+            {tab === 'devize' && (
+              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} prefill={devizPrefill} onConsumePrefill={()=>setDevizPrefill(null)} />
+            )}
+
+            {tab === 'oferte' && (
+              <div>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Oferte</h2>
+                  <div className="flex items-center gap-2">
+                    {offers.length>0 && <button onClick={()=>printAll(offers,'Ofertă')} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127', border:'1px solid #2A323B' }}>📚 Exportă toate în PDF</button>}
+                    {!offerForm && <button onClick={()=>setOfferForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă ofertă</button>}
+                  </div>
+                </div>
+                {offerForm && <DocForm kind="Ofertă" clients={clients} materials={materials} initial={offerForm.id?offerForm:null} onCancel={()=>setOfferForm(null)} onSave={saveOffer} />}
+                <DocTable kind="Ofertă" docs={offers} clients={clients} statuses={OFFER_STATUSES} onEdit={setOfferForm} onDelete={deleteOffer} onStatusChange={offerStatus} onConvert={convertToInvoice} onPrint={printOne('Ofertă')} />
+              </div>
+            )}
+
+            {tab === 'facturi' && (
+              <div>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Facturi</h2>
+                  <div className="flex items-center gap-2">
+                    {invoices.length>0 && <button onClick={()=>printAll(invoices,'Factură')} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127', border:'1px solid #2A323B' }}>📚 Exportă toate în PDF</button>}
+                    {!invoiceForm && <button onClick={()=>setInvoiceForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă factură</button>}
+                  </div>
+                </div>
+                {invoiceForm && <DocForm kind="Factură" clients={clients} materials={materials} initial={invoiceForm.id?invoiceForm:null} onCancel={()=>setInvoiceForm(null)} onSave={saveInvoice} />}
+                <DocTable kind="Factură" docs={invoices} clients={clients} statuses={INVOICE_STATUSES} onEdit={setInvoiceForm} onDelete={deleteInvoice} onStatusChange={invoiceStatus} onPrint={printOne('Factură')} onSmartBill={sendInvoiceToSmartBill} />
+              </div>
+            )}
+
+            {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
+            {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
+
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={currentUser} />}
+            {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
+
+            {tab === 'profil' && <ProfileTab currentUser={currentUser} onLogout={logout} />}
+
+            {tab === 'utilizatori' && currentUser.rol === 'Manager' && <UsersTab currentUser={currentUser} />}
+          </>
+        )}
+      </main>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
