@@ -467,6 +467,7 @@ function RoCalendarPicker({ value, onChange }) {
   const base = value ? new Date(value + 'T00:00:00') : new Date();
   const [viewYear, setViewYear] = useState(base.getFullYear());
   const [viewMonth, setViewMonth] = useState(base.getMonth());
+  const todayStr = new Date().toISOString().slice(0,10);
 
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
@@ -504,6 +505,8 @@ function RoCalendarPicker({ value, onChange }) {
                   style={{
                     color: value === cellDate(d) ? '#14181C' : '#E9E7E2',
                     background: value === cellDate(d) ? '#2E8BD1' : 'transparent',
+                    border: todayStr === cellDate(d) ? '1px solid #2E8BD1' : '1px solid transparent',
+                    fontWeight: todayStr === cellDate(d) ? 700 : 400,
                   }}>{d}</button>
               ) : <div key={i} />)}
             </div>
@@ -1532,8 +1535,6 @@ function SantierForm({ initial, onCancel, onSave }) {
 
 function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfarsit, echipaPermisa }) {
   const [users, setUsers] = useState([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [selected, setSelected] = useState(new Set());
 
   useEffect(() => {
     fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
@@ -1546,22 +1547,15 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
   const numeDejaAdaugate = new Set(persoane.map((p)=>p.nume));
   const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
   const usersEchipa = (echipaPermisa && echipaPermisa.length > 0) ? users.filter((u)=>echipaPermisa.includes(u.id)) : [];
+  const disponibili = usersEchipa.filter((u)=>!numeDejaAdaugate.has(u.nume));
 
-  const toggleSelected = (userId) => {
-    const next = new Set(selected);
-    next.has(userId) ? next.delete(userId) : next.add(userId);
-    setSelected(next);
-  };
-
-  const adaugaSelectati = () => {
-    const noi = usersEchipa.filter((u)=>selected.has(u.id)).map((u)=>({ id: uid(), nume: u.nume, oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }));
-    setPersoane([...persoane, ...noi]);
-    setSelected(new Set());
-    setPickerOpen(false);
+  const addPerson = (u) => {
+    setPersoane([...persoane, { id: uid(), nume: u.nume, oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }]);
   };
 
   return (
     <div className="space-y-2">
+      {persoane.length > 0 && (
       <div className="overflow-x-auto">
       <div style={{ minWidth: 420 }}>
       <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 100px 100px 60px 28px', color:'#8B93A0' }}>
@@ -1581,30 +1575,24 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
       })}
       </div>
       </div>
-
-      {pickerOpen ? (
-        <div className="rounded-lg p-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
-          <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Selectează persoanele care au lucrat (doar echipa asignată la acest șantier):</div>
-          {usersEchipa.length === 0 ? (
-            <div className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat la acest șantier — cere unui Manager să asigneze echipa.</div>
-          ) : (
-            <div className="space-y-1 mb-2">
-              {usersEchipa.filter((u)=>!numeDejaAdaugate.has(u.nume)).map((u)=>(
-                <label key={u.id} className="flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg cursor-pointer" style={{ background: selected.has(u.id)?'#2E8BD122':'transparent', color:'#E9E7E2' }}>
-                  <input type="checkbox" checked={selected.has(u.id)} onChange={()=>toggleSelected(u.id)} />
-                  <span>{iconFor(u.rol)}</span> {u.nume}
-                </label>
-              ))}
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button onClick={()=>{ setPickerOpen(false); setSelected(new Set()); }} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>Renunță</button>
-            <button onClick={adaugaSelectati} disabled={selected.size===0} className="text-xs px-2 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă selectați ({selected.size})</button>
-          </div>
-        </div>
-      ) : (
-        <button onClick={()=>setPickerOpen(true)} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă persoană</button>
       )}
+
+      <div>
+        <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Apasă pe nume ca să adaugi persoana la raport:</div>
+        {usersEchipa.length === 0 ? (
+          <div className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat la acest șantier — cere unui Manager să asigneze echipa.</div>
+        ) : disponibili.length === 0 ? (
+          <div className="text-xs" style={{ color:'#5C6570' }}>Toți cei asignați sunt deja adăugați.</div>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {disponibili.map((u)=>(
+              <button key={u.id} onClick={()=>addPerson(u)} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #2A323B' }}>
+                <Icon>+</Icon> {iconFor(u.rol)} {u.nume}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1614,7 +1602,7 @@ function RaportForm({ initial, etape, echipaPermisa, onCancel, onSave }) {
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
   const [etapaId, setEtapaId] = useState(initial?.etapaId || '');
-  const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', oraInceput:'08:00', oraSfarsit:'17:00' }]);
+  const [persoane, setPersoane] = useState(initial?.persoane || []);
   const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const totalOreMin = persoane.reduce((s,p)=>s+personMinutes(p),0);
@@ -2133,6 +2121,9 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
 
   const isManager = currentUser?.rol === 'Manager';
+  const [mementoOpen, setMementoOpen] = useState(false);
+  const [santiereOpen, setSantiereOpen] = useState(false);
+  const [cereriOpen, setCereriOpen] = useState(false);
 
   // --- Date specifice Electricianului: șantierele lui, memento raport, materiale cerute acolo ---
   const santiereMele = santiere.filter((s)=>(s.echipa || []).includes(currentUser?.id));
@@ -2182,29 +2173,16 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 
       {!isManager && santiereFaraRaportAzi.length > 0 && (
         <div className="mb-6">
-          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Memento</div>
-          <div className="space-y-2">
-            {santiereFaraRaportAzi.map((s)=>(
-              <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
-                <span className="text-sm" style={{ color:'#E9E7E2' }}>⏰ Nu ai trimis raportul de azi pentru „{s.nume}"</span>
-                <span style={{ color:'#E9A23B' }}>→</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!isManager && (
-        <div className="mb-6">
-          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Șantierele tale</div>
-          {santiereMele.length === 0 ? (
-            <p className="text-sm" style={{ color:'#5C6570' }}>Nu ești asignat la niciun șantier încă.</p>
-          ) : (
-            <div className="space-y-2">
-              {santiereMele.map((s)=>(
-                <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                  <span className="text-sm" style={{ color:'#E9E7E2' }}>{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></span>
-                  <span style={{ color:'#5C6570' }}>→</span>
+          <button onClick={()=>setMementoOpen(!mementoOpen)} className="w-full flex items-center justify-between rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #E05252' }}>
+            <span className="text-sm font-medium" style={{ color:'#E05252' }}>⏰ {santiereFaraRaportAzi.length} {santiereFaraRaportAzi.length===1?'raport netrimis':'rapoarte netrimise'} azi</span>
+            <span className="text-xs" style={{ color:'#E05252' }}>{mementoOpen ? 'Ascunde' : 'Arată tot'}</span>
+          </button>
+          {mementoOpen && (
+            <div className="space-y-2 mt-2">
+              {santiereFaraRaportAzi.map((s)=>(
+                <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
+                  <span className="text-sm" style={{ color:'#E9E7E2' }}>Nu ai trimis raportul de azi pentru „{s.nume}"</span>
+                  <span style={{ color:'#E05252' }}>→</span>
                 </button>
               ))}
             </div>
@@ -2212,20 +2190,48 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         </div>
       )}
 
+      {!isManager && (
+        <div className="mb-6">
+          <button onClick={()=>setSantiereOpen(!santiereOpen)} className="w-full flex items-center justify-between rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <span className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🏗 Șantierele tale ({santiereMele.length})</span>
+            <span className="text-xs" style={{ color:'#8B93A0' }}>{santiereOpen ? 'Ascunde' : 'Arată tot'}</span>
+          </button>
+          {santiereOpen && (
+            santiereMele.length === 0 ? (
+              <p className="text-sm mt-2" style={{ color:'#5C6570' }}>Nu ești asignat la niciun șantier încă.</p>
+            ) : (
+              <div className="space-y-2 mt-2">
+                {santiereMele.map((s)=>(
+                  <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></span>
+                    <span style={{ color:'#5C6570' }}>→</span>
+                  </button>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
       {!isManager && cereriLaSantiereleMele.length > 0 && (
         <div className="mb-6">
-          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Materiale cerute (șantierele tale)</div>
-          <div className="space-y-2">
-            {cereriLaSantiereleMele.map((c)=>{
-              const santierNume = santiere.find((s)=>s.id===c.santierId)?.nume || '—';
-              return (
-                <div key={c.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                  <span className="text-sm" style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um} <span className="text-xs ml-1" style={{ color:'#8B93A0' }}>{santierNume}</span></span>
-                  <span className="text-xs" style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
-                </div>
-              );
-            })}
-          </div>
+          <button onClick={()=>setCereriOpen(!cereriOpen)} className="w-full flex items-center justify-between rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <span className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📥 Materiale cerute ({cereriLaSantiereleMele.length})</span>
+            <span className="text-xs" style={{ color:'#8B93A0' }}>{cereriOpen ? 'Ascunde' : 'Arată tot'}</span>
+          </button>
+          {cereriOpen && (
+            <div className="space-y-2 mt-2">
+              {cereriLaSantiereleMele.map((c)=>{
+                const santierNume = santiere.find((s)=>s.id===c.santierId)?.nume || '—';
+                return (
+                  <div key={c.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um} <span className="text-xs ml-1" style={{ color:'#8B93A0' }}>{santierNume}</span></span>
+                    <span className="text-xs" style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
