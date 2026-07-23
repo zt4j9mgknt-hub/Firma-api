@@ -1652,6 +1652,27 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [etapaNoua, setEtapaNoua] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
   const [siteView, setSiteView] = useState('rapoarte');
+  const [allUsers, setAllUsers] = useState([]);
+  const [teamPickerOpen, setTeamPickerOpen] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setAllUsers((data.users || []).filter((u)=>u.rol==='Electrician'))).catch(()=>setAllUsers([]));
+  }, []);
+
+  const updateEchipa = (santierId, echipa) => {
+    const next = santiere.map((s)=>s.id===santierId ? {...s, echipa} : s);
+    setSantiere(next); persist('santiere', next);
+  };
+  const addToEchipa = (santierId, userId) => {
+    const s = santiere.find((x)=>x.id===santierId);
+    const echipa = s.echipa || [];
+    if (!echipa.includes(userId)) updateEchipa(santierId, [...echipa, userId]);
+  };
+  const removeFromEchipa = (santierId, userId) => {
+    const s = santiere.find((x)=>x.id===santierId);
+    updateEchipa(santierId, (s.echipa || []).filter((id)=>id!==userId));
+  };
 
   const saveSantier = (s) => {
     const next = santiere.some((x)=>x.id===s.id) ? santiere.map((x)=>x.id===s.id?s:x) : [...santiere, s];
@@ -1742,6 +1763,36 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           {!reportForm && <button onClick={()=>setReportForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
         </div>
         <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreSantierMin)}</span></p>
+
+        {currentUser?.rol === 'Manager' && (
+          <div className="rounded-xl p-3 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>👥 Echipă asignată</div>
+              <button onClick={()=>setTeamPickerOpen(!teamPickerOpen)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{teamPickerOpen ? 'Închide' : '+ Asignează'}</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {(santier?.echipa || []).length === 0 && <span className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat.</span>}
+              {(santier?.echipa || []).map((userId)=>{
+                const u = allUsers.find((x)=>x.id===userId);
+                return (
+                  <span key={userId} className="inline-flex items-center gap-1 text-xs pl-2.5 pr-1 py-1 rounded-lg" style={{ color:'#E9E7E2', background:'#171C21' }}>
+                    🔌 {u?.nume || '(cont șters)'}
+                    <button onClick={()=>removeFromEchipa(santier.id, userId)} style={{ color:'#E05252', opacity:0.8 }}>✕</button>
+                  </span>
+                );
+              })}
+            </div>
+            {teamPickerOpen && (
+              <div className="flex flex-wrap gap-1.5 pt-2" style={{ borderTop:'1px solid #2A323B' }}>
+                {allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).length === 0 ? (
+                  <span className="text-xs" style={{ color:'#5C6570' }}>Toți electricienii sunt deja asignați (sau nu există niciunul înregistrat).</span>
+                ) : allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).map((u)=>(
+                  <button key={u.id} onClick={()=>addToEchipa(santier.id, u.id)} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>+ 🔌 {u.nume}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-2 mb-4">
           <button onClick={()=>setSiteView('rapoarte')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='rapoarte'?'#14181C':'#8B93A0', background: siteView==='rapoarte'?'#2E8BD1':'#171C21' }}>Rapoarte zilnice</button>
