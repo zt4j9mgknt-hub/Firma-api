@@ -708,7 +708,8 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     setStockMoves(nextMoves); persist('stockMoves', nextMoves);
     setMoveState(null);
   };
-  const filtered = materials.filter((m)=> !filter || m.denumire.toLowerCase().includes(filter.toLowerCase()) || m.categorie?.toLowerCase().includes(filter.toLowerCase()));
+  const normalizeSearch = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
+  const filtered = materials.filter((m)=> !filter || normalizeSearch(m.denumire).includes(normalizeSearch(filter)) || normalizeSearch(m.categorie).includes(normalizeSearch(filter)));
 
   const importCatalog = () => {
     const existing = new Set(materials.map((m)=>m.denumire));
@@ -817,16 +818,8 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   };
 
   const gestiuni = [...new Set(materials.map((m)=>m.categorie).filter(Boolean))].sort();
-  const [catTab, setCatTab] = useState(null);
-  const [stocCatTab, setStocCatTab] = useState(null);
+  const [stocShowAll, setStocShowAll] = useState(false);
   const searchingGestiune = filter.trim() !== '';
-  const showGestiuneList = searchingGestiune || catTab !== null;
-  const filteredByCat = searchingGestiune
-    ? filtered
-    : catTab === '__fara__' ? materials.filter((m)=>!m.categorie)
-    : catTab ? filtered.filter((m)=>m.categorie === catTab)
-    : filtered;
-  const materialeFaraGestiune = materials.filter((m)=>!m.categorie);
 
   return (
     <div>
@@ -870,34 +863,13 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
           {form && form.id && <MaterialForm initial={form} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
           {materials.length===0 && !form ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material încă.</div>
-          ) : !showGestiuneList ? (
-            <div className="space-y-2">
-              {gestiuni.map((g)=>{
-                const count = materials.filter((m)=>m.categorie===g).length;
-                return (
-                  <button key={g} onClick={()=>setCatTab(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                    <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
-                    <span className="text-xs" style={{ color:'#8B93A0' }}>{count} materiale →</span>
-                  </button>
-                );
-              })}
-              {materialeFaraGestiune.length > 0 && (
-                <button onClick={()=>setCatTab('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                  <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
-                  <span className="text-xs" style={{ color:'#8B93A0' }}>{materialeFaraGestiune.length} materiale →</span>
-                </button>
-              )}
-            </div>
           ) : (
             <>
-              {!searchingGestiune && (
-                <button onClick={()=>setCatTab(null)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
-              )}
               <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
-                Valoare totală ({filteredByCat.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(filteredByCat.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span>
+                Valoare totală ({filtered.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(filtered.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span>
               </div>
               <div className="space-y-2">
-                {filteredByCat.map((m)=>(
+                {filtered.map((m)=>(
                   <div key={m.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                     <div className="min-w-0">
                       <div className="text-sm truncate" style={{ color:'#E9E7E2' }}>{m.denumire}{m.categorie && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{m.categorie}</span>}</div>
@@ -918,36 +890,22 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
 
       {subTab === 'stocuri' && (
         <div>
-          <div className="flex justify-between items-center mb-4 gap-3">
-            <input placeholder="Caută..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <input placeholder="Caută material..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+            {!stocShowAll && !searchingGestiune && (
+              <button onClick={()=>setStocShowAll(true)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📦 Afișează stoc integral</button>
+            )}
+            {stocShowAll && !searchingGestiune && (
+              <button onClick={()=>setStocShowAll(false)} className="text-xs px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>Ascunde lista</button>
+            )}
           </div>
           {materials.length===0 ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material — adaugă mai întâi din tab-ul „Gestiune".</div>
-          ) : !searchingGestiune && !stocCatTab ? (
-            <div className="space-y-2">
-              {gestiuni.map((g)=>{
-                const count = materials.filter((m)=>m.categorie===g).length;
-                return (
-                  <button key={g} onClick={()=>setStocCatTab(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                    <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
-                    <span className="text-xs" style={{ color:'#8B93A0' }}>{count} materiale →</span>
-                  </button>
-                );
-              })}
-              {materialeFaraGestiune.length > 0 && (
-                <button onClick={()=>setStocCatTab('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                  <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
-                  <span className="text-xs" style={{ color:'#8B93A0' }}>{materialeFaraGestiune.length} materiale →</span>
-                </button>
-              )}
-            </div>
+          ) : !stocShowAll && !searchingGestiune ? (
+            <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Caută un material, sau apasă „Afișează stoc integral".</div>
           ) : (
-            <>
-              {!searchingGestiune && (
-                <button onClick={()=>setStocCatTab(null)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
-              )}
               <div className="space-y-2">
-              {(searchingGestiune ? filtered : stocCatTab==='__fara__' ? materials.filter((m)=>!m.categorie) : filtered.filter((m)=>m.categorie===stocCatTab)).map((m)=>{
+              {filtered.map((m)=>{
                 const low = Number(m.stoc) < Number(m.stocMinim);
                 const moves = stockMoves.filter((mv)=>mv.materialId===m.id).slice(0,8);
                 return (
@@ -988,7 +946,6 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                 );
               })}
               </div>
-            </>
           )}
         </div>
       )}
