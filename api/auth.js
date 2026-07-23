@@ -86,6 +86,24 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    if (action === 'changePassword') {
+      const { id, oldPassword, newPassword } = body;
+      if (!id || !oldPassword || !newPassword) {
+        return res.status(400).json({ error: 'Completeaza toate campurile.' });
+      }
+      const users = await getUsers();
+      const idx = users.findIndex((u) => u.id === id);
+      if (idx === -1) return res.status(404).json({ error: 'Utilizator negasit.' });
+      const user = users[idx];
+      const oldHash = hashPassword(oldPassword, user.salt);
+      if (oldHash !== user.passwordHash) return res.status(401).json({ error: 'Parola actuala este gresita.' });
+      const newSalt = crypto.randomBytes(16).toString('hex');
+      const newHash = hashPassword(newPassword, newSalt);
+      users[idx] = { ...user, salt: newSalt, passwordHash: newHash };
+      await saveUsers(users);
+      return res.status(200).json({ ok: true });
+    }
+
     return res.status(400).json({ error: 'Actiune necunoscuta.' });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Eroare necunoscuta.' });
