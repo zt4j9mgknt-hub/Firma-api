@@ -1525,7 +1525,7 @@ function SantierForm({ initial, onCancel, onSave }) {
   );
 }
 
-function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfarsit }) {
+function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfarsit, echipaPermisa }) {
   const [users, setUsers] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selected, setSelected] = useState(new Set());
@@ -1537,10 +1537,10 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
 
   const update = (id, f, v) => setPersoane(persoane.map((p)=> p.id===id ? {...p, [f]:v} : p));
   const remove = (id) => setPersoane(persoane.filter((p)=>p.id!==id));
-  const addManual = () => setPersoane([...persoane, { id: uid(), nume:'', oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }]);
 
   const numeDejaAdaugate = new Set(persoane.map((p)=>p.nume));
   const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
+  const usersEchipa = (echipaPermisa && echipaPermisa.length > 0) ? users.filter((u)=>echipaPermisa.includes(u.id)) : [];
 
   const toggleSelected = (userId) => {
     const next = new Set(selected);
@@ -1549,7 +1549,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
   };
 
   const adaugaSelectati = () => {
-    const noi = users.filter((u)=>selected.has(u.id)).map((u)=>({ id: uid(), nume: u.nume, oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }));
+    const noi = usersEchipa.filter((u)=>selected.has(u.id)).map((u)=>({ id: uid(), nume: u.nume, oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }));
     setPersoane([...persoane, ...noi]);
     setSelected(new Set());
     setPickerOpen(false);
@@ -1579,12 +1579,12 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
 
       {pickerOpen ? (
         <div className="rounded-lg p-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
-          <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Selectează persoanele care au lucrat:</div>
-          {users.length === 0 ? (
-            <div className="text-xs" style={{ color:'#5C6570' }}>Niciun utilizator înregistrat încă.</div>
+          <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Selectează persoanele care au lucrat (doar echipa asignată la acest șantier):</div>
+          {usersEchipa.length === 0 ? (
+            <div className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat la acest șantier — cere unui Manager să asigneze echipa.</div>
           ) : (
             <div className="space-y-1 mb-2">
-              {users.filter((u)=>!numeDejaAdaugate.has(u.nume)).map((u)=>(
+              {usersEchipa.filter((u)=>!numeDejaAdaugate.has(u.nume)).map((u)=>(
                 <label key={u.id} className="flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg cursor-pointer" style={{ background: selected.has(u.id)?'#2E8BD122':'transparent', color:'#E9E7E2' }}>
                   <input type="checkbox" checked={selected.has(u.id)} onChange={()=>toggleSelected(u.id)} />
                   <span>{iconFor(u.rol)}</span> {u.nume}
@@ -1595,7 +1595,6 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
           <div className="flex gap-2">
             <button onClick={()=>{ setPickerOpen(false); setSelected(new Set()); }} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>Renunță</button>
             <button onClick={adaugaSelectati} disabled={selected.size===0} className="text-xs px-2 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă selectați ({selected.size})</button>
-            <button onClick={addManual} className="text-xs px-2 py-1.5 rounded-lg ml-auto" style={{ color:'#8B93A0', background:'#1B2127' }}>+ Nume manual</button>
           </div>
         </div>
       ) : (
@@ -1605,7 +1604,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
   );
 }
 
-function RaportForm({ initial, etape, onCancel, onSave }) {
+function RaportForm({ initial, etape, echipaPermisa, onCancel, onSave }) {
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
@@ -1636,7 +1635,7 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
         )}
       </div>
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
-      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} />
+      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} />
       <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
       <div className="flex justify-between items-center mt-3">
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMin)}</span></span>
@@ -1826,7 +1825,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           <button onClick={()=>exportExcel(selected, rapoarte.filter((r)=>r.santierId===selected), etapeSantier)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
         </div>
 
-        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} echipaPermisa={santier?.echipa || []} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : (
