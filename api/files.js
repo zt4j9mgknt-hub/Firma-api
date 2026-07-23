@@ -1,16 +1,17 @@
 // Functie server (Vercel) pentru incarcare/stergere/afisare fisiere (planse PDF, foto, video)
 // folosind Vercel Blob (magazin PRIVAT - fisierele NU sunt accesibile direct din URL,
-// trec mereu prin acest server, care detine cheia de acces).
+// trec mereu prin acest server, care se autentifica automat prin SDK).
 //
 // Actiuni (trimise ca { action: '...' } in body-ul POST):
 //   upload - incarca un fisier { filename, base64, contentType, folder }
 //   delete - sterge un fisier { url }
-// GET ?url=<url privat> - "serveste" fisierul (proxy autentificat), pentru <img>/<video>/<a href>
+// GET ?pathname=<pathname> - "serveste" fisierul (proxy autentificat), pentru <img>/<video>/<a href>
 //
 // Limitare Vercel: request-urile catre functii server au un plafon de ~4.5MB.
 // Fisiere foto/PDF obisnuite se incadreaza; video-uri lungi pot depasi limita.
 
-import { put, del } from '@vercel/blob';
+import { put, del, get } from '@vercel/blob';
+import { buffer as streamToBuffer } from 'node:stream/consumers';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -18,23 +19,19 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-
   // GET => proxy autentificat catre un fisier privat, ca sa poata fi afisat direct in pagina.
   if (req.method === 'GET') {
     try {
-      const url = req.query.url;
-      if (!url || !String(url).includes('.blob.vercel-storage.com')) {
-        return res.status(400).send('URL invalid.');
-      }
-      const upstream = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!upstream.ok) return res.status(upstream.status).send('Fisierul nu a fost gasit.');
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
-      res.setHeader('Cache-Control', 'private, max-age=3600');
+      const pathname = req.query.pathname;
+      if (!pathname) return res.status(400).send('Lipseste pathname.');
+      const result = await get(pathname, { access: 'private' });
+      if (!result || !result.stream) return res.status(404).send('Fisierul nu a fost gasit.');
+      const buf = await streamToBuffer(result.stream);
+      res.setHeader('Content-Type', result.blob?.contentType || 'application/octet-stream');
+      res.setHeader('Cache-Control', 'private, no-cache');
       return res.status(200).send(buf);
     } catch (e) {
-      return res.status(500).send('Eroare la incarcarea fisierului.');
+      return res.status(500).send('Eroare la incarcarea fisierului: ' + (e.message || ''));
     }
   }
 
