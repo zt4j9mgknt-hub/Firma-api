@@ -1,11 +1,11 @@
-// Functie EDGE (Vercel) care genereaza un "token de client" pentru incarcare directa
-// din browser catre Vercel Blob, ocolind complet limita de 4.5MB a functiilor server
-// normale. Fisierul NU mai trece prin acest server - merge direct browser -> Blob.
+// Functie server (Vercel, runtime Node.js implicit) care genereaza un "token de client"
+// pentru incarcare directa din browser catre Vercel Blob, ocolind complet limita de
+// 4.5MB a functiilor server normale. Fisierul NU mai trece prin acest server - merge
+// direct browser -> Blob.
 //
-// Trebuie sa fie Edge (nu Node clasic) pentru ca handleUpload() asteapta un obiect
-// Request/Response in stil web, nu (req,res) clasic de Node.
-
-export const config = { runtime: 'edge' };
+// IMPORTANT: handleUpload() foloseste module Node.js (crypto, stream) care NU sunt
+// disponibile pe runtime-ul "Edge" - de-aia acest fisier NU seteaza runtime:'edge',
+// ramane pe Node.js (implicit), care suporta si formatul modern de handler (request) => Response.
 
 import { handleUpload } from '@vercel/blob/client';
 
