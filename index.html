@@ -1668,10 +1668,12 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
       <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📥 Cerere materiale</div>
+          {currentUser?.rol === 'Manager' && (
           <div className="flex gap-1.5">
             <button onClick={exportCereriExcel} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>📊 Excel</button>
             <button onClick={exportCererePDF} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>🖨 PDF</button>
           </div>
+          )}
         </div>
         <div className="flex gap-2 mb-2 flex-wrap">
           <input list="materiale-catalog-santier" placeholder="Material" value={cerereForm.denumire} onChange={(e)=>setCerereForm({...cerereForm, denumire:e.target.value})} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none min-w-[140px]" style={inputStyle} />
@@ -1731,7 +1733,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
           <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📦 Stoc materiale la șantier</div>
           <div className="flex items-center gap-1.5">
-            {consumList.length > 0 && <button onClick={trimiteConsumInDeviz} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>🧾 Exportă consum în Deviz</button>}
+            {currentUser?.rol === 'Manager' && consumList.length > 0 && <button onClick={trimiteConsumInDeviz} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>🧾 Exportă consum în Deviz</button>}
             {stocList.length > 0 && <button onClick={()=>setStocShowAllSantier(!stocShowAllSantier)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{stocShowAllSantier ? 'Ascunde' : '👁 Vezi tot stocul'}</button>}
           </div>
         </div>
@@ -1963,7 +1965,7 @@ function RaportForm({ initial, etape, echipaPermisa, materials, onCancel, onSave
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -1977,6 +1979,15 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
   const [echipaVizibila, setEchipaVizibila] = useState(false);
   const [raporteShowAll, setRaporteShowAll] = useState(false);
+
+  // Cand un Manager/Electrician apasă pe o alertă din Dashboard, sare direct
+  // la șantierul și sub-tab-ul relevant (Materiale, Scule etc.), nu doar la listă.
+  useEffect(() => {
+    if (!pendingSiteNav) return;
+    setSelected(pendingSiteNav.santierId);
+    setSiteView(pendingSiteNav.siteView || 'rapoarte');
+    setPendingSiteNav(null);
+  }, [pendingSiteNav]);
 
   useEffect(() => {
     fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
@@ -2149,6 +2160,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         )}
         {siteView === 'rapoarte' && (
         <>
+        {currentUser?.rol === 'Manager' && (
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <span className="text-xs" style={{ color:'#5C6570' }}>Raport pentru perioada:</span>
           <RoCalendarPicker value={exportFrom} onChange={setExportFrom} />
@@ -2159,6 +2171,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             <button onClick={()=>onExportMaterialeFolosite(rapoarte.filter((r)=>r.santierId===selected && (!exportFrom || r.data>=exportFrom) && (!exportTo || r.data<=exportTo)), santier?.nume)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>🧾 Exportă materiale folosite în Deviz</button>
           )}
         </div>
+        )}
 
         {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} echipaPermisa={santier?.echipa || []} materials={materials} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
@@ -2461,8 +2474,9 @@ function UsersTab({ currentUser }) {
   );
 }
 
-function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, setTab, currentUser }) {
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, setTab, setPendingSiteNav, currentUser }) {
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
+  const goToSite = (santierId, siteView) => { setPendingSiteNav({ santierId, siteView: siteView || 'rapoarte' }); setTab('santiere'); };
 
   const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
   const oferteTrimise = offers.filter((o)=>o.status==='Trimisă').length;
@@ -2471,6 +2485,13 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const santiereActive = santiere.filter((s)=>s.status==='Activ').length;
   const materialeSubStoc = materials.filter((m)=>!m.arhivat && Number(m.stoc) < Number(m.stocMinim));
   const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
+  const cereriInAsteptarePeSantier = Object.values(
+    cereriInAsteptare.reduce((acc, c) => {
+      if (!acc[c.santierId]) acc[c.santierId] = { santierId: c.santierId, count: 0 };
+      acc[c.santierId].count += 1;
+      return acc;
+    }, {})
+  );
 
   const isManager = currentUser?.rol === 'Manager';
   const [mementoOpen, setMementoOpen] = useState(false);
@@ -2532,7 +2553,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
           {mementoOpen && (
             <div className="space-y-2 mt-2">
               {santiereFaraRaportAzi.map((s)=>(
-                <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
+                <button key={s.id} onClick={()=>goToSite(s.id, 'rapoarte')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
                   <span className="text-sm" style={{ color:'#E9E7E2' }}>Nu ai trimis raportul de azi pentru „{s.nume}"</span>
                   <span style={{ color:'#E05252' }}>→</span>
                 </button>
@@ -2554,7 +2575,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             ) : (
               <div className="space-y-2 mt-2">
                 {santiereMele.map((s)=>(
-                  <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <button key={s.id} onClick={()=>goToSite(s.id, 'rapoarte')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                     <span className="text-sm" style={{ color:'#E9E7E2' }}>{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></span>
                     <span style={{ color:'#5C6570' }}>→</span>
                   </button>
@@ -2576,10 +2597,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
               {cereriLaSantiereleMele.map((c)=>{
                 const santierNume = santiere.find((s)=>s.id===c.santierId)?.nume || '—';
                 return (
-                  <div key={c.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <button key={c.id} onClick={()=>goToSite(c.santierId, 'materiale')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                     <span className="text-sm" style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um} <span className="text-xs ml-1" style={{ color:'#8B93A0' }}>{santierNume}</span></span>
                     <span className="text-xs" style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -2597,12 +2618,15 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 <span style={{ color:'#E05252' }}>→</span>
               </button>
             )}
-            {isManager && cereriInAsteptare.length > 0 && (
-              <button onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
-                <span className="text-sm" style={{ color:'#E9E7E2' }}>{cereriInAsteptare.length} cereri de materiale în așteptare de aprobare</span>
-                <span style={{ color:'#E9A23B' }}>→</span>
-              </button>
-            )}
+            {isManager && cereriInAsteptarePeSantier.map((g)=>{
+              const santierNume = santiere.find((s)=>s.id===g.santierId)?.nume || '—';
+              return (
+                <button key={g.santierId} onClick={()=>goToSite(g.santierId, 'materiale')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
+                  <span className="text-sm" style={{ color:'#E9E7E2' }}>{g.count} {g.count===1?'cerere':'cereri'} de materiale în așteptare — {santierNume}</span>
+                  <span style={{ color:'#E9A23B' }}>→</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -2833,6 +2857,7 @@ function App() {
   const [cereriSantier, setCereriSantier] = useState([]);
   const [miscariSantier, setMiscariSantier] = useState([]);
   const [planseSantier, setPlanseSantier] = useState([]);
+  const [pendingSiteNav, setPendingSiteNav] = useState(null);
   const [mediaSantier, setMediaSantier] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
@@ -3150,7 +3175,7 @@ function App() {
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
         ) : !tab ? (
-          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setTab={setTab} currentUser={effectiveUser} />
+          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setTab={setTab} setPendingSiteNav={setPendingSiteNav} currentUser={effectiveUser} />
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
@@ -3190,7 +3215,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'profil' && <ProfileTab currentUser={effectiveUser} onLogout={logout} />}
