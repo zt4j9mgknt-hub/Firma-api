@@ -113,7 +113,7 @@ function LineItemsEditor({ items, setItems, materials }) {
   const remove = (id) => setItems(items.filter((it) => it.id !== id));
   const add = () => setItems([...items, { id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
   const pickMaterial = (id, denumire) => {
-    const m = (materials || []).find((mm) => mm.denumire === denumire);
+    const m = (materials || []).find((mm) => mm.denumire === denumire && !mm.arhivat);
     if (m) {
       setItems(items.map((it) => it.id === id ? { ...it, denumire: m.denumire, um: m.um, pretUnitar: m.pret } : it));
     } else {
@@ -123,7 +123,7 @@ function LineItemsEditor({ items, setItems, materials }) {
   return (
     <div className="space-y-2">
       <datalist id="materiale-catalog">
-        {(materials || []).map((m) => <option key={m.id} value={m.denumire} />)}
+        {(materials || []).filter((m)=>!m.arhivat).map((m) => <option key={m.id} value={m.denumire} />)}
       </datalist>
       <div className="overflow-x-auto">
       <div style={{ minWidth: 560 }}>
@@ -706,6 +706,15 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   const [exportTo, setExportTo] = useState('');
   const [exportGestiuni, setExportGestiuni] = useState(new Set());
   const [filter, setFilter] = useState('');
+  const [arataVechi, setArataVechi] = useState(false);
+
+  const materialeActive = materials.filter((m)=>!m.arhivat);
+  const materialeVechi = materials.filter((m)=>m.arhivat);
+  const arhiveazaGestiune = () => {
+    if (!window.confirm(`Sigur arhivezi toate cele ${materialeActive.length} materiale active ca „Gestiune veche"? Rămân vizibile la nevoie, dar nu mai apar în Stocuri sau la scăderea automată din devize. Poți adăuga apoi materiale noi, cu cantități reale.`)) return;
+    const next = materials.map((m)=> m.arhivat ? m : {...m, arhivat:true});
+    setMaterials(next); persist('materials', next);
+  };
 
   const saveMaterial = (m) => {
     const next = materials.some((x)=>x.id===m.id) ? materials.map((x)=>x.id===m.id?m:x) : [...materials, m];
@@ -731,7 +740,9 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     setMoveState(null);
   };
   const normalizeSearch = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
-  const filtered = materials.filter((m)=> !filter || normalizeSearch(m.denumire).includes(normalizeSearch(filter)) || normalizeSearch(m.categorie).includes(normalizeSearch(filter)));
+  const baseList = arataVechi ? materialeVechi : materialeActive;
+  const filtered = baseList.filter((m)=> !filter || normalizeSearch(m.denumire).includes(normalizeSearch(filter)) || normalizeSearch(m.categorie).includes(normalizeSearch(filter)));
+  const filteredStocuri = materialeActive.filter((m)=> !filter || normalizeSearch(m.denumire).includes(normalizeSearch(filter)) || normalizeSearch(m.categorie).includes(normalizeSearch(filter)));
 
   const importCatalog = () => {
     const existing = new Set(materials.map((m)=>m.denumire));
@@ -839,7 +850,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     XLSX.writeFile(wb, `balanta_stocului_${label}.xlsx`);
   };
 
-  const gestiuni = [...new Set(materials.map((m)=>m.categorie).filter(Boolean))].sort();
+  const gestiuni = [...new Set(baseList.map((m)=>m.categorie).filter(Boolean))].sort();
   const [stocShowAll, setStocShowAll] = useState(false);
   const [gestShowAll, setGestShowAll] = useState(false);
   const [gestFlatAll, setGestFlatAll] = useState(false);
@@ -862,7 +873,17 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
             {!form && <button onClick={()=>{ setForm({}); setAddMode('manual'); }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă material</button>}
           </div>
 
-          <details className="mb-3">
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <button onClick={()=>setArataVechi(!arataVechi)} className="text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ color: arataVechi?'#14181C':'#8B93A0', background: arataVechi?'#E9A23B':'#171C21', border:'1px solid #2A323B' }}>
+              {arataVechi ? `🗄 Gestiune veche (${materialeVechi.length})` : `🗄 Arată gestiunea veche (${materialeVechi.length})`}
+            </button>
+            {!arataVechi && materialeActive.length > 0 && (
+              <button onClick={arhiveazaGestiune} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color:'#E05252', background:'#171C21', border:'1px solid #E0525266' }}>📦 Arhivează gestiunea curentă (fă loc uneia noi)</button>
+            )}
+          </div>
+          {arataVechi && (
+            <p className="text-xs mb-3" style={{ color:'#E9A23B' }}>Aceasta e gestiunea veche, din SmartBill — cifrele nu mai corespund cu stocul fizic real. E doar de referință; nu apare în Stocuri și nu se scade automat la devize.</p>
+          )}
             <summary className="text-xs cursor-pointer select-none" style={{ color:'#5C6570' }}>📊 Export balanță stoc</summary>
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               <RoCalendarPicker value={exportFrom} onChange={setExportFrom} />
@@ -897,7 +918,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
           {form && !form.id && <MaterialForm initial={null} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
           {form && form.id && <MaterialForm initial={form} onCancel={()=>setForm(null)} onSave={saveMaterial} />}
 
-          {materials.length===0 && !form ? (
+          {baseList.length===0 && !form ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material încă.</div>
           ) : (searchingGestiune || gestFlatAll) ? (
             <>
@@ -928,12 +949,12 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
           ) : gestGroup === null ? (
             <>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm" style={{ color:'#8B93A0' }}>Valoare totală, toate gestiunile ({materials.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(materials.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span></span>
+                <span className="text-sm" style={{ color:'#8B93A0' }}>Valoare totală, toate gestiunile ({baseList.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(baseList.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span></span>
                 <button onClick={()=>setGestFlatAll(true)} className="text-xs px-2.5 py-1.5 rounded-lg shrink-0" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>Arată toate materialele</button>
               </div>
               <div className="space-y-2">
                 {gestiuni.map((g)=>{
-                  const count = materials.filter((m)=>m.categorie===g).length;
+                  const count = baseList.filter((m)=>m.categorie===g).length;
                   return (
                     <button key={g} onClick={()=>setGestGroup(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                       <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
@@ -941,10 +962,10 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                     </button>
                   );
                 })}
-                {materials.some((m)=>!m.categorie) && (
+                {baseList.some((m)=>!m.categorie) && (
                   <button onClick={()=>setGestGroup('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
                     <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
-                    <span className="text-xs" style={{ color:'#8B93A0' }}>{materials.filter((m)=>!m.categorie).length} materiale →</span>
+                    <span className="text-xs" style={{ color:'#8B93A0' }}>{baseList.filter((m)=>!m.categorie).length} materiale →</span>
                   </button>
                 )}
               </div>
@@ -953,7 +974,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
             <>
               <button onClick={()=>setGestGroup(null)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
               {(() => {
-                const groupItems = gestGroup === '__fara__' ? materials.filter((m)=>!m.categorie) : materials.filter((m)=>m.categorie===gestGroup);
+                const groupItems = gestGroup === '__fara__' ? baseList.filter((m)=>!m.categorie) : baseList.filter((m)=>m.categorie===gestGroup);
                 return (
                   <>
                     <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
@@ -993,13 +1014,13 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
               <button onClick={()=>setStocShowAll(false)} className="text-xs px-3 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>Ascunde lista</button>
             )}
           </div>
-          {materials.length===0 ? (
+          {materialeActive.length===0 ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material — adaugă mai întâi din tab-ul „Gestiune".</div>
           ) : !stocShowAll && !searchingGestiune ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Caută un material, sau apasă „Afișează stoc integral".</div>
           ) : (
               <div className="space-y-2">
-              {filtered.map((m)=>{
+              {filteredStocuri.map((m)=>{
                 const low = Number(m.stoc) < Number(m.stocMinim);
                 const moves = stockMoves.filter((mv)=>mv.materialId===m.id).slice(0,8);
                 return (
@@ -1267,6 +1288,149 @@ function SiteAlertsPanel({ santierId, categorie, categorieLabel, alerte, setAler
   );
 }
 
+// Citește un fișier ca base64 (fără prefixul "data:...;base64,") pentru trimitere către /api/files.
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadFileToBlob(file, folder) {
+  const base64 = await fileToBase64(file);
+  const res = await fetch('/api/files', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'upload', filename: file.name, base64, contentType: file.type, folder }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error || 'Încărcarea a eșuat.');
+  return data;
+}
+
+function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, currentUser }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const planseAici = planseSantier.filter((p)=>p.santierId===santierId);
+
+  const handleFiles = async (fileList) => {
+    setError('');
+    const files = Array.from(fileList).filter((f)=>f.type === 'application/pdf');
+    if (files.length === 0) { setError('Doar fișiere PDF sunt acceptate aici.'); return; }
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/planse`);
+        const next = [...planseSantier, { id: uid(), santierId, nume: file.name, url: uploaded.url, data: new Date().toISOString().slice(0,10), incarcatDe: currentUser?.nume || '' }];
+        setPlanseSantier(next); persist('planseSantier', next);
+      }
+    } catch (e) {
+      setError(e.message || 'A eșuat.');
+    }
+    setUploading(false);
+  };
+
+  const remove = async (p) => {
+    try { await fetch('/api/files', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', url: p.url }) }); } catch {}
+    const next = planseSantier.filter((x)=>x.id!==p.id);
+    setPlanseSantier(next); persist('planseSantier', next);
+  };
+
+  return (
+    <div>
+      <div className="rounded-xl p-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>📐 Planșe de execuție (PDF)</div>
+        <label className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg cursor-pointer" style={{ color:'#14181C', background:'#2E8BD1' }}>
+          <Icon>+</Icon> {uploading ? 'Se încarcă...' : 'Adaugă PDF'}
+          <input type="file" accept="application/pdf" multiple disabled={uploading} onChange={(e)=>{ handleFiles(e.target.files); e.target.value=''; }} style={{ display:'none' }} />
+        </label>
+        {error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{error}</p>}
+        {planseAici.length === 0 ? (
+          <div className="text-xs mt-3" style={{ color:'#5C6570' }}>Nicio planșă încărcată încă.</div>
+        ) : (
+          <div className="space-y-2 mt-3">
+            {planseAici.map((p)=>(
+              <div key={p.id} className="flex items-center justify-between text-sm px-3 py-2 rounded-lg" style={{ background:'#171C21' }}>
+                <a href={p.url} target="_blank" rel="noopener noreferrer" className="truncate" style={{ color:'#2E8BD1' }}>📄 {p.nume}</a>
+                <div className="flex items-center gap-2 shrink-0 ml-2">
+                  <span className="text-xs" style={{ color:'#5C6570' }}>{p.data}</span>
+                  <button onClick={()=>remove(p)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, currentUser }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const mediaAici = mediaSantier.filter((m)=>m.santierId===santierId);
+
+  const handleFiles = async (fileList) => {
+    setError('');
+    const files = Array.from(fileList).filter((f)=>f.type.startsWith('image/') || f.type.startsWith('video/'));
+    if (files.length === 0) { setError('Doar poze sau video sunt acceptate aici.'); return; }
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/media`);
+        const next = [...mediaSantier, { id: uid(), santierId, nume: file.name, url: uploaded.url, tip: file.type.startsWith('video/') ? 'video' : 'foto', data: new Date().toISOString().slice(0,10), incarcatDe: currentUser?.nume || '' }];
+        setMediaSantier(next); persist('mediaSantier', next);
+      }
+    } catch (e) {
+      setError(e.message || 'A eșuat.');
+    }
+    setUploading(false);
+  };
+
+  const remove = async (m) => {
+    try { await fetch('/api/files', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', url: m.url }) }); } catch {}
+    const next = mediaSantier.filter((x)=>x.id!==m.id);
+    setMediaSantier(next); persist('mediaSantier', next);
+  };
+
+  return (
+    <div>
+      <div className="rounded-xl p-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>📷 Foto / Video</div>
+        <label className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg cursor-pointer" style={{ color:'#14181C', background:'#2E8BD1' }}>
+          <Icon>+</Icon> {uploading ? 'Se încarcă...' : 'Adaugă foto/video'}
+          <input type="file" accept="image/*,video/*" multiple disabled={uploading} onChange={(e)=>{ handleFiles(e.target.files); e.target.value=''; }} style={{ display:'none' }} />
+        </label>
+        <p className="text-[11px] mt-1.5" style={{ color:'#5C6570' }}>Fișiere de până la ~4MB; video-uri lungi/necomprimate pot eșua la încărcare.</p>
+        {error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{error}</p>}
+        {mediaAici.length === 0 ? (
+          <div className="text-xs mt-3" style={{ color:'#5C6570' }}>Nimic încărcat încă.</div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
+            {mediaAici.map((m)=>(
+              <div key={m.id} className="rounded-lg overflow-hidden relative" style={{ background:'#171C21' }}>
+                {m.tip === 'video' ? (
+                  <video src={m.url} controls className="w-full" style={{ maxHeight:140, objectFit:'cover' }} />
+                ) : (
+                  <a href={m.url} target="_blank" rel="noopener noreferrer">
+                    <img src={m.url} alt={m.nume} className="w-full" style={{ height:140, objectFit:'cover' }} />
+                  </a>
+                )}
+                <div className="flex items-center justify-between px-2 py-1">
+                  <span className="text-[11px] truncate" style={{ color:'#8B93A0' }}>{m.data}</span>
+                  <button onClick={()=>remove(m)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const [sculaNoua, setSculaNoua] = useState('');
@@ -1430,7 +1594,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         </div>
         <div className="flex gap-2 mb-2 flex-wrap">
           <input list="materiale-catalog-santier" placeholder="Material" value={cerereForm.denumire} onChange={(e)=>setCerereForm({...cerereForm, denumire:e.target.value})} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none min-w-[140px]" style={inputStyle} />
-          <datalist id="materiale-catalog-santier">{materials.map((m)=><option key={m.id} value={m.denumire} />)}</datalist>
+          <datalist id="materiale-catalog-santier">{materials.filter((m)=>!m.arhivat).map((m)=><option key={m.id} value={m.denumire} />)}</datalist>
           <input type="number" value={cerereForm.cantitate} onChange={(e)=>setCerereForm({...cerereForm, cantitate:e.target.value})} className="w-20 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
           <input placeholder="UM" value={cerereForm.um} onChange={(e)=>setCerereForm({...cerereForm, um:e.target.value})} className="w-20 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
           <button onClick={addCerere} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Cere</button>
@@ -1597,13 +1761,49 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
   );
 }
 
-function RaportForm({ initial, etape, echipaPermisa, onCancel, onSave }) {
+function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const activeMaterials = (materials || []).filter((m)=>!m.arhivat);
+  const update = (id, f, v) => setMaterialeFolosite(materialeFolosite.map((m)=> m.id===id ? {...m, [f]:v} : m));
+  const remove = (id) => setMaterialeFolosite(materialeFolosite.filter((m)=>m.id!==id));
+  const add = () => setMaterialeFolosite([...materialeFolosite, { id: uid(), denumire:'', cantitate:1, um:'buc', sursa:'proprie' }]);
+
+  return (
+    <div>
+      <div className="text-sm font-medium mb-1.5" style={{ color:'#E9E7E2' }}>🧰 Materiale folosite</div>
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>„Proprii" se scad automat din Gestiune la emiterea devizului. „Client" apar în deviz doar ca informație, fără să afecteze stocul tău.</p>
+      {materialeFolosite.length > 0 && (
+        <div className="space-y-1 mb-2">
+          {materialeFolosite.map((m)=>(
+            <div key={m.id} className="flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1.5" style={{ background:'#171C21' }}>
+              <input list="materiale-folosite-catalog" placeholder="Material" value={m.denumire} onChange={(e)=>update(m.id,'denumire',e.target.value)} className="bg-transparent outline-none text-sm py-1 flex-1 min-w-[120px]" style={{ color:'#E9E7E2' }} />
+              <input type="number" value={m.cantitate} onChange={(e)=>update(m.id,'cantitate',e.target.value)} className="bg-transparent outline-none text-sm py-1 w-16" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+              <input value={m.um} onChange={(e)=>update(m.id,'um',e.target.value)} className="bg-transparent outline-none text-sm py-1 w-16" style={{ color:'#E9E7E2' }} />
+              <button onClick={()=>update(m.id,'sursa', m.sursa==='proprie'?'client':'proprie')} className="text-[11px] px-2 py-1 rounded-lg font-medium"
+                style={{ color: m.sursa==='proprie'?'#14181C':'#14181C', background: m.sursa==='proprie'?'#2E8BD1':'#E9A23B' }}>
+                {m.sursa==='proprie' ? 'Proprii' : 'Client'}
+              </button>
+              <button onClick={()=>remove(m.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <datalist id="materiale-folosite-catalog">
+        {activeMaterials.map((m)=><option key={m.id} value={m.denumire} />)}
+      </datalist>
+      <button onClick={add} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă material folosit</button>
+    </div>
+  );
+}
+
+function RaportForm({ initial, etape, echipaPermisa, materials, onCancel, onSave }) {
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
   const [etapaId, setEtapaId] = useState(initial?.etapaId || '');
   const [persoane, setPersoane] = useState(initial?.persoane || []);
   const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
+  const [materialeFolosite, setMaterialeFolosite] = useState(initial?.materialeFolosite || []);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const totalOreMin = persoane.reduce((s,p)=>s+personMinutes(p),0);
   return (
@@ -1629,19 +1829,22 @@ function RaportForm({ initial, etape, echipaPermisa, onCancel, onSave }) {
       </div>
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
       <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} />
+      <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+        <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} />
+      </div>
       <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
       <div className="flex justify-between items-center mt-3">
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMin)}</span></span>
         <div className="flex gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
-          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
         </div>
       </div>
     </div>
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, onExportToDeviz, onCerereMaterial, currentUser }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -1793,10 +1996,12 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           </div>
         )}
 
-        <div className="flex gap-2 mb-4">
+        <div className="flex gap-2 mb-4 flex-wrap">
           <button onClick={()=>setSiteView('rapoarte')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='rapoarte'?'#14181C':'#8B93A0', background: siteView==='rapoarte'?'#2E8BD1':'#171C21' }}>Rapoarte zilnice</button>
           <button onClick={()=>setSiteView('materiale')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='materiale'?'#14181C':'#8B93A0', background: siteView==='materiale'?'#2E8BD1':'#171C21' }}>Materiale</button>
           <button onClick={()=>setSiteView('scule')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='scule'?'#14181C':'#8B93A0', background: siteView==='scule'?'#2E8BD1':'#171C21' }}>Scule</button>
+          <button onClick={()=>setSiteView('planse')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='planse'?'#14181C':'#8B93A0', background: siteView==='planse'?'#2E8BD1':'#171C21' }}>Planșe</button>
+          <button onClick={()=>setSiteView('media')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='media'?'#14181C':'#8B93A0', background: siteView==='media'?'#2E8BD1':'#171C21' }}>Foto/Video</button>
         </div>
 
         {siteView === 'materiale' && (
@@ -1808,6 +2013,12 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         {siteView === 'scule' && (
           <SiteToolsTab santierId={selected} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} persist={persist} />
         )}
+        {siteView === 'planse' && (
+          <SitePlanseTab santierId={selected} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} persist={persist} currentUser={currentUser} />
+        )}
+        {siteView === 'media' && (
+          <SiteMediaTab santierId={selected} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} persist={persist} currentUser={currentUser} />
+        )}
         {siteView === 'rapoarte' && (
         <>
         <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -1816,9 +2027,12 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
           <RoCalendarPicker value={exportTo} onChange={setExportTo} />
           <button onClick={()=>exportExcel(selected, rapoarte.filter((r)=>r.santierId===selected), etapeSantier)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Exportă Excel</button>
+          {rapoarte.filter((r)=>r.santierId===selected).some((r)=>(r.materialeFolosite||[]).length>0) && (
+            <button onClick={()=>onExportMaterialeFolosite(rapoarte.filter((r)=>r.santierId===selected), santier?.nume)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>🧾 Exportă materiale folosite în Deviz</button>
+          )}
         </div>
 
-        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} echipaPermisa={santier?.echipa || []} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} echipaPermisa={santier?.echipa || []} materials={materials} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : (
@@ -1845,6 +2059,11 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                     </div>
                   </div>
                   {r.explicatii && <div className="text-xs mt-2" style={{ color:'#8B93A0' }}>{r.explicatii}</div>}
+                  {(r.materialeFolosite||[]).length > 0 && (
+                    <div className="text-xs mt-1" style={{ color:'#4CAF7D' }}>
+                      🧰 {r.materialeFolosite.map((m)=>`${m.denumire} (${m.cantitate} ${m.um}, ${m.sursa==='client'?'client':'proprii'})`).join(', ')}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -2117,7 +2336,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const facturiNeplatite = invoices.filter((i)=>i.status==='Neplătită');
   const sumaNeplatita = facturiNeplatite.reduce((s,i)=>s+calcSubtotal(i.items)*(1+(Number(i.tva)||0)/100),0);
   const santiereActive = santiere.filter((s)=>s.status==='Activ').length;
-  const materialeSubStoc = materials.filter((m)=>Number(m.stoc) < Number(m.stocMinim));
+  const materialeSubStoc = materials.filter((m)=>!m.arhivat && Number(m.stoc) < Number(m.stocMinim));
   const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
 
   const isManager = currentUser?.rol === 'Manager';
@@ -2480,6 +2699,8 @@ function App() {
   const [sculeSantier, setSculeSantier] = useState([]);
   const [cereriSantier, setCereriSantier] = useState([]);
   const [miscariSantier, setMiscariSantier] = useState([]);
+  const [planseSantier, setPlanseSantier] = useState([]);
+  const [mediaSantier, setMediaSantier] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
@@ -2500,6 +2721,8 @@ function App() {
         setSculeSantier(await loadKey('sculeSantier', []));
         setCereriSantier(await loadKey('cereriSantier', []));
         setMiscariSantier(await loadKey('miscariSantier', []));
+        setPlanseSantier(await loadKey('planseSantier', []));
+        setMediaSantier(await loadKey('mediaSantier', []));
       } catch (e) {
         setError('Nu am putut încărca datele.');
       } finally {
@@ -2540,7 +2763,7 @@ function App() {
     let nextMaterials = materials;
     const moves = [];
     (items || []).forEach((it) => {
-      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire);
+      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire && !m.arhivat);
       const cant = Number(it.cantitate) || 0;
       if (idx === -1 || !cant) { if (idx === -1) unmatched.push(it.denumire); return; }
       nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) - cant } : m);
@@ -2561,7 +2784,7 @@ function App() {
     let nextMaterials = materials;
     const moves = [];
     (items || []).forEach((it) => {
-      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire);
+      const idx = nextMaterials.findIndex((m) => m.denumire === it.denumire && !m.arhivat);
       const cant = Number(it.cantitate) || 0;
       if (idx === -1 || !cant) return;
       nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) + cant } : m);
@@ -2600,20 +2823,43 @@ function App() {
 
   const exportConsumToDeviz = (items, santierNume) => {
     const itemsWithPrice = items.map((it) => {
-      const mat = materials.find((m)=>m.denumire === it.denumire);
+      const mat = materials.find((m)=>m.denumire === it.denumire && !m.arhivat);
       return { id: uid(), denumire: it.denumire, um: it.um, cantitate: it.cantitate, pretUnitar: mat?.pret || 0, adaos: 0 };
     });
     setTab('devize');
     setDevizPrefill({ clientId: clients[0]?.id || '', items: itemsWithPrice, tva: 21, lucrare: santierNume ? `Materiale consumate — ${santierNume}` : '' });
   };
 
+  // Aduce "materialele folosite" notate la rapoartele zilnice ale unui șantier într-un Deviz nou.
+  // Cele proprii primesc preț din Gestiune (și se vor scădea automat la emiterea devizului).
+  // Cele ale clientului intră doar informativ, fără să afecteze stocul — prețul se completează ulterior.
+  const exportMaterialeFolositeToDeviz = (rapoarteSantier, santierNume) => {
+    const toate = rapoarteSantier.flatMap((r)=>r.materialeFolosite || []);
+    const grupate = {};
+    toate.forEach((m)=>{
+      if (!m.denumire?.trim()) return;
+      const cheie = `${m.sursa}::${m.denumire}::${m.um}`;
+      if (!grupate[cheie]) grupate[cheie] = { denumire: m.denumire, um: m.um, sursa: m.sursa, cantitate: 0 };
+      grupate[cheie].cantitate += Number(m.cantitate) || 0;
+    });
+    const items = Object.values(grupate).map((m) => {
+      if (m.sursa === 'client') {
+        return { id: uid(), denumire: `(Client) ${m.denumire}`, um: m.um, cantitate: m.cantitate, pretUnitar: 0, adaos: 0 };
+      }
+      const mat = materials.find((mm)=>mm.denumire === m.denumire && !mm.arhivat);
+      return { id: uid(), denumire: m.denumire, um: m.um, cantitate: m.cantitate, pretUnitar: mat?.pret || 0, adaos: 0 };
+    });
+    setTab('devize');
+    setDevizPrefill({ clientId: clients[0]?.id || '', items, tva: 21, lucrare: santierNume ? `Materiale folosite — ${santierNume}` : '' });
+  };
+
   // La o cerere nouă de materiale dintr-un șantier: creează materialul în Gestiune dacă nu există,
   // și scade cantitatea din stocul central (ca ieșire, către șantier).
   const proceseazaCerereMaterial = (denumire, um, cantitate, santierNume) => {
-    let mat = materials.find((m) => m.denumire === denumire);
+    let mat = materials.find((m) => m.denumire === denumire && !m.arhivat);
     let nextMaterials;
     if (!mat) {
-      mat = { id: uid(), denumire, categorie: '', um, stoc: 0, stocMinim: 0, pret: 0 };
+      mat = { id: uid(), denumire, categorie: '', um, stoc: 0, stocMinim: 0, pret: 0, arhivat: false };
       nextMaterials = [...materials, mat];
     } else {
       nextMaterials = materials.slice();
@@ -2776,7 +3022,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'profil' && <ProfileTab currentUser={effectiveUser} onLogout={logout} />}
