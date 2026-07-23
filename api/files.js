@@ -1,16 +1,15 @@
-// Functie server (Vercel) pentru incarcare/stergere/afisare fisiere (planse PDF, foto, video)
+// Functie server (Vercel) pentru stergere/afisare fisiere (planse PDF, foto, video)
 // folosind Vercel Blob (magazin PRIVAT - fisierele NU sunt accesibile direct din URL,
 // trec mereu prin acest server, care se autentifica automat prin SDK).
 //
+// Incarcarea fisierelor NU mai trece pe aici (vezi api/blob-upload.js) - merge direct
+// din browser catre Vercel Blob, ca sa nu mai fim limitati la ~4.5MB.
+//
 // Actiuni (trimise ca { action: '...' } in body-ul POST):
-//   upload - incarca un fisier { filename, base64, contentType, folder }
 //   delete - sterge un fisier { url }
 // GET ?pathname=<pathname> - "serveste" fisierul (proxy autentificat), pentru <img>/<video>/<a href>
-//
-// Limitare Vercel: request-urile catre functii server au un plafon de ~4.5MB.
-// Fisiere foto/PDF obisnuite se incadreaza; video-uri lungi pot depasi limita.
 
-import { put, del, get } from '@vercel/blob';
+import { del, get } from '@vercel/blob';
 import { buffer as streamToBuffer } from 'node:stream/consumers';
 
 export default async function handler(req, res) {
@@ -40,24 +39,6 @@ export default async function handler(req, res) {
   try {
     const body = req.body || {};
     const action = body.action;
-
-    if (action === 'upload') {
-      const { filename, base64, contentType, folder } = body;
-      if (!filename || !base64 || !folder) {
-        return res.status(400).json({ error: 'Lipsesc date pentru incarcare.' });
-      }
-      const buffer = Buffer.from(base64, 'base64');
-      if (buffer.length > 4.3 * 1024 * 1024) {
-        return res.status(413).json({ error: 'Fisierul e prea mare (peste ~4MB). Incearca un fisier mai mic sau un video mai scurt/comprimat.' });
-      }
-      const safeName = String(filename).replace(/[^a-zA-Z0-9.\-_]/g, '_');
-      const pathname = `${folder}/${Date.now()}-${safeName}`;
-      const blob = await put(pathname, buffer, {
-        access: 'private',
-        contentType: contentType || 'application/octet-stream',
-      });
-      return res.status(200).json({ ok: true, url: blob.url, pathname: blob.pathname });
-    }
 
     if (action === 'delete') {
       const { url } = body;
