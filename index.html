@@ -34,7 +34,25 @@ function calcOreDinInterval(inceput, sfarsit) {
   let minute = (h2 * 60 + m2) - (h1 * 60 + m1);
   if (minute <= 0) minute += 24 * 60;
   minute -= 60; // pauza de masă
-  return Math.max(0, Math.round((minute / 60) * 100) / 100);
+  return Math.max(0, minute); // în minute
+}
+// Acceptă fie un text "8:45", fie un număr vechi (decimal) — și îl transformă în minute întregi.
+function oreToMinutes(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  if (typeof v === 'number') return Math.round(v * 60);
+  const s = String(v).trim();
+  if (s.includes(':')) {
+    const [h, m] = s.split(':');
+    return (Number(h) || 0) * 60 + (Number(m) || 0);
+  }
+  const n = Number(s);
+  return isNaN(n) ? 0 : Math.round(n * 60);
+}
+function minutesToHM(total) {
+  const t = Math.max(0, Math.round(total || 0));
+  const h = Math.floor(t / 60);
+  const m = t % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
 }
 const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * pretFinal(it), 0);
 
@@ -93,11 +111,13 @@ function LineItemsEditor({ items, setItems, materials }) {
       <datalist id="materiale-catalog">
         {(materials || []).map((m) => <option key={m.id} value={m.denumire} />)}
       </datalist>
+      <div className="overflow-x-auto">
+      <div style={{ minWidth: 560 }}>
       <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'28px 1fr 50px 60px 85px 65px 85px 90px 28px', color:'#8B93A0' }}>
         <span>Nr.</span><span>Denumire</span><span>U.M</span><span>Cant.</span><span>Preț cost</span><span>Adaos %</span><span>Preț final</span><span>Total</span><span/>
       </div>
       {items.map((it, i) => (
-        <div key={it.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'28px 1fr 50px 60px 85px 65px 85px 90px 28px', background:'#171C21' }}>
+        <div key={it.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5 mt-2" style={{ gridTemplateColumns:'28px 1fr 50px 60px 85px 65px 85px 90px 28px', background:'#171C21' }}>
           <span className="text-xs text-center" style={{ color:'#5C6570', fontFamily:"'JetBrains Mono', monospace" }}>{i+1}</span>
           <input list="materiale-catalog" value={it.denumire} onChange={(e)=>pickMaterial(it.id, e.target.value)} placeholder="ex: Cablu N2XH 3x2,5 mmp — caută din catalog" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
           <input value={it.um} onChange={(e)=>update(it.id,'um',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
@@ -109,6 +129,8 @@ function LineItemsEditor({ items, setItems, materials }) {
           <button onClick={()=>remove(it.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
         </div>
       ))}
+      </div>
+      </div>
       <button onClick={add} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă articol</button>
     </div>
   );
@@ -477,7 +499,7 @@ function RoCalendarPicker({ value, onChange }) {
 function RoTimePicker({ value, onChange }) {
   const [h, m] = (value || '08:00').split(':');
   const hours = Array.from({ length:24 }, (_,i)=>String(i).padStart(2,'0'));
-  const minutes = ['00','15','30','45'];
+  const minutes = Array.from({ length:60 }, (_, i) => String(i).padStart(2,'0'));
   const selStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   return (
     <div className="flex items-center gap-1">
@@ -1395,16 +1417,16 @@ function SantierForm({ initial, onCancel, onSave }) {
 function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
   const update = (id, f, v) => setPersoane(persoane.map((p)=> p.id===id ? {...p, [f]:v} : p));
   const remove = (id) => setPersoane(persoane.filter((p)=>p.id!==id));
-  const add = () => setPersoane([...persoane, { id: uid(), nume:'', ore: oreImplicite ?? 8 }]);
+  const add = () => setPersoane([...persoane, { id: uid(), nume:'', ore: oreImplicite ?? '8:00' }]);
   return (
     <div className="space-y-2">
       <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 70px 28px', color:'#8B93A0' }}>
-        <span>Persoană</span><span>Ore</span><span/>
+        <span>Persoană</span><span>Ore (h:mm)</span><span/>
       </div>
       {persoane.map((p)=>(
         <div key={p.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'1fr 70px 28px', background:'#171C21' }}>
           <input value={p.nume} onChange={(e)=>update(p.id,'nume',e.target.value)} placeholder="Nume persoană" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
-          <input type="number" value={p.ore} onChange={(e)=>update(p.id,'ore',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
+          <input type="text" placeholder="8:00" value={p.ore} onChange={(e)=>update(p.id,'ore',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
           <button onClick={()=>remove(p.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
         </div>
       ))}
@@ -1418,14 +1440,14 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
   const [etapaId, setEtapaId] = useState(initial?.etapaId || '');
-  const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', ore:8 }]);
+  const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', ore:'8:00' }]);
   const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
-  const totalOre = persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
-  const oreCalculate = calcOreDinInterval(oraInceput, oraSfarsit);
-  const aplicaLaToti = () => setPersoane(persoane.map((p)=>({...p, ore: oreCalculate})));
+  const totalOreMin = persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
+  const oreCalculateMin = calcOreDinInterval(oraInceput, oraSfarsit);
+  const aplicaLaToti = () => setPersoane(persoane.map((p)=>({...p, ore: minutesToHM(oreCalculateMin)})));
   useEffect(() => {
-    if (oreCalculate !== null) setPersoane((prev)=>prev.map((p)=>({...p, ore: oreCalculate})));
+    if (oreCalculateMin !== null) setPersoane((prev)=>prev.map((p)=>({...p, ore: minutesToHM(oreCalculateMin)})));
   }, [oraInceput, oraSfarsit]);
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -1448,16 +1470,16 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
           </label>
         )}
       </div>
-      {oreCalculate !== null && (
+      {oreCalculateMin !== null && (
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs" style={{ color:'#8B93A0' }}>Ore calculate (interval − 1h pauză): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{oreCalculate}h</span></span>
+          <span className="text-xs" style={{ color:'#8B93A0' }}>Ore calculate (interval − 1h pauză): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(oreCalculateMin)}</span></span>
           <button onClick={aplicaLaToti} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>Aplică la toate persoanele</button>
         </div>
       )}
-      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} oreImplicite={oreCalculate ?? 8} />
+      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} oreImplicite={oreCalculateMin!=null ? minutesToHM(oreCalculateMin) : '8:00'} />
       <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
       <div className="flex justify-between items-center mt-3">
-        <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}</span></span>
+        <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMin)}</span></span>
         <div className="flex gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
           <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
@@ -1510,21 +1532,21 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const etapaNume = (id) => etapeSantier.find((e)=>e.id===id)?.nume || '';
     const inRange = listaRapoarte.filter((r) => (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo));
     const rows = inRange.slice().sort((a,b)=> a.data<b.data?-1:1).map((r)=>{
-      const totalOre = r.persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
+      const totalOreMinRow = r.persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
       return {
         'Data': r.data,
         'Etapă': etapaNume(r.etapaId),
         'Ora început': r.oraInceput || '',
         'Ora sfârșit': r.oraSfarsit || '',
         'Nr. persoane': r.persoane.filter((p)=>p.nume.trim()).length,
-        'Persoane': r.persoane.map((p)=>`${p.nume} (${p.ore}h)`).filter((s)=>s.trim()!=='(h)').join(', '),
-        'Total ore': totalOre,
+        'Persoane': r.persoane.map((p)=>`${p.nume} (${p.ore})`).filter((s)=>s.trim()!=='()').join(', '),
+        'Total ore': minutesToHM(totalOreMinRow),
         'Ce s-a făcut': r.explicatii || '',
       };
     });
-    const totalOreGeneral = rows.reduce((s,row)=>s+(Number(row['Total ore'])||0),0);
-    const totalPersoane = rows.reduce((s,row)=>s+(Number(row['Nr. persoane'])||0),0);
-    const totalRow = { 'Data':'TOTAL', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane': totalPersoane, 'Persoane':'', 'Total ore': totalOreGeneral, 'Ce s-a făcut':'' };
+    const totalOreGeneralMin = inRange.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+oreToMinutes(p.ore),0),0);
+    const totalPersoane = inRange.reduce((s,r)=>s+r.persoane.filter((p)=>p.nume.trim()).length,0);
+    const totalRow = { 'Data':'TOTAL', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane': totalPersoane, 'Persoane':'', 'Total ore': minutesToHM(totalOreGeneralMin), 'Ce s-a făcut':'' };
     const sheetRows = rows.length
       ? [...rows, totalRow]
       : [{ 'Data':'', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane':'', 'Persoane':'', 'Total ore':'', 'Ce s-a făcut':'Niciun raport în perioada selectată.' }];
@@ -1558,7 +1580,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const rapoarteSantier = rapoarte.filter((r)=>r.santierId===selected)
       .filter((r)=> etapaTab === 'toate' || r.etapaId === etapaTab)
       .slice().sort((a,b)=> a.data<b.data?1:-1);
-    const totalOreSantier = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+(Number(p.ore)||0),0),0);
+    const totalOreSantierMin = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+oreToMinutes(p.ore),0),0);
     return (
       <div>
         <button onClick={()=>setSelected(null)} className="text-xs mb-3" style={{ color:'#5C6570' }}>← Toate șantierele</button>
@@ -1566,7 +1588,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
           {!reportForm && <button onClick={()=>setReportForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
         </div>
-        <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOreSantier}</span></p>
+        <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreSantierMin)}</span></p>
 
         <div className="flex gap-2 mb-4">
           <button onClick={()=>setSiteView('rapoarte')} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color: siteView==='rapoarte'?'#14181C':'#8B93A0', background: siteView==='rapoarte'?'#2E8BD1':'#171C21' }}>Rapoarte zilnice</button>
@@ -1599,7 +1621,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         ) : (
           <div className="space-y-2">
             {rapoarteSantier.map((r)=>{
-              const totalOre = r.persoane.reduce((s,p)=>s+(Number(p.ore)||0),0);
+              const totalOreMinRow = r.persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               return (
@@ -1610,11 +1632,11 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                         {r.data}{(r.oraInceput||r.oraSfarsit) && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{r.oraInceput||'?'}–{r.oraSfarsit||'?'}</span>}
                         {etapaN && <span className="text-xs ml-2" style={{ color:'#2E8BD1' }}>{etapaN}</span>}
                       </div>
-                      <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.map((p)=>`${p.nume} (${p.ore}h)`).filter((s)=>s.trim()!=='(h)').join(', ') || 'Fără persoane'}</div>
+                      <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.map((p)=>`${p.nume} (${p.ore})`).filter((s)=>s.trim()!=='()').join(', ') || 'Fără persoane'}</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs" style={{ color:'#8B93A0' }}>{nrPersoane} pers.</span>
-                      <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{totalOre}h</span>
+                      <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMinRow)}</span>
                       <button onClick={()=>setReportForm(r)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
                       <button onClick={()=>delReport(r.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
                     </div>
@@ -2046,6 +2068,7 @@ function App() {
   const [contabOpen, setContabOpen] = useState(false);
   const MATERIALE_TABS = ['gestiune', 'stocuri'];
   const [materialeOpen, setMaterialeOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [clients, setClients] = useState([]);
@@ -2233,7 +2256,7 @@ function App() {
   };
 
   const NavItem = ({ id, label }) => (
-    <button onClick={()=>setTab(id)} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: tab===id?'#14181C':'#B8BFC9', background: tab===id?'#2E8BD1':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
+    <button onClick={()=>{ setTab(id); setSidebarOpen(false); }} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: tab===id?'#14181C':'#B8BFC9', background: tab===id?'#2E8BD1':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
   );
 
   if (!currentUser) {
@@ -2241,9 +2264,20 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen w-full flex" style={{ background:'#14181C', fontFamily:"'Inter', sans-serif" }}>
-      <aside className="w-56 shrink-0 p-4 flex flex-col gap-1" style={{ borderRight:'1px solid #2A323B' }}>
-        <button onClick={()=>setTab(null)} className="flex items-center gap-2 px-2 mb-4">
+    <div className="min-h-screen w-full" style={{ background:'#14181C', fontFamily:"'Inter', sans-serif" }}>
+      <div className="md:hidden flex items-center justify-between px-3 py-2.5" style={{ borderBottom:'1px solid #2A323B' }}>
+        <button onClick={()=>setSidebarOpen(true)} className="text-xl px-1" style={{ color:'#E9E7E2' }}>☰</button>
+        <img src="/logo.png" alt="Logo" style={{ height:24, width:'auto' }} />
+        <div style={{ width:28 }} />
+      </div>
+
+      {sidebarOpen && (
+        <div onClick={()=>setSidebarOpen(false)} className="md:hidden fixed inset-0" style={{ background:'rgba(0,0,0,0.6)', zIndex:40 }} />
+      )}
+
+      <div className="w-full flex">
+      <aside className={`w-64 md:w-56 shrink-0 p-4 flex flex-col gap-1 fixed md:static inset-y-0 left-0 transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`} style={{ borderRight:'1px solid #2A323B', background:'#14181C', zIndex:50, overflowY:'auto' }}>
+        <button onClick={()=>{ setTab(null); setSidebarOpen(false); }} className="flex items-center gap-2 px-2 mb-4">
           <img src="/logo.png" alt="Logo" style={{ height: 32, width: 'auto' }} />
         </button>
         <NavItem id={null} label="🏠 Dashboard" />
@@ -2281,7 +2315,7 @@ function App() {
           </div>
         </div>
       </aside>
-      <main className="flex-1 p-6 max-w-4xl">
+      <main className="flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0">
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
         ) : !tab ? (
@@ -2332,6 +2366,7 @@ function App() {
           </>
         )}
       </main>
+      </div>
     </div>
   );
 }
