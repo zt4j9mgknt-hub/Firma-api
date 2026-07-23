@@ -86,6 +86,14 @@ function personMinutes(p) {
 }
 const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * pretFinal(it), 0);
 
+// Echipa unui șantier: listă de {userId, status}. Compatibil cu formatul vechi
+// (listă simplă de userId), tratat ca status:'activ' implicit.
+function echipaNormalizata(echipa) {
+  return (echipa || []).map((e) => typeof e === 'string' ? { userId: e, status: 'activ' } : e);
+}
+const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e)=>e.userId);
+const inEchipa = (echipa, userId) => echipaUserIds(echipa).includes(userId);
+
 async function loadKey(key, fallback) {
   try {
     const r = await fetch(`/api/data?key=${encodeURIComponent(key)}`);
@@ -1779,9 +1787,14 @@ function SantierForm({ initial, onCancel, onSave }) {
       .then((r)=>r.json()).then((data)=>setUsers((data.users || []).filter((u)=>u.rol==='Electrician'))).catch(()=>setUsers([]));
   }, []);
 
-  const echipa = form.echipa || [];
+  const echipa = echipaNormalizata(form.echipa);
+  const echipaIds = echipa.map((e)=>e.userId);
   const toggleEchipa = (userId) => {
-    const next = echipa.includes(userId) ? echipa.filter((id)=>id!==userId) : [...echipa, userId];
+    const next = echipaIds.includes(userId) ? echipa.filter((e)=>e.userId!==userId) : [...echipa, { userId, status:'activ' }];
+    setForm({...form, echipa: next});
+  };
+  const setEchipaStatus = (userId, status) => {
+    const next = echipa.map((e)=> e.userId===userId ? {...e, status} : e);
     setForm({...form, echipa: next});
   };
 
@@ -1797,16 +1810,36 @@ function SantierForm({ initial, onCancel, onSave }) {
           ))}
         </div>
         <div>
-          <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Echipă asignată (doar aceștia pot accesa șantierul):</div>
+          <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Echipă asignată (doar aceștia pot accesa șantierul; Activ/Pauză controlează dacă lucrează acolo mâine):</div>
           {users.length === 0 ? (
             <div className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician înregistrat încă.</div>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {users.map((u)=>(
-                <button key={u.id} onClick={()=>toggleEchipa(u.id)} className="text-xs px-2.5 py-1.5 rounded-lg"
-                  style={{ color: echipa.includes(u.id)?'#14181C':'#8B93A0', background: echipa.includes(u.id)?'#2E8BD1':'#171C21' }}>🔌 {u.nume}</button>
-              ))}
-            </div>
+            <>
+              {echipa.length > 0 && (
+                <div className="space-y-1 mb-2">
+                  {echipa.map((e)=>{
+                    const u = users.find((x)=>x.id===e.userId);
+                    return (
+                      <div key={e.userId} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                        <span style={{ color:'#E9E7E2' }}>🔌 {u?.nume || '(cont șters)'}</span>
+                        <div className="flex items-center gap-1">
+                          <button onClick={()=>setEchipaStatus(e.userId,'activ')} className="px-2 py-0.5 rounded" style={{ color: e.status==='activ'?'#14181C':'#8B93A0', background: e.status==='activ'?'#4CAF7D':'#1B2127' }}>Activ</button>
+                          <button onClick={()=>setEchipaStatus(e.userId,'pauza')} className="px-2 py-0.5 rounded" style={{ color: e.status==='pauza'?'#14181C':'#8B93A0', background: e.status==='pauza'?'#E9A23B':'#1B2127' }}>Pauză</button>
+                          <button onClick={()=>toggleEchipa(e.userId)} style={{ color:'#E05252' }}>✕</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {users.filter((u)=>!echipaIds.includes(u.id)).length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {users.filter((u)=>!echipaIds.includes(u.id)).map((u)=>(
+                    <button key={u.id} onClick={()=>toggleEchipa(u.id)} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>+ 🔌 {u.nume}</button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -2000,12 +2033,16 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   };
   const addToEchipa = (santierId, userId) => {
     const s = santiere.find((x)=>x.id===santierId);
-    const echipa = s.echipa || [];
-    if (!echipa.includes(userId)) updateEchipa(santierId, [...echipa, userId]);
+    const echipa = echipaNormalizata(s.echipa);
+    if (!echipa.some((e)=>e.userId===userId)) updateEchipa(santierId, [...echipa, { userId, status:'activ' }]);
   };
   const removeFromEchipa = (santierId, userId) => {
     const s = santiere.find((x)=>x.id===santierId);
-    updateEchipa(santierId, (s.echipa || []).filter((id)=>id!==userId));
+    updateEchipa(santierId, echipaNormalizata(s.echipa).filter((e)=>e.userId!==userId));
+  };
+  const setEchipaMemberStatus = (santierId, userId, status) => {
+    const s = santiere.find((x)=>x.id===santierId);
+    updateEchipa(santierId, echipaNormalizata(s.echipa).map((e)=> e.userId===userId ? {...e, status} : e));
   };
 
   const saveSantier = (s) => {
@@ -2101,7 +2138,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         {currentUser?.rol === 'Manager' && (
           <div className="mb-4">
             <button onClick={()=>setEchipaVizibila(!echipaVizibila)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>
-              👥 {echipaVizibila ? 'Ascunde echipa' : `Vezi echipă (${(santier?.echipa || []).length})`}
+              👥 {echipaVizibila ? 'Ascunde echipa' : `Vezi echipă (${echipaNormalizata(santier?.echipa).length})`}
             </button>
             {echipaVizibila && (
             <div className="rounded-xl p-3 mt-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -2109,23 +2146,27 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                 <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>Echipă asignată</div>
                 <button onClick={()=>setTeamPickerOpen(!teamPickerOpen)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{teamPickerOpen ? 'Închide' : '+ Asignează'}</button>
               </div>
-              <div className="flex flex-wrap gap-1.5 mb-2">
-                {(santier?.echipa || []).length === 0 && <span className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat.</span>}
-                {(santier?.echipa || []).map((userId)=>{
-                  const u = allUsers.find((x)=>x.id===userId);
+              <div className="space-y-1 mb-2">
+                {echipaNormalizata(santier?.echipa).length === 0 && <span className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat.</span>}
+                {echipaNormalizata(santier?.echipa).map((e)=>{
+                  const u = allUsers.find((x)=>x.id===e.userId);
                   return (
-                    <span key={userId} className="inline-flex items-center gap-1 text-xs pl-2.5 pr-1 py-1 rounded-lg" style={{ color:'#E9E7E2', background:'#171C21' }}>
-                      🔌 {u?.nume || '(cont șters)'}
-                      <button onClick={()=>removeFromEchipa(santier.id, userId)} style={{ color:'#E05252', opacity:0.8 }}>✕</button>
-                    </span>
+                    <div key={e.userId} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                      <span style={{ color:'#E9E7E2' }}>🔌 {u?.nume || '(cont șters)'}</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={()=>setEchipaMemberStatus(santier.id, e.userId, 'activ')} className="px-2 py-0.5 rounded" style={{ color: e.status==='activ'?'#14181C':'#8B93A0', background: e.status==='activ'?'#4CAF7D':'#1B2127' }}>Activ</button>
+                        <button onClick={()=>setEchipaMemberStatus(santier.id, e.userId, 'pauza')} className="px-2 py-0.5 rounded" style={{ color: e.status==='pauza'?'#14181C':'#8B93A0', background: e.status==='pauza'?'#E9A23B':'#1B2127' }}>Pauză</button>
+                        <button onClick={()=>removeFromEchipa(santier.id, e.userId)} style={{ color:'#E05252', opacity:0.8 }}>✕</button>
+                      </div>
+                    </div>
                   );
                 })}
               </div>
               {teamPickerOpen && (
                 <div className="flex flex-wrap gap-1.5 pt-2" style={{ borderTop:'1px solid #2A323B' }}>
-                  {allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).length === 0 ? (
+                  {allUsers.filter((u)=>!inEchipa(santier?.echipa, u.id)).length === 0 ? (
                     <span className="text-xs" style={{ color:'#5C6570' }}>Toți electricienii sunt deja asignați (sau nu există niciunul înregistrat).</span>
-                  ) : allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).map((u)=>(
+                  ) : allUsers.filter((u)=>!inEchipa(santier?.echipa, u.id)).map((u)=>(
                     <button key={u.id} onClick={()=>addToEchipa(santier.id, u.id)} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>+ 🔌 {u.nume}</button>
                   ))}
                 </div>
@@ -2173,7 +2214,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         </div>
         )}
 
-        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} echipaPermisa={santier?.echipa || []} materials={materials} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : !raporteShowAll ? (
@@ -2235,7 +2276,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         <div className="space-y-2">
           {santiere.filter((s)=> !siteSearch || s.nume.toLowerCase().includes(siteSearch.toLowerCase())).map((s)=>{
             const nrRapoarte = rapoarte.filter((r)=>r.santierId===s.id).length;
-            const areAcces = currentUser?.rol === 'Manager' || (s.echipa || []).includes(currentUser?.id);
+            const areAcces = currentUser?.rol === 'Manager' || inEchipa(s.echipa, currentUser?.id);
             return (
               <div key={s.id} className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${areAcces ? 'cursor-pointer' : ''}`} onClick={()=>{ if (areAcces) { setSelected(s.id); setSiteView('rapoarte'); } }} style={{ background:'#1B2127', border:'1px solid #2A323B', opacity: areAcces?1:0.5 }}>
                 <div className="min-w-0">
@@ -2497,9 +2538,15 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const [mementoOpen, setMementoOpen] = useState(false);
   const [santiereOpen, setSantiereOpen] = useState(false);
   const [cereriOpen, setCereriOpen] = useState(false);
+  const [colegiUsers, setColegiUsers] = useState([]);
+  useEffect(() => {
+    if (isManager) return;
+    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setColegiUsers(data.users || [])).catch(()=>{});
+  }, [isManager]);
 
   // --- Date specifice Electricianului: șantierele lui, memento raport, materiale cerute acolo ---
-  const santiereMele = santiere.filter((s)=>(s.echipa || []).includes(currentUser?.id));
+  const santiereMele = santiere.filter((s)=>inEchipa(s.echipa, currentUser?.id));
   const azi = new Date().toISOString().slice(0,10);
   const santiereFaraRaportAzi = santiereMele.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
   const idSantiereMele = new Set(santiereMele.map((s)=>s.id));
@@ -2567,14 +2614,30 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         <div className="mb-6">
           <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Mâine</div>
           <div className="space-y-2">
-            {santiereMele.filter((s)=>s.status==='Activ' || s.status==='Pauză').map((s)=>(
-              <button key={s.id} onClick={()=>goToSite(s.id, 'rapoarte')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border: s.status==='Pauză' ? '1px solid #E9A23B66' : '1px solid #4CAF7D66' }}>
-                <span className="text-sm" style={{ color:'#E9E7E2' }}>
-                  {s.status==='Pauză' ? `⏸ „${s.nume}" e în pauză — nu lucrezi acolo mâine` : `✅ Lucrezi la „${s.nume}" și mâine`}
-                </span>
-                <span style={{ color: s.status==='Pauză' ? '#E9A23B' : '#4CAF7D' }}>→</span>
-              </button>
-            ))}
+            {santiereMele.filter((s)=>s.status==='Activ' || s.status==='Pauză').map((s)=>{
+              const echipaS = echipaNormalizata(s.echipa);
+              const eu = echipaS.find((e)=>e.userId===currentUser?.id);
+              const suntInPauza = s.status === 'Pauză' || eu?.status === 'pauza';
+              const colegiActivi = s.status === 'Activ'
+                ? echipaS.filter((e)=>e.status==='activ' && e.userId!==currentUser?.id).map((e)=>colegiUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)
+                : [];
+              return (
+                <button key={s.id} onClick={()=>goToSite(s.id, 'rapoarte')} className="w-full text-left rounded-xl px-4 py-3" style={{ background:'#1B2127', border: suntInPauza ? '1px solid #E9A23B66' : '1px solid #4CAF7D66' }}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>
+                      {s.status==='Pauză' ? `⏸ „${s.nume}" e în pauză — nu lucrezi acolo mâine` : suntInPauza ? `⏸ Ești în pauză la „${s.nume}" — nu lucrezi acolo mâine` : `✅ Mâine lucrezi la „${s.nume}"`}
+                    </span>
+                    <span style={{ color: suntInPauza ? '#E9A23B' : '#4CAF7D' }}>→</span>
+                  </div>
+                  {!suntInPauza && (s.adresa || colegiActivi.length > 0) && (
+                    <div className="text-xs mt-1.5" style={{ color:'#8B93A0' }}>
+                      {s.adresa && <div>📍 {s.adresa}</div>}
+                      {colegiActivi.length > 0 && <div>👥 {colegiActivi.join(', ')}</div>}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
