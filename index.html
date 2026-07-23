@@ -1510,6 +1510,10 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
 
   // --- Cerere materiale ---
   const [cerereForm, setCerereForm] = useState({ denumire:'', cantitate:1, um:'buc' });
+  const [cerereFilter, setCerereFilter] = useState('');
+  const [cerereDataFiltru, setCerereDataFiltru] = useState('');
+  const [cerereShowAll, setCerereShowAll] = useState(false);
+  const normalizeSearchLocal = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
   const cereriAici = cereriSantier.filter((c)=>c.santierId===santierId);
   const addCerere = () => {
     if (!cerereForm.denumire.trim()) return;
@@ -1604,7 +1608,19 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     stocPeMaterial[m.denumire].stoc += (m.tip==='intrare' ? 1 : -1) * (Number(m.cantitate)||0);
   });
   const stocList = Object.values(stocPeMaterial);
+  const [stocShowAllSantier, setStocShowAllSantier] = useState(false);
+  const [editStocState, setEditStocState] = useState(null);
+  const [editStocValue, setEditStocValue] = useState('');
   const [consumState, setConsumState] = useState(null);
+  const confirmEditStoc = (m) => {
+    const nou = Number(editStocValue) || 0;
+    const diff = nou - m.stoc;
+    setEditStocState(null);
+    if (diff === 0) return;
+    const miscare = { id: uid(), santierId, denumire: m.denumire, um: m.um, tip: diff > 0 ? 'intrare' : 'iesire', cantitate: Math.abs(diff), data: new Date().toISOString().slice(0,10), nota:'Corecție manuală' };
+    const next = [miscare, ...miscariSantier];
+    setMiscariSantier(next); persist('miscariSantier', next);
+  };
   const confirmConsum = (denumire, um, cantitate) => {
     const miscare = { id: uid(), santierId, denumire, um, tip:'iesire', cantitate: Number(cantitate)||0, data: new Date().toISOString().slice(0,10), nota:'Consum șantier' };
     const next = [miscare, ...miscariSantier];
@@ -1621,6 +1637,20 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     if (consumList.length === 0) return;
     onExportToDeviz(consumList, santierNume);
   };
+
+  const cerereSearching = cerereFilter.trim() !== '' || cerereDataFiltru !== '';
+  const cereriFiltrate = cereriAici.filter((c) => {
+    if (cerereDataFiltru && c.data !== cerereDataFiltru) return false;
+    if (cerereFilter.trim() && !normalizeSearchLocal(c.denumire).includes(normalizeSearchLocal(cerereFilter))) return false;
+    return true;
+  });
+  const cereriPeZi = {};
+  cereriFiltrate.forEach((c) => {
+    if (!cereriPeZi[c.data]) cereriPeZi[c.data] = [];
+    cereriPeZi[c.data].push(c);
+  });
+  const ziledisponibile = Object.keys(cereriPeZi).sort((a,b)=> b.localeCompare(a));
+  const cereriShow = cerereSearching || cerereShowAll;
 
   return (
     <div className="space-y-4">
@@ -1639,24 +1669,46 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
           <input placeholder="UM" value={cerereForm.um} onChange={(e)=>setCerereForm({...cerereForm, um:e.target.value})} className="w-20 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
           <button onClick={addCerere} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Cere</button>
         </div>
-        {cereriAici.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Nicio cerere.</div> : (
-          <div className="space-y-1">
-            {cereriAici.map((c)=>(
-              <div key={c.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
-                <span style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um}</span>
-                <div className="flex items-center gap-2">
-                  <span style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
-                  {c.status==='Cerută' && currentUser?.rol === 'Manager' && (
-                    <>
-                      <button onClick={()=>setCerereStatus(c.id,'Aprobată')} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă</button>
-                      <button onClick={()=>setCerereStatus(c.id,'Respinsă')} className="px-2 py-0.5 rounded" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #E0525266' }}>✕ Respinge</button>
-                    </>
-                  )}
-                  {c.status==='Cerută' && currentUser?.rol !== 'Manager' && (
-                    <span className="text-xs" style={{ color:'#5C6570' }}>Așteaptă aprobare manager</span>
-                  )}
-                  {c.status==='Aprobată' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📦 Livrată</button>}
-                  <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+
+        <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+          <input placeholder="🔍 Caută material..." value={cerereFilter} onChange={(e)=>setCerereFilter(e.target.value)} className="rounded-lg px-2.5 py-1.5 text-xs outline-none flex-1 min-w-[100px]" style={inputStyle} />
+          <RoCalendarPicker value={cerereDataFiltru} onChange={setCerereDataFiltru} />
+          {!cerereSearching && (
+            <button onClick={()=>setCerereShowAll(!cerereShowAll)} className="text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{cerereShowAll ? 'Ascunde' : 'Vezi toate materialele'}</button>
+          )}
+        </div>
+
+        {cereriAici.length===0 ? (
+          <div className="text-xs" style={{ color:'#5C6570' }}>Nicio cerere.</div>
+        ) : !cereriShow ? (
+          <div className="text-xs" style={{ color:'#5C6570' }}>Caută un material sau o dată, sau apasă „Vezi toate materialele".</div>
+        ) : ziledisponibile.length === 0 ? (
+          <div className="text-xs" style={{ color:'#5C6570' }}>Niciun rezultat.</div>
+        ) : (
+          <div className="space-y-3">
+            {ziledisponibile.map((zi)=>(
+              <div key={zi}>
+                <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color:'#5C6570' }}>{zi} ({cereriPeZi[zi].length})</div>
+                <div className="space-y-1">
+                  {cereriPeZi[zi].map((c)=>(
+                    <div key={c.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                      <span style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um}</span>
+                      <div className="flex items-center gap-2">
+                        <span style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
+                        {c.status==='Cerută' && currentUser?.rol === 'Manager' && (
+                          <>
+                            <button onClick={()=>setCerereStatus(c.id,'Aprobată')} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă</button>
+                            <button onClick={()=>setCerereStatus(c.id,'Respinsă')} className="px-2 py-0.5 rounded" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #E0525266' }}>✕ Respinge</button>
+                          </>
+                        )}
+                        {c.status==='Cerută' && currentUser?.rol !== 'Manager' && (
+                          <span className="text-xs" style={{ color:'#5C6570' }}>Așteaptă aprobare manager</span>
+                        )}
+                        {c.status==='Aprobată' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📦 Livrată</button>}
+                        <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
@@ -1665,19 +1717,35 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
       </div>
 
       <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
           <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>📦 Stoc materiale la șantier</div>
-          {consumList.length > 0 && <button onClick={trimiteConsumInDeviz} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>🧾 Exportă consum în Deviz</button>}
+          <div className="flex items-center gap-1.5">
+            {consumList.length > 0 && <button onClick={trimiteConsumInDeviz} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>🧾 Exportă consum în Deviz</button>}
+            {stocList.length > 0 && <button onClick={()=>setStocShowAllSantier(!stocShowAllSantier)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{stocShowAllSantier ? 'Ascunde' : '👁 Vezi tot stocul'}</button>}
+          </div>
         </div>
-        {stocList.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Niciun material adus încă la șantier.</div> : (
+        {stocList.length===0 ? (
+          <div className="text-xs" style={{ color:'#5C6570' }}>Niciun material adus încă la șantier.</div>
+        ) : !stocShowAllSantier ? (
+          <div className="text-xs" style={{ color:'#5C6570' }}>Apasă „Vezi tot stocul" ca să vezi lista.</div>
+        ) : (
           <div className="space-y-1">
             {stocList.map((m)=>(
               <div key={m.denumire} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
                 <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.stoc} {m.um}</span></span>
-                {consumState===m.denumire ? (
+                {editStocState===m.denumire ? (
+                  <div className="flex items-center gap-1">
+                    <input type="number" value={editStocValue} onChange={(e)=>setEditStocValue(e.target.value)} className="w-16 rounded-lg px-2 py-1 text-xs outline-none" style={inputStyle} />
+                    <button onClick={()=>confirmEditStoc(m)} className="px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#4CAF7D' }}>✓</button>
+                    <button onClick={()=>setEditStocState(null)} className="px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>
+                  </div>
+                ) : consumState===m.denumire ? (
                   <MoveInput tip="iesire" onConfirm={(cant)=>confirmConsum(m.denumire, m.um, cant)} onCancel={()=>setConsumState(null)} />
                 ) : (
-                  <button onClick={()=>setConsumState(m.denumire)} className="px-2 py-1 rounded-lg" style={{ color:'#E05252', background:'#1B2127' }}>− Consum</button>
+                  <div className="flex items-center gap-1">
+                    <button onClick={()=>{ setEditStocState(m.denumire); setEditStocValue(m.stoc); }} className="px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✎ Edit</button>
+                    <button onClick={()=>setConsumState(m.denumire)} className="px-2 py-1 rounded-lg" style={{ color:'#E05252', background:'#1B2127' }}>− Consum</button>
+                  </div>
                 )}
               </div>
             ))}
@@ -1896,6 +1964,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [siteView, setSiteView] = useState('rapoarte');
   const [allUsers, setAllUsers] = useState([]);
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
+  const [echipaVizibila, setEchipaVizibila] = useState(false);
   const [raporteShowAll, setRaporteShowAll] = useState(false);
 
   useEffect(() => {
@@ -2008,31 +2077,38 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>{santier?.adresa} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreSantierMin)}</span></p>
 
         {currentUser?.rol === 'Manager' && (
-          <div className="rounded-xl p-3 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>👥 Echipă asignată</div>
-              <button onClick={()=>setTeamPickerOpen(!teamPickerOpen)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{teamPickerOpen ? 'Închide' : '+ Asignează'}</button>
-            </div>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {(santier?.echipa || []).length === 0 && <span className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat.</span>}
-              {(santier?.echipa || []).map((userId)=>{
-                const u = allUsers.find((x)=>x.id===userId);
-                return (
-                  <span key={userId} className="inline-flex items-center gap-1 text-xs pl-2.5 pr-1 py-1 rounded-lg" style={{ color:'#E9E7E2', background:'#171C21' }}>
-                    🔌 {u?.nume || '(cont șters)'}
-                    <button onClick={()=>removeFromEchipa(santier.id, userId)} style={{ color:'#E05252', opacity:0.8 }}>✕</button>
-                  </span>
-                );
-              })}
-            </div>
-            {teamPickerOpen && (
-              <div className="flex flex-wrap gap-1.5 pt-2" style={{ borderTop:'1px solid #2A323B' }}>
-                {allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).length === 0 ? (
-                  <span className="text-xs" style={{ color:'#5C6570' }}>Toți electricienii sunt deja asignați (sau nu există niciunul înregistrat).</span>
-                ) : allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).map((u)=>(
-                  <button key={u.id} onClick={()=>addToEchipa(santier.id, u.id)} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>+ 🔌 {u.nume}</button>
-                ))}
+          <div className="mb-4">
+            <button onClick={()=>setEchipaVizibila(!echipaVizibila)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>
+              👥 {echipaVizibila ? 'Ascunde echipa' : `Vezi echipă (${(santier?.echipa || []).length})`}
+            </button>
+            {echipaVizibila && (
+            <div className="rounded-xl p-3 mt-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>Echipă asignată</div>
+                <button onClick={()=>setTeamPickerOpen(!teamPickerOpen)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{teamPickerOpen ? 'Închide' : '+ Asignează'}</button>
               </div>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {(santier?.echipa || []).length === 0 && <span className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician asignat.</span>}
+                {(santier?.echipa || []).map((userId)=>{
+                  const u = allUsers.find((x)=>x.id===userId);
+                  return (
+                    <span key={userId} className="inline-flex items-center gap-1 text-xs pl-2.5 pr-1 py-1 rounded-lg" style={{ color:'#E9E7E2', background:'#171C21' }}>
+                      🔌 {u?.nume || '(cont șters)'}
+                      <button onClick={()=>removeFromEchipa(santier.id, userId)} style={{ color:'#E05252', opacity:0.8 }}>✕</button>
+                    </span>
+                  );
+                })}
+              </div>
+              {teamPickerOpen && (
+                <div className="flex flex-wrap gap-1.5 pt-2" style={{ borderTop:'1px solid #2A323B' }}>
+                  {allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).length === 0 ? (
+                    <span className="text-xs" style={{ color:'#5C6570' }}>Toți electricienii sunt deja asignați (sau nu există niciunul înregistrat).</span>
+                  ) : allUsers.filter((u)=>!(santier?.echipa || []).includes(u.id)).map((u)=>(
+                    <button key={u.id} onClick={()=>addToEchipa(santier.id, u.id)} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>+ 🔌 {u.nume}</button>
+                  ))}
+                </div>
+              )}
+            </div>
             )}
           </div>
         )}
