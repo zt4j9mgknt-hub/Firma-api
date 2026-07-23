@@ -60,6 +60,14 @@ function minutesToHM(total) {
   const m = t % 60;
   return `${h}:${String(m).padStart(2, '0')}`;
 }
+// Minutele lucrate de o persoană: preferă intervalul individual (oră început/sfârșit),
+// altfel cade pe câmpul vechi "ore" (compatibilitate cu rapoartele mai vechi).
+function personMinutes(p) {
+  if (p.oraInceput && p.oraSfarsit) {
+    return calcOreDinInterval(p.oraInceput, p.oraSfarsit) || 0;
+  }
+  return oreToMinutes(p.ore);
+}
 const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * pretFinal(it), 0);
 
 async function loadKey(key, fallback) {
@@ -1517,7 +1525,7 @@ function SantierForm({ initial, onCancel, onSave }) {
   );
 }
 
-function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
+function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfarsit }) {
   const [users, setUsers] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selected, setSelected] = useState(new Set());
@@ -1529,7 +1537,7 @@ function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
 
   const update = (id, f, v) => setPersoane(persoane.map((p)=> p.id===id ? {...p, [f]:v} : p));
   const remove = (id) => setPersoane(persoane.filter((p)=>p.id!==id));
-  const addManual = () => setPersoane([...persoane, { id: uid(), nume:'', ore: oreImplicite ?? '8:00' }]);
+  const addManual = () => setPersoane([...persoane, { id: uid(), nume:'', oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }]);
 
   const numeDejaAdaugate = new Set(persoane.map((p)=>p.nume));
   const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
@@ -1541,7 +1549,7 @@ function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
   };
 
   const adaugaSelectati = () => {
-    const noi = users.filter((u)=>selected.has(u.id)).map((u)=>({ id: uid(), nume: u.nume, ore: oreImplicite ?? '8:00' }));
+    const noi = users.filter((u)=>selected.has(u.id)).map((u)=>({ id: uid(), nume: u.nume, oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }));
     setPersoane([...persoane, ...noi]);
     setSelected(new Set());
     setPickerOpen(false);
@@ -1549,16 +1557,25 @@ function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
 
   return (
     <div className="space-y-2">
-      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 70px 28px', color:'#8B93A0' }}>
-        <span>Persoană</span><span>Ore (h:mm)</span><span/>
+      <div className="overflow-x-auto">
+      <div style={{ minWidth: 420 }}>
+      <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 100px 100px 60px 28px', color:'#8B93A0' }}>
+        <span>Persoană</span><span>Ora început</span><span>Ora sfârșit</span><span>Ore</span><span/>
       </div>
-      {persoane.map((p)=>(
-        <div key={p.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5" style={{ gridTemplateColumns:'1fr 70px 28px', background:'#171C21' }}>
-          <input value={p.nume} onChange={(e)=>update(p.id,'nume',e.target.value)} placeholder="Nume persoană" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
-          <input type="text" placeholder="8:00" value={p.ore} onChange={(e)=>update(p.id,'ore',e.target.value)} className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
-          <button onClick={()=>remove(p.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
-        </div>
-      ))}
+      {persoane.map((p)=>{
+        const mins = personMinutes(p);
+        return (
+          <div key={p.id} className="grid gap-2 items-center rounded-lg px-2 py-1.5 mt-1" style={{ gridTemplateColumns:'1fr 100px 100px 60px 28px', background:'#171C21' }}>
+            <input value={p.nume} onChange={(e)=>update(p.id,'nume',e.target.value)} placeholder="Nume persoană" className="bg-transparent outline-none text-sm py-1" style={{ color:'#E9E7E2' }} />
+            <RoTimePicker value={p.oraInceput || defaultInceput || '08:00'} onChange={(v)=>update(p.id,'oraInceput',v)} />
+            <RoTimePicker value={p.oraSfarsit || defaultSfarsit || '17:00'} onChange={(v)=>update(p.id,'oraSfarsit',v)} />
+            <span className="text-sm text-center" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(mins)}</span>
+            <button onClick={()=>remove(p.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+          </div>
+        );
+      })}
+      </div>
+      </div>
 
       {pickerOpen ? (
         <div className="rounded-lg p-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
@@ -1593,25 +1610,20 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
   const [etapaId, setEtapaId] = useState(initial?.etapaId || '');
-  const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', ore:'8:00' }]);
+  const [persoane, setPersoane] = useState(initial?.persoane || [{ id: uid(), nume:'', oraInceput:'08:00', oraSfarsit:'17:00' }]);
   const [explicatii, setExplicatii] = useState(initial?.explicatii || '');
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
-  const totalOreMin = persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
-  const oreCalculateMin = calcOreDinInterval(oraInceput, oraSfarsit);
-  const aplicaLaToti = () => setPersoane(persoane.map((p)=>({...p, ore: minutesToHM(oreCalculateMin)})));
-  useEffect(() => {
-    if (oreCalculateMin !== null) setPersoane((prev)=>prev.map((p)=>({...p, ore: minutesToHM(oreCalculateMin)})));
-  }, [oraInceput, oraSfarsit]);
+  const totalOreMin = persoane.reduce((s,p)=>s+personMinutes(p),0);
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
       <div className="flex gap-3 mb-2 flex-wrap items-end">
         <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data
           <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle} />
         </label>
-        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora început
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora implicită început
           <RoTimePicker value={oraInceput} onChange={setOraInceput} />
         </label>
-        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora sfârșit
+        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora implicită sfârșit
           <RoTimePicker value={oraSfarsit} onChange={setOraSfarsit} />
         </label>
         {etape && etape.length > 0 && (
@@ -1623,13 +1635,8 @@ function RaportForm({ initial, etape, onCancel, onSave }) {
           </label>
         )}
       </div>
-      {oreCalculateMin !== null && (
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs" style={{ color:'#8B93A0' }}>Ore calculate (interval − 1h pauză): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(oreCalculateMin)}</span></span>
-          <button onClick={aplicaLaToti} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#2E8BD1' }}>Aplică la toate persoanele</button>
-        </div>
-      )}
-      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} oreImplicite={oreCalculateMin!=null ? minutesToHM(oreCalculateMin) : '8:00'} />
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
+      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} />
       <textarea placeholder="Explicații / operațiuni executate..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
       <div className="flex justify-between items-center mt-3">
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMin)}</span></span>
@@ -1706,19 +1713,19 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const etapaNume = (id) => etapeSantier.find((e)=>e.id===id)?.nume || '';
     const inRange = listaRapoarte.filter((r) => (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo));
     const rows = inRange.slice().sort((a,b)=> a.data<b.data?-1:1).map((r)=>{
-      const totalOreMinRow = r.persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
+      const totalOreMinRow = r.persoane.reduce((s,p)=>s+personMinutes(p),0);
       return {
         'Data': r.data,
         'Etapă': etapaNume(r.etapaId),
         'Ora început': r.oraInceput || '',
         'Ora sfârșit': r.oraSfarsit || '',
         'Nr. persoane': r.persoane.filter((p)=>p.nume.trim()).length,
-        'Persoane': r.persoane.map((p)=>`${p.nume} (${p.ore})`).filter((s)=>s.trim()!=='()').join(', '),
+        'Persoane': r.persoane.filter((p)=>p.nume.trim()).map((p)=>`${p.nume} (${minutesToHM(personMinutes(p))})`).join(', '),
         'Total ore': minutesToHM(totalOreMinRow),
         'Ce s-a făcut': r.explicatii || '',
       };
     });
-    const totalOreGeneralMin = inRange.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+oreToMinutes(p.ore),0),0);
+    const totalOreGeneralMin = inRange.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+personMinutes(p),0),0);
     const totalPersoane = inRange.reduce((s,r)=>s+r.persoane.filter((p)=>p.nume.trim()).length,0);
     const totalRow = { 'Data':'TOTAL', 'Etapă':'', 'Ora început':'', 'Ora sfârșit':'', 'Nr. persoane': totalPersoane, 'Persoane':'', 'Total ore': minutesToHM(totalOreGeneralMin), 'Ce s-a făcut':'' };
     const sheetRows = rows.length
@@ -1754,7 +1761,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const rapoarteSantier = rapoarte.filter((r)=>r.santierId===selected)
       .filter((r)=> etapaTab === 'toate' || r.etapaId === etapaTab)
       .slice().sort((a,b)=> a.data<b.data?1:-1);
-    const totalOreSantierMin = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+oreToMinutes(p.ore),0),0);
+    const totalOreSantierMin = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+personMinutes(p),0),0);
     return (
       <div>
         <button onClick={()=>setSelected(null)} className="text-xs mb-3" style={{ color:'#5C6570' }}>← Toate șantierele</button>
@@ -1825,7 +1832,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         ) : (
           <div className="space-y-2">
             {rapoarteSantier.map((r)=>{
-              const totalOreMinRow = r.persoane.reduce((s,p)=>s+oreToMinutes(p.ore),0);
+              const totalOreMinRow = r.persoane.reduce((s,p)=>s+personMinutes(p),0);
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               return (
@@ -1836,7 +1843,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                         {r.data}{(r.oraInceput||r.oraSfarsit) && <span className="text-xs ml-2" style={{ color:'#8B93A0' }}>{r.oraInceput||'?'}–{r.oraSfarsit||'?'}</span>}
                         {etapaN && <span className="text-xs ml-2" style={{ color:'#2E8BD1' }}>{etapaN}</span>}
                       </div>
-                      <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.map((p)=>`${p.nume} (${p.ore})`).filter((s)=>s.trim()!=='()').join(', ') || 'Fără persoane'}</div>
+                      <div className="text-xs" style={{ color:'#8B93A0' }}>{r.persoane.filter((p)=>p.nume.trim()).map((p)=>`${p.nume} (${minutesToHM(personMinutes(p))})`).join(', ') || 'Fără persoane'}</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs" style={{ color:'#8B93A0' }}>{nrPersoane} pers.</span>
