@@ -1794,7 +1794,7 @@ function SantierForm({ initial, onCancel, onSave }) {
     setForm({...form, echipa: next});
   };
   const setEchipaStatus = (userId, status) => {
-    const next = echipa.map((e)=> e.userId===userId ? {...e, status} : e);
+    const next = echipa.map((e)=> e.userId===userId ? {...e, status, dataModificare: new Date().toISOString().slice(0,10)} : e);
     setForm({...form, echipa: next});
   };
 
@@ -1805,7 +1805,7 @@ function SantierForm({ initial, onCancel, onSave }) {
         <input placeholder="Adresă (opțional)" value={form.adresa} onChange={(e)=>setForm({...form, adresa:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         <div className="flex gap-2">
           {SANTIER_STATUSES.map((s)=>(
-            <button key={s} onClick={()=>setForm({...form, status:s})} className="text-xs px-2.5 py-1.5 rounded-lg"
+            <button key={s} onClick={()=>setForm({...form, status:s, statusSchimbatLa: new Date().toISOString().slice(0,10)})} className="text-xs px-2.5 py-1.5 rounded-lg"
               style={{ color: form.status===s?'#14181C':'#8B93A0', background: form.status===s?'#2E8BD1':'#171C21' }}>{s}</button>
           ))}
         </div>
@@ -2042,7 +2042,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   };
   const setEchipaMemberStatus = (santierId, userId, status) => {
     const s = santiere.find((x)=>x.id===santierId);
-    updateEchipa(santierId, echipaNormalizata(s.echipa).map((e)=> e.userId===userId ? {...e, status} : e));
+    updateEchipa(santierId, echipaNormalizata(s.echipa).map((e)=> e.userId===userId ? {...e, status, dataModificare: new Date().toISOString().slice(0,10)} : e));
   };
 
   const saveSantier = (s) => {
@@ -2610,15 +2610,26 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         </div>
       )}
 
-      {!isManager && santiereMele.filter((s)=>s.status==='Activ' || s.status==='Pauză').length > 0 && (
+      {!isManager && new Date().getDay() >= 1 && new Date().getDay() <= 5 && (() => {
+        const maineList = santiereMele
+          .filter((s)=>s.status==='Activ' || s.status==='Pauză')
+          .map((s)=>{
+            const echipaS = echipaNormalizata(s.echipa);
+            const eu = echipaS.find((e)=>e.userId===currentUser?.id);
+            const santierInPauzaAzi = s.status === 'Pauză' && s.statusSchimbatLa === azi;
+            const euInPauzaAzi = s.status === 'Activ' && eu?.status === 'pauza' && eu?.dataModificare === azi;
+            const suntInPauza = santierInPauzaAzi || euInPauzaAzi;
+            const activ = s.status === 'Activ' && eu?.status !== 'pauza';
+            return { s, suntInPauza, activ, echipaS, eu };
+          })
+          .filter((x)=> x.activ || x.suntInPauza); // pauza se arată doar în ziua schimbării; activ mereu
+        if (maineList.length === 0) return null;
+        return (
         <div className="mb-6">
           <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Mâine</div>
           <div className="space-y-2">
-            {santiereMele.filter((s)=>s.status==='Activ' || s.status==='Pauză').map((s)=>{
-              const echipaS = echipaNormalizata(s.echipa);
-              const eu = echipaS.find((e)=>e.userId===currentUser?.id);
-              const suntInPauza = s.status === 'Pauză' || eu?.status === 'pauza';
-              const colegiActivi = s.status === 'Activ'
+            {maineList.map(({ s, suntInPauza, activ, echipaS })=>{
+              const colegiActivi = activ
                 ? echipaS.filter((e)=>e.status==='activ' && e.userId!==currentUser?.id).map((e)=>colegiUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)
                 : [];
               return (
@@ -2629,7 +2640,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                     </span>
                     <span style={{ color: suntInPauza ? '#E9A23B' : '#4CAF7D' }}>→</span>
                   </div>
-                  {!suntInPauza && (s.adresa || colegiActivi.length > 0) && (
+                  {activ && (s.adresa || colegiActivi.length > 0) && (
                     <div className="text-xs mt-1.5" style={{ color:'#8B93A0' }}>
                       {s.adresa && <div>📍 {s.adresa}</div>}
                       {colegiActivi.length > 0 && <div>👥 {colegiActivi.join(', ')}</div>}
@@ -2640,7 +2651,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             })}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {!isManager && (
         <div className="mb-6">
