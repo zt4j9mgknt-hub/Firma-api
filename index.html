@@ -2435,6 +2435,20 @@ function App() {
     setCurrentUser(null);
     try { localStorage.removeItem('currentUser'); } catch {}
   };
+
+  // --- "Vezi ca" — doar Managerul real poate testa ce vede fiecare rol/utilizator, fără să se deloge. ---
+  const [viewAsUserId, setViewAsUserId] = useState(null);
+  const [allAppUsers, setAllAppUsers] = useState([]);
+  useEffect(() => {
+    if (currentUser?.rol === 'Manager') {
+      fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+        .then((r)=>r.json()).then((data)=>setAllAppUsers(data.users || [])).catch(()=>{});
+    }
+  }, [currentUser]);
+  const effectiveUser = (currentUser?.rol === 'Manager' && viewAsUserId)
+    ? (allAppUsers.find((u)=>u.id===viewAsUserId) || currentUser)
+    : currentUser;
+
   const CONTAB_TABS = ['devize', 'oferte', 'facturi', 'clienti'];
   const [contabOpen, setContabOpen] = useState(false);
   const MATERIALE_TABS = ['gestiune', 'stocuri'];
@@ -2653,7 +2667,7 @@ function App() {
         </button>
         <NavItem id={null} label="🏠 Dashboard" />
         <div style={{ height:1, background:'#2A323B', margin:'4px 4px 8px' }} />
-        {currentUser.rol === 'Manager' && (
+        {effectiveUser.rol === 'Manager' && (
         <>
         <button onClick={()=>setContabOpen(!contabOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: CONTAB_TABS.includes(tab) ? '#2E8BD1' : '#B8BFC9', fontWeight:600 }}>
           <span>📊 Contabilitate</span>
@@ -2675,16 +2689,32 @@ function App() {
         </button>
         {materialeOpen && (
           <div className="flex flex-col gap-1 pl-3">
-            {currentUser.rol === 'Manager' && <NavItem id="gestiune" label="🗂 Gestiune" />}
+            {effectiveUser.rol === 'Manager' && <NavItem id="gestiune" label="🗂 Gestiune" />}
             <NavItem id="stocuri" label="📈 Stocuri" />
           </div>
         )}
         <NavItem id="santiere" label="🏗 Șantiere" />
         <div style={{ height:1, background:'#2A323B', margin:'8px 4px' }} />
-        {currentUser.rol === 'Manager' && <NavItem id="firma" label="⚙ Firma mea" />}
+        {effectiveUser.rol === 'Manager' && <NavItem id="firma" label="⚙ Firma mea" />}
         <NavItem id="profil" label="👤 Profilul meu" />
-        {currentUser.rol === 'Manager' && <NavItem id="utilizatori" label="🔑 Utilizatori" />}
+        {effectiveUser.rol === 'Manager' && <NavItem id="utilizatori" label="🔑 Utilizatori" />}
         <div className="mt-auto pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          {currentUser.rol === 'Manager' && (
+            <div className="px-3 mb-2">
+              <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color:'#5C6570' }}>🧪 Vezi ca (test)</div>
+              <select value={viewAsUserId || ''} onChange={(e)=>{ setViewAsUserId(e.target.value || null); setTab(null); }} className="w-full text-xs rounded-lg px-2 py-1.5 outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }}>
+                <option value="">— tu (cont real) —</option>
+                {allAppUsers.filter((u)=>u.id!==currentUser.id).map((u)=>(
+                  <option key={u.id} value={u.id} style={{ background:'#1B2127' }}>{u.nume} ({u.rol})</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {viewAsUserId && (
+            <div className="px-3 mb-2 text-[11px]" style={{ color:'#E9A23B' }}>
+              ⚠ Vezi ca: {effectiveUser.nume} ({effectiveUser.rol})
+            </div>
+          )}
           <div className="flex items-center justify-between px-3 py-2 text-xs" style={{ color:'#8B93A0' }}>
             <span>{ROLES.find((r)=>r.id===currentUser.rol)?.icon} {currentUser.nume}</span>
             <button onClick={logout} style={{ color:'#E05252' }}>Ieși</button>
@@ -2695,7 +2725,7 @@ function App() {
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
         ) : !tab ? (
-          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setTab={setTab} currentUser={currentUser} />
+          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setTab={setTab} currentUser={effectiveUser} />
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
@@ -2735,12 +2765,12 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={currentUser} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} onExportToDeviz={exportConsumToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
-            {tab === 'profil' && <ProfileTab currentUser={currentUser} onLogout={logout} />}
+            {tab === 'profil' && <ProfileTab currentUser={effectiveUser} onLogout={logout} />}
 
-            {tab === 'utilizatori' && currentUser.rol === 'Manager' && <UsersTab currentUser={currentUser} />}
+            {tab === 'utilizatori' && effectiveUser.rol === 'Manager' && <UsersTab currentUser={effectiveUser} />}
           </>
         )}
       </main>
