@@ -1837,11 +1837,8 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
 }
 
 function LoginScreen({ onLogin }) {
-  const [mode, setMode] = useState('login');
-  const [nume, setNume] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [rol, setRol] = useState('Electrician');
   const [status, setStatus] = useState({ loading:false, error:'' });
   const [showPassword, setShowPassword] = useState(false);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
@@ -1849,12 +1846,7 @@ function LoginScreen({ onLogin }) {
   const submit = async () => {
     setStatus({ loading:true, error:'' });
     try {
-      if (mode === 'login') {
-        await onLogin({ action:'login', username, password });
-      } else {
-        if (!nume.trim() || !username.trim() || !password) throw new Error('Completează toate câmpurile.');
-        await onLogin({ action:'register', nume: nume.trim(), username: username.trim(), password, rol });
-      }
+      await onLogin({ action:'login', username, password });
     } catch (e) {
       setStatus({ loading:false, error: e.message || 'A eșuat.' });
       return;
@@ -1867,16 +1859,9 @@ function LoginScreen({ onLogin }) {
       <div className="rounded-xl p-6 w-full max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
         <div className="flex flex-col items-center mb-5">
           <img src="/logo.png" alt="Logo" style={{ height:40, width:'auto', marginBottom:10 }} />
-          <div className="flex gap-2">
-            <button onClick={()=>setMode('login')} className="text-sm px-3 py-1 rounded-lg font-medium" style={{ color: mode==='login'?'#14181C':'#8B93A0', background: mode==='login'?'#2E8BD1':'#171C21' }}>Autentificare</button>
-            <button onClick={()=>setMode('register')} className="text-sm px-3 py-1 rounded-lg font-medium" style={{ color: mode==='register'?'#14181C':'#8B93A0', background: mode==='register'?'#2E8BD1':'#171C21' }}>Cont nou</button>
-          </div>
         </div>
 
         <div className="space-y-2">
-          {mode === 'register' && (
-            <input placeholder="Nume complet" value={nume} onChange={(e)=>setNume(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-          )}
           <input placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
           <div style={{ position:'relative' }}>
             <input type={showPassword ? 'text' : 'password'} placeholder="Parolă" value={password} onChange={(e)=>setPassword(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && submit()} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, paddingRight:36 }} />
@@ -1884,22 +1869,12 @@ function LoginScreen({ onLogin }) {
               {showPassword ? '🙈' : '👁'}
             </button>
           </div>
-          {mode === 'register' && (
-            <div className="flex gap-2">
-              {ROLES.map((r)=>(
-                <button key={r.id} onClick={()=>setRol(r.id)} className="flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5"
-                  style={{ color: rol===r.id?'#14181C':'#8B93A0', background: rol===r.id?'#2E8BD1':'#171C21' }}>
-                  <span>{r.icon}</span> {r.id}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         {status.error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{status.error}</p>}
 
         <button onClick={submit} disabled={status.loading} className="w-full mt-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>
-          {status.loading ? '...' : mode==='login' ? 'Intră în aplicație' : 'Creează cont'}
+          {status.loading ? '...' : 'Intră în aplicație'}
         </button>
       </div>
     </div>
@@ -1998,14 +1973,17 @@ function UsersTab({ currentUser }) {
     loadUsers();
   };
 
-  const addUser = async () => {
-    if (!form.nume.trim() || !form.username.trim() || !form.password) {
+  const saveUser = async () => {
+    if (!form.nume.trim() || !form.username.trim() || (!form.id && !form.password)) {
       setFormStatus({ loading:false, error:'Completează toate câmpurile.' });
       return;
     }
     setFormStatus({ loading:true, error:'' });
     try {
-      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'register', nume: form.nume.trim(), username: form.username.trim(), password: form.password, rol: form.rol }) });
+      const payload = form.id
+        ? { action:'update', id: form.id, nume: form.nume.trim(), username: form.username.trim(), rol: form.rol, newPassword: form.password || undefined }
+        : { action:'register', nume: form.nume.trim(), username: form.username.trim(), password: form.password, rol: form.rol };
+      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
       setForm(null);
@@ -2031,7 +2009,7 @@ function UsersTab({ currentUser }) {
         <div className="rounded-xl p-4 mb-4 space-y-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
           <input placeholder="Nume complet" value={form.nume} onChange={(e)=>setForm({...form, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
           <input placeholder="Username" value={form.username} onChange={(e)=>setForm({...form, username:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-          <input type="text" placeholder="Parolă standard" value={form.password} onChange={(e)=>setForm({...form, password:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input type="text" placeholder={form.id ? 'Parolă nouă (lasă gol ca să nu o schimbi)' : 'Parolă standard'} value={form.password} onChange={(e)=>setForm({...form, password:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
           <div className="flex gap-2">
             {ROLES.map((r)=>(
               <button key={r.id} onClick={()=>setForm({...form, rol:r.id})} className="flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5"
@@ -2043,7 +2021,7 @@ function UsersTab({ currentUser }) {
           {formStatus.error && <p className="text-xs" style={{ color:'#E05252' }}>{formStatus.error}</p>}
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
-            <button onClick={addUser} disabled={formStatus.loading} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>{formStatus.loading ? '...' : 'Creează cont'}</button>
+            <button onClick={saveUser} disabled={formStatus.loading} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>{formStatus.loading ? '...' : (form.id ? 'Salvează modificările' : 'Creează cont')}</button>
           </div>
         </div>
       )}
@@ -2063,7 +2041,10 @@ function UsersTab({ currentUser }) {
                   <div className="text-xs" style={{ color:'#8B93A0' }}>@{u.username} · {u.rol}</div>
                 </div>
               </div>
-              <button onClick={()=>delUser(u.id)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={()=>{ setForm({ id:u.id, nume:u.nume, username:u.username, password:'', rol:u.rol }); setFormStatus({loading:false,error:''}); }} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                <button onClick={()=>delUser(u.id)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+              </div>
             </div>
           ))}
         </div>
