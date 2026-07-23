@@ -820,6 +820,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   const gestiuni = [...new Set(materials.map((m)=>m.categorie).filter(Boolean))].sort();
   const [stocShowAll, setStocShowAll] = useState(false);
   const [gestShowAll, setGestShowAll] = useState(false);
+  const [gestFlatAll, setGestFlatAll] = useState(false);
   const [gestGroup, setGestGroup] = useState(null);
   const searchingGestiune = filter.trim() !== '';
 
@@ -833,7 +834,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
           <div className="flex justify-between items-center mb-2 gap-3 flex-wrap">
             <input placeholder="Caută gestiune sau material..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
             {!searchingGestiune && !gestShowAll && <button onClick={()=>setGestShowAll(true)} className="text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}>🗂 Afișează toate gestiunile</button>}
-            {!searchingGestiune && gestShowAll && <button onClick={()=>{ setGestShowAll(false); setGestGroup(null); }} className="text-xs px-3 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>Ascunde</button>}
+            {!searchingGestiune && gestShowAll && <button onClick={()=>{ setGestShowAll(false); setGestGroup(null); setGestFlatAll(false); }} className="text-xs px-3 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>Ascunde</button>}
             <button onClick={importSmartBillStock} className="text-xs px-2.5 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>📥 SmartBill</button>
             <button onClick={importCatalog} className="text-xs px-2.5 py-1.5 rounded-lg shrink-0" style={{ color:'#8B93A0', background:'#171C21', border:'1px solid #2A323B' }}>📥 Catalog</button>
             {!form && <button onClick={()=>{ setForm({}); setAddMode('manual'); }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă material</button>}
@@ -850,6 +851,10 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
             {gestiuni.length > 0 && (
               <div className="flex items-center gap-1 mt-1.5 flex-wrap">
                 <span className="text-[11px] mr-1" style={{ color:'#5C6570' }}>Gestiuni (nimic bifat = toate):</span>
+                <button onClick={()=>setExportGestiuni(new Set(gestiuni))} className="text-[11px] px-2 py-0.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>Selectează toate</button>
+                {exportGestiuni.size > 0 && (
+                  <button onClick={()=>setExportGestiuni(new Set())} className="text-[11px] px-2 py-0.5 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Deselectează</button>
+                )}
                 {gestiuni.map((g)=>{
                   const active = exportGestiuni.has(g);
                   return (
@@ -872,8 +877,11 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
 
           {materials.length===0 && !form ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun material încă.</div>
-          ) : searchingGestiune ? (
+          ) : (searchingGestiune || gestFlatAll) ? (
             <>
+              {gestFlatAll && !searchingGestiune && (
+                <button onClick={()=>setGestFlatAll(false)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
+              )}
               <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
                 Valoare totală ({filtered.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(filtered.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span>
               </div>
@@ -896,23 +904,29 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
           ) : !gestShowAll ? (
             <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Caută o gestiune sau un material, sau apasă „Afișează toate gestiunile".</div>
           ) : gestGroup === null ? (
-            <div className="space-y-2">
-              {gestiuni.map((g)=>{
-                const count = materials.filter((m)=>m.categorie===g).length;
-                return (
-                  <button key={g} onClick={()=>setGestGroup(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                    <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
-                    <span className="text-xs" style={{ color:'#8B93A0' }}>{count} materiale →</span>
+            <>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm" style={{ color:'#8B93A0' }}>Valoare totală, toate gestiunile ({materials.length} produse): <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(materials.reduce((s,m)=>s+(Number(m.stoc)||0)*(Number(m.pret)||0),0))}</span></span>
+                <button onClick={()=>setGestFlatAll(true)} className="text-xs px-2.5 py-1.5 rounded-lg shrink-0" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>Arată toate materialele</button>
+              </div>
+              <div className="space-y-2">
+                {gestiuni.map((g)=>{
+                  const count = materials.filter((m)=>m.categorie===g).length;
+                  return (
+                    <button key={g} onClick={()=>setGestGroup(g)} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                      <span className="text-sm" style={{ color:'#E9E7E2' }}>{g}</span>
+                      <span className="text-xs" style={{ color:'#8B93A0' }}>{count} materiale →</span>
+                    </button>
+                  );
+                })}
+                {materials.some((m)=>!m.categorie) && (
+                  <button onClick={()=>setGestGroup('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
+                    <span className="text-xs" style={{ color:'#8B93A0' }}>{materials.filter((m)=>!m.categorie).length} materiale →</span>
                   </button>
-                );
-              })}
-              {materials.some((m)=>!m.categorie) && (
-                <button onClick={()=>setGestGroup('__fara__')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                  <span className="text-sm" style={{ color:'#E9E7E2' }}>Fără gestiune</span>
-                  <span className="text-xs" style={{ color:'#8B93A0' }}>{materials.filter((m)=>!m.categorie).length} materiale →</span>
-                </button>
-              )}
-            </div>
+                )}
+              </div>
+            </>
           ) : (
             <>
               <button onClick={()=>setGestGroup(null)} className="text-xs mb-2" style={{ color:'#5C6570' }}>← Înapoi la gestiuni</button>
@@ -1472,9 +1486,35 @@ function SantierForm({ initial, onCancel, onSave }) {
 }
 
 function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
+  const [users, setUsers] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+
+  useEffect(() => {
+    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setUsers(data.users || [])).catch(()=>setUsers([]));
+  }, []);
+
   const update = (id, f, v) => setPersoane(persoane.map((p)=> p.id===id ? {...p, [f]:v} : p));
   const remove = (id) => setPersoane(persoane.filter((p)=>p.id!==id));
-  const add = () => setPersoane([...persoane, { id: uid(), nume:'', ore: oreImplicite ?? '8:00' }]);
+  const addManual = () => setPersoane([...persoane, { id: uid(), nume:'', ore: oreImplicite ?? '8:00' }]);
+
+  const numeDejaAdaugate = new Set(persoane.map((p)=>p.nume));
+  const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
+
+  const toggleSelected = (userId) => {
+    const next = new Set(selected);
+    next.has(userId) ? next.delete(userId) : next.add(userId);
+    setSelected(next);
+  };
+
+  const adaugaSelectati = () => {
+    const noi = users.filter((u)=>selected.has(u.id)).map((u)=>({ id: uid(), nume: u.nume, ore: oreImplicite ?? '8:00' }));
+    setPersoane([...persoane, ...noi]);
+    setSelected(new Set());
+    setPickerOpen(false);
+  };
+
   return (
     <div className="space-y-2">
       <div className="grid gap-2 text-[11px] uppercase tracking-wider px-2" style={{ gridTemplateColumns:'1fr 70px 28px', color:'#8B93A0' }}>
@@ -1487,7 +1527,31 @@ function PersonHoursEditor({ persoane, setPersoane, oreImplicite }) {
           <button onClick={()=>remove(p.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
         </div>
       ))}
-      <button onClick={add} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă persoană</button>
+
+      {pickerOpen ? (
+        <div className="rounded-lg p-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+          <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Selectează persoanele care au lucrat:</div>
+          {users.length === 0 ? (
+            <div className="text-xs" style={{ color:'#5C6570' }}>Niciun utilizator înregistrat încă.</div>
+          ) : (
+            <div className="space-y-1 mb-2">
+              {users.filter((u)=>!numeDejaAdaugate.has(u.nume)).map((u)=>(
+                <label key={u.id} className="flex items-center gap-2 text-sm px-2 py-1.5 rounded-lg cursor-pointer" style={{ background: selected.has(u.id)?'#2E8BD122':'transparent', color:'#E9E7E2' }}>
+                  <input type="checkbox" checked={selected.has(u.id)} onChange={()=>toggleSelected(u.id)} />
+                  <span>{iconFor(u.rol)}</span> {u.nume}
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={()=>{ setPickerOpen(false); setSelected(new Set()); }} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>Renunță</button>
+            <button onClick={adaugaSelectati} disabled={selected.size===0} className="text-xs px-2 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă selectați ({selected.size})</button>
+            <button onClick={addManual} className="text-xs px-2 py-1.5 rounded-lg ml-auto" style={{ color:'#8B93A0', background:'#1B2127' }}>+ Nume manual</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={()=>setPickerOpen(true)} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă persoană</button>
+      )}
     </div>
   );
 }
@@ -1814,6 +1878,7 @@ function LoginScreen({ onLogin }) {
 }
 
 function ProfileTab({ currentUser }) {
+  const [expandedForm, setExpandedForm] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -1841,10 +1906,19 @@ function ProfileTab({ currentUser }) {
     <div>
       <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Profilul meu</h2>
       <p className="text-xs mb-5" style={{ color:'#5C6570' }}>{roleIcon} {currentUser?.nume} · @{currentUser?.username} · {currentUser?.rol}</p>
+
+      {!expandedForm ? (
+        <button onClick={()=>setExpandedForm(true)} className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>
+          <span>🔒</span> Schimbă parola
+        </button>
+      ) : (
       <div className="rounded-xl p-4 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-        <div className="flex items-center gap-2 mb-3 pb-3" style={{ borderBottom:'1px solid #2A323B' }}>
-          <span>🔒</span>
-          <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>Schimbă parola</div>
+        <div className="flex items-center justify-between mb-3 pb-3" style={{ borderBottom:'1px solid #2A323B' }}>
+          <div className="flex items-center gap-2">
+            <span>🔒</span>
+            <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>Schimbă parola</div>
+          </div>
+          <button onClick={()=>{ setExpandedForm(false); setOldPassword(''); setNewPassword(''); setConfirmPassword(''); setStatus({loading:false,error:'',success:''}); }} style={{ color:'#5C6570' }}><Icon size={14}>✕</Icon></button>
         </div>
         <div className="space-y-2">
         <input type={showPw?'text':'password'} placeholder="Parola actuală" value={oldPassword} onChange={(e)=>setOldPassword(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
@@ -1862,6 +1936,7 @@ function ProfileTab({ currentUser }) {
         </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
