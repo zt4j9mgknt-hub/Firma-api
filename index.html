@@ -15,6 +15,10 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script type="module">
+  import { upload } from 'https://esm.sh/@vercel/blob@2.6.1/client';
+  window.__vercelBlobUpload = upload;
+</script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   html, body, #root { height: 100%; }
@@ -1290,26 +1294,23 @@ function SiteAlertsPanel({ santierId, categorie, categorieLabel, alerte, setAler
   );
 }
 
-// Citește un fișier ca base64 (fără prefixul "data:...;base64,") pentru trimitere către /api/files.
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+// Fisierele merg direct din telefon catre Vercel Blob (nu mai trec prin serverul
+// nostru), deci nu mai suntem limitati la ~3MB - pana la 200MB per fisier.
+const MAX_UPLOAD_SIZE = 200 * 1024 * 1024; // 200MB
 
 async function uploadFileToBlob(file, folder) {
-  const base64 = await fileToBase64(file);
-  const res = await fetch('/api/files', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'upload', filename: file.name, base64, contentType: file.type, folder }),
+  if (file.size > MAX_UPLOAD_SIZE) {
+    throw new Error(`„${file.name}" e prea mare (${(file.size/1024/1024).toFixed(0)}MB). Limita e 200MB per fișier.`);
+  }
+  if (!window.__vercelBlobUpload) {
+    throw new Error('Componenta de încărcare nu s-a încărcat încă — așteaptă o clipă și încearcă din nou.');
+  }
+  const pathname = `${folder}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
+  const blob = await window.__vercelBlobUpload(pathname, file, {
+    access: 'private',
+    handleUploadUrl: '/api/blob-upload',
   });
-  const data = await res.json();
-  if (!res.ok || !data.ok) throw new Error(data.error || 'Încărcarea a eșuat.');
-  return data;
+  return { url: blob.url, pathname: blob.pathname };
 }
 
 // Fișierele sunt într-un magazin Blob privat — nu au un URL accesibil direct,
@@ -1441,7 +1442,7 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
           <Icon>+</Icon> {uploading ? 'Se încarcă...' : 'Adaugă foto/video'}
           <input type="file" accept="image/*,video/*" multiple disabled={uploading} onChange={(e)=>{ handleFiles(e.target.files); e.target.value=''; }} style={{ display:'none' }} />
         </label>
-        <p className="text-[11px] mt-1.5" style={{ color:'#5C6570' }}>Fișiere de până la ~4MB; video-uri lungi/necomprimate pot eșua la încărcare.</p>
+        <p className="text-[11px] mt-1.5" style={{ color:'#5C6570' }}>Fișiere de până la 200MB.</p>
         {error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{error}</p>}
         {mediaAici.length === 0 ? (
           <div className="text-xs mt-3" style={{ color:'#5C6570' }}>Nimic încărcat încă.</div>
