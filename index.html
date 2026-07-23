@@ -2117,7 +2117,7 @@ function UsersTab({ currentUser }) {
   );
 }
 
-function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, setTab, currentUser }) {
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, setTab, currentUser }) {
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
 
   const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
@@ -2129,13 +2129,21 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
 
   const isManager = currentUser?.rol === 'Manager';
+
+  // --- Date specifice Electricianului: șantierele lui, memento raport, materiale cerute acolo ---
+  const santiereMele = santiere.filter((s)=>(s.echipa || []).includes(currentUser?.id));
+  const azi = new Date().toISOString().slice(0,10);
+  const santiereFaraRaportAzi = santiereMele.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
+  const idSantiereMele = new Set(santiereMele.map((s)=>s.id));
+  const cereriLaSantiereleMele = cereriSantier.filter((c)=>idSantiereMele.has(c.santierId)).slice().reverse().slice(0,6);
+
   const cards = isManager ? [
     { label:'Devize active', value: devizeActive, tab:'devize' },
     { label:'Oferte trimise', value: oferteTrimise, tab:'oferte' },
     { label:'Facturi neplătite', value: `${facturiNeplatite.length} · ${money(sumaNeplatita)}`, tab:'facturi' },
     { label:'Șantiere active', value: santiereActive, tab:'santiere' },
   ] : [
-    { label:'Șantiere active', value: santiereActive, tab:'santiere' },
+    { label:'Șantierele tale', value: santiereMele.length, tab:'santiere' },
   ];
 
   const actions = isManager ? [
@@ -2168,6 +2176,55 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         ))}
       </div>
 
+      {!isManager && santiereFaraRaportAzi.length > 0 && (
+        <div className="mb-6">
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Memento</div>
+          <div className="space-y-2">
+            {santiereFaraRaportAzi.map((s)=>(
+              <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
+                <span className="text-sm" style={{ color:'#E9E7E2' }}>⏰ Nu ai trimis raportul de azi pentru „{s.nume}"</span>
+                <span style={{ color:'#E9A23B' }}>→</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isManager && (
+        <div className="mb-6">
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Șantierele tale</div>
+          {santiereMele.length === 0 ? (
+            <p className="text-sm" style={{ color:'#5C6570' }}>Nu ești asignat la niciun șantier încă.</p>
+          ) : (
+            <div className="space-y-2">
+              {santiereMele.map((s)=>(
+                <button key={s.id} onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <span className="text-sm" style={{ color:'#E9E7E2' }}>{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></span>
+                  <span style={{ color:'#5C6570' }}>→</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!isManager && cereriLaSantiereleMele.length > 0 && (
+        <div className="mb-6">
+          <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Materiale cerute (șantierele tale)</div>
+          <div className="space-y-2">
+            {cereriLaSantiereleMele.map((c)=>{
+              const santierNume = santiere.find((s)=>s.id===c.santierId)?.nume || '—';
+              return (
+                <div key={c.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                  <span className="text-sm" style={{ color:'#E9E7E2' }}>{c.denumire} — {c.cantitate} {c.um} <span className="text-xs ml-1" style={{ color:'#8B93A0' }}>{santierNume}</span></span>
+                  <span className="text-xs" style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {(materialeSubStoc.length > 0 || cereriInAsteptare.length > 0) && (
         <div className="mb-6">
           <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Atenționări</div>
@@ -2178,7 +2235,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 <span style={{ color:'#E05252' }}>→</span>
               </button>
             )}
-            {cereriInAsteptare.length > 0 && (
+            {isManager && cereriInAsteptare.length > 0 && (
               <button onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
                 <span className="text-sm" style={{ color:'#E9E7E2' }}>{cereriInAsteptare.length} cereri de materiale în așteptare de aprobare</span>
                 <span style={{ color:'#E9A23B' }}>→</span>
@@ -2639,7 +2696,7 @@ function App() {
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
         ) : !tab ? (
-          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} setTab={setTab} currentUser={currentUser} />
+          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setTab={setTab} currentUser={currentUser} />
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
