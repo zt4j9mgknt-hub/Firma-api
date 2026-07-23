@@ -15,6 +15,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://js.pusher.com/8.4.0/pusher.min.js"></script>
 <script type="module">
   import { upload } from 'https://esm.sh/@vercel/blob@2.6.1/client';
   window.__vercelBlobUpload = upload;
@@ -2750,31 +2751,66 @@ function App() {
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
 
+  const loadAllData = async (showSpinner) => {
+    if (showSpinner) setLoading(true);
+    try {
+      setClients(await loadKey('clients', []));
+      setOffers(await loadKey('offers', []));
+      setInvoices(await loadKey('invoices', []));
+      setDevize(await loadKey('devize', []));
+      setCompany(await loadKey('company', {}));
+      setMaterials(await loadKey('materials', []));
+      setStockMoves(await loadKey('stockMoves', []));
+      setSantiere(await loadKey('santiere', []));
+      setRapoarte(await loadKey('rapoarte', []));
+      setEtape(await loadKey('etape', []));
+      setSculeSantier(await loadKey('sculeSantier', []));
+      setCereriSantier(await loadKey('cereriSantier', []));
+      setMiscariSantier(await loadKey('miscariSantier', []));
+      setPlanseSantier(await loadKey('planseSantier', []));
+      setMediaSantier(await loadKey('mediaSantier', []));
+      setError(null);
+    } catch (e) {
+      if (showSpinner) setError('Nu am putut încărca datele.');
+    } finally {
+      if (showSpinner) setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadAllData(true); }, []);
+
+  // Sincronizare in timp real: cand oricine salveaza ceva, primim un semnal instant
+  // (prin Pusher) si reincarcam DOAR acea bucata de date - nu verificam constant.
   useEffect(() => {
-    (async () => {
-      try {
-        setClients(await loadKey('clients', []));
-        setOffers(await loadKey('offers', []));
-        setInvoices(await loadKey('invoices', []));
-        setDevize(await loadKey('devize', []));
-        setCompany(await loadKey('company', {}));
-        setMaterials(await loadKey('materials', []));
-        setStockMoves(await loadKey('stockMoves', []));
-        setSantiere(await loadKey('santiere', []));
-        setRapoarte(await loadKey('rapoarte', []));
-        setEtape(await loadKey('etape', []));
-        setSculeSantier(await loadKey('sculeSantier', []));
-        setCereriSantier(await loadKey('cereriSantier', []));
-        setMiscariSantier(await loadKey('miscariSantier', []));
-        setPlanseSantier(await loadKey('planseSantier', []));
-        setMediaSantier(await loadKey('mediaSantier', []));
-      } catch (e) {
-        setError('Nu am putut încărca datele.');
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    if (!currentUser || typeof Pusher === 'undefined') return;
+    // Inlocuieste cele doua valori de mai jos cu cele din contul tau Pusher
+    // (Channels app -> App Keys): "key" si "cluster". Sunt valori publice, e ok sa fie in cod.
+    const pusherClient = new Pusher('fca0c2f943634978aa7a', { cluster: 'eu' });
+    const channel = pusherClient.subscribe('firma-updates');
+    const setters = {
+      clients: (v)=>setClients(v ?? []),
+      offers: (v)=>setOffers(v ?? []),
+      invoices: (v)=>setInvoices(v ?? []),
+      devize: (v)=>setDevize(v ?? []),
+      company: (v)=>setCompany(v ?? {}),
+      materials: (v)=>setMaterials(v ?? []),
+      stockMoves: (v)=>setStockMoves(v ?? []),
+      santiere: (v)=>setSantiere(v ?? []),
+      rapoarte: (v)=>setRapoarte(v ?? []),
+      etape: (v)=>setEtape(v ?? []),
+      sculeSantier: (v)=>setSculeSantier(v ?? []),
+      cereriSantier: (v)=>setCereriSantier(v ?? []),
+      miscariSantier: (v)=>setMiscariSantier(v ?? []),
+      planseSantier: (v)=>setPlanseSantier(v ?? []),
+      mediaSantier: (v)=>setMediaSantier(v ?? []),
+    };
+    channel.bind('data-changed', async (payload) => {
+      const setter = setters[payload?.key];
+      if (!setter) return;
+      setter(await loadKey(payload.key, payload.key === 'company' ? {} : []));
+    });
+    return () => { pusherClient.unsubscribe('firma-updates'); pusherClient.disconnect(); };
+  }, [currentUser]);
 
   const persist = async (key, value, isRetry) => {
     try {
