@@ -1463,8 +1463,21 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
 }
 
 function SantierForm({ initial, onCancel, onSave }) {
-  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ' });
+  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ', echipa:[] });
+  const [users, setUsers] = useState([]);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+
+  useEffect(() => {
+    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setUsers((data.users || []).filter((u)=>u.rol==='Electrician'))).catch(()=>setUsers([]));
+  }, []);
+
+  const echipa = form.echipa || [];
+  const toggleEchipa = (userId) => {
+    const next = echipa.includes(userId) ? echipa.filter((id)=>id!==userId) : [...echipa, userId];
+    setForm({...form, echipa: next});
+  };
+
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
       <div className="space-y-2 mb-2">
@@ -1475,6 +1488,19 @@ function SantierForm({ initial, onCancel, onSave }) {
             <button key={s} onClick={()=>setForm({...form, status:s})} className="text-xs px-2.5 py-1.5 rounded-lg"
               style={{ color: form.status===s?'#14181C':'#8B93A0', background: form.status===s?'#2E8BD1':'#171C21' }}>{s}</button>
           ))}
+        </div>
+        <div>
+          <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Echipă asignată (doar aceștia pot accesa șantierul):</div>
+          {users.length === 0 ? (
+            <div className="text-xs" style={{ color:'#5C6570' }}>Niciun electrician înregistrat încă.</div>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {users.map((u)=>(
+                <button key={u.id} onClick={()=>toggleEchipa(u.id)} className="text-xs px-2.5 py-1.5 rounded-lg"
+                  style={{ color: echipa.includes(u.id)?'#14181C':'#8B93A0', background: echipa.includes(u.id)?'#2E8BD1':'#171C21' }}>🔌 {u.nume}</button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex justify-end gap-2">
@@ -1779,7 +1805,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
       <div className="flex justify-between items-center mb-4 gap-3">
         <h2 className="text-lg shrink-0" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Șantiere</h2>
         <input placeholder="Caută șantier..." value={siteSearch} onChange={(e)=>setSiteSearch(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-        {!form && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
+        {!form && currentUser?.rol === 'Manager' && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
       </div>
       {form && <SantierForm initial={form.id?form:null} onCancel={()=>setForm(null)} onSave={saveSantier} />}
       {santiere.length===0 && !form ? (
@@ -1788,16 +1814,19 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         <div className="space-y-2">
           {santiere.filter((s)=> !siteSearch || s.nume.toLowerCase().includes(siteSearch.toLowerCase())).map((s)=>{
             const nrRapoarte = rapoarte.filter((r)=>r.santierId===s.id).length;
+            const areAcces = currentUser?.rol === 'Manager' || (s.echipa || []).includes(currentUser?.id);
             return (
-              <div key={s.id} className="rounded-xl px-4 py-3 flex items-center justify-between gap-3 cursor-pointer" onClick={()=>{setSelected(s.id); setSiteView('rapoarte');}} style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div key={s.id} className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${areAcces ? 'cursor-pointer' : ''}`} onClick={()=>{ if (areAcces) { setSelected(s.id); setSiteView('rapoarte'); } }} style={{ background:'#1B2127', border:'1px solid #2A323B', opacity: areAcces?1:0.5 }}>
                 <div className="min-w-0">
-                  <div className="text-sm" style={{ color:'#E9E7E2' }}>{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></div>
-                  <div className="text-xs" style={{ color:'#8B93A0' }}>{s.adresa} · {nrRapoarte} rapoarte</div>
+                  <div className="text-sm" style={{ color:'#E9E7E2' }}>{!areAcces && '🔒 '}{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':'#8B93A0' }}>{s.status}</span></div>
+                  <div className="text-xs" style={{ color:'#8B93A0' }}>{s.adresa} · {nrRapoarte} rapoarte{!areAcces && ' · Nu ești asignat aici'}</div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0" onClick={(e)=>e.stopPropagation()}>
-                  <button onClick={()=>setForm(s)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
-                  <button onClick={()=>delSantier(s.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
-                </div>
+                {currentUser?.rol === 'Manager' && (
+                  <div className="flex items-center gap-2 shrink-0" onClick={(e)=>e.stopPropagation()}>
+                    <button onClick={()=>setForm(s)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                    <button onClick={()=>delSantier(s.id)} style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2049,17 +2078,22 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const materialeSubStoc = materials.filter((m)=>Number(m.stoc) < Number(m.stocMinim));
   const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
 
-  const cards = [
+  const isManager = currentUser?.rol === 'Manager';
+  const cards = isManager ? [
     { label:'Devize active', value: devizeActive, tab:'devize' },
     { label:'Oferte trimise', value: oferteTrimise, tab:'oferte' },
     { label:'Facturi neplătite', value: `${facturiNeplatite.length} · ${money(sumaNeplatita)}`, tab:'facturi' },
     { label:'Șantiere active', value: santiereActive, tab:'santiere' },
+  ] : [
+    { label:'Șantiere active', value: santiereActive, tab:'santiere' },
   ];
 
-  const actions = [
+  const actions = isManager ? [
     { label:'+ Deviz nou', tab:'devize' },
     { label:'+ Ofertă nouă', tab:'oferte' },
     { label:'+ Client nou', tab:'clienti' },
+    { label:'+ Raport șantier', tab:'santiere' },
+  ] : [
     { label:'+ Raport șantier', tab:'santiere' },
   ];
 
@@ -2088,7 +2122,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         <div className="mb-6">
           <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Atenționări</div>
           <div className="space-y-2">
-            {materialeSubStoc.length > 0 && (
+            {isManager && materialeSubStoc.length > 0 && (
               <button onClick={()=>setTab('gestiune')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
                 <span className="text-sm" style={{ color:'#E9E7E2' }}>{materialeSubStoc.length} materiale sub stocul minim</span>
                 <span style={{ color:'#E05252' }}>→</span>
@@ -2513,6 +2547,8 @@ function App() {
         </button>
         <NavItem id={null} label="🏠 Dashboard" />
         <div style={{ height:1, background:'#2A323B', margin:'4px 4px 8px' }} />
+        {currentUser.rol === 'Manager' && (
+        <>
         <button onClick={()=>setContabOpen(!contabOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: CONTAB_TABS.includes(tab) ? '#2E8BD1' : '#B8BFC9', fontWeight:600 }}>
           <span>📊 Contabilitate</span>
           <span style={{ fontSize:10, transform: contabOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
@@ -2525,13 +2561,15 @@ function App() {
             <NavItem id="clienti" label="👥 Clienți" />
           </div>
         )}
+        </>
+        )}
         <button onClick={()=>setMaterialeOpen(!materialeOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: MATERIALE_TABS.includes(tab) ? '#2E8BD1' : '#B8BFC9', fontWeight:600 }}>
           <span>📦 Materiale</span>
           <span style={{ fontSize:10, transform: materialeOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
         </button>
         {materialeOpen && (
           <div className="flex flex-col gap-1 pl-3">
-            <NavItem id="gestiune" label="🗂 Gestiune" />
+            {currentUser.rol === 'Manager' && <NavItem id="gestiune" label="🗂 Gestiune" />}
             <NavItem id="stocuri" label="📈 Stocuri" />
           </div>
         )}
