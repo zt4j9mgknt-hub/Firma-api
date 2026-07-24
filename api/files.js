@@ -11,12 +11,15 @@
 
 import { del, get } from '@vercel/blob';
 import { buffer as streamToBuffer } from 'node:stream/consumers';
+import { authenticate } from './_auth.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  if (!authenticate(req)) return res.status(401).send('Sesiune invalida sau expirata.');
 
   // GET => proxy autentificat catre un fisier privat, ca sa poata fi afisat direct in pagina.
   if (req.method === 'GET') {
