@@ -8,6 +8,7 @@
 // ramane pe Node.js (implicit), care suporta si formatul modern de handler (request) => Response.
 
 import { handleUpload } from '@vercel/blob/client';
+import { verifyToken } from './_auth.js';
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') {
@@ -16,8 +17,19 @@ export default async function handler(request) {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
+    });
+  }
+
+  // Aici request e stil Web (Request), nu (req,res) clasic de Node - extragem token-ul diferit.
+  // handleUploadUrl e doar un string, SDK-ul nu suporta header-e custom -> token-ul vine prin query.
+  const authHeader = request.headers.get('authorization') || '';
+  const sessionToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : new URL(request.url).searchParams.get('token');
+  if (!verifyToken(sessionToken)) {
+    return new Response(JSON.stringify({ error: 'Sesiune invalida sau expirata.' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });
   }
 
