@@ -2,11 +2,15 @@
 // Rulează pe server, deci nu are restricțiile CORS pe care le are browserul.
 // Aplicația va apela: https://<numele-proiectului-tau>.vercel.app/api/cui?cui=14399840
 
+import { authenticate } from './_auth.js';
+
 export default async function handler(req, res) {
   // Permite aplicației din browser să apeleze acest server
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!authenticate(req)) return res.status(401).json({ error: 'Sesiune invalida sau expirata.' });
 
   const cui = String(req.query.cui || '').replace(/\D/g, '');
   if (!cui) return res.status(400).json({ error: 'CUI lipsă sau invalid.' });
