@@ -3258,7 +3258,7 @@ function UsersTab({ currentUser }) {
   );
 }
 
-function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, setTab, setPendingSiteNav, currentUser }) {
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, setTab, setPendingSiteNav, currentUser }) {
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
   const goToSite = (santierId, siteView) => { setPendingSiteNav({ santierId, siteView: siteView || 'rapoarte' }); setTab('santiere'); };
 
@@ -3276,6 +3276,9 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
       return acc;
     }, {})
   );
+  const azi = new Date().toISOString().slice(0,10);
+  const concediiInAsteptare = concedii ? concedii.filter((c)=>c.status==='Cerut') : [];
+  const santiereActiveFaraRaportAzi = santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
 
   const isManager = currentUser?.rol === 'Manager';
   const [mementoOpen, setMementoOpen] = useState(false);
@@ -3304,7 +3307,6 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 
   // --- Date specifice Electricianului: șantierele lui, memento raport, materiale cerute acolo ---
   const santiereMele = santiere.filter((s)=>inEchipa(s.echipa, currentUser?.id));
-  const azi = new Date().toISOString().slice(0,10);
   const santiereFaraRaportAzi = santiereMele.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
   const idSantiereMele = new Set(santiereMele.map((s)=>s.id));
   const cereriLaSantiereleMele = cereriSantier.filter((c)=>idSantiereMele.has(c.santierId)).slice().reverse().slice(0,6);
@@ -3435,7 +3437,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 <button key={s.id} onClick={()=>goToSite(s.id, 'rapoarte')} className="w-full text-left rounded-xl px-4 py-3" style={{ background:'#1B2127', border: suntInPauza ? '1px solid #E9A23B66' : '1px solid #4CAF7D66' }}>
                   <div className="flex items-center justify-between">
                     <span className="text-sm" style={{ color:'#E9E7E2' }}>
-                      {suntInPauza ? `⏸ ${ziuaLabel} ${targetDateStr} nu lucrezi în „${s.nume}"` : `✅ ${ziuaLabel} ${targetDateStr} lucrezi la „${s.nume}"`}
+                      {suntInPauza ? `⏸ ${ziuaLabel} ${targetDateStr} nu lucrezi în șantierul ${s.nume}` : `✅ ${ziuaLabel} ${targetDateStr} lucrezi în șantierul ${s.nume}`}
                     </span>
                     <span style={{ color: suntInPauza ? '#E9A23B' : '#4CAF7D' }}>→</span>
                   </div>
@@ -3498,26 +3500,52 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         </div>
       )}
 
-      {(materialeSubStoc.length > 0 || cereriInAsteptare.length > 0) && (
+      {isManager && (materialeSubStoc.length > 0 || cereriInAsteptarePeSantier.length > 0 || santiereActiveFaraRaportAzi.length > 0 || concediiInAsteptare.length > 0) && (
         <div className="mb-6">
           <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>Atenționări</div>
-          <div className="space-y-2">
-            {isManager && materialeSubStoc.length > 0 && (
+
+          {materialeSubStoc.length > 0 && (
+            <div className="mb-3">
+              <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color:'#E05252' }}>🔧 Materiale</div>
               <button onClick={()=>setTab('gestiune')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
                 <span className="text-sm" style={{ color:'#E9E7E2' }}>{materialeSubStoc.length} materiale sub stocul minim</span>
                 <span style={{ color:'#E05252' }}>→</span>
               </button>
-            )}
-            {isManager && cereriInAsteptarePeSantier.map((g)=>{
-              const santierNume = santiere.find((s)=>s.id===g.santierId)?.nume || '—';
-              return (
-                <button key={g.santierId} onClick={()=>goToSite(g.santierId, 'materiale')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E9A23B66' }}>
-                  <span className="text-sm" style={{ color:'#E9E7E2' }}>{g.count} {g.count===1?'cerere':'cereri'} de materiale în așteptare — {santierNume}</span>
-                  <span style={{ color:'#E9A23B' }}>→</span>
-                </button>
-              );
-            })}
-          </div>
+            </div>
+          )}
+
+          {(cereriInAsteptarePeSantier.length > 0 || santiereActiveFaraRaportAzi.length > 0) && (
+            <div className="mb-3">
+              <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color:'#E05252' }}>🏗 Șantiere</div>
+              <div className="space-y-1.5">
+                {cereriInAsteptarePeSantier.map((g)=>{
+                  const santierNume = santiere.find((s)=>s.id===g.santierId)?.nume || '—';
+                  return (
+                    <button key={g.santierId} onClick={()=>goToSite(g.santierId, 'materiale')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
+                      <span className="text-sm" style={{ color:'#E9E7E2' }}>{g.count} {g.count===1?'cerere':'cereri'} de materiale în așteptare — {santierNume}</span>
+                      <span style={{ color:'#E05252' }}>→</span>
+                    </button>
+                  );
+                })}
+                {santiereActiveFaraRaportAzi.map((s)=>(
+                  <button key={s.id} onClick={()=>goToSite(s.id, 'rapoarte')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
+                    <span className="text-sm" style={{ color:'#E9E7E2' }}>Niciun raport trimis azi — {s.nume}</span>
+                    <span style={{ color:'#E05252' }}>→</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {concediiInAsteptare.length > 0 && (
+            <div className="mb-3">
+              <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color:'#E05252' }}>🏖 Concedii</div>
+              <button onClick={()=>setTab('concedii')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #E0525266' }}>
+                <span className="text-sm" style={{ color:'#E9E7E2' }}>{concediiInAsteptare.length} {concediiInAsteptare.length===1?'cerere':'cereri'} de concediu în așteptare de aprobare</span>
+                <span style={{ color:'#E05252' }}>→</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -4080,7 +4108,7 @@ function App() {
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
         ) : !tab ? (
-          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setTab={setTab} setPendingSiteNav={setPendingSiteNav} currentUser={effectiveUser} />
+          <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} setTab={setTab} setPendingSiteNav={setPendingSiteNav} currentUser={effectiveUser} />
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
