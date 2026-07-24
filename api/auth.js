@@ -1,142 +1,47 @@
-// Functie server (Vercel) pentru autentificare si gestiune utilizatori.
-// Foloseste Upstash Redis (deja conectat la acest proiect) pentru a stoca
-// lista de utilizatori. Parolele NU sunt stocate in clar, ci hash-uite
-// server-side (scrypt + salt unic per utilizator), folosind modulul
-// "crypto" nativ din Node - fara dependinte externe.
+// Fisier PARTAJAT (nu e o ruta) - functii pentru semnarea si verificarea
+// "biletelor de acces" (token-uri de sesiune), folosite de toate celelalte
+// functii server ca sa verifice cine face cererea, inainte sa dea vreun raspuns.
 //
-// Actiuni (trimise ca { action: '...' } in body-ul POST):
-//   register - creeaza un cont nou { nume, username, password, rol }
-//   login    - autentificare { username, password }
-//   list     - lista utilizatorilor (fara parole)
-//   delete   - sterge un utilizator { id }
+// Fisierele care incep cu "_" in /api NU devin rute publice pe Vercel -
+// pot fi doar importate de celelalte functii din acelasi folder.
 
 import crypto from 'crypto';
 
-function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
+const SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+const DURATA_SESIUNE_MS = 30 * 24 * 60 * 60 * 1000; // 30 zile
+
+export function signToken(payload) {
+  const data = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + DURATA_SESIUNE_MS })).toString('base64url');
+  const sig = crypto.createHmac('sha256', SECRET).update(data).digest('base64url');
+  return `${data}.${sig}`;
 }
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Metoda nepermisa.' });
-
-  const base = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!base || !token) {
-    return res.status(500).json({ error: 'Baza de date nu este configurata (KV_REST_API_URL/TOKEN).' });
-  }
-
-  const getUsers = async () => {
-    const r = await fetch(`${base}/get/firma:users`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await r.json();
-    return data.result ? JSON.parse(data.result) : [];
-  };
-  const saveUsers = async (users) => {
-    await fetch(`${base}/set/firma:users`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
-      body: JSON.stringify(users),
-    });
-  };
-
+export function verifyToken(token) {
+  if (!token) return null;
+  const parts = String(token).split('.');
+  if (parts.length !== 2) return null;
+  const [data, sig] = parts;
+  const expected = crypto.createHmac('sha256', SECRET).update(data).digest('base64url');
+  if (sig !== expected) return null; // semnatura nu se potriveste - token falsificat sau invalid
   try {
-    const body = req.body || {};
-    const action = body.action;
-
-    if (action === 'register') {
-      const nume = String(body.nume || '').trim();
-      const username = String(body.username || '').trim();
-      const password = String(body.password || '').trim();
-      const rol = body.rol;
-      if (!nume || !username || !password || !rol) {
-        return res.status(400).json({ error: 'Completeaza toate campurile.' });
-      }
-      const users = await getUsers();
-      if (users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
-        return res.status(400).json({ error: 'Acest utilizator exista deja.' });
-      }
-      const salt = crypto.randomBytes(16).toString('hex');
-      const passwordHash = hashPassword(password, salt);
-      const newUser = { id: crypto.randomUUID(), nume, username, rol, salt, passwordHash };
-      users.push(newUser);
-      await saveUsers(users);
-      return res.status(200).json({ ok: true, user: { id: newUser.id, nume, username, rol } });
-    }
-
-    if (action === 'login') {
-      const username = String(body.username || '').trim();
-      const password = String(body.password || '').trim();
-      const users = await getUsers();
-      const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-      if (!user) return res.status(401).json({ error: 'Username sau parola gresite.' });
-      const hash = hashPassword(password, user.salt);
-      if (hash !== user.passwordHash) return res.status(401).json({ error: 'Username sau parola gresite.' });
-      return res.status(200).json({ ok: true, user: { id: user.id, nume: user.nume, username: user.username, rol: user.rol } });
-    }
-
-    if (action === 'list') {
-      const users = await getUsers();
-      return res.status(200).json({ ok: true, users: users.map((u) => ({ id: u.id, nume: u.nume, username: u.username, rol: u.rol })) });
-    }
-
-    if (action === 'delete') {
-      const { id } = body;
-      const users = await getUsers();
-      const next = users.filter((u) => u.id !== id);
-      await saveUsers(next);
-      return res.status(200).json({ ok: true });
-    }
-
-    if (action === 'changePassword') {
-      const { id } = body;
-      const oldPassword = String(body.oldPassword || '').trim();
-      const newPassword = String(body.newPassword || '').trim();
-      if (!id || !oldPassword || !newPassword) {
-        return res.status(400).json({ error: 'Completeaza toate campurile.' });
-      }
-      const users = await getUsers();
-      const idx = users.findIndex((u) => u.id === id);
-      if (idx === -1) return res.status(404).json({ error: 'Utilizator negasit.' });
-      const user = users[idx];
-      const oldHash = hashPassword(oldPassword, user.salt);
-      if (oldHash !== user.passwordHash) return res.status(401).json({ error: 'Parola actuala este gresita.' });
-      const newSalt = crypto.randomBytes(16).toString('hex');
-      const newHash = hashPassword(newPassword, newSalt);
-      users[idx] = { ...user, salt: newSalt, passwordHash: newHash };
-      await saveUsers(users);
-      return res.status(200).json({ ok: true });
-    }
-
-    if (action === 'update') {
-      const { id, rol } = body;
-      const nume = String(body.nume || '').trim();
-      const username = String(body.username || '').trim();
-      const newPassword = String(body.newPassword || '').trim();
-      if (!id || !nume || !username || !rol) {
-        return res.status(400).json({ error: 'Completeaza toate campurile.' });
-      }
-      const users = await getUsers();
-      const idx = users.findIndex((u) => u.id === id);
-      if (idx === -1) return res.status(404).json({ error: 'Utilizator negasit.' });
-      const dupe = users.find((u) => u.id !== id && u.username.toLowerCase() === username.toLowerCase());
-      if (dupe) return res.status(400).json({ error: 'Acest username este deja folosit.' });
-      const user = users[idx];
-      let updated = { ...user, nume, username, rol };
-      if (newPassword) {
-        const newSalt = crypto.randomBytes(16).toString('hex');
-        updated.salt = newSalt;
-        updated.passwordHash = hashPassword(newPassword, newSalt);
-      }
-      users[idx] = updated;
-      await saveUsers(users);
-      return res.status(200).json({ ok: true, user: { id: updated.id, nume: updated.nume, username: updated.username, rol: updated.rol } });
-    }
-
-    return res.status(400).json({ error: 'Actiune necunoscuta.' });
-  } catch (e) {
-    return res.status(500).json({ error: e.message || 'Eroare necunoscuta.' });
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+    if (!payload.exp || Date.now() > payload.exp) return null; // expirat
+    return payload; // { userId, rol, exp }
+  } catch {
+    return null;
   }
+}
+
+// Extrage token-ul din header-ul "Authorization: Bearer <token>", sau (fallback)
+// din parametrul ?token=... din URL - necesar pentru <img>/<video src>, care nu
+// pot trimite header-e custom.
+export function getTokenFromReq(req) {
+  const h = req.headers.authorization || req.headers.Authorization || '';
+  if (h.startsWith('Bearer ')) return h.slice(7);
+  return req.query?.token || null;
+}
+
+// Verifica cererea si intoarce payload-ul daca e valid, altfel null.
+export function authenticate(req) {
+  return verifyToken(getTokenFromReq(req));
 }
