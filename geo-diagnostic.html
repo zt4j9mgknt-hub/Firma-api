@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Diagnostic Geolocalizare</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0b0f14;
+    color: #e6edf3;
+    padding: env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 24px);
+    line-height: 1.5;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; padding-top: 20px; }
+  h1 { font-size: 1.35rem; margin: 0 0 4px; }
+  .sub { color: #8b98a5; font-size: .9rem; margin: 0 0 20px; }
+  button {
+    width: 100%;
+    padding: 16px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 12px;
+    background: #2f81f7;
+    color: #fff;
+    cursor: pointer;
+    margin-bottom: 10px;
+    transition: transform .05s, background .2s;
+  }
+  button:active { transform: scale(.98); }
+  button.secondary { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
+  button:disabled { opacity: .5; }
+  .card {
+    background: #11161d;
+    border: 1px solid #21262d;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  .card h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: #8b98a5; margin: 0 0 10px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; font-size: .92rem; border-bottom: 1px solid #1a2028; }
+  .row:last-child { border-bottom: none; }
+  .row .k { color: #8b98a5; flex-shrink: 0; }
+  .row .v { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-word; }
+  .ok { color: #3fb950; } .bad { color: #f85149; } .warn { color: #d29922; }
+  #log { font-family: ui-monospace, Menlo, monospace; font-size: .8rem; white-space: pre-wrap; color: #8b98a5; max-height: 200px; overflow-y: auto; }
+  .big { font-size: 1.5rem; font-weight: 700; font-family: ui-monospace, Menlo, monospace; }
+  .coord { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+  .coord .box { background: #0b0f14; border: 1px solid #21262d; border-radius: 10px; padding: 10px 12px; }
+  .coord .box .lbl { font-size: .72rem; color: #8b98a5; }
+  a { color: #2f81f7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📍 Diagnostic Geolocalizare</h1>
+  <p class="sub">Apasă butonul, apoi acceptă cererea de locație. Merge pe orice browser, telefon sau aplicație de pe ecran.</p>
+
+  <button id="btn">Obține locația mea</button>
+  <button id="btnWatch" class="secondary">Urmărește continuu (watch)</button>
+
+  <div class="card" id="resultCard" style="display:none">
+    <h2>Rezultat</h2>
+    <div class="coord">
+      <div class="box"><div class="lbl">Latitudine</div><div class="big" id="lat">—</div></div>
+      <div class="box"><div class="lbl">Longitudine</div><div class="big" id="lon">—</div></div>
+    </div>
+    <div class="row"><span class="k">Precizie</span><span class="v" id="acc">—</span></div>
+    <div class="row"><span class="k">Metodă</span><span class="v" id="method">—</span></div>
+    <div class="row"><span class="k">Pe hartă</span><span class="v"><a id="maps" href="#" target="_blank">Deschide în Maps</a></span></div>
+  </div>
+
+  <div class="card">
+    <h2>Mediu detectat</h2>
+    <div class="row"><span class="k">API geolocalizare</span><span class="v" id="hasGeo">—</span></div>
+    <div class="row"><span class="k">Context securizat (HTTPS)</span><span class="v" id="secure">—</span></div>
+    <div class="row"><span class="k">Mod aplicație (standalone)</span><span class="v" id="standalone">—</span></div>
+    <div class="row"><span class="k">Stare permisiune</span><span class="v" id="perm">—</span></div>
+    <div class="row"><span class="k">Platformă</span><span class="v" id="platform">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Jurnal</h2>
+    <div id="log">Aștept acțiune...</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var logEl = document.getElementById('log');
+  var lines = [];
+  function log(msg, cls) {
+    var t = new Date().toLocaleTimeString('ro-RO');
+    lines.push('[' + t + '] ' + msg);
+    logEl.innerHTML = lines.map(function (l) { return l; }).join('\n');
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function set(id, text, cls) {
+    var el = document.getElementById(id);
+    el.textContent = text;
+    el.className = 'v' + (cls ? ' ' + cls : '');
+  }
+
+  // ---- Detectare mediu ----
+  var hasGeo = 'geolocation' in navigator;
+  set('hasGeo', hasGeo ? 'Disponibil' : 'LIPSEȘTE', hasGeo ? 'ok' : 'bad');
+
+  var secure = window.isSecureContext;
+  set('secure', secure ? 'Da' : 'NU (obligatoriu!)', secure ? 'ok' : 'bad');
+
+  var standalone = (window.navigator.standalone === true) ||
+                   (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  set('standalone', standalone ? 'DA (ecran principal)' : 'Nu (browser)', standalone ? 'warn' : 'ok');
+
+  set('platform', (navigator.platform || '') + ' · ' + (navigator.userAgent.match(/(iPhone|iPad|Android|Mac|Windows)[^;)]*/) || ['?'])[0], '');
+
+  // Stare permisiune (nu e suportat pe toate versiunile de Safari)
+  if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: 'geolocation' }).then(function (r) {
+      var map = { granted: ['Acordată', 'ok'], denied: ['REFUZATĂ', 'bad'], prompt: ['Va întreba', 'warn'] };
+      var m = map[r.state] || [r.state, ''];
+      set('perm', m[0], m[1]);
+      r.onchange = function () { var m2 = map[r.state] || [r.state, '']; set('perm', m2[0], m2[1]); };
+    }).catch(function () { set('perm', 'Necunoscută', 'warn'); });
+  } else {
+    set('perm', 'Nedisponibil (Safari)', 'warn');
+  }
+
+  // ---- Funcția robustă: high accuracy, apoi fallback la low accuracy ----
+  function getLocation(onOk, onErr) {
+    if (!hasGeo) { onErr({ code: 0, message: 'Geolocalizarea nu e suportată de acest dispozitiv.' }); return; }
+
+    log('Cerere locație (precizie mare, timeout 15s)...');
+    navigator.geolocation.getCurrentPosition(
+      function (pos) { onOk(pos, 'GPS / precizie mare'); },
+      function (err) {
+        log('Precizie mare eșuată: ' + describe(err));
+        if (err.code === 3 /* TIMEOUT */ || err.code === 2 /* POSITION_UNAVAILABLE */) {
+          log('Reîncerc cu precizie mică (rețea/WiFi)...');
+          navigator.geolocation.getCurrentPosition(
+            function (pos) { onOk(pos, 'Rețea / precizie mică'); },
+            function (err2) { onErr(err2); },
+            { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 }
+          );
+        } else {
+          onErr(err);
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  function describe(err) {
+    switch (err.code) {
+      case 1: return 'PERMISIUNE REFUZATĂ — trebuie activată din Setări.';
+      case 2: return 'Poziție indisponibilă (fără semnal GPS/rețea).';
+      case 3: return 'Timeout — nu a răspuns la timp.';
+      default: return err.message || 'Eroare necunoscută.';
+    }
+  }
+
+  function showPosition(pos, method) {
+    var c = pos.coords;
+    document.getElementById('resultCard').style.display = 'block';
+    document.getElementById('lat').textContent = c.latitude.toFixed(6);
+    document.getElementById('lon').textContent = c.longitude.toFixed(6);
+    document.getElementById('acc').textContent = '± ' + Math.round(c.accuracy) + ' m';
+    document.getElementById('method').textContent = method;
+    document.getElementById('maps').href = 'https://www.google.com/maps?q=' + c.latitude + ',' + c.longitude;
+    log('✓ Succes (' + method + '): ' + c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5) + ' (±' + Math.round(c.accuracy) + 'm)');
+  }
+
+  // ---- Butoane (declanșate de utilizator — esențial pe iOS) ----
+  var btn = document.getElementById('btn');
+  btn.addEventListener('click', function () {
+    btn.disabled = true; btn.textContent = 'Se caută locația...';
+    getLocation(
+      function (pos, method) { showPosition(pos, method); btn.disabled = false; btn.textContent = 'Obține locația mea'; },
+      function (err) {
+        log('✗ EȘUAT: ' + describe(err));
+        alert('Nu am putut obține locația.\n\n' + describe(err) +
+              (err.code === 1 ? '\n\niPhone: Setări → Confidențialitate → Servicii de localizare → activează, apoi caută Safari și pune „Cât timp folosesc aplicația”.' : ''));
+        btn.disabled = false; btn.textContent = 'Încearcă din nou';
+      }
+    );
+  });
+
+  var watchId = null;
+  var btnW = document.getElementById('btnWatch');
+  btnW.addEventListener('click', function () {
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId); watchId = null;
+      btnW.textContent = 'Urmărește continuu (watch)'; log('Urmărire oprită.');
+      return;
+    }
+    log('Pornesc urmărirea continuă...');
+    watchId = navigator.geolocation.watchPosition(
+      function (pos) { showPosition(pos, 'watch (live)'); },
+      function (err) { log('watch eroare: ' + describe(err)); },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
+    );
+    btnW.textContent = 'Oprește urmărirea';
+  });
+
+  log('Gata. Apasă „Obține locația mea”.');
+})();
+</script>
+</body>
+</html>
