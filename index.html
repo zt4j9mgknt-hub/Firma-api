@@ -2568,7 +2568,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   const isManager = currentUser?.rol === 'Manager';
   const [editState, setEditState] = useState(null);
   const [editValue, setEditValue] = useState('');
-  const [santierExport, setSantierExport] = useState('');
+  const [santiereExport, setSantiereExport] = useState([]);
   const [allUsersPontaj, setAllUsersPontaj] = useState([]);
   useEffect(() => {
     if (!isManager) return;
@@ -2614,6 +2614,15 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     const next = [...(pontajCorectii || []), c];
     setPontajCorectii(next); persist('pontajCorectii', next);
   };
+  const [expandedPerson, setExpandedPerson] = useState(null);
+  const zileDetaliu = (nume) => rapoarteLuna
+    .filter((r)=>(r.persoane||[]).some((p)=>p.nume===nume))
+    .map((r)=>{
+      const p = r.persoane.find((pp)=>pp.nume===nume);
+      const santierNume = santiere.find((s)=>s.id===r.santierId)?.nume || '—';
+      return { data: r.data, santierNume, min: personMinutes(p) };
+    })
+    .sort((a,b)=> a.data<b.data?-1:1);
 
   const [lunaNume, anNume] = (() => {
     const LUNI = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
@@ -2721,68 +2730,62 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   };
 
   const exportFoaiePrezentaExcel = () => {
-    const { santier, zile, angajati } = construiesteGrila(santierExport, luna);
-    if (!santier) return;
-    const headerRows = [
-      [`SC ${company?.nume || 'Firma mea'}`],
-      [company?.cui ? `CUI:${company.cui}` : ''],
-      [company?.regCom ? `Numar registrul comertului:${company.regCom}` : ''],
-      [`SANTIER: ${santier.nume}${santier.adresa ? ' , ' + santier.adresa : ''}`],
-      [],
-      ['FOAIE COLECTIVA DE PREZENTA - EVIDENTA NUMARULUI DE ORE LUCRATE'],
-      [`LUNA ${lunaNume.toUpperCase()} ${anNume}`],
-      [],
-    ];
-    const headRow1 = ['Nr. crt', 'Nume și prenume', 'Program de lucru', ...zile.map((z)=>z.litera)];
-    const headRow2 = ['', '', '', ...zile.map((z)=>z.zi)];
-    const body = [];
-    angajati.forEach((a, i)=>{
-      body.push([i+1, a.nume, 'Inceput', ...a.celule.map((c)=>c.start)]);
-      body.push(['', '', 'Sfarsit', ...a.celule.map((c)=>c.sfarsit)]);
-      body.push(['', '', 'Pauza de masa (ore)', ...a.celule.map((c)=>c.pauza)]);
-      body.push(['', '', 'Nr ore lucrate', ...a.celule.map((c)=>c.ore)]);
-    });
-    const legenda = [
-      [],
-      ['Intocmit,', '', 'SL- Sarbatori legale / liber de la stat', '', 'CO- concediu de odihna', '', 'I - invoiri si concediu fara retrib'],
-      [company?.administrator ? `ADM. ${company.administrator}` : '', '', 'Bo - boala obisnuita', '', 'O - obligatii cetatenesti'],
-      ['', '', 'N - Absente nemotivate'],
-    ];
-    const aoa = [...headerRows, headRow1, headRow2, ...body, ...legenda];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{wch:6},{wch:22},{wch:18}, ...zile.map(()=>({wch:6}))];
+    if (santiereExport.length === 0) return;
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Foaie prezenta');
-    XLSX.writeFile(wb, `foaie_pontaj_${santier.nume.replace(/\s+/g,'_')}_${luna}.xlsx`);
+    santiereExport.forEach((santierId)=>{
+      const { santier, zile, angajati } = construiesteGrila(santierId, luna);
+      if (!santier) return;
+      const headerRows = [
+        [`SC ${company?.nume || 'Firma mea'}`],
+        [company?.cui ? `CUI:${company.cui}` : ''],
+        [company?.regCom ? `Numar registrul comertului:${company.regCom}` : ''],
+        [`SANTIER: ${santier.nume}${santier.adresa ? ' , ' + santier.adresa : ''}`],
+        [],
+        ['FOAIE COLECTIVA DE PREZENTA - EVIDENTA NUMARULUI DE ORE LUCRATE'],
+        [`LUNA ${lunaNume.toUpperCase()} ${anNume}`],
+        [],
+      ];
+      const headRow1 = ['Nr. crt', 'Nume și prenume', 'Program de lucru', ...zile.map((z)=>z.litera)];
+      const headRow2 = ['', '', '', ...zile.map((z)=>z.zi)];
+      const body = [];
+      angajati.forEach((a, i)=>{
+        body.push([i+1, a.nume, 'Inceput', ...a.celule.map((c)=>c.start)]);
+        body.push(['', '', 'Sfarsit', ...a.celule.map((c)=>c.sfarsit)]);
+        body.push(['', '', 'Pauza de masa (ore)', ...a.celule.map((c)=>c.pauza)]);
+        body.push(['', '', 'Nr ore lucrate', ...a.celule.map((c)=>c.ore)]);
+      });
+      const legenda = [
+        [],
+        ['Intocmit,', '', 'SL- Sarbatori legale / liber de la stat', '', 'CO- concediu de odihna', '', 'I - invoiri si concediu fara retrib'],
+        [company?.administrator ? `ADM. ${company.administrator}` : '', '', 'Bo - boala obisnuita', '', 'O - obligatii cetatenesti'],
+        ['', '', 'N - Absente nemotivate'],
+      ];
+      const aoa = [...headerRows, headRow1, headRow2, ...body, ...legenda];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{wch:6},{wch:22},{wch:18}, ...zile.map(()=>({wch:6}))];
+      // Numele foii nu poate depasi 31 caractere si nu poate avea anumite caractere.
+      const numeFoaie = santier.nume.replace(/[\\/*?:\[\]]/g,'').slice(0,31) || 'Santier';
+      XLSX.utils.book_append_sheet(wb, ws, numeFoaie);
+    });
+    const label = santiereExport.length === 1 ? santiere.find((s)=>s.id===santiereExport[0])?.nume.replace(/\s+/g,'_') : `${santiereExport.length}_santiere`;
+    XLSX.writeFile(wb, `foaie_pontaj_${label}_${luna}.xlsx`);
   };
 
   const exportFoaiePrezentaPDF = () => {
-    const { santier, zile, angajati } = construiesteGrila(santierExport, luna);
-    if (!santier) return;
+    if (santiereExport.length === 0) return;
     const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const randCap1 = zile.map((z)=>`<th>${z.litera}</th>`).join('');
-    const randCap2 = zile.map((z)=>`<th>${z.zi}</th>`).join('');
-    const randuri = angajati.map((a,i)=>`
-      <tr><td rowspan="4">${i+1}</td><td rowspan="4" style="text-align:left">${esc(a.nume)}</td><td style="text-align:left">Inceput</td>${a.celule.map((c)=>`<td>${esc(c.start)}</td>`).join('')}</tr>
-      <tr><td style="text-align:left">Sfarsit</td>${a.celule.map((c)=>`<td>${esc(c.sfarsit)}</td>`).join('')}</tr>
-      <tr><td style="text-align:left">Pauza de masa (ore)</td>${a.celule.map((c)=>`<td>${esc(c.pauza)}</td>`).join('')}</tr>
-      <tr><td style="text-align:left">Nr ore lucrate</td>${a.celule.map((c)=>`<td>${esc(c.ore)}</td>`).join('')}</tr>
-    `).join('');
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Foaie pontaj</title><style>
-      * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; font-size:9px; }
-      @page { size: A4 landscape; margin: 10mm; }
-      .page { width:100%; }
-      .header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4mm; }
-      .meta { font-size:10px; line-height:1.6; }
-      .logo { height:34px; }
-      .title { font-size:13px; font-weight:700; text-align:center; margin:3mm 0 1mm; }
-      .subtitle { font-size:11px; text-align:center; margin-bottom:3mm; }
-      table { width:100%; border-collapse:collapse; font-size:8px; }
-      th, td { border:1px solid #999; padding:1mm; text-align:center; }
-      th { background:#f2f2f2; }
-      .legend { display:flex; justify-content:space-between; margin-top:5mm; font-size:9px; }
-      .legend-col { flex:1; line-height:1.7; }
-    </style></head><body>
+    const pagini = santiereExport.map((santierId)=>{
+      const { santier, zile, angajati } = construiesteGrila(santierId, luna);
+      if (!santier) return '';
+      const randCap1 = zile.map((z)=>`<th>${z.litera}</th>`).join('');
+      const randCap2 = zile.map((z)=>`<th>${z.zi}</th>`).join('');
+      const randuri = angajati.map((a,i)=>`
+        <tr><td rowspan="4">${i+1}</td><td rowspan="4" style="text-align:left">${esc(a.nume)}</td><td style="text-align:left">Inceput</td>${a.celule.map((c)=>`<td>${esc(c.start)}</td>`).join('')}</tr>
+        <tr><td style="text-align:left">Sfarsit</td>${a.celule.map((c)=>`<td>${esc(c.sfarsit)}</td>`).join('')}</tr>
+        <tr><td style="text-align:left">Pauza de masa (ore)</td>${a.celule.map((c)=>`<td>${esc(c.pauza)}</td>`).join('')}</tr>
+        <tr><td style="text-align:left">Nr ore lucrate</td>${a.celule.map((c)=>`<td>${esc(c.ore)}</td>`).join('')}</tr>
+      `).join('');
+      return `
       <div class="page">
         <div class="header-row">
           <div class="meta">
@@ -2808,8 +2811,24 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
           <div class="legend-col">CO- concediu de odihna<br/>O - obligatii cetatenesti<br/>N - Absente nemotivate<br/>Prm - program redus maternitate<br/>Prb - program redus boala</div>
           <div class="legend-col">I - invoiri si concediu fara retrib</div>
         </div>
-      </div>
-    </body></html>`;
+      </div>`;
+    }).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Foaie pontaj</title><style>
+      * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; font-size:9px; }
+      @page { size: A4 landscape; margin: 10mm; }
+      .page { width:100%; page-break-after:always; }
+      .page:last-child { page-break-after:auto; }
+      .header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4mm; }
+      .meta { font-size:10px; line-height:1.6; }
+      .logo { height:34px; }
+      .title { font-size:13px; font-weight:700; text-align:center; margin:3mm 0 1mm; }
+      .subtitle { font-size:11px; text-align:center; margin-bottom:3mm; }
+      table { width:100%; border-collapse:collapse; font-size:8px; }
+      th, td { border:1px solid #999; padding:1mm; text-align:center; }
+      th { background:#f2f2f2; }
+      .legend { display:flex; justify-content:space-between; margin-top:5mm; font-size:9px; }
+      .legend-col { flex:1; line-height:1.7; }
+    </style></head><body>${pagini}</body></html>`;
     const w = window.open('', '_blank');
     if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
     w.document.open(); w.document.write(html); w.document.close();
@@ -2830,14 +2849,23 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         )}
       </div>
       {isManager && (
-        <div className="flex items-center gap-2 mb-4 flex-wrap rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-          <span className="text-xs" style={{ color:'#8B93A0' }}>Foaie colectivă de prezență (pe șantier):</span>
-          <select value={santierExport} onChange={(e)=>setSantierExport(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle}>
-            <option value="">Alege șantierul...</option>
-            {santiere.map((s)=><option key={s.id} value={s.id} style={{ background:'#1B2127' }}>{s.nume}</option>)}
-          </select>
-          <button onClick={exportFoaiePrezentaExcel} disabled={!santierExport} className="text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>📊 Excel</button>
-          <button onClick={exportFoaiePrezentaPDF} disabled={!santierExport} className="text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>🖨 PDF</button>
+        <div className="mb-4 rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="text-xs mb-2" style={{ color:'#8B93A0' }}>Foaie colectivă de prezență (zi cu zi) — alege unul, mai multe, sau toate șantierele:</div>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            <button onClick={()=>setSantiereExport(santiere.map((s)=>s.id))} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>Selectează toate</button>
+            {santiereExport.length > 0 && <button onClick={()=>setSantiereExport([])} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Deselectează</button>}
+            {santiere.map((s)=>{
+              const activ = santiereExport.includes(s.id);
+              return (
+                <button key={s.id} onClick={()=>setSantiereExport(activ ? santiereExport.filter((id)=>id!==s.id) : [...santiereExport, s.id])} className="text-xs px-2.5 py-1 rounded-lg"
+                  style={{ color: activ?'#14181C':'#8B93A0', background: activ?'#4CAF7D':'#171C21' }}>{s.nume}</button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={exportFoaiePrezentaExcel} disabled={santiereExport.length===0} className="text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>📊 Excel {santiereExport.length>1 && `(${santiereExport.length} foi)`}</button>
+            <button onClick={exportFoaiePrezentaPDF} disabled={santiereExport.length===0} className="text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>🖨 PDF {santiereExport.length>1 && `(${santiereExport.length} pagini)`}</button>
+          </div>
         </div>
       )}
       {lista.length === 0 ? (
@@ -2863,10 +2891,23 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
                   ) : (
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(p.totalFinal)}</span>
+                      <button onClick={()=>setExpandedPerson(expandedPerson===p.nume ? null : p.nume)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>{expandedPerson===p.nume ? 'Ascunde' : '👁 Zi cu zi'}</button>
                       {isManager && <button onClick={()=>startEdit(p)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>✎ Edit</button>}
                     </div>
                   )}
                 </div>
+                {expandedPerson===p.nume && (
+                  <div className="mt-2 pt-2 space-y-1" style={{ borderTop:'1px solid #2A323B' }}>
+                    {zileDetaliu(p.nume).length === 0 ? (
+                      <div className="text-xs" style={{ color:'#5C6570' }}>Nicio zi lucrată luna asta.</div>
+                    ) : zileDetaliu(p.nume).map((z)=>(
+                      <div key={z.data} className="flex items-center justify-between text-xs" style={{ color:'#8B93A0' }}>
+                        <span>{z.data} — {z.santierNume}</span>
+                        <span style={{ fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(z.min)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-1.5 space-y-0.5">
                   {Object.entries(p.peSantier).map(([s,m])=>(
                     <div key={s} className="flex items-center justify-between text-xs" style={{ color:'#8B93A0' }}>
