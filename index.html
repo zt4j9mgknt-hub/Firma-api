@@ -2438,6 +2438,209 @@ function ProfileTab({ currentUser, onLogout }) {
   );
 }
 
+const CONCEDIU_TIPURI = ['Concediu de odihnă', 'Concediu medical', 'Fără plată', 'Altele'];
+const ACHIZITIE_STATUSES = ['De comandat', 'Comandat', 'Primit'];
+
+function PontajTab({ rapoarte, santiere, currentUser }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [luna, setLuna] = useState(new Date().toISOString().slice(0,7));
+  const isManager = currentUser?.rol === 'Manager';
+
+  const rapoarteLuna = rapoarte.filter((r)=>r.data?.startsWith(luna));
+  const perPersoana = {};
+  rapoarteLuna.forEach((r)=>{
+    const santierNume = santiere.find((s)=>s.id===r.santierId)?.nume || '—';
+    (r.persoane || []).forEach((p)=>{
+      if (!p.nume?.trim()) return;
+      if (!isManager && p.nume !== currentUser?.nume) return;
+      if (!perPersoana[p.nume]) perPersoana[p.nume] = { nume: p.nume, totalMin: 0, peSantier: {} };
+      const min = personMinutes(p);
+      perPersoana[p.nume].totalMin += min;
+      perPersoana[p.nume].peSantier[santierNume] = (perPersoana[p.nume].peSantier[santierNume] || 0) + min;
+    });
+  });
+  const lista = Object.values(perPersoana).sort((a,b)=>b.totalMin - a.totalMin);
+  const totalGeneral = lista.reduce((s,p)=>s+p.totalMin,0);
+
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>🕐 Pontaj</h2>
+      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Ore calculate automat din rapoartele zilnice de la toate șantierele.</p>
+      <input type="month" value={luna} onChange={(e)=>setLuna(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none mb-4" style={inputStyle} />
+      {lista.length === 0 ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio oră înregistrată în luna selectată.</div>
+      ) : (
+        <>
+          {isManager && (
+            <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
+              Total general: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalGeneral)}</span>
+            </div>
+          )}
+          <div className="space-y-2">
+            {lista.map((p)=>(
+              <div key={p.nume} className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm" style={{ color:'#E9E7E2' }}>{p.nume}</span>
+                  <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(p.totalMin)}</span>
+                </div>
+                <div className="text-xs mt-1" style={{ color:'#8B93A0' }}>
+                  {Object.entries(p.peSantier).map(([s,m])=>`${s}: ${minutesToHM(m)}`).join(' · ')}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ConcediiTab({ concedii, setConcedii, persist, currentUser }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [form, setForm] = useState(null);
+  const isManager = currentUser?.rol === 'Manager';
+  const listaVizibila = isManager ? concedii : concedii.filter((c)=>c.userId===currentUser?.id);
+
+  const addCerere = () => {
+    if (!form.dataInceput || !form.dataSfarsit) return;
+    const c = { id: uid(), userId: currentUser.id, nume: currentUser.nume, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', status:'Cerut' };
+    const next = [c, ...concedii];
+    setConcedii(next); persist('concedii', next);
+    setForm(null);
+  };
+  const setStatus = (id, status) => {
+    const next = concedii.map((c)=> c.id===id ? {...c, status} : c);
+    setConcedii(next); persist('concedii', next);
+  };
+  const delCerere = (id) => {
+    const next = concedii.filter((c)=>c.id!==id);
+    setConcedii(next); persist('concedii', next);
+  };
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>🏖 Concedii</h2>
+        {!form && <button onClick={()=>setForm({ dataInceput:'', dataSfarsit:'', tip: CONCEDIU_TIPURI[0], motiv:'' })} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Cerere nouă</button>}
+      </div>
+      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>{isManager ? 'Toate cererile de concediu.' : 'Cererile tale de concediu.'}</p>
+
+      {form && (
+        <div className="rounded-xl p-4 mb-4 space-y-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="flex items-center gap-2">
+            <RoCalendarPicker value={form.dataInceput} onChange={(v)=>setForm({...form, dataInceput:v})} />
+            <span className="text-xs" style={{ color:'#5C6570' }}>—</span>
+            <RoCalendarPicker value={form.dataSfarsit} onChange={(v)=>setForm({...form, dataSfarsit:v})} />
+          </div>
+          <select value={form.tip} onChange={(e)=>setForm({...form, tip:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+            {CONCEDIU_TIPURI.map((t)=><option key={t} value={t} style={{ background:'#1B2127' }}>{t}</option>)}
+          </select>
+          <textarea placeholder="Motiv (opțional)" value={form.motiv} onChange={(e)=>setForm({...form, motiv:e.target.value})} rows={2} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button onClick={addCerere} disabled={!form.dataInceput || !form.dataSfarsit} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Trimite cererea</button>
+          </div>
+        </div>
+      )}
+
+      {listaVizibila.length === 0 ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio cerere de concediu.</div>
+      ) : (
+        <div className="space-y-2">
+          {listaVizibila.map((c)=>(
+            <div key={c.id} className="rounded-xl p-3 flex items-center justify-between gap-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div className="min-w-0">
+                {isManager && <div className="text-sm" style={{ color:'#E9E7E2' }}>{c.nume}</div>}
+                <div className="text-sm" style={{ color: isManager?'#8B93A0':'#E9E7E2' }}>{c.dataInceput} → {c.dataSfarsit} · {c.tip}</div>
+                {c.motiv && <div className="text-xs mt-0.5" style={{ color:'#5C6570' }}>{c.motiv}</div>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs" style={{ color: c.status==='Aprobat'?'#4CAF7D':c.status==='Respins'?'#E05252':'#E9A23B' }}>{c.status}</span>
+                {isManager && c.status==='Cerut' && (
+                  <>
+                    <button onClick={()=>setStatus(c.id,'Aprobat')} className="px-2 py-1 rounded-lg text-xs" style={{ color:'#14181C', background:'#4CAF7D' }}>✓</button>
+                    <button onClick={()=>setStatus(c.id,'Respins')} className="px-2 py-1 rounded-lg text-xs" style={{ color:'#E9E7E2', background:'#171C21', border:'1px solid #E0525266' }}>✕</button>
+                  </>
+                )}
+                <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AchizitiiTab({ achizitii, setAchizitii, persist }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [form, setForm] = useState(null);
+
+  const save = () => {
+    if (!form.furnizor.trim() && !form.descriere.trim()) return;
+    const next = achizitii.some((x)=>x.id===form.id) ? achizitii.map((x)=>x.id===form.id?form:x) : [form, ...achizitii];
+    setAchizitii(next); persist('achizitii', next);
+    setForm(null);
+  };
+  const del = (id) => {
+    const next = achizitii.filter((x)=>x.id!==id);
+    setAchizitii(next); persist('achizitii', next);
+  };
+  const setStatus = (id, status) => {
+    const next = achizitii.map((x)=> x.id===id ? {...x, status} : x);
+    setAchizitii(next); persist('achizitii', next);
+  };
+  const total = achizitii.reduce((s,a)=>s+(Number(a.suma)||0),0);
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>🛒 Achiziții</h2>
+        {!form && <button onClick={()=>setForm({ id: uid(), data: new Date().toISOString().slice(0,10), furnizor:'', descriere:'', suma:0, status: ACHIZITIE_STATUSES[0] })} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Achiziție nouă</button>}
+      </div>
+      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Achiziții și comenzi ale firmei (unelte, echipamente, servicii etc.).</p>
+
+      {form && (
+        <div className="rounded-xl p-4 mb-4 space-y-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <RoCalendarPicker value={form.data} onChange={(v)=>setForm({...form, data:v})} />
+          <input placeholder="Furnizor" value={form.furnizor} onChange={(e)=>setForm({...form, furnizor:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input placeholder="Descriere" value={form.descriere} onChange={(e)=>setForm({...form, descriere:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input type="number" placeholder="Sumă (lei)" value={form.suma} onChange={(e)=>setForm({...form, suma:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
+            <button onClick={save} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          </div>
+        </div>
+      )}
+
+      {achizitii.length > 0 && (
+        <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>Total: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span></div>
+      )}
+      {achizitii.length === 0 ? (
+        <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio achiziție înregistrată.</div>
+      ) : (
+        <div className="space-y-2">
+          {achizitii.map((a)=>(
+            <div key={a.id} className="rounded-xl p-3 flex items-center justify-between gap-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <div className="min-w-0">
+                <div className="text-sm" style={{ color:'#E9E7E2' }}>{a.furnizor}{a.furnizor && a.descriere ? ' — ' : ''}{a.descriere}</div>
+                <div className="text-xs mt-0.5" style={{ color:'#8B93A0' }}>{a.data} · {money(a.suma)}</div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <select value={a.status} onChange={(e)=>setStatus(a.id, e.target.value)} className="text-xs rounded-lg px-2 py-1 outline-none" style={inputStyle}>
+                  {ACHIZITIE_STATUSES.map((s)=><option key={s} value={s} style={{ background:'#1B2127' }}>{s}</option>)}
+                </select>
+                <button onClick={()=>setForm(a)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                <button onClick={()=>del(a.id)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UsersTab({ currentUser }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2991,6 +3194,8 @@ function App() {
   const [miscariSantier, setMiscariSantier] = useState([]);
   const [planseSantier, setPlanseSantier] = useState([]);
   const [pendingSiteNav, setPendingSiteNav] = useState(null);
+  const [concedii, setConcedii] = useState([]);
+  const [achizitii, setAchizitii] = useState([]);
   const [mediaSantier, setMediaSantier] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
@@ -3014,6 +3219,8 @@ function App() {
       setMiscariSantier(await loadKey('miscariSantier', []));
       setPlanseSantier(await loadKey('planseSantier', []));
       setMediaSantier(await loadKey('mediaSantier', []));
+      setConcedii(await loadKey('concedii', []));
+      setAchizitii(await loadKey('achizitii', []));
       setError(null);
     } catch (e) {
       if (showSpinner) setError('Nu am putut încărca datele.');
@@ -3048,6 +3255,8 @@ function App() {
       miscariSantier: (v)=>setMiscariSantier(v ?? []),
       planseSantier: (v)=>setPlanseSantier(v ?? []),
       mediaSantier: (v)=>setMediaSantier(v ?? []),
+      concedii: (v)=>setConcedii(v ?? []),
+      achizitii: (v)=>setAchizitii(v ?? []),
     };
     channel.bind('data-changed', async (payload) => {
       const setter = setters[payload?.key];
@@ -3277,6 +3486,9 @@ function App() {
           </div>
         )}
         <NavItem id="santiere" label="🏗 Șantiere" />
+        <NavItem id="pontaj" label="🕐 Pontaj" />
+        <NavItem id="concedii" label="🏖 Concedii" />
+        {effectiveUser.rol === 'Manager' && <NavItem id="achizitii" label="🛒 Achiziții" />}
         <div style={{ height:1, background:'#2A323B', margin:'8px 4px' }} />
         {effectiveUser.rol === 'Manager' && <NavItem id="firma" label="⚙ Firma mea" />}
         <NavItem id="profil" label="👤 Profilul meu" />
@@ -3350,6 +3562,12 @@ function App() {
 
             {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
+
+            {tab === 'pontaj' && <PontajTab rapoarte={rapoarte} santiere={santiere} currentUser={effectiveUser} />}
+
+            {tab === 'concedii' && <ConcediiTab concedii={concedii} setConcedii={setConcedii} persist={persist} currentUser={effectiveUser} />}
+
+            {tab === 'achizitii' && effectiveUser.rol === 'Manager' && <AchizitiiTab achizitii={achizitii} setAchizitii={setAchizitii} persist={persist} />}
 
             {tab === 'profil' && <ProfileTab currentUser={effectiveUser} onLogout={logout} />}
 
