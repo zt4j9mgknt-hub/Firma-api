@@ -48,6 +48,12 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
 // Transformă o dată ISO ("2026-07-24") în format zi/lună/an ("24/07/2026").
 const fmtData = (iso) => { if (!iso) return ''; const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
+// Link către hartă — preferă coordonate GPS exacte (pin precis), altfel caută adresa text.
+const mapsUrl = (santier) => {
+  if (santier?.lat && santier?.lng) return `https://www.google.com/maps?q=${santier.lat},${santier.lng}`;
+  if (santier?.adresa) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(santier.adresa)}`;
+  return null;
+};
 const pretFinal = (it) => (Number(it.pretUnitar) || 0) * (1 + (Number(it.adaos) || 0) / 100);
 
 // Calculează orele lucrate dintr-un interval oră-început/oră-sfârșit, scăzând 1 oră de pauză (program normal).
@@ -2030,6 +2036,9 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [allUsers, setAllUsers] = useState([]);
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
   const [echipaVizibila, setEchipaVizibila] = useState(false);
+  const [pinPanelOpen, setPinPanelOpen] = useState(false);
+  const [pinManual, setPinManual] = useState('');
+  const [pinStatus, setPinStatus] = useState('');
   const [raporteShowAll, setRaporteShowAll] = useState(false);
 
   // Cand un Manager/Electrician apasă pe o alertă din Dashboard, sare direct
@@ -2067,6 +2076,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const saveSantier = (s) => {
     const next = santiere.some((x)=>x.id===s.id) ? santiere.map((x)=>x.id===s.id?s:x) : [...santiere, s];
     setSantiere(next); persist('santiere', next); setForm(null);
+  };
+  const setSantierLocatie = (id, lat, lng) => {
+    const next = santiere.map((s)=>s.id===id ? {...s, lat, lng} : s);
+    setSantiere(next); persist('santiere', next);
   };
   const delSantier = (id) => {
     if (!window.confirm('Ștergi definitiv acest șantier? (Rapoartele și orele rămân în Pontaj, dar șantierul dispare din listă.)')) return;
@@ -2153,11 +2166,43 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
           {!reportForm && <button onClick={()=>setReportForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
         </div>
-        <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>
+        <p className="text-xs mb-1" style={{ color:'#8B93A0' }}>
           {santier?.adresa && (
-            <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(santier.adresa)}`} target="_blank" rel="noopener noreferrer" style={{ color:'#2E8BD1' }}>📍 {santier.adresa}</a>
+            <a href={mapsUrl(santier)} target="_blank" rel="noopener noreferrer" style={{ color:'#2E8BD1' }}>📍 {santier.adresa}</a>
           )} · Total ore înregistrate: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreSantierMin)}</span>
         </p>
+        <div className="mb-3">
+          <button onClick={()=>{ setPinPanelOpen(!pinPanelOpen); setPinStatus(''); }} className="text-xs" style={{ color: santier?.lat ? '#4CAF7D' : '#5C6570' }}>
+            {santier?.lat ? '📌 Pin exact setat — schimbă' : '📌 Fără pin exact — adaugă unul (navigația pe adresă poate să nu fie precisă)'}
+          </button>
+          {pinPanelOpen && (
+            <div className="rounded-xl p-3 mt-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+              <button onClick={()=>{
+                  if (!navigator.geolocation) { setPinStatus('Telefonul nu suportă geolocalizare.'); return; }
+                  setPinStatus('Se caută locația...');
+                  navigator.geolocation.getCurrentPosition(
+                    (pos)=>{ setSantierLocatie(santier.id, pos.coords.latitude, pos.coords.longitude); setPinStatus('Pin salvat — chiar locul unde ești acum.'); },
+                    (err)=>{ setPinStatus('Nu am putut lua locația: ' + err.message + ' (verifică permisiunea de locație în browser).'); },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                  );
+                }} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📍 Sunt aici acum — setează pin</button>
+              <div className="text-xs mt-3 mb-1" style={{ color:'#5C6570' }}>Sau, dacă nu ești la șantier, lipește coordonate (ex: 46.770439, 23.591423):</div>
+              <div className="flex gap-1.5">
+                <input value={pinManual} onChange={(e)=>setPinManual(e.target.value)} placeholder="46.770439, 23.591423" className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+                <button onClick={()=>{
+                    const m = pinManual.match(/(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)/);
+                    if (!m) { setPinStatus('Nu am putut citi coordonatele — folosește formatul „lat, lng".'); return; }
+                    setSantierLocatie(santier.id, Number(m[1]), Number(m[2]));
+                    setPinStatus('Pin salvat.'); setPinManual('');
+                  }} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>Salvează</button>
+              </div>
+              {santier?.lat && (
+                <button onClick={()=>{ setSantierLocatie(santier.id, null, null); setPinStatus('Pin șters — navigația va folosi din nou adresa text.'); }} className="text-xs mt-2" style={{ color:'#E05252' }}>Șterge pinul exact</button>
+              )}
+              {pinStatus && <p className="text-xs mt-2" style={{ color:'#8B93A0' }}>{pinStatus}</p>}
+            </div>
+          )}
+        </div>
 
         {currentUser?.rol === 'Manager' && (
           <div className="mb-4">
@@ -3460,7 +3505,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                   {activ && (s.adresa || colegiActivi.length > 0) && (
                     <div className="text-xs mt-2" style={{ color:'#8B93A0' }}>
                       {s.adresa && (
-                        <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.adresa)}`} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} className="inline-flex items-center gap-1" style={{ color:'#2E8BD1' }}>📍 {s.adresa}</a>
+                        <a href={mapsUrl(s)} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} className="inline-flex items-center gap-1" style={{ color:'#2E8BD1' }}>📍 {s.adresa}</a>
                       )}
                       {colegiActivi.length > 0 && <div className="mt-0.5">👥 {colegiActivi.join(', ')}</div>}
                     </div>
