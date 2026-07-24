@@ -2438,10 +2438,69 @@ function ProfileTab({ currentUser, onLogout }) {
   );
 }
 
-const CONCEDIU_TIPURI = ['Concediu de odihnă', 'Concediu medical', 'Fără plată', 'Altele'];
+const CONCEDIU_TIPURI = [
+  { label:'Concediu de odihnă', cod:'CO' },
+  { label:'Concediu medical', cod:'Bo' },
+  { label:'Boală profesională', cod:'Bp' },
+  { label:'Accident de muncă', cod:'Am' },
+  { label:'Maternitate', cod:'M' },
+  { label:'Program redus maternitate', cod:'Prm' },
+  { label:'Program redus boală', cod:'Prb' },
+  { label:'Fără plată', cod:'I' },
+  { label:'Obligații cetățenești', cod:'O' },
+  { label:'Absențe nemotivate', cod:'N' },
+];
+const codPentruTip = (tip) => CONCEDIU_TIPURI.find((t)=>t.label===tip)?.cod || 'CO';
+
+// Calculeaza, pentru o persoana si un an, ziua-cu-ziua ce s-a intamplat: lucrat, concediu aprobat,
+// sau concediu AUTOMAT (zi lucrata sub 8h sau lipsa complet, fara cerere aprobata care sa explice).
+// Concediul automat consuma dintr-un buget anual de 21 zile x 8h (168h) platite; peste buget devine "I" (fara plata).
+// "panaLaLuna" (format YYYY-MM) opreste calculul la sfarsitul acelei luni, ca sa nu procesam degeaba tot anul.
+function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
+  const concediiAprobate = (concedii || []).filter((c)=>c.nume===nume && c.status==='Aprobat');
+  const minuteLucratePeZi = {};
+  rapoarte.forEach((r)=>{
+    if (!r.data?.startsWith(String(an))) return;
+    const p = (r.persoane || []).find((pp)=>pp.nume===nume);
+    if (!p) return;
+    minuteLucratePeZi[r.data] = (minuteLucratePeZi[r.data] || 0) + personMinutes(p);
+  });
+
+  const [anLimita, lunaLimita] = panaLaLuna.split('-').map(Number);
+  const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
+  const dataLimita = `${panaLaLuna}-${String(ultimaZiLimita).padStart(2,'0')}`;
+
+  let bugetRamasMin = 21 * 8 * 60;
+  const rezultat = {};
+  for (let luna=0; luna<12; luna++) {
+    const nrZileLuna = new Date(an, luna+1, 0).getDate();
+    for (let zi=1; zi<=nrZileLuna; zi++) {
+      const dataStr = `${an}-${String(luna+1).padStart(2,'0')}-${String(zi).padStart(2,'0')}`;
+      if (dataStr > dataLimita) return rezultat;
+      const dow = new Date(an, luna, zi).getDay();
+      if (dow===0 || dow===6) continue;
+
+      const concAprobat = concediiAprobate.find((c)=>dataStr>=c.dataInceput && dataStr<=c.dataSfarsit);
+      if (concAprobat) { rezultat[dataStr] = { status:'aprobat', cod: codPentruTip(concAprobat.tip) }; continue; }
+
+      const minLucrate = minuteLucratePeZi[dataStr] || 0;
+      const diferenta = 480 - minLucrate;
+      if (diferenta <= 0) {
+        rezultat[dataStr] = { status:'lucrat', minuteLucrate: minLucrate, suplimentar: -diferenta };
+      } else {
+        let codAuto;
+        if (bugetRamasMin >= diferenta) { codAuto = 'CO'; bugetRamasMin -= diferenta; }
+        else { codAuto = 'I'; bugetRamasMin = 0; }
+        rezultat[dataStr] = { status: minLucrate > 0 ? 'partial' : 'absent', minuteLucrate: minLucrate, minuteAuto: diferenta, codAuto };
+      }
+    }
+  }
+  return rezultat;
+}
+
 const ACHIZITIE_STATUSES = ['De comandat', 'Comandat', 'Primit'];
 
-function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajCorectii, persist, company }) {
+function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajCorectii, persist, company, concedii }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const [luna, setLuna] = useState(new Date().toISOString().slice(0,7));
   const isManager = currentUser?.rol === 'Manager';
@@ -2487,6 +2546,56 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     return [LUNI[Number(m)-1], y];
   })();
 
+  // --- Export legal "Foaie colectivă de prezență", pe șantier, zi cu zi ---
+  const [santierExport, setSantierExport] = useState('');
+  const [allUsersPontaj, setAllUsersPontaj] = useState([]);
+  useEffect(() => {
+    if (!isManager) return;
+    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setAllUsersPontaj(data.users || [])).catch(()=>{});
+  }, [isManager]);
+
+  const ZI_LITERA = ['D','L','M','M','J','V','S'];
+  const zileLunaInfo = (lunaStr) => {
+    const [y,m] = lunaStr.split('-').map(Number);
+    const nrZile = new Date(y, m, 0).getDate();
+    const zile = [];
+    for (let d=1; d<=nrZile; d++) {
+      const dateObj = new Date(y, m-1, d);
+      const dow = dateObj.getDay();
+      zile.push({ zi:d, litera: ZI_LITERA[dow], weekend: dow===0 || dow===6, dataStr: `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}` });
+    }
+    return zile;
+  };
+  const construiesteGrila = (santierId, lunaStr) => {
+    const santier = santiere.find((s)=>s.id===santierId);
+    const zile = zileLunaInfo(lunaStr);
+    const an = lunaStr.split('-')[0];
+    const rapoarteSantierLuna = rapoarte.filter((r)=>r.santierId===santierId && r.data?.startsWith(lunaStr));
+    const numeDinEchipa = echipaNormalizata(santier?.echipa).map((e)=>allUsersPontaj.find((u)=>u.id===e.userId)?.nume).filter(Boolean);
+    const numeDinRapoarte = [...new Set(rapoarteSantierLuna.flatMap((r)=>(r.persoane||[]).map((p)=>p.nume).filter((n)=>n?.trim())))];
+    const numeToate = [...new Set([...numeDinEchipa, ...numeDinRapoarte])];
+
+    const angajati = numeToate.map((nume)=>{
+      const anual = calculPontajAnual(nume, an, lunaStr, rapoarte, concedii);
+      const celule = zile.map((zi)=>{
+        if (zi.weekend) return { start:'X', sfarsit:'X', pauza:'X', ore:'X' };
+        const info = anual[zi.dataStr];
+        if (info?.status === 'aprobat') return { start:info.cod, sfarsit:info.cod, pauza:info.cod, ore:info.cod };
+        const raport = rapoarteSantierLuna.find((r)=>r.data===zi.dataStr);
+        const persoana = raport?.persoane?.find((p)=>p.nume===nume);
+        if (persoana) {
+          const supl = info?.suplimentar > 0 ? ` (+${minutesToHM(info.suplimentar)} supl.)` : '';
+          return { start: persoana.oraInceput || '', sfarsit: persoana.oraSfarsit || '', pauza:'1:00', ore: minutesToHM(personMinutes(persoana)) + supl };
+        }
+        if (info?.status === 'absent') return { start: info.codAuto, sfarsit: info.codAuto, pauza: info.codAuto, ore: info.codAuto };
+        return { start:'', sfarsit:'', pauza:'', ore:'' };
+      });
+      return { nume, celule };
+    });
+    return { santier, zile, angajati };
+  };
+
   const exportPontajExcel = () => {
     const rows = lista.map((p)=>({
       'Nume': p.nume,
@@ -2498,7 +2607,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
       [company?.nume || 'Firma mea'],
       [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
       [],
-      [`Pontaj — ${lunaNume} ${anNume}`],
+      [`Pontaj (rezumat general) — ${lunaNume} ${anNume}`],
       [],
     ];
     const ws = XLSX.utils.aoa_to_sheet(headerRows);
@@ -2506,7 +2615,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     ws['!cols'] = [{wch:22},{wch:12},{wch:60}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Pontaj');
-    XLSX.writeFile(wb, `pontaj_${luna}.xlsx`);
+    XLSX.writeFile(wb, `pontaj_rezumat_${luna}.xlsx`);
   };
 
   const exportPontajPDF = () => {
@@ -2528,7 +2637,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         <div class="header-row">
           <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
           <div class="title-block">
-            <div class="title">PONTAJ</div>
+            <div class="title">PONTAJ (rezumat general)</div>
             <div style="font-size:11px;color:#555;margin-top:2mm;">${esc(lunaNume)} ${esc(anNume)}</div>
           </div>
         </div>
@@ -2544,19 +2653,126 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     setTimeout(()=>{ w.focus(); w.print(); }, 300);
   };
 
+  const exportFoaiePrezentaExcel = () => {
+    const { santier, zile, angajati } = construiesteGrila(santierExport, luna);
+    if (!santier) return;
+    const headerRows = [
+      [`SC ${company?.nume || 'Firma mea'}`],
+      [company?.cui ? `CUI:${company.cui}` : ''],
+      [company?.regCom ? `Numar registrul comertului:${company.regCom}` : ''],
+      [`SANTIER: ${santier.nume}${santier.adresa ? ' , ' + santier.adresa : ''}`],
+      [],
+      ['FOAIE COLECTIVA DE PREZENTA - EVIDENTA NUMARULUI DE ORE LUCRATE'],
+      [`LUNA ${lunaNume.toUpperCase()} ${anNume}`],
+      [],
+    ];
+    const headRow1 = ['Nr. crt', 'Nume și prenume', 'Program de lucru', ...zile.map((z)=>z.litera)];
+    const headRow2 = ['', '', '', ...zile.map((z)=>z.zi)];
+    const body = [];
+    angajati.forEach((a, i)=>{
+      body.push([i+1, a.nume, 'Inceput', ...a.celule.map((c)=>c.start)]);
+      body.push(['', '', 'Sfarsit', ...a.celule.map((c)=>c.sfarsit)]);
+      body.push(['', '', 'Pauza de masa (ore)', ...a.celule.map((c)=>c.pauza)]);
+      body.push(['', '', 'Nr ore lucrate', ...a.celule.map((c)=>c.ore)]);
+    });
+    const legenda = [
+      [],
+      ['Intocmit,', '', 'SL- Sarbatori legale / liber de la stat', '', 'CO- concediu de odihna', '', 'I - invoiri si concediu fara retrib'],
+      [company?.administrator ? `ADM. ${company.administrator}` : '', '', 'Bo - boala obisnuita', '', 'O - obligatii cetatenesti'],
+      ['', '', 'N - Absente nemotivate'],
+    ];
+    const aoa = [...headerRows, headRow1, headRow2, ...body, ...legenda];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{wch:6},{wch:22},{wch:18}, ...zile.map(()=>({wch:6}))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Foaie prezenta');
+    XLSX.writeFile(wb, `foaie_pontaj_${santier.nume.replace(/\s+/g,'_')}_${luna}.xlsx`);
+  };
+
+  const exportFoaiePrezentaPDF = () => {
+    const { santier, zile, angajati } = construiesteGrila(santierExport, luna);
+    if (!santier) return;
+    const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const randCap1 = zile.map((z)=>`<th>${z.litera}</th>`).join('');
+    const randCap2 = zile.map((z)=>`<th>${z.zi}</th>`).join('');
+    const randuri = angajati.map((a,i)=>`
+      <tr><td rowspan="4">${i+1}</td><td rowspan="4" style="text-align:left">${esc(a.nume)}</td><td style="text-align:left">Inceput</td>${a.celule.map((c)=>`<td>${esc(c.start)}</td>`).join('')}</tr>
+      <tr><td style="text-align:left">Sfarsit</td>${a.celule.map((c)=>`<td>${esc(c.sfarsit)}</td>`).join('')}</tr>
+      <tr><td style="text-align:left">Pauza de masa (ore)</td>${a.celule.map((c)=>`<td>${esc(c.pauza)}</td>`).join('')}</tr>
+      <tr><td style="text-align:left">Nr ore lucrate</td>${a.celule.map((c)=>`<td>${esc(c.ore)}</td>`).join('')}</tr>
+    `).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Foaie pontaj</title><style>
+      * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; font-size:9px; }
+      @page { size: A4 landscape; margin: 10mm; }
+      .page { width:100%; }
+      .header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4mm; }
+      .meta { font-size:10px; line-height:1.6; }
+      .logo { height:34px; }
+      .title { font-size:13px; font-weight:700; text-align:center; margin:3mm 0 1mm; }
+      .subtitle { font-size:11px; text-align:center; margin-bottom:3mm; }
+      table { width:100%; border-collapse:collapse; font-size:8px; }
+      th, td { border:1px solid #999; padding:1mm; text-align:center; }
+      th { background:#f2f2f2; }
+      .legend { display:flex; justify-content:space-between; margin-top:5mm; font-size:9px; }
+      .legend-col { flex:1; line-height:1.7; }
+    </style></head><body>
+      <div class="page">
+        <div class="header-row">
+          <div class="meta">
+            SC ${esc(company?.nume || '')}<br/>
+            ${company?.cui ? `CUI:${esc(company.cui)}<br/>` : ''}
+            ${company?.regCom ? `Numar registrul comertului:${esc(company.regCom)}<br/>` : ''}
+            SANTIER: ${esc(santier.nume)}${santier.adresa ? ' , ' + esc(santier.adresa) : ''}
+          </div>
+          <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
+        </div>
+        <div class="title">FOAIE COLECTIVA DE PREZENTA - EVIDENTA NUMARULUI DE ORE LUCRATE</div>
+        <div class="subtitle">LUNA ${esc(lunaNume.toUpperCase())} ${esc(anNume)}</div>
+        <table>
+          <thead>
+            <tr><th rowspan="2">Nr. Crt</th><th rowspan="2">Nume si prenume</th><th rowspan="2">Program de lucru</th>${randCap1}</tr>
+            <tr>${randCap2}</tr>
+          </thead>
+          <tbody>${randuri || `<tr><td colspan="${3+zile.length}">Niciun angajat asignat acestui șantier.</td></tr>`}</tbody>
+        </table>
+        <div class="legend">
+          <div class="legend-col">Intocmit,<br/>${company?.administrator ? `ADM. ${esc(company.administrator)}` : ''}</div>
+          <div class="legend-col">SL- Sarbatori legale / liber de la stat<br/>Bo - boala obisnuita<br/>Bp - boala profesionala<br/>Am - accident de munca<br/>M - maternitate</div>
+          <div class="legend-col">CO- concediu de odihna<br/>O - obligatii cetatenesti<br/>N - Absente nemotivate<br/>Prm - program redus maternitate<br/>Prb - program redus boala</div>
+          <div class="legend-col">I - invoiri si concediu fara retrib</div>
+        </div>
+      </div>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(()=>{ w.focus(); w.print(); }, 300);
+  };
+
   return (
     <div>
       <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>🕐 Pontaj</h2>
       <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Ore calculate automat din rapoartele zilnice de la toate șantierele.</p>
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <input type="month" value={luna} onChange={(e)=>setLuna(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         {isManager && lista.length > 0 && (
           <>
-            <button onClick={exportPontajExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Excel</button>
-            <button onClick={exportPontajPDF} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF</button>
+            <button onClick={exportPontajExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Excel (rezumat)</button>
+            <button onClick={exportPontajPDF} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF (rezumat)</button>
           </>
         )}
       </div>
+      {isManager && (
+        <div className="flex items-center gap-2 mb-4 flex-wrap rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <span className="text-xs" style={{ color:'#8B93A0' }}>Foaie colectivă de prezență (pe șantier):</span>
+          <select value={santierExport} onChange={(e)=>setSantierExport(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle}>
+            <option value="">Alege șantierul...</option>
+            {santiere.map((s)=><option key={s.id} value={s.id} style={{ background:'#1B2127' }}>{s.nume}</option>)}
+          </select>
+          <button onClick={exportFoaiePrezentaExcel} disabled={!santierExport} className="text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>📊 Excel</button>
+          <button onClick={exportFoaiePrezentaPDF} disabled={!santierExport} className="text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>🖨 PDF</button>
+        </div>
+      )}
       {lista.length === 0 ? (
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio oră înregistrată în luna selectată.</div>
       ) : (
@@ -2607,7 +2823,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   );
 }
 
-function ConcediiTab({ concedii, setConcedii, persist, currentUser }) {
+function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const [form, setForm] = useState(null);
   const isManager = currentUser?.rol === 'Manager';
@@ -2629,11 +2845,31 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser }) {
     setConcedii(next); persist('concedii', next);
   };
 
+  // Rezumat concediu AUTOMAT: zile lucrate sub 8h sau lipsă, calculate din pontaj,
+  // consumate din bugetul anual de 21 zile (168h), pana la epuizare (apoi "fara plata").
+  const azi = new Date().toISOString().slice(0,10);
+  const anCurent = azi.slice(0,4);
+  const lunaCurenta = azi.slice(0,7);
+  const numeDeUrmarit = isManager
+    ? [...new Set(rapoarte.filter((r)=>r.data?.startsWith(anCurent)).flatMap((r)=>(r.persoane||[]).map((p)=>p.nume).filter((n)=>n?.trim())))]
+    : [currentUser?.nume].filter(Boolean);
+  const rezumatAutomat = numeDeUrmarit.map((nume)=>{
+    const anual = calculPontajAnual(nume, anCurent, lunaCurenta, rapoarte, concedii);
+    let coAutoMin = 0, faraPlataMin = 0, zileAfectate = 0;
+    Object.values(anual).forEach((info)=>{
+      if (info.status==='partial' || info.status==='absent') {
+        zileAfectate += 1;
+        if (info.codAuto==='CO') coAutoMin += info.minuteAuto; else faraPlataMin += info.minuteAuto;
+      }
+    });
+    return { nume, coAutoMin, faraPlataMin, zileAfectate };
+  }).filter((r)=>r.zileAfectate > 0);
+
   return (
     <div>
       <div className="flex justify-between items-center mb-1">
         <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>🏖 Concedii</h2>
-        {!form && <button onClick={()=>setForm({ dataInceput:'', dataSfarsit:'', tip: CONCEDIU_TIPURI[0], motiv:'' })} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Cerere nouă</button>}
+        {!form && <button onClick={()=>setForm({ dataInceput:'', dataSfarsit:'', tip: CONCEDIU_TIPURI[0].label, motiv:'' })} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Cerere nouă</button>}
       </div>
       <p className="text-xs mb-4" style={{ color:'#5C6570' }}>{isManager ? 'Toate cererile de concediu.' : 'Cererile tale de concediu.'}</p>
 
@@ -2645,12 +2881,31 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser }) {
             <RoCalendarPicker value={form.dataSfarsit} onChange={(v)=>setForm({...form, dataSfarsit:v})} />
           </div>
           <select value={form.tip} onChange={(e)=>setForm({...form, tip:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
-            {CONCEDIU_TIPURI.map((t)=><option key={t} value={t} style={{ background:'#1B2127' }}>{t}</option>)}
+            {CONCEDIU_TIPURI.map((t)=><option key={t.label} value={t.label} style={{ background:'#1B2127' }}>{t.label} ({t.cod})</option>)}
           </select>
           <textarea placeholder="Motiv (opțional)" value={form.motiv} onChange={(e)=>setForm({...form, motiv:e.target.value})} rows={2} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
           <div className="flex justify-end gap-2 pt-1">
             <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
             <button onClick={addCerere} disabled={!form.dataInceput || !form.dataSfarsit} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Trimite cererea</button>
+          </div>
+        </div>
+      )}
+
+      {rezumatAutomat.length > 0 && (
+        <div className="rounded-xl p-3 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🤖 Concediu automat (din pontaj, {anCurent})</div>
+          <p className="text-[11px] mb-2" style={{ color:'#5C6570' }}>Zile lucrate sub 8h sau lipsă, fără cerere aprobată — consumate automat din bugetul de 21 zile/an; peste buget devine „fără plată".</p>
+          <div className="space-y-1">
+            {rezumatAutomat.map((r)=>(
+              <div key={r.nume} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                <span style={{ color:'#E9E7E2' }}>{r.nume}</span>
+                <span>
+                  {r.coAutoMin > 0 && <span style={{ color:'#E9A23B' }}>CO: {minutesToHM(r.coAutoMin)}</span>}
+                  {r.coAutoMin > 0 && r.faraPlataMin > 0 && <span style={{ color:'#5C6570' }}> · </span>}
+                  {r.faraPlataMin > 0 && <span style={{ color:'#E05252' }}>Fără plată: {minutesToHM(r.faraPlataMin)}</span>}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -2663,7 +2918,7 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser }) {
             <div key={c.id} className="rounded-xl p-3 flex items-center justify-between gap-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
               <div className="min-w-0">
                 {isManager && <div className="text-sm" style={{ color:'#E9E7E2' }}>{c.nume}</div>}
-                <div className="text-sm" style={{ color: isManager?'#8B93A0':'#E9E7E2' }}>{c.dataInceput} → {c.dataSfarsit} · {c.tip}</div>
+                <div className="text-sm" style={{ color: isManager?'#8B93A0':'#E9E7E2' }}>{c.dataInceput} → {c.dataSfarsit} · {c.tip} ({codPentruTip(c.tip)})</div>
                 {c.motiv && <div className="text-xs mt-0.5" style={{ color:'#5C6570' }}>{c.motiv}</div>}
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -3678,9 +3933,9 @@ function App() {
             {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
-            {tab === 'pontaj' && <PontajTab rapoarte={rapoarte} santiere={santiere} currentUser={effectiveUser} pontajCorectii={pontajCorectii} setPontajCorectii={setPontajCorectii} persist={persist} company={company} />}
+            {tab === 'pontaj' && <PontajTab rapoarte={rapoarte} santiere={santiere} currentUser={effectiveUser} pontajCorectii={pontajCorectii} setPontajCorectii={setPontajCorectii} persist={persist} company={company} concedii={concedii} />}
 
-            {tab === 'concedii' && <ConcediiTab concedii={concedii} setConcedii={setConcedii} persist={persist} currentUser={effectiveUser} />}
+            {tab === 'concedii' && <ConcediiTab concedii={concedii} setConcedii={setConcedii} persist={persist} currentUser={effectiveUser} rapoarte={rapoarte} />}
 
             {tab === 'achizitii' && effectiveUser.rol === 'Manager' && <AchizitiiTab achizitii={achizitii} setAchizitii={setAchizitii} persist={persist} />}
 
