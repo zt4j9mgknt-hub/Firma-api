@@ -2438,6 +2438,24 @@ function ProfileTab({ currentUser, onLogout }) {
   );
 }
 
+// Zile libere legale — se completează manual la începutul fiecărui an nou.
+const SARBATORI_LEGALE = {
+  2026: [
+    '2026-01-01','2026-01-02', // Anul Nou
+    '2026-01-06', // Boboteaza
+    '2026-01-07', // Sfântul Ioan Botezătorul
+    '2026-01-24', // Ziua Unirii Principatelor Române
+    '2026-04-10','2026-04-11','2026-04-12','2026-04-13', // Paște ortodox
+    '2026-05-01', // Ziua Muncii
+    '2026-05-31', // Rusalii
+    '2026-06-01', // Ziua Copilului / a doua zi de Rusalii
+    '2026-08-15', // Adormirea Maicii Domnului
+    '2026-11-30', // Sfântul Andrei
+    '2026-12-01', // Ziua Națională a României
+    '2026-12-25','2026-12-26', // Crăciunul
+  ],
+};
+
 const CONCEDIU_TIPURI = [
   { label:'Concediu de odihnă', cod:'CO' },
   { label:'Concediu medical', cod:'Bo' },
@@ -2451,6 +2469,23 @@ const CONCEDIU_TIPURI = [
   { label:'Absențe nemotivate', cod:'N' },
 ];
 const codPentruTip = (tip) => CONCEDIU_TIPURI.find((t)=>t.label===tip)?.cod || 'CO';
+
+// Extrage ziua de nastere (zi/luna, fara an) dintr-un CNP romanesc valid.
+// Cifra 1 = sex+secol (1/2=1900-1999, 3/4=1800-1899, 5/6=2000-2099); 7/8/9 = cazuri speciale, ignorate.
+function nasterePeDinCnp(cnp) {
+  if (!cnp || !/^\d{13}$/.test(cnp)) return null;
+  const s = Number(cnp[0]);
+  let secol;
+  if (s===1 || s===2) secol=1900;
+  else if (s===3 || s===4) secol=1800;
+  else if (s===5 || s===6) secol=2000;
+  else return null;
+  const an = secol + Number(cnp.slice(1,3));
+  const luna = Number(cnp.slice(3,5));
+  const zi = Number(cnp.slice(5,7));
+  if (luna<1 || luna>12 || zi<1 || zi>31) return null;
+  return { an, luna, zi };
+}
 
 // Calculeaza, pentru o persoana si un an, ziua-cu-ziua ce s-a intamplat: lucrat, concediu aprobat,
 // sau concediu AUTOMAT (zi lucrata sub 8h sau lipsa complet, fara cerere aprobata care sa explice).
@@ -2479,6 +2514,8 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
       if (dataStr > dataLimita) return rezultat;
       const dow = new Date(an, luna, zi).getDay();
       if (dow===0 || dow===6) continue;
+
+      if ((SARBATORI_LEGALE[an] || []).includes(dataStr)) { rezultat[dataStr] = { status:'sarbatoare', cod:'SL' }; continue; }
 
       const concAprobat = concediiAprobate.find((c)=>dataStr>=c.dataInceput && dataStr<=c.dataSfarsit);
       if (concAprobat) { rezultat[dataStr] = { status:'aprobat', cod: codPentruTip(concAprobat.tip) }; continue; }
@@ -2581,7 +2618,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
       const celule = zile.map((zi)=>{
         if (zi.weekend) return { start:'X', sfarsit:'X', pauza:'X', ore:'X' };
         const info = anual[zi.dataStr];
-        if (info?.status === 'aprobat') return { start:info.cod, sfarsit:info.cod, pauza:info.cod, ore:info.cod };
+        if (info?.status === 'aprobat' || info?.status === 'sarbatoare') return { start:info.cod, sfarsit:info.cod, pauza:info.cod, ore:info.cod };
         const raport = rapoarteSantierLuna.find((r)=>r.data===zi.dataStr);
         const persoana = raport?.persoane?.find((p)=>p.nume===nume);
         if (persoana) {
@@ -3036,11 +3073,15 @@ function UsersTab({ currentUser }) {
       setFormStatus({ loading:false, error:'Completează toate câmpurile.' });
       return;
     }
+    if (form.cnp && !/^\d{13}$/.test(form.cnp)) {
+      setFormStatus({ loading:false, error:'CNP-ul trebuie să aibă exact 13 cifre.' });
+      return;
+    }
     setFormStatus({ loading:true, error:'' });
     try {
       const payload = form.id
-        ? { action:'update', id: form.id, nume: form.nume.trim(), username: form.username.trim(), rol: form.rol, newPassword: form.password || undefined }
-        : { action:'register', nume: form.nume.trim(), username: form.username.trim(), password: form.password, rol: form.rol };
+        ? { action:'update', id: form.id, nume: form.nume.trim(), username: form.username.trim(), rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim(), newPassword: form.password || undefined }
+        : { action:'register', nume: form.nume.trim(), username: form.username.trim(), password: form.password, rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim() };
       const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
@@ -3054,12 +3095,13 @@ function UsersTab({ currentUser }) {
 
   const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const ZILE_SCURT = ['','ian','feb','mar','apr','mai','iun','iul','aug','sep','oct','noi','dec'];
 
   return (
     <div>
       <div className="flex justify-between items-center mb-1">
         <h2 className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>Utilizatori</h2>
-        {!form && <button onClick={()=>{ setForm({ nume:'', username:'', password:'', rol:'Electrician' }); setFormStatus({ loading:false, error:'' }); }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă utilizator</button>}
+        {!form && <button onClick={()=>{ setForm({ nume:'', username:'', password:'', rol:'Electrician', telefon:'', cnp:'' }); setFormStatus({ loading:false, error:'' }); }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă utilizator</button>}
       </div>
       <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Conturile care pot intra în aplicație.</p>
 
@@ -3068,6 +3110,8 @@ function UsersTab({ currentUser }) {
           <input placeholder="Nume complet" value={form.nume} onChange={(e)=>setForm({...form, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
           <input placeholder="Username" value={form.username} onChange={(e)=>setForm({...form, username:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
           <input type="text" placeholder={form.id ? 'Parolă nouă (lasă gol ca să nu o schimbi)' : 'Parolă standard'} value={form.password} onChange={(e)=>setForm({...form, password:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input placeholder="Telefon (opțional)" value={form.telefon} onChange={(e)=>setForm({...form, telefon:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <input placeholder="CNP (opțional, 13 cifre — pentru ziua de naștere)" value={form.cnp} onChange={(e)=>setForm({...form, cnp:e.target.value.replace(/\D/g,'').slice(0,13)})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, fontFamily:"'JetBrains Mono', monospace" }} />
           <div className="flex gap-2">
             {ROLES.map((r)=>(
               <button key={r.id} onClick={()=>setForm({...form, rol:r.id})} className="flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5"
@@ -3090,21 +3134,24 @@ function UsersTab({ currentUser }) {
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun utilizator încă.</div>
       ) : (
         <div className="space-y-2">
-          {users.map((u)=>(
+          {users.map((u)=>{
+            const nastere = nasterePeDinCnp(u.cnp);
+            return (
             <div key={u.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
               <div className="flex items-center gap-2">
                 <span>{iconFor(u.rol)}</span>
                 <div>
                   <div className="text-sm" style={{ color:'#E9E7E2' }}>{u.nume}{u.id===currentUser.id && <span className="text-xs ml-1" style={{ color:'#5C6570' }}>(tu)</span>}</div>
-                  <div className="text-xs" style={{ color:'#8B93A0' }}>@{u.username} · {u.rol}</div>
+                  <div className="text-xs" style={{ color:'#8B93A0' }}>@{u.username} · {u.rol}{u.telefon && ` · 📞 ${u.telefon}`}{nastere && ` · 🎂 ${nastere.zi} ${ZILE_SCURT[nastere.luna]}`}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button onClick={()=>{ setForm({ id:u.id, nume:u.nume, username:u.username, password:'', rol:u.rol }); setFormStatus({loading:false,error:''}); }} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
+                <button onClick={()=>{ setForm({ id:u.id, nume:u.nume, username:u.username, password:'', rol:u.rol, telefon:u.telefon||'', cnp:u.cnp||'' }); setFormStatus({loading:false,error:''}); }} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>Editează</button>
                 <button onClick={()=>delUser(u.id)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
