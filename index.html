@@ -2441,10 +2441,12 @@ function ProfileTab({ currentUser, onLogout }) {
 const CONCEDIU_TIPURI = ['Concediu de odihnă', 'Concediu medical', 'Fără plată', 'Altele'];
 const ACHIZITIE_STATUSES = ['De comandat', 'Comandat', 'Primit'];
 
-function PontajTab({ rapoarte, santiere, currentUser }) {
+function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajCorectii, persist, company }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const [luna, setLuna] = useState(new Date().toISOString().slice(0,7));
   const isManager = currentUser?.rol === 'Manager';
+  const [editState, setEditState] = useState(null);
+  const [editValue, setEditValue] = useState('');
 
   const rapoarteLuna = rapoarte.filter((r)=>r.data?.startsWith(luna));
   const perPersoana = {};
@@ -2459,14 +2461,102 @@ function PontajTab({ rapoarte, santiere, currentUser }) {
       perPersoana[p.nume].peSantier[santierNume] = (perPersoana[p.nume].peSantier[santierNume] || 0) + min;
     });
   });
-  const lista = Object.values(perPersoana).sort((a,b)=>b.totalMin - a.totalMin);
-  const totalGeneral = lista.reduce((s,p)=>s+p.totalMin,0);
+
+  const corectiiLuna = (pontajCorectii || []).filter((c)=>c.luna===luna);
+  const corectiePersoana = (nume) => corectiiLuna.filter((c)=>c.nume===nume).reduce((s,c)=>s+c.minuteAjustare,0);
+
+  const lista = Object.values(perPersoana)
+    .map((p)=>({ ...p, corectieMin: corectiePersoana(p.nume), totalFinal: p.totalMin + corectiePersoana(p.nume) }))
+    .sort((a,b)=>b.totalFinal - a.totalFinal);
+  const totalGeneral = lista.reduce((s,p)=>s+p.totalFinal,0);
+
+  const startEdit = (p) => { setEditState(p.nume); setEditValue(minutesToHM(p.totalFinal)); };
+  const confirmEdit = (p) => {
+    const dorit = oreToMinutes(editValue);
+    const delta = dorit - p.totalFinal;
+    setEditState(null);
+    if (!delta) return;
+    const c = { id: uid(), nume: p.nume, luna, minuteAjustare: delta, nota:'Corecție manuală', data: new Date().toISOString().slice(0,10) };
+    const next = [...(pontajCorectii || []), c];
+    setPontajCorectii(next); persist('pontajCorectii', next);
+  };
+
+  const [lunaNume, anNume] = (() => {
+    const LUNI = ['Ianuarie','Februarie','Martie','Aprilie','Mai','Iunie','Iulie','August','Septembrie','Octombrie','Noiembrie','Decembrie'];
+    const [y,m] = luna.split('-');
+    return [LUNI[Number(m)-1], y];
+  })();
+
+  const exportPontajExcel = () => {
+    const rows = lista.map((p)=>({
+      'Nume': p.nume,
+      'Total ore': minutesToHM(p.totalFinal),
+      'Detaliu pe șantiere': Object.entries(p.peSantier).map(([s,m])=>`${s}: ${minutesToHM(m)}`).join(', ') + (p.corectieMin ? `, Corecție manuală: ${p.corectieMin>0?'+':''}${minutesToHM(Math.abs(p.corectieMin))}` : ''),
+    }));
+    const sheetRows = rows.length ? [...rows, { 'Nume':'TOTAL', 'Total ore': minutesToHM(totalGeneral), 'Detaliu pe șantiere':'' }] : [{ 'Nume':'', 'Total ore':'', 'Detaliu pe șantiere':'Nicio oră în luna selectată.' }];
+    const headerRows = [
+      [company?.nume || 'Firma mea'],
+      [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
+      [],
+      [`Pontaj — ${lunaNume} ${anNume}`],
+      [],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(headerRows);
+    XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
+    ws['!cols'] = [{wch:22},{wch:12},{wch:60}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Pontaj');
+    XLSX.writeFile(wb, `pontaj_${luna}.xlsx`);
+  };
+
+  const exportPontajPDF = () => {
+    const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const rows = lista.map((p)=>`
+      <tr><td style="text-align:left">${esc(p.nume)}</td><td>${esc(minutesToHM(p.totalFinal))}</td><td style="text-align:left">${esc(Object.entries(p.peSantier).map(([s,m])=>`${s}: ${minutesToHM(m)}`).join(', '))}</td></tr>`).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Pontaj</title><style>
+      * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; }
+      .page { width:190mm; margin:0 auto; padding:14mm; }
+      .header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8mm; }
+      .logo { height:30px; }
+      .title-block { text-align:right; }
+      .title { font-size:18px; font-weight:700; }
+      table { width:100%; border-collapse:collapse; font-size:11px; margin-top:6mm; }
+      th { text-align:center; border:1px solid #999; padding:2mm; font-size:10px; text-transform:uppercase; background:#f2f2f2; }
+      td { text-align:center; border:1px solid #ccc; padding:2mm; }
+    </style></head><body>
+      <div class="page">
+        <div class="header-row">
+          <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
+          <div class="title-block">
+            <div class="title">PONTAJ</div>
+            <div style="font-size:11px;color:#555;margin-top:2mm;">${esc(lunaNume)} ${esc(anNume)}</div>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th style="text-align:left">Nume</th><th>Total ore</th><th style="text-align:left">Detaliu pe șantiere</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="3">Nicio oră în luna selectată.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(()=>{ w.focus(); w.print(); }, 300);
+  };
 
   return (
     <div>
       <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>🕐 Pontaj</h2>
       <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Ore calculate automat din rapoartele zilnice de la toate șantierele.</p>
-      <input type="month" value={luna} onChange={(e)=>setLuna(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none mb-4" style={inputStyle} />
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <input type="month" value={luna} onChange={(e)=>setLuna(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        {isManager && lista.length > 0 && (
+          <>
+            <button onClick={exportPontajExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Excel</button>
+            <button onClick={exportPontajPDF} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF</button>
+          </>
+        )}
+      </div>
       {lista.length === 0 ? (
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Nicio oră înregistrată în luna selectată.</div>
       ) : (
@@ -2479,12 +2569,34 @@ function PontajTab({ rapoarte, santiere, currentUser }) {
           <div className="space-y-2">
             {lista.map((p)=>(
               <div key={p.nume} className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-sm" style={{ color:'#E9E7E2' }}>{p.nume}</span>
-                  <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(p.totalMin)}</span>
+                  {editState===p.nume ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input value={editValue} onChange={(e)=>setEditValue(e.target.value)} placeholder="H:MM" className="w-20 rounded-lg px-2 py-1 text-xs outline-none text-center" style={{ ...inputStyle, fontFamily:"'JetBrains Mono', monospace" }} />
+                      <button onClick={()=>confirmEdit(p)} className="px-2 py-1 rounded-lg text-xs" style={{ color:'#14181C', background:'#4CAF7D' }}>✓</button>
+                      <button onClick={()=>setEditState(null)} className="px-2 py-1 rounded-lg text-xs" style={{ color:'#8B93A0', background:'#171C21' }}>✕</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(p.totalFinal)}</span>
+                      {isManager && <button onClick={()=>startEdit(p)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>✎ Edit</button>}
+                    </div>
+                  )}
                 </div>
-                <div className="text-xs mt-1" style={{ color:'#8B93A0' }}>
-                  {Object.entries(p.peSantier).map(([s,m])=>`${s}: ${minutesToHM(m)}`).join(' · ')}
+                <div className="mt-1.5 space-y-0.5">
+                  {Object.entries(p.peSantier).map(([s,m])=>(
+                    <div key={s} className="flex items-center justify-between text-xs" style={{ color:'#8B93A0' }}>
+                      <span>📍 {s}</span>
+                      <span style={{ fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(m)}</span>
+                    </div>
+                  ))}
+                  {p.corectieMin !== 0 && (
+                    <div className="flex items-center justify-between text-xs" style={{ color:'#E9A23B' }}>
+                      <span>✎ Corecție manuală</span>
+                      <span style={{ fontFamily:"'JetBrains Mono', monospace" }}>{p.corectieMin>0?'+':'−'}{minutesToHM(Math.abs(p.corectieMin))}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -3196,6 +3308,7 @@ function App() {
   const [pendingSiteNav, setPendingSiteNav] = useState(null);
   const [concedii, setConcedii] = useState([]);
   const [achizitii, setAchizitii] = useState([]);
+  const [pontajCorectii, setPontajCorectii] = useState([]);
   const [mediaSantier, setMediaSantier] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
@@ -3221,6 +3334,7 @@ function App() {
       setMediaSantier(await loadKey('mediaSantier', []));
       setConcedii(await loadKey('concedii', []));
       setAchizitii(await loadKey('achizitii', []));
+      setPontajCorectii(await loadKey('pontajCorectii', []));
       setError(null);
     } catch (e) {
       if (showSpinner) setError('Nu am putut încărca datele.');
@@ -3257,6 +3371,7 @@ function App() {
       mediaSantier: (v)=>setMediaSantier(v ?? []),
       concedii: (v)=>setConcedii(v ?? []),
       achizitii: (v)=>setAchizitii(v ?? []),
+      pontajCorectii: (v)=>setPontajCorectii(v ?? []),
     };
     channel.bind('data-changed', async (payload) => {
       const setter = setters[payload?.key];
@@ -3563,7 +3678,7 @@ function App() {
             {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
-            {tab === 'pontaj' && <PontajTab rapoarte={rapoarte} santiere={santiere} currentUser={effectiveUser} />}
+            {tab === 'pontaj' && <PontajTab rapoarte={rapoarte} santiere={santiere} currentUser={effectiveUser} pontajCorectii={pontajCorectii} setPontajCorectii={setPontajCorectii} persist={persist} company={company} />}
 
             {tab === 'concedii' && <ConcediiTab concedii={concedii} setConcedii={setConcedii} persist={persist} currentUser={effectiveUser} />}
 
