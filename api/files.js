@@ -1,17 +1,38 @@
 // Functie server (Vercel) pentru stergere/afisare fisiere (planse PDF, foto, video)
-// folosind Vercel Blob (magazin PRIVAT - fisierele NU sunt accesibile direct din URL,
-// trec mereu prin acest server, care se autentifica automat prin SDK).
+// folosind Vercel Blob (magazin PRIVAT).
 //
-// Incarcarea fisierelor NU mai trece pe aici (vezi api/blob-upload.js) - merge direct
-// din browser catre Vercel Blob, ca sa nu mai fim limitati la ~4.5MB.
+// Incarcarea fisierelor NU mai trece pe aici (vezi api/blob-upload.js).
 //
 // Actiuni (trimise ca { action: '...' } in body-ul POST):
 //   delete - sterge un fisier { url }
-// GET ?pathname=<pathname> - "serveste" fisierul (proxy autentificat), pentru <img>/<video>/<a href>
+// GET ?pathname=<pathname>&token=<token> - "serveste" fisierul, pentru <img>/<video>/<a href>
 
 import { del, get } from '@vercel/blob';
 import { buffer as streamToBuffer } from 'node:stream/consumers';
-import { authenticate } from './_auth.js';
+import crypto from 'crypto';
+
+// --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
+const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+function verifyToken(token) {
+  if (!token) return null;
+  const parts = String(token).split('.');
+  if (parts.length !== 2) return null;
+  const [data, sig] = parts;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  if (sig !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+function authenticate(req) {
+  const h = req.headers.authorization || req.headers.Authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : (req.query?.token || null);
+  return verifyToken(token);
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -21,7 +42,6 @@ export default async function handler(req, res) {
 
   if (!authenticate(req)) return res.status(401).send('Sesiune invalida sau expirata.');
 
-  // GET => proxy autentificat catre un fisier privat, ca sa poata fi afisat direct in pagina.
   if (req.method === 'GET') {
     try {
       const pathname = req.query.pathname;
