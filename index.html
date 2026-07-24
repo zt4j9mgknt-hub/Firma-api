@@ -2472,6 +2472,16 @@ const codPentruTip = (tip) => CONCEDIU_TIPURI.find((t)=>t.label===tip)?.cod || '
 
 // Extrage ziua de nastere (zi/luna, fara an) dintr-un CNP romanesc valid.
 // Cifra 1 = sex+secol (1/2=1900-1999, 3/4=1800-1899, 5/6=2000-2099); 7/8/9 = cazuri speciale, ignorate.
+// Formateaza minute in "X zile" sau "X zile si Y ore" (o zi = 8 ore), pentru afisarea concediului.
+function minutesToZileOre(minute) {
+  const totalMin = Math.max(0, Math.round(minute || 0));
+  const zile = Math.floor(totalMin / 480);
+  const oreRamase = totalMin % 480;
+  const ziLabel = zile === 1 ? 'zi' : 'zile';
+  if (oreRamase === 0) return `${zile} ${ziLabel}`;
+  return `${zile} ${ziLabel} și ${minutesToHM(oreRamase)} ore`;
+}
+
 function nasterePeDinCnp(cnp) {
   if (!cnp || !/^\d{13}$/.test(cnp)) return null;
   const s = Number(cnp[0]);
@@ -2518,7 +2528,12 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
       if ((SARBATORI_LEGALE[an] || []).includes(dataStr)) { rezultat[dataStr] = { status:'sarbatoare', cod:'SL' }; continue; }
 
       const concAprobat = concediiAprobate.find((c)=>dataStr>=c.dataInceput && dataStr<=c.dataSfarsit);
-      if (concAprobat) { rezultat[dataStr] = { status:'aprobat', cod: codPentruTip(concAprobat.tip) }; continue; }
+      if (concAprobat) {
+        const cod = codPentruTip(concAprobat.tip);
+        if (cod === 'CO') bugetRamasMin = Math.max(0, bugetRamasMin - 480);
+        rezultat[dataStr] = { status:'aprobat', cod };
+        continue;
+      }
 
       const minLucrate = minuteLucratePeZi[dataStr] || 0;
       const diferenta = 480 - minLucrate;
@@ -2892,15 +2907,18 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) 
     : [currentUser?.nume].filter(Boolean);
   const rezumatAutomat = numeDeUrmarit.map((nume)=>{
     const anual = calculPontajAnual(nume, anCurent, lunaCurenta, rapoarte, concedii);
-    let coAutoMin = 0, faraPlataMin = 0, zileAfectate = 0;
+    let coFolositMin = 0, faraPlataMin = 0;
     Object.values(anual).forEach((info)=>{
       if (info.status==='partial' || info.status==='absent') {
-        zileAfectate += 1;
-        if (info.codAuto==='CO') coAutoMin += info.minuteAuto; else faraPlataMin += info.minuteAuto;
+        if (info.codAuto==='CO') coFolositMin += info.minuteAuto; else faraPlataMin += info.minuteAuto;
+      } else if (info.status==='aprobat') {
+        if (info.cod==='CO') coFolositMin += 480;
+        else if (info.cod==='I') faraPlataMin += 480;
       }
     });
-    return { nume, coAutoMin, faraPlataMin, zileAfectate };
-  }).filter((r)=>r.zileAfectate > 0);
+    const coRamasMin = Math.max(0, 21*8*60 - coFolositMin);
+    return { nume, coRamasMin, faraPlataMin };
+  });
 
   return (
     <div>
@@ -2930,16 +2948,15 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) 
 
       {rezumatAutomat.length > 0 && (
         <div className="rounded-xl p-3 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-          <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🤖 Concediu automat (din pontaj, {anCurent})</div>
-          <p className="text-[11px] mb-2" style={{ color:'#5C6570' }}>Zile lucrate sub 8h sau lipsă, fără cerere aprobată — consumate automat din bugetul de 21 zile/an; peste buget devine „fără plată".</p>
+          <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🏖 Concediu de odihnă rămas ({anCurent})</div>
           <div className="space-y-1">
             {rezumatAutomat.map((r)=>(
               <div key={r.nume} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
                 <span style={{ color:'#E9E7E2' }}>{r.nume}</span>
                 <span>
-                  {r.coAutoMin > 0 && <span style={{ color:'#E9A23B' }}>CO: {minutesToHM(r.coAutoMin)}</span>}
-                  {r.coAutoMin > 0 && r.faraPlataMin > 0 && <span style={{ color:'#5C6570' }}> · </span>}
-                  {r.faraPlataMin > 0 && <span style={{ color:'#E05252' }}>Fără plată: {minutesToHM(r.faraPlataMin)}</span>}
+                  <span style={{ color:'#4CAF7D' }}>{minutesToZileOre(r.coRamasMin)}</span>
+                  {r.faraPlataMin > 0 && <span style={{ color:'#5C6570' }}> · </span>}
+                  {r.faraPlataMin > 0 && <span style={{ color:'#E05252' }}>Fără plată: {minutesToZileOre(r.faraPlataMin)}</span>}
                 </span>
               </div>
             ))}
@@ -3183,10 +3200,23 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const [cereriOpen, setCereriOpen] = useState(false);
   const [colegiUsers, setColegiUsers] = useState([]);
   useEffect(() => {
-    if (isManager) return;
     fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
       .then((r)=>r.json()).then((data)=>setColegiUsers(data.users || [])).catch(()=>{});
-  }, [isManager]);
+  }, []);
+
+  // --- Felicitări: ziua de naștere (din CNP) și sărbători (Crăciun, Paște, Anul Nou) ---
+  const ZILE_FELICITARE = {
+    '2026-01-01': '🎉 La mulți ani cu ocazia Anului Nou! Din partea Smart Electroconect, vă dorim un an plin de realizări!',
+    '2026-04-12': '🐣 Hristos a Înviat! Paște fericit, din partea Smart Electroconect!',
+    '2026-12-25': '🎄 Crăciun fericit! Din partea Smart Electroconect, vă dorim sărbători pline de liniște și bucurie!',
+  };
+  const aziDate = new Date();
+  const aziISO = aziDate.toISOString().slice(0,10);
+  const mesajSarbatoare = ZILE_FELICITARE[aziISO];
+  const sarbatoriiZi = colegiUsers.filter((u)=>{
+    const n = nasterePeDinCnp(u.cnp);
+    return n && n.zi === aziDate.getDate() && n.luna === aziDate.getMonth()+1;
+  });
 
   // --- Date specifice Electricianului: șantierele lui, memento raport, materiale cerute acolo ---
   const santiereMele = santiere.filter((s)=>inEchipa(s.echipa, currentUser?.id));
@@ -3224,6 +3254,19 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
           </div>
         </div>
       </div>
+
+      {mesajSarbatoare && (
+        <div className="rounded-xl p-6 mb-6 text-center" style={{ background:'linear-gradient(135deg, #2E8BD1, #4CAF7D)' }}>
+          <div style={{ fontSize:20, fontWeight:700, color:'#fff', lineHeight:1.4 }}>{mesajSarbatoare}</div>
+        </div>
+      )}
+
+      {sarbatoriiZi.length > 0 && (
+        <div className="rounded-xl p-6 mb-6 text-center" style={{ background:'linear-gradient(135deg, #E9A23B, #E05252)' }}>
+          <div style={{ fontSize:20, fontWeight:700, color:'#fff', lineHeight:1.4 }}>🎂 La mulți ani, {sarbatoriiZi.map((u)=>u.nume).join(' și ')}! 🎉</div>
+          <div style={{ fontSize:13, color:'#fff', opacity:0.9, marginTop:4 }}>Din partea întregii echipe {company?.nume || 'Smart Electroconect'}!</div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {cards.map((c)=>(
