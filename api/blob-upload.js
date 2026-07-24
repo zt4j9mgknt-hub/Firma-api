@@ -1,14 +1,29 @@
 // Functie server (Vercel, runtime Node.js implicit) care genereaza un "token de client"
-// pentru incarcare directa din browser catre Vercel Blob, ocolind complet limita de
-// 4.5MB a functiilor server normale. Fisierul NU mai trece prin acest server - merge
-// direct browser -> Blob.
+// pentru incarcare directa din browser catre Vercel Blob.
 //
 // IMPORTANT: handleUpload() foloseste module Node.js (crypto, stream) care NU sunt
-// disponibile pe runtime-ul "Edge" - de-aia acest fisier NU seteaza runtime:'edge',
-// ramane pe Node.js (implicit), care suporta si formatul modern de handler (request) => Response.
+// disponibile pe runtime-ul "Edge" - de-aia acest fisier NU seteaza runtime:'edge'.
 
 import { handleUpload } from '@vercel/blob/client';
-import { verifyToken } from './_auth.js';
+import crypto from 'crypto';
+
+// --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
+const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+function verifyToken(token) {
+  if (!token) return null;
+  const parts = String(token).split('.');
+  if (parts.length !== 2) return null;
+  const [data, sig] = parts;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  if (sig !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') {
@@ -22,8 +37,6 @@ export default async function handler(request) {
     });
   }
 
-  // Aici request e stil Web (Request), nu (req,res) clasic de Node - extragem token-ul diferit.
-  // handleUploadUrl e doar un string, SDK-ul nu suporta header-e custom -> token-ul vine prin query.
   const authHeader = request.headers.get('authorization') || '';
   const sessionToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : new URL(request.url).searchParams.get('token');
   if (!verifyToken(sessionToken)) {
@@ -39,7 +52,6 @@ export default async function handler(request) {
       body,
       request,
       onBeforeGenerateToken: async () => {
-        // Aplicatia e deja protejata de login; nu adaugam verificari suplimentare aici.
         return {
           access: 'private',
           addRandomSuffix: true,
@@ -51,9 +63,7 @@ export default async function handler(request) {
           maximumSizeInBytes: 200 * 1024 * 1024,
         };
       },
-      onUploadCompleted: async () => {
-        // Nimic de facut aici - metadatele fisierului se salveaza separat, din aplicatie.
-      },
+      onUploadCompleted: async () => {},
     });
 
     return new Response(JSON.stringify(jsonResponse), {
