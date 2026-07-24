@@ -7,6 +7,7 @@
 // toate telefoanele conectate, ca sa se actualizeze fara sa verifice constant.
 
 import Pusher from 'pusher';
+import { authenticate } from './_auth.js';
 
 let pusher = null;
 function getPusher() {
@@ -26,8 +27,10 @@ function getPusher() {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+
+  if (!authenticate(req)) return res.status(401).json({ error: 'Sesiune invalida sau expirata - te rog reloghează-te.' });
 
   const base = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
