@@ -94,15 +94,29 @@ function echipaNormalizata(echipa) {
 const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e)=>e.userId);
 const inEchipa = (echipa, userId) => echipaUserIds(echipa).includes(userId);
 
+// --- Token de sesiune (bilet de acces) — trimis la fiecare cerere către server,
+// ca sa nu mai poata fi cerute datele direct, fara sa fii logat. ---
+let AUTH_TOKEN = null;
+try { AUTH_TOKEN = localStorage.getItem('authToken') || null; } catch {}
+function setAuthToken(t) {
+  AUTH_TOKEN = t;
+  try { if (t) localStorage.setItem('authToken', t); else localStorage.removeItem('authToken'); } catch {}
+}
+function authFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (AUTH_TOKEN) headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
+  return fetch(url, { ...options, headers });
+}
+
 async function loadKey(key, fallback) {
   try {
-    const r = await fetch(`/api/data?key=${encodeURIComponent(key)}`);
+    const r = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
     const data = await r.json();
     return data.value ?? fallback;
   } catch { return fallback; }
 }
 async function saveKey(key, value) {
-  const r = await fetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value }) });
+  const r = await authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value }) });
   const data = await r.json();
   if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
 }
@@ -346,7 +360,7 @@ function ClientsTab({ clients, setClients, persist }) {
     if (!clean) return;
     setLookup({status:'loading',message:''});
     try {
-      const res = await fetch(`/api/cui?cui=${clean}`);
+      const res = await authFetch(`/api/cui?cui=${clean}`);
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || `Eroare ${res.status}`);
       if (!data.denumire) throw new Error('Răspunsul nu conține denumirea firmei.');
@@ -1329,14 +1343,14 @@ async function uploadFileToBlob(file, folder) {
   const pathname = `${folder}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
   const blob = await window.__vercelBlobUpload(pathname, file, {
     access: 'private',
-    handleUploadUrl: '/api/blob-upload',
+    handleUploadUrl: `/api/blob-upload?token=${encodeURIComponent(AUTH_TOKEN || '')}`,
   });
   return { url: blob.url, pathname: blob.pathname };
 }
 
 // Fișierele sunt într-un magazin Blob privat — nu au un URL accesibil direct,
 // trebuie mereu cerute prin acest "pod" (proxy autentificat), altfel nu se văd.
-const blobViewUrl = (pathname) => `/api/files?pathname=${encodeURIComponent(pathname)}`;
+const blobViewUrl = (pathname) => `/api/files?pathname=${encodeURIComponent(pathname)}&token=${encodeURIComponent(AUTH_TOKEN || '')}`;
 
 function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, currentUser }) {
   const [uploading, setUploading] = useState(false);
@@ -1363,7 +1377,7 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
 
   const remove = async (p) => {
     if (!window.confirm(`Ștergi definitiv „${p.nume}"?`)) return;
-    try { await fetch('/api/files', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', url: p.url }) }); } catch {}
+    try { await authFetch('/api/files', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', url: p.url }) }); } catch {}
     const next = planseSantier.filter((x)=>x.id!==p.id);
     setPlanseSantier(next); persist('planseSantier', next);
     if (viewing?.id === p.id) setViewing(null);
@@ -1437,7 +1451,7 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
 
   const remove = async (m) => {
     if (!window.confirm(`Ștergi definitiv „${m.nume}"?`)) return;
-    try { await fetch('/api/files', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', url: m.url }) }); } catch {}
+    try { await authFetch('/api/files', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', url: m.url }) }); } catch {}
     const next = mediaSantier.filter((x)=>x.id!==m.id);
     setMediaSantier(next); persist('mediaSantier', next);
     if (viewing?.id === m.id) setViewing(null);
@@ -1786,7 +1800,7 @@ function SantierForm({ initial, onCancel, onSave }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
 
   useEffect(() => {
-    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+    authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
       .then((r)=>r.json()).then((data)=>setUsers((data.users || []).filter((u)=>u.rol==='Electrician'))).catch(()=>setUsers([]));
   }, []);
 
@@ -1858,7 +1872,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
   const [users, setUsers] = useState([]);
 
   useEffect(() => {
-    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+    authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
       .then((r)=>r.json()).then((data)=>setUsers(data.users || [])).catch(()=>setUsers([]));
   }, []);
 
@@ -2026,7 +2040,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   }, [pendingSiteNav]);
 
   useEffect(() => {
-    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+    authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
       .then((r)=>r.json()).then((data)=>setAllUsers((data.users || []).filter((u)=>u.rol==='Electrician'))).catch(()=>setAllUsers([]));
   }, []);
 
@@ -2388,7 +2402,7 @@ function ProfileTab({ currentUser, onLogout }) {
     if (!oldPassword || !newPassword) { setStatus({ loading:false, error:'Completează toate câmpurile.', success:'' }); return; }
     if (newPassword !== confirmPassword) { setStatus({ loading:false, error:'Parola nouă nu se potrivește cu confirmarea.', success:'' }); return; }
     try {
-      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'changePassword', id: currentUser.id, oldPassword, newPassword }) });
+      const res = await authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'changePassword', id: currentUser.id, oldPassword, newPassword }) });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
       setStatus({ loading:false, error:'', success:'Parola a fost schimbată.' });
@@ -2572,7 +2586,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   const [allUsersPontaj, setAllUsersPontaj] = useState([]);
   useEffect(() => {
     if (!isManager) return;
-    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+    authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
       .then((r)=>r.json()).then((data)=>setAllUsersPontaj(data.users || [])).catch(()=>{});
   }, [isManager]);
 
@@ -3137,7 +3151,7 @@ function UsersTab({ currentUser }) {
   const loadUsers = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) });
+      const res = await authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) });
       const data = await res.json();
       setUsers(data.users || []);
     } catch { setUsers([]); }
@@ -3148,7 +3162,7 @@ function UsersTab({ currentUser }) {
   const delUser = async (id) => {
     if (id === currentUser.id) { window.alert('Nu îți poți șterge propriul cont din listă.'); return; }
     if (!window.confirm('Ștergi definitiv acest cont? Persoana nu va mai putea intra în aplicație.')) return;
-    await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', id }) });
+    await authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'delete', id }) });
     loadUsers();
   };
 
@@ -3166,7 +3180,7 @@ function UsersTab({ currentUser }) {
       const payload = form.id
         ? { action:'update', id: form.id, nume: form.nume.trim(), username: form.username.trim(), rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim(), newPassword: form.password || undefined }
         : { action:'register', nume: form.nume.trim(), username: form.username.trim(), password: form.password, rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim() };
-      const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      const res = await authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
       setForm(null);
@@ -3267,7 +3281,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const [cereriOpen, setCereriOpen] = useState(false);
   const [colegiUsers, setColegiUsers] = useState([]);
   useEffect(() => {
-    fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+    authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
       .then((r)=>r.json()).then((data)=>setColegiUsers(data.users || [])).catch(()=>{});
   }, []);
 
@@ -3675,10 +3689,12 @@ function App() {
     const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || 'A eșuat.');
+    setAuthToken(data.token);
     setCurrentUser(data.user);
     try { localStorage.setItem('currentUser', JSON.stringify(data.user)); } catch {}
   };
   const logout = () => {
+    setAuthToken(null);
     setCurrentUser(null);
     try { localStorage.removeItem('currentUser'); } catch {}
   };
@@ -3688,7 +3704,7 @@ function App() {
   const [allAppUsers, setAllAppUsers] = useState([]);
   useEffect(() => {
     if (currentUser?.rol === 'Manager') {
-      fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
         .then((r)=>r.json()).then((data)=>setAllAppUsers(data.users || [])).catch(()=>{});
     }
   }, [currentUser]);
@@ -3806,7 +3822,7 @@ function App() {
   const printOne = (kind) => (doc) => openPrintWindow([{ doc, kind, client: clients.find((c)=>c.id===doc.clientId), company }]);
   const sendInvoiceToSmartBill = async (invoice) => {
     const client = clients.find((c)=>c.id===invoice.clientId);
-    const res = await fetch('/api/smartbill', {
+    const res = await authFetch('/api/smartbill', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ invoice, client }),
