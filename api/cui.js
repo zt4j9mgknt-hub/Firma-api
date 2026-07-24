@@ -2,7 +2,30 @@
 // Rulează pe server, deci nu are restricțiile CORS pe care le are browserul.
 // Aplicația va apela: https://<numele-proiectului-tau>.vercel.app/api/cui?cui=14399840
 
-import { authenticate } from './_auth.js';
+import crypto from 'crypto';
+
+// --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
+const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+function verifyToken(token) {
+  if (!token) return null;
+  const parts = String(token).split('.');
+  if (parts.length !== 2) return null;
+  const [data, sig] = parts;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  if (sig !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+function authenticate(req) {
+  const h = req.headers.authorization || req.headers.Authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : (req.query?.token || null);
+  return verifyToken(token);
+}
 
 export default async function handler(req, res) {
   // Permite aplicației din browser să apeleze acest server
