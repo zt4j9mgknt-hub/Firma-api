@@ -10,6 +10,8 @@
 //   SMARTBILL_CIF     - CIF-ul firmei (ex: RO44353721)
 //   SMARTBILL_SERIES  - numele seriei de facturi (din Emitere > Factura > Serii)
 
+import { authenticate } from './_auth.js';
+
 function mapTaxName(tva) {
   const t = Number(tva);
   if (t === 19) return "Normala";
@@ -22,9 +24,10 @@ function mapTaxName(tva) {
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Metoda nepermisa." });
+  if (!authenticate(req)) return res.status(401).json({ error: 'Sesiune invalida sau expirata.' });
 
   const email = process.env.SMARTBILL_EMAIL;
   const token = process.env.SMARTBILL_TOKEN;
