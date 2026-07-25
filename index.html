@@ -2180,12 +2180,31 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           {pinPanelOpen && (
             <div className="rounded-xl p-3 mt-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
               <button onClick={()=>{
-                  if (!navigator.geolocation) { setPinStatus('Telefonul nu suportă geolocalizare.'); return; }
+                  if (!navigator.geolocation) { setPinStatus('Dispozitivul nu suportă geolocalizare.'); return; }
+                  if (typeof window !== 'undefined' && window.isSecureContext === false) { setPinStatus('Locația are nevoie de HTTPS. Deschide aplicația prin adresa https://…, nu dintr-un fișier local.'); return; }
+                  const msgFor = (err)=>{
+                    if (err.code === 1) return 'Accesul la locație a fost refuzat. iPhone: Setări → Confidențialitate și securitate → Servicii de localizare (pornit) → derulează la Safari și alege „Cât timp folosesc aplicația". Laptop/Chrome: apasă pe iconița de locație din bara de adrese și permite.';
+                    if (err.code === 2) return 'Poziția nu poate fi determinată acum (fără semnal GPS/rețea). Încearcă din nou sau scrie coordonatele manual mai jos.';
+                    if (err.code === 3) return 'A durat prea mult obținerea locației. Verifică semnalul și încearcă din nou.';
+                    return err.message || 'Nu am putut obține locația.';
+                  };
+                  const onOk = (pos, metoda)=>{ setSantierLocatie(santier.id, pos.coords.latitude, pos.coords.longitude); setPinStatus('Pin salvat — chiar locul unde ești acum (' + metoda + ', ±' + Math.round(pos.coords.accuracy) + 'm).'); };
                   setPinStatus('Se caută locația...');
                   navigator.geolocation.getCurrentPosition(
-                    (pos)=>{ setSantierLocatie(santier.id, pos.coords.latitude, pos.coords.longitude); setPinStatus('Pin salvat — chiar locul unde ești acum.'); },
-                    (err)=>{ setPinStatus('Nu am putut lua locația: ' + err.message + ' (verifică permisiunea de locație în browser).'); },
-                    { enableHighAccuracy: true, timeout: 10000 }
+                    (pos)=>onOk(pos, 'GPS'),
+                    (err)=>{
+                      if (err.code === 3 || err.code === 2) {
+                        setPinStatus('Semnal GPS slab — încerc prin rețea...');
+                        navigator.geolocation.getCurrentPosition(
+                          (pos)=>onOk(pos, 'rețea'),
+                          (err2)=>{ setPinStatus('Nu am putut lua locația: ' + msgFor(err2)); },
+                          { enableHighAccuracy: false, timeout: 25000, maximumAge: 60000 }
+                        );
+                      } else {
+                        setPinStatus('Nu am putut lua locația: ' + msgFor(err));
+                      }
+                    },
+                    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
                   );
                 }} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📍 Sunt aici acum — setează pin</button>
               <div className="text-xs mt-3 mb-1" style={{ color:'#5C6570' }}>Sau, dacă nu ești la șantier, scrie coordonate (ex: 46.770439, 23.591423):</div>
