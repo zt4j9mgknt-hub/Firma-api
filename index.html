@@ -2039,6 +2039,8 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [pinPanelOpen, setPinPanelOpen] = useState(false);
   const [pinManual, setPinManual] = useState('');
   const [pinStatus, setPinStatus] = useState('');
+  const [pinCoords, setPinCoords] = useState(null);
+  const [pinLoading, setPinLoading] = useState(false);
   const [raporteShowAll, setRaporteShowAll] = useState(false);
 
   // Cand un Manager/Electrician apasă pe o alertă din Dashboard, sare direct
@@ -2173,23 +2175,26 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         </p>
         <div className="mb-3">
           {santier?.lat ? (
-            <button onClick={()=>{ setPinPanelOpen(!pinPanelOpen); setPinStatus(''); }} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#4CAF7D', background:'#171C21', border:'1px solid #4CAF7D66' }}>📌 Pin exact setat — schimbă</button>
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <button onClick={()=>{ setPinPanelOpen(!pinPanelOpen); setPinStatus(''); setPinCoords(null); }} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#4CAF7D', background:'#171C21', border:'1px solid #4CAF7D66' }}>📌 Pin exact setat — schimbă</button>
+              <a href={`https://www.google.com/maps/dir/?api=1&destination=${santier.lat},${santier.lng}`} target="_blank" rel="noopener noreferrer" className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>🧭 Navighează la pin</a>
+            </div>
           ) : (
-            <button onClick={()=>{ setPinPanelOpen(!pinPanelOpen); setPinStatus(''); }} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📌 Adaugă pin exact</button>
+            <button onClick={()=>{ setPinPanelOpen(!pinPanelOpen); setPinStatus(''); setPinCoords(null); }} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📌 Adaugă pin exact</button>
           )}
           {pinPanelOpen && (
             <div className="rounded-xl p-3 mt-2 max-w-sm" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-              <button onClick={()=>{
+              <button disabled={pinLoading} onClick={()=>{
                   if (!navigator.geolocation) { setPinStatus('Dispozitivul nu suportă geolocalizare.'); return; }
-                  if (typeof window !== 'undefined' && window.isSecureContext === false) { setPinStatus('Locația are nevoie de HTTPS. Deschide aplicația prin adresa https://…, nu dintr-un fișier local.'); return; }
+                  if (typeof window !== 'undefined' && window.isSecureContext === false) { setPinStatus('Locația are nevoie de HTTPS. Deschide aplicația prin adresa https://…'); return; }
                   const msgFor = (err)=>{
-                    if (err.code === 1) return 'Accesul la locație a fost refuzat. iPhone: Setări → Confidențialitate și securitate → Servicii de localizare (pornit) → derulează la Safari și alege „Cât timp folosesc aplicația". Laptop/Chrome: apasă pe iconița de locație din bara de adrese și permite.';
-                    if (err.code === 2) return 'Poziția nu poate fi determinată acum (fără semnal GPS/rețea). Încearcă din nou sau scrie coordonatele manual mai jos.';
+                    if (err.code === 1) return 'Accesul la locație a fost refuzat. iPhone: Setări → Confidențialitate și securitate → Servicii de localizare (pornit) → Safari → „Cât timp folosesc aplicația" + „Locație precisă" pornită. Laptop/Chrome: apasă pe iconița de locație din bara de adrese și permite.';
+                    if (err.code === 2) return 'Poziția nu poate fi determinată acum (fără semnal GPS/rețea). Încearcă din nou.';
                     if (err.code === 3) return 'A durat prea mult obținerea locației. Verifică semnalul și încearcă din nou.';
                     return err.message || 'Nu am putut obține locația.';
                   };
-                  const onOk = (pos, metoda)=>{ setSantierLocatie(santier.id, pos.coords.latitude, pos.coords.longitude); setPinStatus('Pin salvat — chiar locul unde ești acum (' + metoda + ', ±' + Math.round(pos.coords.accuracy) + 'm).'); };
-                  setPinStatus('Se caută locația...');
+                  const onOk = (pos, metoda)=>{ setPinLoading(false); setPinCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, method: metoda }); setPinStatus(''); };
+                  setPinLoading(true); setPinStatus('Se caută locația...');
                   navigator.geolocation.getCurrentPosition(
                     (pos)=>onOk(pos, 'GPS'),
                     (err)=>{
@@ -2197,31 +2202,37 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                         setPinStatus('Semnal GPS slab — încerc prin rețea...');
                         navigator.geolocation.getCurrentPosition(
                           (pos)=>onOk(pos, 'rețea'),
-                          (err2)=>{ setPinStatus('Nu am putut lua locația: ' + msgFor(err2)); },
+                          (err2)=>{ setPinLoading(false); setPinStatus('Nu am putut lua locația: ' + msgFor(err2)); },
                           { enableHighAccuracy: false, timeout: 25000, maximumAge: 60000 }
                         );
                       } else {
-                        setPinStatus('Nu am putut lua locația: ' + msgFor(err));
+                        setPinLoading(false); setPinStatus('Nu am putut lua locația: ' + msgFor(err));
                       }
                     },
                     { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
                   );
-                }} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📍 Sunt aici acum — setează pin</button>
-              <div className="text-xs mt-3 mb-1" style={{ color:'#5C6570' }}>Sau, dacă nu ești la șantier, scrie coordonate (ex: 46.770439, 23.591423):</div>
-              <div className="flex gap-1.5">
-                <input value={pinManual} onChange={(e)=>setPinManual(e.target.value)} placeholder="scrie aici, ex: 46.770439, 23.591423" className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-                <button onClick={()=>{
-                    if (!pinManual.trim()) { setPinStatus('Scrie mai întâi coordonatele în căsuță.'); return; }
-                    const m = pinManual.match(/(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)/);
-                    if (!m) { setPinStatus('Nu am putut citi coordonatele — folosește formatul „lat, lng".'); return; }
-                    setSantierLocatie(santier.id, Number(m[1]), Number(m[2]));
-                    setPinStatus('Pin salvat.'); setPinManual('');
-                  }} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>Salvează</button>
-              </div>
-              {santier?.lat && (
-                <button onClick={()=>{ setSantierLocatie(santier.id, null, null); setPinStatus('Pin șters — navigația va folosi din nou adresa text.'); }} className="text-xs mt-2" style={{ color:'#E05252' }}>Șterge pinul exact</button>
+                }} className="w-full text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background: pinLoading ? '#6b7683' : '#2E8BD1' }}>{pinLoading ? '⏳ Se caută locația...' : '📍 Ia coordonatele actuale'}</button>
+
+              {pinCoords && (
+                <div className="mt-3 rounded-lg p-3" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+                  <div className="text-xs mb-1" style={{ color:'#8B93A0' }}>Coordonatele tale acum ({pinCoords.method}, ±{Math.round(pinCoords.accuracy)}m):</div>
+                  <div className="text-lg" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{pinCoords.lat.toFixed(6)}, {pinCoords.lng.toFixed(6)}</div>
+                  <button onClick={()=>{ setSantierLocatie(santier.id, pinCoords.lat, pinCoords.lng); setPinStatus('✅ Pin salvat aici!'); setPinCoords(null); }} className="w-full mt-2 text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>💾 Salvează pin la aceste coordonate</button>
+                </div>
               )}
-              {pinStatus && <p className="text-xs mt-2" style={{ color:'#8B93A0' }}>{pinStatus}</p>}
+
+              {santier?.lat && (
+                <div className="mt-3 rounded-lg p-3" style={{ background:'#14231A', border:'1px solid #4CAF7D66' }}>
+                  <div className="text-sm font-semibold" style={{ color:'#4CAF7D' }}>✅ Pin exact setat</div>
+                  <div className="text-sm mb-2" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{Number(santier.lat).toFixed(6)}, {Number(santier.lng).toFixed(6)}</div>
+                  <div className="flex gap-1.5">
+                    <a href={`https://www.google.com/maps/dir/?api=1&destination=${santier.lat},${santier.lng}`} target="_blank" rel="noopener noreferrer" className="flex-1 text-center text-sm px-3 py-2 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>🧭 Deschide navigația</a>
+                    <button onClick={()=>{ setSantierLocatie(santier.id, null, null); setPinCoords(null); setPinStatus('Pin șters — navigația va folosi din nou adresa text.'); }} className="text-sm px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#171C21', border:'1px solid #E0525244' }}>Șterge</button>
+                  </div>
+                </div>
+              )}
+
+              {pinStatus && <p className="text-sm mt-2 font-medium" style={{ color: pinStatus.startsWith('Nu am putut') ? '#E05252' : '#E9E7E2' }}>{pinStatus}</p>}
             </div>
           )}
         </div>
