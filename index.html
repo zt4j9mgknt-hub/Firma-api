@@ -2253,6 +2253,8 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [pinCoords, setPinCoords] = useState(null);
   const [pinLoading, setPinLoading] = useState(false);
   const [raporteShowAll, setRaporteShowAll] = useState(false);
+  const [devizNr, setDevizNr] = useState('');
+  const [devizData, setDevizData] = useState(new Date().toISOString().slice(0,10));
 
   // Cand un Manager/Electrician apasă pe o alertă din Dashboard, sare direct
   // la șantierul și sub-tab-ul relevant (Materiale, Scule etc.), nu doar la listă.
@@ -2542,6 +2544,31 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             <button onClick={()=>onExportMaterialeFolosite(rapoarte.filter((r)=>r.santierId===selected && (!exportFrom || r.data>=exportFrom) && (!exportTo || r.data<=exportTo)), santier?.nume)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>🧾 Exportă materiale folosite în Deviz</button>
           )}
         </div>
+        )}
+
+        {/* ---- Generează deviz din rapoarte (Manager) — depinde de tipul de facturare al șantierului ---- */}
+        {currentUser?.rol === 'Manager' && (
+          (santier?.tipFacturare === 'orar' || !santier?.tipFacturare) ? (
+            <div className="rounded-xl p-3 mb-4 flex items-center gap-2 flex-wrap" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+              <span className="text-sm font-semibold" style={{ color:'#E9E7E2' }}>🧾 Deviz tarif orar</span>
+              <span className="text-xs" style={{ color:'#5C6570' }}>Nr.</span>
+              <input value={devizNr} onChange={(e)=>setDevizNr(e.target.value)} placeholder="ex: 2" className="w-16 rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#1B2127', color:'#E9E7E2', border:'1px solid #2A323B' }} />
+              <span className="text-xs" style={{ color:'#5C6570' }}>Data</span>
+              <RoCalendarPicker value={devizData} onChange={setDevizData} />
+              <button
+                onClick={()=>{
+                  const rapInterval = rapoarte.filter((r)=>r.santierId===selected && (!exportFrom || r.data>=exportFrom) && (!exportTo || r.data<=exportTo));
+                  openDevizOrar({ santier, company, rapoarte: rapInterval, nr: devizNr || '—', data: fmtData(devizData) });
+                }}
+                className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>Generează deviz (PDF)</button>
+              {(!santier?.benefNume) && <span className="text-xs" style={{ color:'#E05252' }}>⚠ Completează „Detalii pentru deviz" la editarea șantierului (beneficiar, contract).</span>}
+              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Se ia perioada aleasă mai sus. Preț/oră: {Number(santier?.tarifOrar)||75} lei · TVA 21%.</span>
+            </div>
+          ) : (
+            <div className="rounded-xl p-3 mb-4 text-xs" style={{ background:'#171C21', border:'1px solid #2A323B', color:'#8B93A0' }}>
+              📋 Șantier facturat <b>la poziție</b>. Devizul pe poziții (din lista de cantități importată) vine în pasul următor.
+            </div>
+          )
         )}
 
         {reportForm && <RaportForm initial={reportForm.id?reportForm:null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
@@ -4100,6 +4127,95 @@ function devizPageHtml({ doc, client, company }) {
 
 function openPrintWindow(items) {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Export PDF</title><style>${PRINT_CSS}</style></head><body>${items.map((it) => it.isDeviz ? devizPageHtml(it) : pageHtml(it)).join('')}</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); }, 300);
+}
+
+// --- Deviz pe TARIF ORAR generat din rapoartele zilnice ale unui șantier ---
+// Tabel: DATA · NR PERSOANE · NR ORE/PERS · TOTAL ORE · PREȚ UNITAR · VALOARE.
+// Antetul (Executant / Beneficiar / Contract / Obiectiv) vine din setările șantierului (Etapa 1).
+function devizOrarPageHtml({ santier, company, rapoarte, nr, data }) {
+  const tarif = Number(santier?.tarifOrar) || 75;
+  const tva = 21;
+  const zile = (rapoarte || [])
+    .filter((r)=> (r.persoane || []).some((p)=> p.nume && String(p.nume).trim()))
+    .slice().sort((a,b)=> (a.data < b.data ? -1 : 1));
+  let totalOreGeneral = 0;
+  const rows = zile.map((r,i)=>{
+    const pv = r.persoane.filter((p)=> p.nume && String(p.nume).trim());
+    const nrPers = pv.length;
+    const totalOre = pv.reduce((s,p)=> s + personMinutes(p), 0) / 60;
+    const orePers = nrPers ? totalOre / nrPers : 0;
+    const valoare = totalOre * tarif;
+    totalOreGeneral += totalOre;
+    return `<tr><td>${i+1}</td><td>${esc(fmtData(r.data))}</td><td>${nrPers}</td><td>${orePers.toFixed(2)}</td><td>${totalOre.toFixed(2)}</td><td>${esc(money(tarif))}</td><td>${esc(money(valoare))}</td></tr>`;
+  }).join('');
+  const subtotal = totalOreGeneral * tarif;
+  const tvaVal = subtotal * tva / 100;
+  const total = subtotal + tvaVal;
+
+  const benefLines = String(santier?.benefInfo || '').split('\n').map((l)=>l.trim()).filter(Boolean).map((l)=>`<div>${esc(l)}</div>`).join('');
+  const metaLines = [];
+  if (santier?.contract) metaLines.push(`<b>Contract:</b> Nr. ${esc(santier.contract)}`);
+  if (santier?.obiectiv) metaLines.push(`<b>Obiectiv / Lucrare:</b> ${esc(santier.obiectiv)}`);
+
+  return `<div class="print-page">
+    <div class="pp-header-row">
+      <img class="pp-logo" src="${window.location.origin}/logo.png" alt="Logo" />
+      <div class="pp-title-block">
+        <div class="pp-title">DEVIZ LUCRĂRI</div>
+        <div class="pp-number">Nr. ${esc(nr)} din ${esc(data)}</div>
+      </div>
+    </div>
+    ${metaLines.length ? `<div class="pp-meta">${metaLines.join('<br/>')}</div>` : ''}
+
+    <div class="pp-parties">
+      <div class="pp-party-col">
+        <div class="pp-label">Executant</div>
+        <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei)'}</div>
+        ${company?.cui?`<div>CUI: ${esc(company.cui)}</div>`:''}${company?.regCom?`<div>Reg. com.: ${esc(company.regCom)}</div>`:''}
+        ${company?.adresa?`<div>${esc(company.adresa)}</div>`:''}${company?.iban?`<div>IBAN: ${esc(company.iban)}</div>`:''}${company?.telefon?`<div>Tel: ${esc(company.telefon)}</div>`:''}
+      </div>
+      <div class="pp-party-col">
+        <div class="pp-label">Beneficiar</div>
+        <div class="pp-party-name">${esc(santier?.benefNume) || '—'}</div>
+        ${benefLines}
+      </div>
+    </div>
+
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th>Data</th><th>Nr. persoane</th><th>Ore / pers.</th><th>Total ore</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7">Niciun raport în perioada selectată.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="4"></td><td style="font-weight:700">${totalOreGeneral.toFixed(2)}</td><td></td><td style="font-weight:700">${esc(money(subtotal))}</td></tr></tfoot>
+    </table>
+
+    <div class="pp-totals">
+      <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
+      <div class="pp-totals-row"><span>TVA ${tva}%</span><span>${esc(money(tvaVal))}</span></div>
+      <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
+    </div>
+
+    <div class="pp-signatures">
+      <div class="pp-sign-col">
+        <div class="pp-sign-label">Executant</div>
+        <div>${esc(company?.nume) || ''}</div>
+        ${company?.administrator ? `<div>Adm. ${esc(company.administrator)}</div>` : ''}
+        <div class="pp-sign-line"></div>
+      </div>
+      <div class="pp-sign-col">
+        <div class="pp-sign-label">Beneficiar</div>
+        <div>${esc(santier?.benefNume) || ''}</div>
+        <div class="pp-sign-line"></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openDevizOrar({ santier, company, rapoarte, nr, data }) {
+  const validPers = (rapoarte || []).some((r)=> (r.persoane || []).some((p)=> p.nume && String(p.nume).trim()));
+  if (!validPers) { window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.'); return; }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${devizOrarPageHtml({ santier, company, rapoarte, nr, data })}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
