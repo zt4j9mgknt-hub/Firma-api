@@ -1526,6 +1526,12 @@ function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
     setSculeSantier(next); persist('sculeSantier', next); setSculaNoua(''); setSculaAdusaDe('');
   };
   const delScula = (id) => { if (!window.confirm('Ștergi această sculă din lista șantierului?')) return; const next = sculeSantier.filter((s)=>s.id!==id); setSculeSantier(next); persist('sculeSantier', next); };
+  const [trimiteSculaId, setTrimiteSculaId] = useState(null);
+  const trimiteScula = (s, dest) => {
+    if (!window.confirm(`Trimiți „${s.denumire}" la ${dest}? Va fi scoasă din lista șantierului.`)) return;
+    const next = sculeSantier.filter((x)=>x.id!==s.id);
+    setSculeSantier(next); persist('sculeSantier', next); setTrimiteSculaId(null);
+  };
 
   return (
     <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -1538,9 +1544,25 @@ function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
       {sculeAici.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Nicio sculă adăugată.</div> : (
         <div className="space-y-1">
           {sculeAici.map((s)=>(
-            <div key={s.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
-              <span style={{ color:'#E9E7E2' }}>{s.denumire}{s.adusaDe && <span style={{ color:'#8B93A0' }}> · {s.adusaDe}</span>}</span>
-              <button onClick={()=>delScula(s.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+            <div key={s.id} className="text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+              <div className="flex items-center justify-between gap-2">
+                <span style={{ color:'#E9E7E2' }}>{s.denumire}{s.adusaDe && <span style={{ color:'#8B93A0' }}> · {s.adusaDe}</span>}</span>
+                {trimiteSculaId!==s.id && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={()=>setTrimiteSculaId(s.id)} className="px-2 py-0.5 rounded" style={{ color:'#8B93A0', background:'#1B2127' }}>↩ Trimite</button>
+                    <button onClick={()=>delScula(s.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                  </div>
+                )}
+              </div>
+              {trimiteSculaId===s.id && (
+                <div className="flex items-center gap-1 flex-wrap mt-2 pt-2" style={{ borderTop:'1px solid #2A323B' }}>
+                  <span className="text-[10px]" style={{ color:'#8B93A0' }}>Trimite la:</span>
+                  <button onClick={()=>trimiteScula(s,'Depozit')} className="px-2 py-1 rounded font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🏠 Depozit</button>
+                  <button onClick={()=>trimiteScula(s,'Alt șantier')} className="px-2 py-1 rounded font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🏗 Alt șantier</button>
+                  <button onClick={()=>trimiteScula(s,'Service')} className="px-2 py-1 rounded font-medium" style={{ color:'#14181C', background:'#E9A23B' }}>🔧 Service</button>
+                  <button onClick={()=>setTrimiteSculaId(null)} className="px-2 py-1" style={{ color:'#8B93A0' }}>Anulează</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1670,9 +1692,18 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     const next = [miscare, ...miscariSantier];
     setMiscariSantier(next); persist('miscariSantier', next); setConsumState(null);
   };
+  const [returnMatState, setReturnMatState] = useState(null);
+  const [returnMatQty, setReturnMatQty] = useState('');
+  const confirmReturnMat = (m, dest) => {
+    const cant = Number(returnMatQty) || 0;
+    if (cant <= 0) { setReturnMatState(null); return; }
+    const miscare = { id: uid(), santierId, denumire: m.denumire, um: m.um, tip:'iesire', cantitate: cant, data: new Date().toISOString().slice(0,10), nota:`Trimis la ${dest}` };
+    const next = [miscare, ...miscariSantier];
+    setMiscariSantier(next); persist('miscariSantier', next); setReturnMatState(null); setReturnMatQty('');
+  };
 
   const consumPeMaterial = {};
-  miscariAici.filter((m)=>m.tip==='iesire').forEach((m)=>{
+  miscariAici.filter((m)=>m.tip==='iesire' && !String(m.nota||'').startsWith('Trimis la')).forEach((m)=>{
     if (!consumPeMaterial[m.denumire]) consumPeMaterial[m.denumire] = { denumire:m.denumire, um:m.um, cantitate:0 };
     consumPeMaterial[m.denumire].cantitate += Number(m.cantitate)||0;
   });
@@ -1779,20 +1810,34 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         ) : (
           <div className="space-y-1">
             {stocList.map((m)=>(
-              <div key={m.denumire} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
-                <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.stoc} {m.um}</span></span>
-                {editStocState===m.denumire ? (
-                  <div className="flex items-center gap-1">
-                    <input type="number" value={editStocValue} onChange={(e)=>setEditStocValue(e.target.value)} className="w-16 rounded-lg px-2 py-1 text-xs outline-none" style={inputStyle} />
-                    <button onClick={()=>confirmEditStoc(m)} className="px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#4CAF7D' }}>✓</button>
-                    <button onClick={()=>setEditStocState(null)} className="px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>
-                  </div>
-                ) : consumState===m.denumire ? (
-                  <MoveInput tip="iesire" onConfirm={(cant)=>confirmConsum(m.denumire, m.um, cant)} onCancel={()=>setConsumState(null)} />
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <button onClick={()=>{ setEditStocState(m.denumire); setEditStocValue(m.stoc); }} className="px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✎ Edit</button>
-                    <button onClick={()=>setConsumState(m.denumire)} className="px-2 py-1 rounded-lg" style={{ color:'#E05252', background:'#1B2127' }}>− Consum</button>
+              <div key={m.denumire} className="text-xs px-2 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                <div className="flex items-center justify-between gap-2">
+                  <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.stoc} {m.um}</span></span>
+                  {editStocState===m.denumire ? (
+                    <div className="flex items-center gap-1">
+                      <input type="number" value={editStocValue} onChange={(e)=>setEditStocValue(e.target.value)} className="w-16 rounded-lg px-2 py-1 text-xs outline-none" style={inputStyle} />
+                      <button onClick={()=>confirmEditStoc(m)} className="px-2 py-1 rounded-lg" style={{ color:'#14181C', background:'#4CAF7D' }}>✓</button>
+                      <button onClick={()=>setEditStocState(null)} className="px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>
+                    </div>
+                  ) : consumState===m.denumire ? (
+                    <MoveInput tip="iesire" onConfirm={(cant)=>confirmConsum(m.denumire, m.um, cant)} onCancel={()=>setConsumState(null)} />
+                  ) : returnMatState!==m.denumire ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={()=>{ setEditStocState(m.denumire); setEditStocValue(m.stoc); }} className="px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✎</button>
+                      <button onClick={()=>setConsumState(m.denumire)} className="px-2 py-1 rounded-lg" style={{ color:'#E05252', background:'#1B2127' }}>− Consum</button>
+                      <button onClick={()=>{ setReturnMatState(m.denumire); setReturnMatQty(m.stoc); }} className="px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>↩ Trimite</button>
+                    </div>
+                  ) : null}
+                </div>
+                {returnMatState===m.denumire && (
+                  <div className="flex items-center gap-1 flex-wrap mt-2 pt-2" style={{ borderTop:'1px solid #2A323B' }}>
+                    <span className="text-[10px]" style={{ color:'#8B93A0' }}>Trimite</span>
+                    <input type="number" value={returnMatQty} onChange={(e)=>setReturnMatQty(e.target.value)} className="w-14 rounded-lg px-2 py-1 text-xs outline-none text-center" style={inputStyle} />
+                    <span className="text-[10px]" style={{ color:'#8B93A0' }}>{m.um} la:</span>
+                    <button onClick={()=>confirmReturnMat(m,'Depozit')} className="px-2 py-1 rounded font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🏠 Depozit</button>
+                    <button onClick={()=>confirmReturnMat(m,'Alt șantier')} className="px-2 py-1 rounded font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🏗 Alt șantier</button>
+                    <button onClick={()=>confirmReturnMat(m,'Furnizor')} className="px-2 py-1 rounded font-medium" style={{ color:'#14181C', background:'#E9A23B' }}>🏭 Furnizor</button>
+                    <button onClick={()=>setReturnMatState(null)} className="px-2 py-1" style={{ color:'#8B93A0' }}>Anulează</button>
                   </div>
                 )}
               </div>
@@ -2025,7 +2070,101 @@ function RaportForm({ initial, etape, echipaPermisa, materials, onCancel, onSave
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
+function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const etaje = structuraSantier.filter((e)=>e.santierId===santierId);
+  const [etajNou, setEtajNou] = useState('');
+  const [apartNou, setApartNou] = useState({});
+  const [openEtaj, setOpenEtaj] = useState({});
+  const [matForm, setMatForm] = useState({});
+  const save = (next) => { setStructuraSantier(next); persist('structuraSantier', next); };
+  const getForm = (apId) => matForm[apId] || { denumire:'', cantitate:1, um:'buc' };
+
+  const addEtaj = () => {
+    if (!etajNou.trim()) return;
+    save([...structuraSantier, { id: uid(), santierId, nume: etajNou.trim(), apartamente: [] }]);
+    setEtajNou('');
+  };
+  const delEtaj = (id) => { if (!window.confirm('Ștergi acest etaj cu tot ce conține?')) return; save(structuraSantier.filter((e)=>e.id!==id)); };
+  const addApart = (etajId) => {
+    const nume = (apartNou[etajId]||'').trim();
+    if (!nume) return;
+    save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:[...(e.apartamente||[]), { id: uid(), nume, materiale: [] }]} : e));
+    setApartNou({...apartNou, [etajId]:''});
+  };
+  const delApart = (etajId, apId) => { if (!window.confirm('Ștergi acest apartament?')) return; save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).filter((a)=>a.id!==apId)} : e)); };
+  const addMat = (etajId, apId) => {
+    const f = getForm(apId);
+    if (!(f.denumire||'').trim()) return;
+    const mat = { id: uid(), denumire: f.denumire.trim(), cantitate: Number(f.cantitate)||0, um: f.um||'buc' };
+    save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:[...(a.materiale||[]), mat]} : a)} : e));
+    setMatForm({...matForm, [apId]: { denumire:'', cantitate:1, um:'buc' }});
+  };
+  const delMat = (etajId, apId, matId) => { save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:(a.materiale||[]).filter((m)=>m.id!==matId)} : a)} : e)); };
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🏢 Structură — etaje și apartamente</div>
+        <div className="flex gap-2">
+          <input placeholder="Etaj (ex: Parter, Etaj 1)" value={etajNou} onChange={(e)=>setEtajNou(e.target.value)} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <button onClick={addEtaj} className="text-sm px-4 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Etaj</button>
+        </div>
+      </div>
+
+      {etaje.length === 0 ? (
+        <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>Niciun etaj încă. Adaugă primul etaj mai sus.</div>
+      ) : etaje.map((e)=>(
+        <div key={e.id} className="rounded-xl" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <button onClick={()=>setOpenEtaj({...openEtaj, [e.id]: !openEtaj[e.id]})} className="flex items-center gap-2 text-left flex-1 min-w-0">
+              <span style={{ fontSize:10, transform: openEtaj[e.id]?'rotate(90deg)':'none', display:'inline-block', color:'#8B93A0' }}>▶</span>
+              <span className="text-sm font-semibold truncate" style={{ color:'#E9E7E2' }}>🏢 {e.nume}</span>
+              <span className="text-xs shrink-0" style={{ color:'#5C6570' }}>({(e.apartamente||[]).length} ap.)</span>
+            </button>
+            <button onClick={()=>delEtaj(e.id)} className="ml-2" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+          </div>
+          {openEtaj[e.id] && (
+          <div className="px-3 pb-3 space-y-2">
+            <div className="flex gap-2">
+              <input placeholder="Apartament (ex: Ap. 1)" value={apartNou[e.id]||''} onChange={(ev)=>setApartNou({...apartNou, [e.id]:ev.target.value})} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+              <button onClick={()=>addApart(e.id)} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Ap.</button>
+            </div>
+            {(e.apartamente||[]).map((a)=>{
+              const f = getForm(a.id);
+              return (
+              <div key={a.id} className="rounded-lg p-2.5" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🚪 {a.nume} <span className="text-xs" style={{ color:'#5C6570' }}>· {(a.materiale||[]).length} mat.</span></span>
+                  <button onClick={()=>delApart(e.id, a.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                </div>
+                <div className="space-y-1 mb-2">
+                  {(a.materiale||[]).length === 0 && <div className="text-[11px]" style={{ color:'#5C6570' }}>Niciun material adăugat.</div>}
+                  {(a.materiale||[]).map((m)=>(
+                    <div key={m.id} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background:'#1B2127' }}>
+                      <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
+                      <button onClick={()=>delMat(e.id, a.id, m.id)} style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-1.5">
+                  <input placeholder="Material" value={f.denumire} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, denumire:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                  <input type="number" value={f.cantitate} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, cantitate:ev.target.value}})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                  <input placeholder="UM" value={f.um} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, um:ev.target.value}})} className="w-12 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                  <button onClick={()=>addMat(e.id, a.id)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>+</button>
+                </div>
+              </div>
+              );
+            })}
+          </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -2239,6 +2378,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
 
         <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 mb-4 p-1.5 rounded-xl" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
           <button onClick={()=>setSiteView('materiale')} className="text-sm px-3 py-2 rounded-lg font-semibold transition-colors" style={{ color: siteView==='materiale'?'#14181C':'#B8BFC9', background: siteView==='materiale'?'#2E8BD1':'transparent' }}>📦 Materiale</button>
+          <button onClick={()=>setSiteView('structura')} className="text-sm px-3 py-2 rounded-lg font-semibold transition-colors" style={{ color: siteView==='structura'?'#14181C':'#B8BFC9', background: siteView==='structura'?'#2E8BD1':'transparent' }}>🏢 Structură</button>
           <button onClick={()=>setSiteView('planse')} className="text-sm px-3 py-2 rounded-lg font-semibold transition-colors" style={{ color: siteView==='planse'?'#14181C':'#B8BFC9', background: siteView==='planse'?'#2E8BD1':'transparent' }}>📐 Planșe</button>
           <button onClick={()=>setSiteView('scule')} className="text-sm px-3 py-2 rounded-lg font-semibold transition-colors" style={{ color: siteView==='scule'?'#14181C':'#B8BFC9', background: siteView==='scule'?'#2E8BD1':'transparent' }}>🔧 Scule</button>
           <button onClick={()=>setSiteView('media')} className="text-sm px-3 py-2 rounded-lg font-semibold transition-colors" style={{ color: siteView==='media'?'#14181C':'#B8BFC9', background: siteView==='media'?'#2E8BD1':'transparent' }}>📸 Foto/Video</button>
@@ -2313,6 +2453,9 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         )}
         {siteView === 'media' && (
           <SiteMediaTab santierId={selected} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} persist={persist} currentUser={currentUser} />
+        )}
+        {siteView === 'structura' && (
+          <SiteStructuraTab santierId={selected} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} />
         )}
         {siteView === 'rapoarte' && (
         <>
@@ -3949,6 +4092,7 @@ function App() {
   const [achizitii, setAchizitii] = useState([]);
   const [pontajCorectii, setPontajCorectii] = useState([]);
   const [mediaSantier, setMediaSantier] = useState([]);
+  const [structuraSantier, setStructuraSantier] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
@@ -3971,6 +4115,7 @@ function App() {
       setMiscariSantier(await loadKey('miscariSantier', []));
       setPlanseSantier(await loadKey('planseSantier', []));
       setMediaSantier(await loadKey('mediaSantier', []));
+      setStructuraSantier(await loadKey('structuraSantier', []));
       setConcedii(await loadKey('concedii', []));
       setAchizitii(await loadKey('achizitii', []));
       setPontajCorectii(await loadKey('pontajCorectii', []));
@@ -4008,6 +4153,7 @@ function App() {
       miscariSantier: (v)=>setMiscariSantier(v ?? []),
       planseSantier: (v)=>setPlanseSantier(v ?? []),
       mediaSantier: (v)=>setMediaSantier(v ?? []),
+      structuraSantier: (v)=>setStructuraSantier(v ?? []),
       concedii: (v)=>setConcedii(v ?? []),
       achizitii: (v)=>setAchizitii(v ?? []),
       pontajCorectii: (v)=>setPontajCorectii(v ?? []),
@@ -4318,7 +4464,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} setTab={setTab} setPendingSiteNav={setPendingSiteNav} currentUser={effectiveUser} />}
