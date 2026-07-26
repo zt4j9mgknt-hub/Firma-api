@@ -2147,7 +2147,22 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
   const [editMatId, setEditMatId] = useState({});
   const [cautare, setCautare] = useState('');
   const norm = (s) => String(s||'').toLowerCase().replace(/[\s.]/g,'');
-  const q = norm(cautare);
+  // Căutare deșteaptă pe tokeni: "etaj 1" → tot etajul 1; "ap1 etaj 2" → apartamentul 1 de la etajul 2; "ap1" → toate ap. 1.
+  const parseCautare = (text) => {
+    const floorNums = [], apNums = [], textTerms = [];
+    String(text||'').toLowerCase().trim().split(/\s+/).filter(Boolean).forEach((tokRaw)=>{
+      const tok = tokRaw.replace(/\./g,'');
+      let m;
+      if ((m = tok.match(/^(?:ap|apartament|apt)(\d+)$/))) apNums.push(parseInt(m[1],10));
+      else if ((m = tok.match(/^(?:etaj|et|e)(\d+)$/))) floorNums.push(parseInt(m[1],10));
+      else if (/^\d+$/.test(tok)) floorNums.push(parseInt(tok,10));
+      else if (['etaj','et','ap','apartament','apt','e'].includes(tok)) { /* doar cuvânt-cheie */ }
+      else textTerms.push(tok);
+    });
+    return { floorNums, apNums, textTerms };
+  };
+  const cauta = parseCautare(cautare);
+  const areCautare = cauta.floorNums.length>0 || cauta.apNums.length>0 || cauta.textTerms.length>0;
   const save = (next) => { setStructuraSantier(next); persist('structuraSantier', next); };
   const getForm = (apId) => matForm[apId] || { denumire:'', cantitate:1, um:'buc' };
 
@@ -2193,30 +2208,44 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
 
   const etajeVizibile = etaje.map((e)=>{
     const aps = (e.apartamente || []).slice().sort(cmpNume);
-    if (!q) return { e, aps, isOpen: !!openEtaj[e.id], show: true };
-    if (norm(e.nume).includes(q)) return { e, aps, isOpen: true, show: true };
-    const apMatch = aps.filter((a)=>norm(a.nume).includes(q));
-    return { e, aps: apMatch, isOpen: true, show: apMatch.length > 0 };
+    if (!areCautare) return { e, aps, isOpen: !!openEtaj[e.id], show: true };
+    const fnum = numDin(e.nume);
+    const floorText = norm(e.nume);
+    // filtru pe numărul etajului
+    if (cauta.floorNums.length && (fnum === null || !cauta.floorNums.includes(fnum))) return { e, aps: [], isOpen: true, show: false };
+    const floorTextOK = cauta.textTerms.every((t)=>floorText.includes(t));
+    const needApFilter = cauta.apNums.length > 0 || (cauta.textTerms.length > 0 && !floorTextOK);
+    if (needApFilter) {
+      const apOut = aps.filter((a)=>{
+        const anum = numDin(a.nume), at = norm(a.nume);
+        const apNumOK = !cauta.apNums.length || cauta.apNums.includes(anum);
+        const apTextOK = !cauta.textTerms.length || floorTextOK || cauta.textTerms.every((t)=>at.includes(t) || floorText.includes(t));
+        return apNumOK && apTextOK;
+      });
+      return { e, aps: apOut, isOpen: true, show: apOut.length > 0 };
+    }
+    // fără constrângere pe apartament → tot etajul (dar dacă e text liber, trebuie să se potrivească pe etaj)
+    if (cauta.textTerms.length && !floorTextOK) return { e, aps: [], isOpen: true, show: false };
+    return { e, aps, isOpen: true, show: true };
   }).filter((x)=>x.show);
 
   return (
     <div className="space-y-2">
       {onBack && <button onClick={onBack} className="text-xs" style={{ color:'#5C6570' }}>← Înapoi</button>}
-      <div className="rounded-xl p-2.5" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-        <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🏢 Structură — etaje și apartamente</div>
-        <input placeholder="🔍 Caută etaj sau apartament..." value={cautare} onChange={(e)=>setCautare(e.target.value)} className="w-full rounded-lg px-3 py-1.5 text-sm outline-none mb-2" style={inputStyle} />
-        <div className="flex gap-2">
-          <input placeholder="Etaj (ex: Parter, Etaj 1)" value={etajNou} onChange={(e)=>setEtajNou(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter') addEtaj(); }} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
-          <button onClick={addEtaj} disabled={!etajNou.trim()} className="text-sm px-4 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă {etajNou.trim() || 'etaj'}</button>
-        </div>
+      <input placeholder="🔍 Caută (ex: „etaj 1", „ap1 etaj 2")" value={cautare} onChange={(e)=>setCautare(e.target.value)} className="w-full rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+      <div className="flex gap-2">
+        <input placeholder="Etaj nou (ex: Parter, Etaj 1)" value={etajNou} onChange={(e)=>setEtajNou(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter') addEtaj(); }} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+        <button onClick={addEtaj} disabled={!etajNou.trim()} className="text-sm px-4 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă {etajNou.trim() || 'etaj'}</button>
       </div>
 
       {etaje.length === 0 ? (
         <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>Niciun etaj încă. Adaugă primul etaj mai sus.</div>
       ) : etajeVizibile.length === 0 ? (
-        <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>Niciun rezultat pentru „{cautare}".</div>
-      ) : etajeVizibile.map(({ e, aps, isOpen })=>(
-        <div key={e.id} className="rounded-lg" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-center py-6 text-sm" style={{ color:'#8B93A0' }}>Niciun rezultat pentru „{cautare}".</div>
+      ) : (
+        <div className="rounded-lg overflow-hidden" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        {etajeVizibile.map(({ e, aps, isOpen }, idx)=>(
+        <div key={e.id} style={{ borderTop: idx ? '1px solid #2A323B' : 'none' }}>
           <div className="flex items-center justify-between px-2.5 py-1.5">
             <button onClick={()=>setOpenEtaj({...openEtaj, [e.id]: !openEtaj[e.id]})} className="flex items-center gap-1.5 text-left flex-1 min-w-0">
               <span style={{ fontSize:9, transform: isOpen?'rotate(90deg)':'none', display:'inline-block', color:'#8B93A0' }}>▶</span>
@@ -2271,7 +2300,9 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
           </div>
           )}
         </div>
-      ))}
+        ))}
+        </div>
+      )}
     </div>
   );
 }
