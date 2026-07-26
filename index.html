@@ -2143,6 +2143,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
   const [etajNou, setEtajNou] = useState('');
   const [apartNou, setApartNou] = useState({});
   const [openEtaj, setOpenEtaj] = useState({});
+  const [selEtaj, setSelEtaj] = useState(null);
   const [matForm, setMatForm] = useState({});
   const [editMatId, setEditMatId] = useState({});
   const [cautare, setCautare] = useState('');
@@ -2229,80 +2230,87 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     return { e, aps, isOpen: true, show: true };
   }).filter((x)=>x.show);
 
+  const activeEtaj = etajeVizibile.find((x)=>x.e.id===selEtaj) || (areCautare ? etajeVizibile[0] : null);
+
   return (
     <div className="space-y-2">
       {onBack && <button onClick={onBack} className="text-xs" style={{ color:'#5C6570' }}>← Înapoi</button>}
-      <input placeholder="🔍 Caută: ex. etaj 1  ·  ap1 etaj 2" value={cautare} onChange={(e)=>setCautare(e.target.value)} className="w-full rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+
+      {/* Bară compactă: căutare mică + etaje ca pastile una lângă alta */}
+      <div className="flex items-center gap-1.5 flex-wrap rounded-lg p-2" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <input placeholder="🔍 Caută" value={cautare} onChange={(e)=>setCautare(e.target.value)} className="rounded-lg px-2.5 py-1 text-sm outline-none" style={{ ...inputStyle, width:'96px' }} />
+        {etaje.length === 0 && <span className="text-xs" style={{ color:'#5C6570' }}>Niciun etaj încă — adaugă mai jos.</span>}
+        {areCautare && etajeVizibile.length === 0 && <span className="text-xs" style={{ color:'#8B93A0' }}>Niciun rezultat.</span>}
+        {etajeVizibile.map(({ e })=>{
+          const activ = activeEtaj && activeEtaj.e.id === e.id;
+          return (
+            <button key={e.id} onClick={()=>setSelEtaj(activ ? null : e.id)} className="text-xs px-2.5 py-1 rounded-lg font-semibold whitespace-nowrap"
+              style={{ color: activ?'#14181C':'#E9E7E2', background: activ?'#2E8BD1':'#171C21', border:'1px solid #2A323B' }}>
+              🏢 {e.nume} <span style={{ color: activ?'#14181C':'#5C6570' }}>({(e.apartamente||[]).length})</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Adaugă etaj compact */}
       <div className="flex gap-2">
         <input placeholder="Etaj nou (ex: Parter, Etaj 1)" value={etajNou} onChange={(e)=>setEtajNou(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter') addEtaj(); }} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
         <button onClick={addEtaj} disabled={!etajNou.trim()} className="text-sm px-4 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă {etajNou.trim() || 'etaj'}</button>
       </div>
 
-      {etaje.length === 0 ? (
-        <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>Niciun etaj încă. Adaugă primul etaj mai sus.</div>
-      ) : etajeVizibile.length === 0 ? (
-        <div className="text-center py-6 text-sm" style={{ color:'#8B93A0' }}>Niciun rezultat pentru „{cautare}".</div>
-      ) : (
-        <div className="rounded-lg overflow-hidden" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-        {etajeVizibile.map(({ e, aps, isOpen }, idx)=>(
-        <div key={e.id} style={{ borderTop: idx ? '1px solid #2A323B' : 'none' }}>
-          <div className="flex items-center justify-between px-2.5 py-1.5">
-            <button onClick={()=>setOpenEtaj({...openEtaj, [e.id]: !openEtaj[e.id]})} className="flex items-center gap-1.5 text-left flex-1 min-w-0">
-              <span style={{ fontSize:9, transform: isOpen?'rotate(90deg)':'none', display:'inline-block', color:'#8B93A0' }}>▶</span>
-              <span className="text-sm font-semibold truncate" style={{ color:'#E9E7E2' }}>🏢 {e.nume}</span>
-              <span className="text-xs shrink-0" style={{ color:'#5C6570' }}>({(e.apartamente||[]).length} ap.)</span>
-            </button>
-            <div className="flex items-center gap-2.5 ml-2 shrink-0">
+      {/* Panoul etajului selectat — apare doar când apeși o pastilă */}
+      {activeEtaj && (()=>{
+        const e = activeEtaj.e; const aps = activeEtaj.aps;
+        return (
+        <div className="rounded-lg p-2.5 space-y-1.5" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold" style={{ color:'#E9E7E2' }}>🏢 {e.nume} <span className="text-xs" style={{ color:'#5C6570' }}>· {(e.apartamente||[]).length} ap.</span></span>
+            <div className="flex items-center gap-2.5 shrink-0">
               <button onClick={()=>renEtaj(e.id, e.nume)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={13}>✎</Icon></button>
               <button onClick={()=>delEtaj(e.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={13}>🗑</Icon></button>
             </div>
           </div>
-          {isOpen && (
-          <div className="px-2.5 pb-2.5 space-y-1.5" style={{ borderTop:'1px solid #232C34' }}>
-            <div className="h-1"></div>
-            <div className="flex gap-2">
-              <input placeholder="Apartament (ex: Ap. 1)" value={apartNou[e.id]||''} onChange={(ev)=>setApartNou({...apartNou, [e.id]:ev.target.value})} onKeyDown={(ev)=>{ if(ev.key==='Enter') addApart(e.id); }} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
-              <button onClick={()=>addApart(e.id)} disabled={!(apartNou[e.id]||'').trim()} className="text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă {(apartNou[e.id]||'').trim() || 'apartament'}</button>
-            </div>
-            {aps.map((a)=>{
-              const f = getForm(a.id);
-              return (
-              <div key={a.id} className="rounded-lg p-2 ml-2" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🚪 {a.nume} <span className="text-xs" style={{ color:'#5C6570' }}>· {(a.materiale||[]).length} mat.</span></span>
-                  <div className="flex items-center gap-2.5 shrink-0">
-                    <button onClick={()=>renApart(e.id, a.id, a.nume)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={12}>✎</Icon></button>
-                    <button onClick={()=>delApart(e.id, a.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
-                  </div>
-                </div>
-                <div className="space-y-1 mb-1.5">
-                  {(a.materiale||[]).length === 0 && <div className="text-[11px]" style={{ color:'#5C6570' }}>Niciun material adăugat.</div>}
-                  {(a.materiale||[]).map((m)=>(
-                    <div key={m.id} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? '#232C34' : '#1B2127' }}>
-                      <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={()=>startEditMat(a.id, m)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
-                        <button onClick={()=>delMat(e.id, a.id, m.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex gap-1.5">
-                  <input placeholder="Material" value={f.denumire} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, denumire:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
-                  <input type="number" value={f.cantitate} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, cantitate:ev.target.value}})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
-                  <input placeholder="UM" value={f.um} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, um:ev.target.value}})} className="w-12 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
-                  <button onClick={()=>addMat(e.id, a.id)} disabled={!(f.denumire||'').trim()} className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background: editMatId[a.id] ? '#E9A23B' : '#4CAF7D' }}>{editMatId[a.id] ? 'Salvează' : 'Adaugă'}</button>
-                  {editMatId[a.id] && <button onClick={()=>cancelEditMat(a.id)} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>}
+          <div className="flex gap-2">
+            <input placeholder="Apartament (ex: Ap. 1)" value={apartNou[e.id]||''} onChange={(ev)=>setApartNou({...apartNou, [e.id]:ev.target.value})} onKeyDown={(ev)=>{ if(ev.key==='Enter') addApart(e.id); }} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+            <button onClick={()=>addApart(e.id)} disabled={!(apartNou[e.id]||'').trim()} className="text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă {(apartNou[e.id]||'').trim() || 'apartament'}</button>
+          </div>
+          {aps.length === 0 && <div className="text-xs" style={{ color:'#5C6570' }}>Niciun apartament încă.</div>}
+          {aps.map((a)=>{
+            const f = getForm(a.id);
+            return (
+            <div key={a.id} className="rounded-lg p-2" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🚪 {a.nume} <span className="text-xs" style={{ color:'#5C6570' }}>· {(a.materiale||[]).length} mat.</span></span>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button onClick={()=>renApart(e.id, a.id, a.nume)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={12}>✎</Icon></button>
+                  <button onClick={()=>delApart(e.id, a.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
                 </div>
               </div>
-              );
-            })}
-          </div>
-          )}
+              <div className="space-y-1 mb-1.5">
+                {(a.materiale||[]).length === 0 && <div className="text-[11px]" style={{ color:'#5C6570' }}>Niciun material adăugat.</div>}
+                {(a.materiale||[]).map((m)=>(
+                  <div key={m.id} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? '#232C34' : '#1B2127' }}>
+                    <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={()=>startEditMat(a.id, m)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
+                      <button onClick={()=>delMat(e.id, a.id, m.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-1.5">
+                <input placeholder="Material" value={f.denumire} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, denumire:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                <input type="number" value={f.cantitate} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, cantitate:ev.target.value}})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                <input placeholder="UM" value={f.um} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, um:ev.target.value}})} className="w-12 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                <button onClick={()=>addMat(e.id, a.id)} disabled={!(f.denumire||'').trim()} className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background: editMatId[a.id] ? '#E9A23B' : '#4CAF7D' }}>{editMatId[a.id] ? 'Salvează' : 'Adaugă'}</button>
+                {editMatId[a.id] && <button onClick={()=>cancelEditMat(a.id)} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>}
+              </div>
+            </div>
+            );
+          })}
         </div>
-        ))}
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
