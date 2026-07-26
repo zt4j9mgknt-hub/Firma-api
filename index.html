@@ -2133,6 +2133,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
   const [apartNou, setApartNou] = useState({});
   const [openEtaj, setOpenEtaj] = useState({});
   const [matForm, setMatForm] = useState({});
+  const [editMatId, setEditMatId] = useState({});
   const [cautare, setCautare] = useState('');
   const norm = (s) => String(s||'').toLowerCase().replace(/[\s.]/g,'');
   const q = norm(cautare);
@@ -2145,6 +2146,11 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     setEtajNou('');
   };
   const delEtaj = (id) => { if (!window.confirm('Ștergi acest etaj cu tot ce conține?')) return; save(structuraSantier.filter((e)=>e.id!==id)); };
+  const renEtaj = (id, numeVechi) => {
+    const nume = window.prompt('Redenumește etajul:', numeVechi);
+    if (nume === null || !nume.trim()) return;
+    save(structuraSantier.map((e)=> e.id===id ? {...e, nume: nume.trim()} : e));
+  };
   const addApart = (etajId) => {
     const nume = (apartNou[etajId]||'').trim();
     if (!nume) return;
@@ -2152,14 +2158,27 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     setApartNou({...apartNou, [etajId]:''});
   };
   const delApart = (etajId, apId) => { if (!window.confirm('Ștergi acest apartament?')) return; save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).filter((a)=>a.id!==apId)} : e)); };
+  const renApart = (etajId, apId, numeVechi) => {
+    const nume = window.prompt('Redenumește apartamentul:', numeVechi);
+    if (nume === null || !nume.trim()) return;
+    save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, nume: nume.trim()} : a)} : e));
+  };
   const addMat = (etajId, apId) => {
     const f = getForm(apId);
     if (!(f.denumire||'').trim()) return;
-    const mat = { id: uid(), denumire: f.denumire.trim(), cantitate: Number(f.cantitate)||0, um: f.um||'buc' };
-    save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:[...(a.materiale||[]), mat]} : a)} : e));
+    const editing = editMatId[apId];
+    if (editing) {
+      save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:(a.materiale||[]).map((m)=> m.id===editing ? {...m, denumire:f.denumire.trim(), cantitate:Number(f.cantitate)||0, um:f.um||'buc'} : m)} : a)} : e));
+      setEditMatId({...editMatId, [apId]: null});
+    } else {
+      const mat = { id: uid(), denumire: f.denumire.trim(), cantitate: Number(f.cantitate)||0, um: f.um||'buc' };
+      save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:[...(a.materiale||[]), mat]} : a)} : e));
+    }
     setMatForm({...matForm, [apId]: { denumire:'', cantitate:1, um:'buc' }});
   };
-  const delMat = (etajId, apId, matId) => { save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:(a.materiale||[]).filter((m)=>m.id!==matId)} : a)} : e)); };
+  const startEditMat = (apId, m) => { setMatForm({...matForm, [apId]: { denumire:m.denumire, cantitate:m.cantitate, um:m.um }}); setEditMatId({...editMatId, [apId]: m.id}); };
+  const cancelEditMat = (apId) => { setEditMatId({...editMatId, [apId]: null}); setMatForm({...matForm, [apId]: { denumire:'', cantitate:1, um:'buc' }}); };
+  const delMat = (etajId, apId, matId) => { if (!window.confirm('Ștergi acest material?')) return; save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:(a.materiale||[]).filter((m)=>m.id!==matId)} : a)} : e)); };
 
   const etajeVizibile = etaje.map((e)=>{
     const aps = e.apartamente || [];
@@ -2175,8 +2194,8 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
         <div className="text-sm font-medium mb-2" style={{ color:'#E9E7E2' }}>🏢 Structură — etaje și apartamente</div>
         <input placeholder="🔍 Caută etaj sau apartament..." value={cautare} onChange={(e)=>setCautare(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
         <div className="flex gap-2">
-          <input placeholder="Etaj (ex: Parter, Etaj 1)" value={etajNou} onChange={(e)=>setEtajNou(e.target.value)} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-          <button onClick={addEtaj} className="text-sm px-4 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Etaj</button>
+          <input placeholder="Etaj (ex: Parter, Etaj 1)" value={etajNou} onChange={(e)=>setEtajNou(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter') addEtaj(); }} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <button onClick={addEtaj} disabled={!etajNou.trim()} className="text-sm px-4 py-2 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă {etajNou.trim() || 'etaj'}</button>
         </div>
       </div>
 
@@ -2192,13 +2211,16 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
               <span className="text-sm font-semibold truncate" style={{ color:'#E9E7E2' }}>🏢 {e.nume}</span>
               <span className="text-xs shrink-0" style={{ color:'#5C6570' }}>({(e.apartamente||[]).length} ap.)</span>
             </button>
-            <button onClick={()=>delEtaj(e.id)} className="ml-2" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+            <div className="flex items-center gap-2 ml-2 shrink-0">
+              <button onClick={()=>renEtaj(e.id, e.nume)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={14}>✎</Icon></button>
+              <button onClick={()=>delEtaj(e.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+            </div>
           </div>
           {isOpen && (
           <div className="px-3 pb-3 space-y-2">
             <div className="flex gap-2">
-              <input placeholder="Apartament (ex: Ap. 1)" value={apartNou[e.id]||''} onChange={(ev)=>setApartNou({...apartNou, [e.id]:ev.target.value})} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
-              <button onClick={()=>addApart(e.id)} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Ap.</button>
+              <input placeholder="Apartament (ex: Ap. 1)" value={apartNou[e.id]||''} onChange={(ev)=>setApartNou({...apartNou, [e.id]:ev.target.value})} onKeyDown={(ev)=>{ if(ev.key==='Enter') addApart(e.id); }} className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-none" style={inputStyle} />
+              <button onClick={()=>addApart(e.id)} disabled={!(apartNou[e.id]||'').trim()} className="text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>Adaugă {(apartNou[e.id]||'').trim() || 'apartament'}</button>
             </div>
             {aps.map((a)=>{
               const f = getForm(a.id);
@@ -2206,14 +2228,20 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
               <div key={a.id} className="rounded-lg p-2.5" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🚪 {a.nume} <span className="text-xs" style={{ color:'#5C6570' }}>· {(a.materiale||[]).length} mat.</span></span>
-                  <button onClick={()=>delApart(e.id, a.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button onClick={()=>renApart(e.id, a.id, a.nume)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={12}>✎</Icon></button>
+                    <button onClick={()=>delApart(e.id, a.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                  </div>
                 </div>
                 <div className="space-y-1 mb-2">
                   {(a.materiale||[]).length === 0 && <div className="text-[11px]" style={{ color:'#5C6570' }}>Niciun material adăugat.</div>}
                   {(a.materiale||[]).map((m)=>(
-                    <div key={m.id} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background:'#1B2127' }}>
+                    <div key={m.id} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? '#232C34' : '#1B2127' }}>
                       <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
-                      <button onClick={()=>delMat(e.id, a.id, m.id)} style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={()=>startEditMat(a.id, m)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
+                        <button onClick={()=>delMat(e.id, a.id, m.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -2221,7 +2249,8 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
                   <input placeholder="Material" value={f.denumire} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, denumire:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
                   <input type="number" value={f.cantitate} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, cantitate:ev.target.value}})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
                   <input placeholder="UM" value={f.um} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, um:ev.target.value}})} className="w-12 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
-                  <button onClick={()=>addMat(e.id, a.id)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>+</button>
+                  <button onClick={()=>addMat(e.id, a.id)} disabled={!(f.denumire||'').trim()} className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background: editMatId[a.id] ? '#E9A23B' : '#4CAF7D' }}>{editMatId[a.id] ? 'Salvează' : 'Adaugă'}</button>
+                  {editMatId[a.id] && <button onClick={()=>cancelEditMat(a.id)} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>}
                 </div>
               </div>
               );
