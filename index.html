@@ -2187,7 +2187,8 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
   const cauta = parseCautare(cautare);
   const areCautare = cauta.floorNums.length>0 || cauta.apNums.length>0 || cauta.textTerms.length>0;
   const save = (next) => { setStructuraSantier(next); persist('structuraSantier', next); };
-  const getForm = (apId) => matForm[apId] || { denumire:'', cantitate:1, um:'buc' };
+  const getForm = (apId) => matForm[apId] || { denumire:'', cantitate:1, um:'buc', descriere:'' };
+  const setApartOre = (etajId, apId, ore) => { save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, ore} : a)} : e)); };
 
   const addEtaj = () => {
     if (!etajNou.trim()) return;
@@ -2217,16 +2218,16 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     if (!(f.denumire||'').trim()) return;
     const editing = editMatId[apId];
     if (editing) {
-      save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:(a.materiale||[]).map((m)=> m.id===editing ? {...m, denumire:f.denumire.trim(), cantitate:Number(f.cantitate)||0, um:f.um||'buc'} : m)} : a)} : e));
+      save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:(a.materiale||[]).map((m)=> m.id===editing ? {...m, denumire:f.denumire.trim(), cantitate:Number(f.cantitate)||0, um:f.um||'buc', descriere:(f.descriere||'').trim()} : m)} : a)} : e));
       setEditMatId({...editMatId, [apId]: null});
     } else {
-      const mat = { id: uid(), denumire: f.denumire.trim(), cantitate: Number(f.cantitate)||0, um: f.um||'buc' };
+      const mat = { id: uid(), denumire: f.denumire.trim(), cantitate: Number(f.cantitate)||0, um: f.um||'buc', descriere:(f.descriere||'').trim() };
       save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:[...(a.materiale||[]), mat]} : a)} : e));
     }
-    setMatForm({...matForm, [apId]: { denumire:'', cantitate:1, um:'buc' }});
+    setMatForm({...matForm, [apId]: { denumire:'', cantitate:1, um:'buc', descriere:'' }});
   };
-  const startEditMat = (apId, m) => { setMatForm({...matForm, [apId]: { denumire:m.denumire, cantitate:m.cantitate, um:m.um }}); setEditMatId({...editMatId, [apId]: m.id}); };
-  const cancelEditMat = (apId) => { setEditMatId({...editMatId, [apId]: null}); setMatForm({...matForm, [apId]: { denumire:'', cantitate:1, um:'buc' }}); };
+  const startEditMat = (apId, m) => { setMatForm({...matForm, [apId]: { denumire:m.denumire, cantitate:m.cantitate, um:m.um, descriere:m.descriere||'' }}); setEditMatId({...editMatId, [apId]: m.id}); };
+  const cancelEditMat = (apId) => { setEditMatId({...editMatId, [apId]: null}); setMatForm({...matForm, [apId]: { denumire:'', cantitate:1, um:'buc', descriere:'' }}); };
   const delMat = (etajId, apId, matId) => { if (!window.confirm('Ștergi acest material?')) return; save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, materiale:(a.materiale||[]).filter((m)=>m.id!==matId)} : a)} : e)); };
 
   const etajeVizibile = etaje.map((e)=>{
@@ -2314,6 +2315,9 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🚪 {a.nume} <span className="text-xs" style={{ color:'#5C6570' }}>· {(a.materiale||[]).length} mat.</span></span>
                 <div className="flex items-center gap-2.5 shrink-0">
+                  <span className="flex items-center gap-1 text-[11px]" style={{ color:'#8B93A0' }}>⏱ Ore
+                    <input type="number" inputMode="decimal" defaultValue={a.ore||''} onBlur={(ev)=>setApartOre(e.id, a.id, ev.target.value)} placeholder="0" className="w-12 rounded-lg px-1.5 py-1 text-xs outline-none text-center" style={inputStyle} />
+                  </span>
                   <button onClick={()=>renApart(e.id, a.id, a.nume)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={12}>✎</Icon></button>
                   <button onClick={()=>delApart(e.id, a.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
                 </div>
@@ -2321,21 +2325,29 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
               <div className="space-y-1 mb-1.5">
                 {(a.materiale||[]).length === 0 && <div className="text-[11px]" style={{ color:'#5C6570' }}>Niciun material adăugat.</div>}
                 {(a.materiale||[]).map((m)=>(
-                  <div key={m.id} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? '#232C34' : '#1B2127' }}>
-                    <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={()=>startEditMat(a.id, m)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
-                      <button onClick={()=>delMat(e.id, a.id, m.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+                  <div key={m.id} className="text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? '#232C34' : '#1B2127' }}>
+                    <div className="flex items-center justify-between">
+                      <span style={{ color:'#E9E7E2' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={()=>startEditMat(a.id, m)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
+                        <button onClick={()=>delMat(e.id, a.id, m.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+                      </div>
                     </div>
+                    {m.descriere && <div className="mt-0.5" style={{ color:'#8B93A0' }}>{m.descriere}</div>}
                   </div>
                 ))}
               </div>
-              <div className="flex gap-1.5">
-                <input placeholder="Material" value={f.denumire} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, denumire:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
-                <input type="number" value={f.cantitate} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, cantitate:ev.target.value}})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
-                <input placeholder="UM" value={f.um} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, um:ev.target.value}})} className="w-12 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
-                <button onClick={()=>addMat(e.id, a.id)} disabled={!(f.denumire||'').trim()} className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background: editMatId[a.id] ? '#E9A23B' : '#4CAF7D' }}>{editMatId[a.id] ? 'Salvează' : 'Adaugă'}</button>
-                {editMatId[a.id] && <button onClick={()=>cancelEditMat(a.id)} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>}
+              <div className="space-y-1.5">
+                <div className="flex gap-1.5">
+                  <input placeholder="Material" value={f.denumire} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, denumire:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                  <input type="number" value={f.cantitate} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, cantitate:ev.target.value}})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                  <input placeholder="UM" value={f.um} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, um:ev.target.value}})} className="w-12 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                </div>
+                <div className="flex gap-1.5">
+                  <input placeholder="Descriere (opțional, ex: montaj îngropat)" value={f.descriere} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, descriere:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                  <button onClick={()=>addMat(e.id, a.id)} disabled={!(f.denumire||'').trim()} className="text-xs px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap disabled:opacity-40" style={{ color:'#14181C', background: editMatId[a.id] ? '#E9A23B' : '#4CAF7D' }}>{editMatId[a.id] ? 'Salvează' : 'Adaugă'}</button>
+                  {editMatId[a.id] && <button onClick={()=>cancelEditMat(a.id)} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>}
+                </div>
               </div>
             </div>
             );
@@ -2347,7 +2359,167 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
+// Parsează rândurile dintr-un Excel de deviz (Poziții sau Listă cantități).
+// Caută rândul de antet (care conține „Denumire") și mapează coloanele; ignoră rândurile TOTAL/TVA.
+function parseDevizRows(rows) {
+  const norm = (s) => String(s == null ? '' : s).toLowerCase();
+  const num = (v) => Number(String(v == null ? '' : v).replace(/\s/g,'').replace(',','.')) || 0;
+  let headerIdx = rows.findIndex((r)=> Array.isArray(r) && r.some((c)=>norm(c).includes('denumire')));
+  let cols = { nr:0, den:1, um:2, cant:3, pret:4, val:5 };
+  if (headerIdx >= 0) {
+    const h = rows[headerIdx].map(norm);
+    const find = (kw, def) => { const i = h.findIndex((c)=> kw.some((k)=>c.includes(k))); return i>=0 ? i : def; };
+    const nr = find(['nr','crt'], 0);
+    const den = find(['denumire','descriere','articol'], 1);
+    const cant = find(['cant'], 3);
+    // „um" strict — altfel prinde „DENUMIRE" (conține „um")
+    let um = find(['u.m','u/m','unitate'], -1);
+    if (um < 0) um = h.findIndex((c)=> String(c).trim() === 'um' || String(c).trim() === 'u m');
+    if (um < 0 || um === den) um = den + 1;
+    const idxTotal = find(['total'], -1);
+    const idxValoare = find(['valoare'], -1);
+    let pret = find(['pret','preț','p.u.','p.u','unitar'], -1);
+    // Dacă nu există coloană explicită „preț", prețul unitar e coloana „valoare" (când există și „total")
+    // sau coloana imediat după „cantitate".
+    if (pret < 0) pret = (idxValoare >= 0 && idxValoare !== idxTotal) ? idxValoare : (cant >= 0 ? cant + 1 : 4);
+    const val = idxTotal >= 0 ? idxTotal : (idxValoare >= 0 ? idxValoare : -1);
+    cols = { nr, den, um, cant, pret, val };
+  }
+  const dataRows = rows.slice((headerIdx >= 0 ? headerIdx : -1) + 1);
+  const out = [];
+  dataRows.forEach((r)=>{
+    if (!Array.isArray(r)) return;
+    const den = r[cols.den];
+    if (!den || !String(den).trim()) return;
+    if (/^(total|tva|total cu tva)/i.test(String(den).trim())) return;
+    const cant = num(r[cols.cant]);
+    const pret = num(r[cols.pret]);
+    out.push({
+      nrCrt: String(r[cols.nr] == null ? '' : r[cols.nr]).trim(),
+      denumire: String(den).trim(),
+      um: String(r[cols.um] == null ? '' : r[cols.um]).trim() || 'buc',
+      cantitate: cant,
+      pretUnitar: pret,
+      valoare: num(r[cols.val]) || (cant * pret),
+    });
+  });
+  return out;
+}
+
+function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, persist }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [innerTab, setInnerTab] = useState('pozitii');
+  const [editId, setEditId] = useState(null);
+  const [editRow, setEditRow] = useState({});
+  const [addRow, setAddRow] = useState({ denumire:'', um:'buc', cantitate:'', pretUnitar:'' });
+  const isPoz = innerTab === 'pozitii';
+  const lista = isPoz ? (pozitiiSantier || []) : (materialeListaSantier || []);
+  const setLista = isPoz ? setPozitiiSantier : setMaterialeListaSantier;
+  const cheie = isPoz ? 'pozitiiSantier' : 'materialeListaSantier';
+  const items = lista.filter((x)=>x.santierId===santierId);
+  const save = (nextAll) => { setLista(nextAll); persist(cheie, nextAll); };
+  const totalVal = items.reduce((s,x)=> s + ((Number(x.cantitate)||0) * (Number(x.pretUnitar)||0)), 0);
+
+  const importExcel = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type:'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+        const parsed = parseDevizRows(rows);
+        if (!parsed.length) { window.alert('Nu am găsit rânduri valide în Excel. Verifică să existe coloana „Denumire".'); return; }
+        if (items.length && !window.confirm(`Înlocuiești lista curentă (${items.length} rânduri) cu cele ${parsed.length} din Excel?`)) return;
+        const rest = lista.filter((x)=>x.santierId!==santierId);
+        save([...rest, ...parsed.map((p)=>({ ...p, id: uid(), santierId }))]);
+      } catch (err) { window.alert('Nu am putut citi fișierul Excel. Verifică formatul (.xlsx).'); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  const startEdit = (x) => { setEditId(x.id); setEditRow({ denumire:x.denumire, um:x.um, cantitate:x.cantitate, pretUnitar:x.pretUnitar, nrCrt:x.nrCrt }); };
+  const saveEdit = () => { save(lista.map((x)=> x.id===editId ? { ...x, ...editRow, cantitate:Number(editRow.cantitate)||0, pretUnitar:Number(editRow.pretUnitar)||0 } : x)); setEditId(null); };
+  const delRow = (id) => { if (!window.confirm('Ștergi acest rând?')) return; save(lista.filter((x)=>x.id!==id)); };
+  const addNew = () => {
+    if (!addRow.denumire.trim()) return;
+    const nou = { id: uid(), santierId, nrCrt: String(items.length+1), denumire: addRow.denumire.trim(), um: addRow.um||'buc', cantitate:Number(addRow.cantitate)||0, pretUnitar:Number(addRow.pretUnitar)||0 };
+    save([...lista, nou]);
+    setAddRow({ denumire:'', um:'buc', cantitate:'', pretUnitar:'' });
+  };
+  const golesteTot = () => { if (!window.confirm('Ștergi toată lista de la acest șantier?')) return; save(lista.filter((x)=>x.santierId!==santierId)); };
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <button onClick={()=>setInnerTab('pozitii')} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color: isPoz?'#14181C':'#B8BFC9', background: isPoz?'#2E8BD1':'#171C21', border:'1px solid #2A323B' }}>📋 Poziții</button>
+        <button onClick={()=>setInnerTab('materiale')} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color: !isPoz?'#14181C':'#B8BFC9', background: !isPoz?'#2E8BD1':'#171C21', border:'1px solid #2A323B' }}>🧱 Listă cantități (materiale)</button>
+      </div>
+
+      <div className="rounded-lg p-2.5 flex items-center gap-2 flex-wrap" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <label className="text-xs px-3 py-2 rounded-lg font-semibold cursor-pointer" style={{ color:'#14181C', background:'#4CAF7D' }}>
+          📥 Importă din Excel
+          <input type="file" accept=".xlsx,.xls" onChange={(e)=>{ importExcel(e.target.files[0]); e.target.value=''; }} style={{ display:'none' }} />
+        </label>
+        {items.length > 0 && <button onClick={golesteTot} className="text-xs px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#171C21' }}>🗑 Golește lista</button>}
+        <span className="text-[11px] w-full" style={{ color:'#5C6570' }}>Coloane așteptate: Nr. crt · Denumire · U.M. · Cantitate · Preț unitar · Valoare. Importul înlocuiește lista curentă a acestui șantier.</span>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>Nicio {isPoz?'poziție':'listă de materiale'} încă. Importă din Excel sau adaugă manual mai jos.</div>
+      ) : (
+        <div className="rounded-lg overflow-hidden" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="grid gap-1 px-2 py-1.5 text-[10px] uppercase tracking-wide" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', color:'#8B93A0', background:'#20272e' }}>
+            <span>Nr</span><span>Denumire</span><span>U.M.</span><span>Cant.</span><span>Preț</span><span>Valoare</span><span></span>
+          </div>
+          {items.map((x, i)=> editId===x.id ? (
+            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', borderTop:'1px solid #2A323B', background:'#232C34' }}>
+              <span className="text-[11px]" style={{ color:'#5C6570' }}>{i+1}</span>
+              <input value={editRow.denumire} onChange={(e)=>setEditRow({...editRow, denumire:e.target.value})} className="rounded px-1.5 py-1 text-xs outline-none" style={inputStyle} />
+              <input value={editRow.um} onChange={(e)=>setEditRow({...editRow, um:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
+              <input type="number" value={editRow.cantitate} onChange={(e)=>setEditRow({...editRow, cantitate:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
+              <input type="number" value={editRow.pretUnitar} onChange={(e)=>setEditRow({...editRow, pretUnitar:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
+              <span className="text-xs text-right" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(editRow.cantitate)||0)*(Number(editRow.pretUnitar)||0))}</span>
+              <div className="flex items-center gap-1.5 justify-end">
+                <button onClick={saveEdit} style={{ color:'#4CAF7D' }}>✓</button>
+                <button onClick={()=>setEditId(null)} style={{ color:'#8B93A0' }}>✕</button>
+              </div>
+            </div>
+          ) : (
+            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', borderTop:'1px solid #2A323B' }}>
+              <span className="text-[11px]" style={{ color:'#5C6570' }}>{i+1}</span>
+              <span className="text-xs truncate" style={{ color:'#E9E7E2' }}>{x.denumire}</span>
+              <span className="text-[11px] text-center" style={{ color:'#8B93A0' }}>{x.um}</span>
+              <span className="text-xs text-center" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{x.cantitate}</span>
+              <span className="text-xs text-center" style={{ color:'#8B93A0', fontFamily:"'JetBrains Mono', monospace" }}>{x.pretUnitar}</span>
+              <span className="text-xs text-right" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(x.cantitate)||0)*(Number(x.pretUnitar)||0))}</span>
+              <div className="flex items-center gap-1.5 justify-end shrink-0">
+                <button onClick={()=>startEdit(x)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
+                <button onClick={()=>delRow(x.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+              </div>
+            </div>
+          ))}
+          <div className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', borderTop:'1.5px solid #2A323B', background:'#20272e' }}>
+            <span></span><span className="text-xs font-semibold" style={{ color:'#E9E7E2' }}>TOTAL (fără TVA)</span><span></span><span></span><span></span>
+            <span className="text-xs text-right font-semibold" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalVal)}</span><span></span>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg p-2.5" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Adaugă manual un rând:</div>
+        <div className="flex gap-1.5 flex-wrap">
+          <input placeholder={isPoz?'Denumire poziție':'Denumire material'} value={addRow.denumire} onChange={(e)=>setAddRow({...addRow, denumire:e.target.value})} className="flex-1 min-w-[140px] rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+          <input placeholder="U.M." value={addRow.um} onChange={(e)=>setAddRow({...addRow, um:e.target.value})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+          <input type="number" placeholder="Cant." value={addRow.cantitate} onChange={(e)=>setAddRow({...addRow, cantitate:e.target.value})} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+          <input type="number" placeholder="Preț" value={addRow.pretUnitar} onChange={(e)=>setAddRow({...addRow, pretUnitar:e.target.value})} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+          <button onClick={addNew} disabled={!addRow.denumire.trim()} className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>+ Adaugă</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -2506,7 +2678,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         </div>
         <div className="flex items-center justify-between gap-2 mb-0.5">
           <h2 className="text-xl" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
-          <button onClick={()=>navTo('structura')} className="text-sm px-3 py-1.5 rounded-lg font-semibold shrink-0" style={{ color: siteView==='structura'?'#14181C':'#2E8BD1', background: siteView==='structura'?'#2E8BD1':'#171C21', border:'1px solid #2E8BD166' }}>🏢 Structură</button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {currentUser?.rol === 'Manager' && <button onClick={()=>navTo('devizpoz')} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color: siteView==='devizpoz'?'#14181C':'#E9A23B', background: siteView==='devizpoz'?'#E9A23B':'#171C21', border:'1px solid #E9A23B66' }}>📋 Poziții/Materiale</button>}
+            <button onClick={()=>navTo('structura')} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color: siteView==='structura'?'#14181C':'#2E8BD1', background: siteView==='structura'?'#2E8BD1':'#171C21', border:'1px solid #2E8BD166' }}>🏢 Structură</button>
+          </div>
         </div>
         <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>
           {santier?.adresa && (
@@ -2657,6 +2832,9 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         )}
         {siteView === 'structura' && (
           <SiteStructuraTab santierId={selected} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} />
+        )}
+        {siteView === 'devizpoz' && (
+          <SiteDevizPozTab santierId={selected} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} persist={persist} />
         )}
         {siteView === 'rapoarte' && (
         <>
@@ -4466,6 +4644,8 @@ function App() {
   const [pontajCorectii, setPontajCorectii] = useState([]);
   const [mediaSantier, setMediaSantier] = useState([]);
   const [structuraSantier, setStructuraSantier] = useState([]);
+  const [pozitiiSantier, setPozitiiSantier] = useState([]);
+  const [materialeListaSantier, setMaterialeListaSantier] = useState([]);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
@@ -4489,6 +4669,8 @@ function App() {
       setPlanseSantier(await loadKey('planseSantier', []));
       setMediaSantier(await loadKey('mediaSantier', []));
       setStructuraSantier(await loadKey('structuraSantier', []));
+      setPozitiiSantier(await loadKey('pozitiiSantier', []));
+      setMaterialeListaSantier(await loadKey('materialeListaSantier', []));
       setConcedii(await loadKey('concedii', []));
       setAchizitii(await loadKey('achizitii', []));
       setPontajCorectii(await loadKey('pontajCorectii', []));
@@ -4527,6 +4709,8 @@ function App() {
       planseSantier: (v)=>setPlanseSantier(v ?? []),
       mediaSantier: (v)=>setMediaSantier(v ?? []),
       structuraSantier: (v)=>setStructuraSantier(v ?? []),
+      pozitiiSantier: (v)=>setPozitiiSantier(v ?? []),
+      materialeListaSantier: (v)=>setMaterialeListaSantier(v ?? []),
       concedii: (v)=>setConcedii(v ?? []),
       achizitii: (v)=>setAchizitii(v ?? []),
       pontajCorectii: (v)=>setPontajCorectii(v ?? []),
@@ -4837,7 +5021,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} clients={clients} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} clients={clients} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} setTab={setTab} setPendingSiteNav={setPendingSiteNav} currentUser={effectiveUser} />}
