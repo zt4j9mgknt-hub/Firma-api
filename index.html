@@ -3030,6 +3030,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   const [editState, setEditState] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [santiereExport, setSantiereExport] = useState([]);
+  const [santierFiltru, setSantierFiltru] = useState('');
   const [allUsersPontaj, setAllUsersPontaj] = useState([]);
   useEffect(() => {
     if (!isManager) return;
@@ -3037,7 +3038,18 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
       .then((r)=>r.json()).then((data)=>setAllUsersPontaj(data.users || [])).catch(()=>{});
   }, [isManager]);
 
-  const rapoarteLuna = rapoarte.filter((r)=>r.data?.startsWith(luna));
+  const rapoarteLuna = rapoarte.filter((r)=>r.data?.startsWith(luna) && (!santierFiltru || r.santierId===santierFiltru));
+  // Zile libere (concediu aprobat) în luna selectată, pe persoană — asta interesează contabila.
+  const zileLibereLuna = (nume) => {
+    const aprobate = (concedii || []).filter((c)=>c.nume===nume && c.status==='Aprobat');
+    let cnt = 0;
+    aprobate.forEach((c)=>{
+      if (!c.dataInceput || !c.dataSfarsit) return;
+      let d = new Date(c.dataInceput); const end = new Date(c.dataSfarsit);
+      while (d <= end) { const ds = d.toISOString().slice(0,10); if (ds.startsWith(luna)) cnt++; d.setDate(d.getDate()+1); }
+    });
+    return cnt;
+  };
   const perPersoana = {};
   rapoarteLuna.forEach((r)=>{
     const santierNume = santiere.find((s)=>s.id===r.santierId)?.nume || '—';
@@ -3061,7 +3073,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   const corectiePersoana = (nume) => corectiiLuna.filter((c)=>c.nume===nume).reduce((s,c)=>s+c.minuteAjustare,0);
 
   const lista = Object.values(perPersoana)
-    .map((p)=>({ ...p, corectieMin: corectiePersoana(p.nume), totalFinal: p.totalMin + corectiePersoana(p.nume) }))
+    .map((p)=>({ ...p, corectieMin: corectiePersoana(p.nume), totalFinal: p.totalMin + corectiePersoana(p.nume), zileLibere: zileLibereLuna(p.nume) }))
     .sort((a,b)=>b.totalFinal - a.totalFinal);
   const totalGeneral = lista.reduce((s,p)=>s+p.totalFinal,0);
 
@@ -3133,23 +3145,25 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     return { santier, zile, angajati };
   };
 
+  const santierFiltruNume = santiere.find((s)=>s.id===santierFiltru)?.nume;
   const exportPontajExcel = () => {
+    const totalZileLibere = lista.reduce((s,p)=>s+(p.zileLibere||0),0);
     const rows = lista.map((p)=>({
       'Nume': p.nume,
       'Total ore': minutesToHM(p.totalFinal),
-      'Detaliu pe șantiere': Object.entries(p.peSantier).map(([s,m])=>`${s}: ${minutesToHM(m)}`).join(', ') + (p.corectieMin ? `, Corecție manuală: ${p.corectieMin>0?'+':''}${minutesToHM(Math.abs(p.corectieMin))}` : ''),
+      'Zile libere': p.zileLibere || 0,
     }));
-    const sheetRows = rows.length ? [...rows, { 'Nume':'TOTAL', 'Total ore': minutesToHM(totalGeneral), 'Detaliu pe șantiere':'' }] : [{ 'Nume':'', 'Total ore':'', 'Detaliu pe șantiere':'Nicio oră în luna selectată.' }];
+    const sheetRows = rows.length ? [...rows, { 'Nume':'TOTAL', 'Total ore': minutesToHM(totalGeneral), 'Zile libere': totalZileLibere }] : [{ 'Nume':'', 'Total ore':'', 'Zile libere':'' }];
     const headerRows = [
       [company?.nume || 'Firma mea'],
       [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
       [],
-      [`Pontaj (rezumat general) — ${lunaNume} ${anNume}`],
+      [`Pontaj${santierFiltruNume ? ' — șantier ' + santierFiltruNume : ' — total pe angajat'} — ${lunaNume} ${anNume}`],
       [],
     ];
     const ws = XLSX.utils.aoa_to_sheet(headerRows);
     XLSX.utils.sheet_add_json(ws, sheetRows, { origin: -1 });
-    ws['!cols'] = [{wch:22},{wch:12},{wch:60}];
+    ws['!cols'] = [{wch:24},{wch:12},{wch:12}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Pontaj');
     XLSX.writeFile(wb, `pontaj_rezumat_${luna}.xlsx`);
@@ -3157,8 +3171,10 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
 
   const exportPontajPDF = () => {
     const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const totalZileLibere = lista.reduce((s,p)=>s+(p.zileLibere||0),0);
     const rows = lista.map((p)=>`
-      <tr><td style="text-align:left">${esc(p.nume)}</td><td>${esc(minutesToHM(p.totalFinal))}</td><td style="text-align:left">${esc(Object.entries(p.peSantier).map(([s,m])=>`${s}: ${minutesToHM(m)}`).join(', '))}</td></tr>`).join('');
+      <tr><td style="text-align:left">${esc(p.nume)}</td><td>${esc(minutesToHM(p.totalFinal))}</td><td>${p.zileLibere||0}</td></tr>`).join('')
+      + `<tr style="font-weight:700"><td style="text-align:left">TOTAL</td><td>${esc(minutesToHM(totalGeneral))}</td><td>${totalZileLibere}</td></tr>`;
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>Pontaj</title><style>
       * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; }
       .page { width:190mm; margin:0 auto; padding:14mm; }
@@ -3174,12 +3190,12 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         <div class="header-row">
           <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
           <div class="title-block">
-            <div class="title">PONTAJ (rezumat general)</div>
-            <div style="font-size:11px;color:#555;margin-top:2mm;">${esc(lunaNume)} ${esc(anNume)}</div>
+            <div class="title">PONTAJ</div>
+            <div style="font-size:11px;color:#555;margin-top:2mm;">${santierFiltruNume ? 'Șantier: ' + esc(santierFiltruNume) + ' — ' : ''}${esc(lunaNume)} ${esc(anNume)}</div>
           </div>
         </div>
         <table>
-          <thead><tr><th style="text-align:left">Nume</th><th>Total ore</th><th style="text-align:left">Detaliu pe șantiere</th></tr></thead>
+          <thead><tr><th style="text-align:left">Nume</th><th>Total ore</th><th>Zile libere</th></tr></thead>
           <tbody>${rows || '<tr><td colspan="3">Nicio oră în luna selectată.</td></tr>'}</tbody>
         </table>
       </div>
@@ -3299,9 +3315,15 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   return (
     <div>
       <h2 className="text-lg mb-1" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>🕐 Pontaj</h2>
-      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Ore calculate automat din rapoartele zilnice de la toate șantierele.</p>
+      <p className="text-xs mb-4" style={{ color:'#5C6570' }}>Total de ore și zile libere pe fiecare angajat (din toate șantierele). Pentru detaliu pe un șantier anume, alege-l din listă.</p>
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <input type="month" value={luna} onChange={(e)=>setLuna(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+        {isManager && (
+          <select value={santierFiltru} onChange={(e)=>setSantierFiltru(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+            <option value="" style={{ background:'#1B2127' }}>Toate șantierele (total pe om)</option>
+            {santiere.map((s)=><option key={s.id} value={s.id} style={{ background:'#1B2127' }}>Rezumat: {s.nume}</option>)}
+          </select>
+        )}
         {isManager && lista.length > 0 && (
           <>
             <button onClick={exportPontajExcel} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📊 Excel (rezumat)</button>
@@ -3334,8 +3356,9 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
       ) : (
         <>
           {isManager && (
-            <div className="flex justify-end mb-2 text-sm" style={{ color:'#8B93A0' }}>
-              Total general: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalGeneral)}</span>
+            <div className="flex justify-between items-center mb-2 text-sm" style={{ color:'#8B93A0' }}>
+              <span>{santierFiltru ? `Rezumat: ${santiere.find((s)=>s.id===santierFiltru)?.nume || ''}` : 'Total pe fiecare angajat'}</span>
+              <span>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalGeneral)}</span></span>
             </div>
           )}
           <div className="space-y-2">
@@ -3351,6 +3374,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 shrink-0">
+                      {p.zileLibere > 0 && <span className="text-xs px-2 py-0.5 rounded-lg" style={{ color:'#E9A23B', background:'#171C21' }}>{p.zileLibere} {p.zileLibere===1?'zi liberă':'zile libere'}</span>}
                       <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(p.totalFinal)}</span>
                       <button onClick={()=>setExpandedPerson(expandedPerson===p.nume ? null : p.nume)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>{expandedPerson===p.nume ? 'Ascunde' : '👁 Zi cu zi'}</button>
                       {isManager && <button onClick={()=>startEdit(p)} className="text-xs px-2 py-1 rounded-lg" style={{ color:'#8B93A0', background:'#171C21' }}>✎ Edit</button>}
@@ -3369,20 +3393,12 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
                     ))}
                   </div>
                 )}
-                <div className="mt-1.5 space-y-0.5">
-                  {Object.entries(p.peSantier).map(([s,m])=>(
-                    <div key={s} className="flex items-center justify-between text-xs" style={{ color:'#8B93A0' }}>
-                      <span>📍 {s}</span>
-                      <span style={{ fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(m)}</span>
-                    </div>
-                  ))}
-                  {p.corectieMin !== 0 && (
-                    <div className="flex items-center justify-between text-xs" style={{ color:'#E9A23B' }}>
-                      <span>✎ Corecție manuală</span>
-                      <span style={{ fontFamily:"'JetBrains Mono', monospace" }}>{p.corectieMin>0?'+':'−'}{minutesToHM(Math.abs(p.corectieMin))}</span>
-                    </div>
-                  )}
-                </div>
+                {p.corectieMin !== 0 && (
+                  <div className="mt-1.5 flex items-center justify-between text-xs" style={{ color:'#E9A23B' }}>
+                    <span>✎ Corecție manuală</span>
+                    <span style={{ fontFamily:"'JetBrains Mono', monospace" }}>{p.corectieMin>0?'+':'−'}{minutesToHM(Math.abs(p.corectieMin))}</span>
+                  </div>
+                )}
               </div>
             ))}
           </div>
