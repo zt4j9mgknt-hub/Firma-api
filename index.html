@@ -2029,8 +2029,8 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
               <button onClick={()=>remove(p.id)} className="shrink-0 opacity-60" style={{ color:'#E05252' }}><Icon>🗑</Icon></button>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
-              <label className="text-[11px] flex items-center gap-1.5" style={{ color:'#8B93A0' }}>Început <RoTimePicker value={p.oraInceput || defaultInceput || '08:00'} onChange={(v)=>update(p.id,'oraInceput',v)} /></label>
-              <label className="text-[11px] flex items-center gap-1.5" style={{ color:'#8B93A0' }}>Sfârșit <RoTimePicker value={p.oraSfarsit || defaultSfarsit || '17:00'} onChange={(v)=>update(p.id,'oraSfarsit',v)} /></label>
+              <span className="text-[11px] flex items-center gap-1.5" style={{ color:'#8B93A0' }}>Început <RoTimePicker value={p.oraInceput || defaultInceput || '08:00'} onChange={(v)=>update(p.id,'oraInceput',v)} /></span>
+              <span className="text-[11px] flex items-center gap-1.5" style={{ color:'#8B93A0' }}>Sfârșit <RoTimePicker value={p.oraSfarsit || defaultSfarsit || '17:00'} onChange={(v)=>update(p.id,'oraSfarsit',v)} /></span>
             </div>
           </div>
         );
@@ -2109,19 +2109,19 @@ function RaportForm({ initial, etape, echipaPermisa, materials, onCancel, onSave
         <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data
           <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle} />
         </label>
-        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora implicită început
+        <div className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora implicită început
           <RoTimePicker value={oraInceput} onChange={setOraInceput} />
-        </label>
-        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora implicită sfârșit
+        </div>
+        <div className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora implicită sfârșit
           <RoTimePicker value={oraSfarsit} onChange={setOraSfarsit} />
-        </label>
+        </div>
         {etape && etape.length > 0 && (
-          <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Etapă
+          <div className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Etapă
             <select value={etapaId} onChange={(e)=>setEtapaId(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle}>
               <option value="">(fără etapă)</option>
               {etape.map((e)=><option key={e.id} value={e.id} style={{ background:'#1B2127' }}>{e.nume}</option>)}
             </select>
-          </label>
+          </div>
         )}
       </div>
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
@@ -4264,15 +4264,24 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data }) {
     .filter((r)=> (r.persoane || []).some((p)=> p.nume && String(p.nume).trim()))
     .slice().sort((a,b)=> (a.data < b.data ? -1 : 1));
   let totalOreGeneral = 0;
-  const rows = zile.map((r,i)=>{
+  // Pe fiecare zi grupăm oamenii după numărul de ore lucrate: dacă 5 au făcut 8h și 1 a făcut 6h,
+  // ies două rânduri curate (5×8 și 1×6), cu total exact — nu o medie ciudată.
+  const rowsArr = [];
+  let idx = 0;
+  zile.forEach((r)=>{
     const pv = r.persoane.filter((p)=> p.nume && String(p.nume).trim());
-    const nrPers = pv.length;
-    const totalOre = pv.reduce((s,p)=> s + personMinutes(p), 0) / 60;
-    const orePers = nrPers ? totalOre / nrPers : 0;
-    const valoare = totalOre * tarif;
-    totalOreGeneral += totalOre;
-    return `<tr><td>${i+1}</td><td>${esc(fmtData(r.data))}</td><td>${nrPers}</td><td>${orePers.toFixed(2)}</td><td>${totalOre.toFixed(2)}</td><td>${esc(money(tarif))}</td><td>${esc(money(valoare))}</td></tr>`;
-  }).join('');
+    const grupe = {};
+    pv.forEach((p)=>{ const oreP = personMinutes(p) / 60; const k = oreP.toFixed(2); grupe[k] = (grupe[k] || 0) + 1; });
+    Object.keys(grupe).sort((a,b)=> Number(b) - Number(a)).forEach((k)=>{
+      const ore = Number(k), nrPers = grupe[k];
+      const totalOre = nrPers * ore;
+      const valoare = totalOre * tarif;
+      totalOreGeneral += totalOre;
+      idx++;
+      rowsArr.push(`<tr><td>${idx}</td><td>${esc(fmtData(r.data))}</td><td>${nrPers}</td><td>${ore.toFixed(2)}</td><td>${totalOre.toFixed(2)}</td><td>${esc(money(tarif))}</td><td>${esc(money(valoare))}</td></tr>`);
+    });
+  });
+  const rows = rowsArr.join('');
   const subtotal = totalOreGeneral * tarif;
   const tvaVal = subtotal * tva / 100;
   const total = subtotal + tvaVal;
