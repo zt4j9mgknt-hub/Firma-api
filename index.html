@@ -3512,6 +3512,29 @@ function ProfileTab({ currentUser, onLogout }) {
   const [status, setStatus] = useState({ loading:false, error:'', success:'' });
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
+  const [recStatus, setRecStatus] = useState('');
+  const [recLoading, setRecLoading] = useState(false);
+  const CHEI_RECUP = ['santiere','clients','rapoarte','etape','structuraSantier','pozitiiSantier','materialeListaSantier','materials','stockMoves','devize','offers','invoices','concedii','cereriSantier','miscariSantier','sculeSantier','planseSantier','mediaSantier','achizitii','pontajCorectii'];
+  const recupereaza = async () => {
+    setRecLoading(true); setRecStatus('Caut date salvate local...');
+    const gasite = [];
+    for (const k of CHEI_RECUP) {
+      const pend = getPending().find((x)=>x.key===k);
+      let local = pend !== undefined ? pend.value : cacheGet(k);
+      if (!Array.isArray(local) || local.length === 0) continue;
+      let server = [];
+      try { const r = await authFetch(`/api/data?key=${encodeURIComponent(k)}`); const d = await r.json(); server = Array.isArray(d.value) ? d.value : []; } catch {}
+      const merged = mergeById(server, local);
+      try {
+        const rr = await authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key:k, value:merged }) });
+        const dd = await rr.json();
+        if (dd.ok) { cacheSet(k, merged); setPending(getPending().filter((x)=>x.key!==k)); gasite.push(`${k}: ${merged.length}`); }
+      } catch {}
+    }
+    setRecLoading(false);
+    if (gasite.length) { setRecStatus('✅ Recuperat: ' + gasite.join(', ') + '. Reîncarc aplicația...'); setTimeout(()=>{ try{ window.location.reload(); }catch{} }, 1500); }
+    else setRecStatus('Nu am găsit date salvate local pe acest dispozitiv. Dacă le-ai creat pe alt telefon/calculator, deschide aplicația acolo și apasă tot acest buton.');
+  };
 
   const submit = async () => {
     setStatus({ loading:true, error:'', success:'' });
@@ -3567,6 +3590,14 @@ function ProfileTab({ currentUser, onLogout }) {
         </div>
         </div>
       </div>
+      )}
+      {currentUser?.rol === 'Manager' && (
+        <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="text-sm font-semibold mb-1" style={{ color:'#E9E7E2' }}>🛟 Recuperare date</div>
+          <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>Dacă lipsesc șantiere/clienți create recent, apasă aici <b>pe dispozitivul unde le-ai creat</b>. Caută datele salvate local și le trimite pe server (nu șterge nimic, doar adaugă).</p>
+          <button onClick={recupereaza} disabled={recLoading} className="text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50" style={{ color:'#14181C', background:'#4CAF7D' }}>{recLoading ? 'Se recuperează...' : '🛟 Recuperează datele locale'}</button>
+          {recStatus && <p className="text-xs mt-2" style={{ color: recStatus.startsWith('✅') ? '#4CAF7D' : '#E9A23B' }}>{recStatus}</p>}
+        </div>
       )}
     </div>
   );
