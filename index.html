@@ -117,17 +117,76 @@ function authFetch(url, options = {}) {
   return fetch(url, { ...options, headers });
 }
 
+// ---- OFFLINE: cache local + coadă de trimitere. Aplicația merge fără net; se sincronizează când revine. ----
+const CACHE_PREFIX = 'cache_';
+function cacheGet(key){ try{ const r=localStorage.getItem(CACHE_PREFIX+key); return r!=null?JSON.parse(r):undefined; }catch{ return undefined; } }
+function cacheSet(key,val){ try{ localStorage.setItem(CACHE_PREFIX+key, JSON.stringify(val)); }catch{} }
+const PENDING_KEY = 'pendingWrites';
+function getPending(){ try{ return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]'); }catch{ return []; } }
+function setPending(q){ try{ localStorage.setItem(PENDING_KEY, JSON.stringify(q)); }catch{} try{ window.dispatchEvent(new CustomEvent('offline-queue-change')); }catch{} }
+function enqueueWrite(key, value){ const q=getPending().filter((x)=>x.key!==key); q.push({ key, value }); setPending(q); }
+// Combină pe id: pornește de la ce e pe server (păstrează ce-au adăugat alții) și aplică deasupra înregistrările tale.
+function mergeById(serverVal, clientVal){
+  if(!Array.isArray(serverVal)||!Array.isArray(clientVal)) return clientVal;
+  const ok=(arr)=>arr.every((x)=>x&&typeof x==='object'&&x.id!=null);
+  if(!ok(serverVal)||!ok(clientVal)) return clientVal;
+  const map=new Map(); serverVal.forEach((x)=>map.set(x.id,x)); clientVal.forEach((x)=>map.set(x.id,x));
+  return Array.from(map.values());
+}
+
 async function loadKey(key, fallback) {
   try {
     const r = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
     const data = await r.json();
-    return data.value ?? fallback;
-  } catch { return fallback; }
+    const val = data.value ?? fallback;
+    cacheSet(key, val);
+    return val;
+  } catch {
+    const c = cacheGet(key);
+    return c !== undefined ? c : fallback;
+  }
 }
 async function saveKey(key, value) {
-  const r = await authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value }) });
-  const data = await r.json();
+  cacheSet(key, value); // salvează local imediat (optimist)
+  let res;
+  try {
+    res = await authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value }) });
+  } catch (e) {
+    enqueueWrite(key, value); // fără net → în coadă, se trimite când revine netul
+    return;
+  }
+  let data = {};
+  try { data = await res.json(); } catch {}
   if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
+}
+let syncingQueue = false;
+async function syncQueue() {
+  if (syncingQueue || (typeof navigator!=='undefined' && !navigator.onLine)) return;
+  if (!getPending().length) return;
+  syncingQueue = true;
+  try {
+    for (const item of getPending().slice()) {
+      let toPost = item.value;
+      try {
+        const r = await authFetch(`/api/data?key=${encodeURIComponent(item.key)}`);
+        const d = await r.json();
+        toPost = mergeById(d.value, item.value);
+      } catch {}
+      let rr;
+      try {
+        rr = await authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key:item.key, value: toPost }) });
+      } catch { break; }
+      let dd = {}; try { dd = await rr.json(); } catch {}
+      if (!dd.ok) break;
+      cacheSet(item.key, toPost);
+      setPending(getPending().filter((x)=>x.key!==item.key));
+    }
+  } finally { syncingQueue = false; }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', ()=>{ syncQueue(); });
+  setInterval(()=>{ if (navigator.onLine && getPending().length) syncQueue(); }, 15000);
+  setTimeout(()=>{ syncQueue(); }, 3000);
 }
 
 const ROLES = [
@@ -1850,7 +1909,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
   );
 }
 
-function SantierForm({ initial, onCancel, onSave, clients }) {
+function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, setStructuraSantier, persist }) {
   const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ', echipa:[], modFacturare:'orar', tipFacturare:'orar', tarifOrar:75, materialeSursa:'noastre', benefNume:'', benefInfo:'', benefSemnatar:'', contract:'', obiectiv:'', lucrare:'Instalații electrice interioare' });
   const setMod = (m) => {
     const patch = { modFacturare: m };
@@ -1860,6 +1919,7 @@ function SantierForm({ initial, onCancel, onSave, clients }) {
   };
   const modCurent = form.modFacturare || (form.tipFacturare==='pozitie' ? (form.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar');
   const [showDeviz, setShowDeviz] = useState(false);
+  const [showStructura, setShowStructura] = useState(false);
   const [users, setUsers] = useState([]);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
 
@@ -1923,6 +1983,22 @@ function SantierForm({ initial, onCancel, onSave, clients }) {
             </>
           )}
         </div>
+
+        {/* ---- Structură (etaje/apartamente) — pliabil, editabil de la creare ---- */}
+        {setStructuraSantier && (
+        <div className="rounded-lg mt-1" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+          <button type="button" onClick={()=>setShowStructura(!showStructura)} className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-semibold" style={{ color:'#E9E7E2' }}>
+            <span>🏢 Structură — etaje / zone și apartamente {(() => { const n = (structuraSantier||[]).filter((e)=>e.santierId===form.id).length; return n ? '· ' + n + ' etaje' : ''; })()}</span>
+            <span style={{ color:'#8B93A0' }}>{showStructura ? '▲' : '▼'}</span>
+          </button>
+          {showStructura && (
+            <div className="px-2 pb-2" style={{ borderTop:'1px solid #2A323B' }}>
+              <div className="h-2"></div>
+              <SiteStructuraTab santierId={form.id} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} />
+            </div>
+          )}
+        </div>
+        )}
 
         {/* ---- Detalii pentru deviz (pliabil) ---- */}
         <div className="rounded-lg mt-1" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
@@ -2208,7 +2284,6 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane }) 
   const toggleAp = (x,apId)=>{ const cur=x.apartamenteIds||[]; update(x.id,'apartamenteIds', cur.includes(apId)? cur.filter((i)=>i!==apId):[...cur,apId]); };
   return (
     <div>
-      <div className="text-sm font-medium mb-1.5" style={{ color:'#E9E7E2' }}>🏢 Lucrări pe apartamente</div>
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Cine, ce a lucrat, în care apartament(e) și cât timp. Ex: Attila — tablouri — Ap.5 — 3h.</p>
       {(lucrari||[]).map((x)=>{
         const etaj = etaje.find((e)=>e.id===x.etajId);
@@ -2245,9 +2320,10 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane }) 
   );
 }
 
-function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, pozitii, structura, mod, onCancel, onSave }) {
+function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, onCancel, onSave }) {
   const modR = mod || 'orar';
   const estePozitie = modR==='pozitie_propriu' || modR==='pozitie_client';
+  const [showStructEdit, setShowStructEdit] = useState(false);
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
@@ -2298,9 +2374,22 @@ function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, 
           <TipuriLucrariEditor tipuriLucrari={tipuriLucrari} setTipuriLucrari={setTipuriLucrari} />
         </div>
       )}
-      {structura && structura.length > 0 && (
+      {setStructuraSantier && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
-          <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} />
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🏢 Lucrări pe apartamente</div>
+            <button type="button" onClick={()=>setShowStructEdit(!showStructEdit)} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>{showStructEdit ? 'Ascunde etaje/apart.' : '✎ Etaje / apartamente'}</button>
+          </div>
+          {showStructEdit && (
+            <div className="rounded-lg p-2 mb-2" style={{ background:'#14181C', border:'1px solid #2A323B' }}>
+              <SiteStructuraTab santierId={santierId} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} />
+            </div>
+          )}
+          {structura && structura.length > 0 ? (
+            <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} />
+          ) : (
+            <p className="text-xs" style={{ color:'#5C6570' }}>Adaugă etaje/apartamente cu butonul „✎ Etaje / apartamente" de sus, apoi poți nota cine a lucrat unde.</p>
+          )}
         </div>
       )}
       <textarea placeholder="Alte observații (opțional)..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={2} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
@@ -3007,7 +3096,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           );
         })()}
 
-        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : !raporteShowAll ? (
@@ -3021,7 +3110,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               if (reportForm && reportForm.id === r.id) {
-                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
+                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
               }
               return (
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -3165,7 +3254,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         <input placeholder="Caută șantier..." value={siteSearch} onChange={(e)=>setSiteSearch(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' }} />
         {!form && currentUser?.rol === 'Manager' && <button onClick={()=>setForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Adaugă șantier</button>}
       </div>
-      {form && <SantierForm initial={form.id?form:null} clients={clients} onCancel={()=>setForm(null)} onSave={saveSantier} />}
+      {form && <SantierForm initial={form.id?form:null} clients={clients} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} onCancel={()=>setForm(null)} onSave={saveSantier} />}
       {santiere.length===0 && !form ? (
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun șantier încă.</div>
       ) : (
@@ -5105,6 +5194,20 @@ function App() {
 
   useEffect(() => { loadAllData(true); }, []);
 
+  // --- Offline: service worker + indicator „fără net / se sincronizează" ---
+  const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [pendingCount, setPendingCount] = useState((typeof getPending === 'function') ? getPending().length : 0);
+  useEffect(() => {
+    if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
+    const upOnline = () => { setOnline(navigator.onLine); if (navigator.onLine) { syncQueue(); loadAllData(false); } };
+    const upPending = () => setPendingCount(getPending().length);
+    window.addEventListener('online', upOnline);
+    window.addEventListener('offline', upOnline);
+    window.addEventListener('offline-queue-change', upPending);
+    const iv = setInterval(upPending, 4000);
+    return () => { window.removeEventListener('online', upOnline); window.removeEventListener('offline', upOnline); window.removeEventListener('offline-queue-change', upPending); clearInterval(iv); };
+  }, []);
+
   // Sincronizare in timp real: cand oricine salveaza ceva, primim un semnal instant
   // (prin Pusher) si reincarcam DOAR acea bucata de date - nu verificam constant.
   useEffect(() => {
@@ -5321,6 +5424,14 @@ function App() {
 
   return (
     <div className="min-h-screen w-full" style={{ background:'#14181C', fontFamily:"'Inter', sans-serif" }}>
+      {(!online || pendingCount > 0) && (
+        <div style={{ position:'fixed', bottom:'12px', left:'12px', right:'12px', zIndex:9998, textAlign:'center' }}>
+          <span style={{ display:'inline-block', padding:'8px 14px', borderRadius:'10px', fontSize:'13px', fontWeight:600,
+            background: online ? '#1d3a52' : '#3a2a14', color: online ? '#9ad' : '#E9A23B', border:'1px solid '+(online?'#2E8BD166':'#E9A23B66'), boxShadow:'0 4px 14px rgba(0,0,0,.4)' }}>
+            {!online ? '📴 Fără net — lucrezi offline, se salvează local.' : `🔄 Se sincronizează… (${pendingCount} în așteptare)`}
+          </span>
+        </div>
+      )}
       <div className="md:hidden flex items-center justify-between px-3 py-2.5" style={{ borderBottom:'1px solid #2A323B' }}>
         <button onClick={()=>setSidebarOpen(true)} className="text-xl px-1" style={{ color:'#E9E7E2' }}>☰</button>
         <img src="/logo.png" alt="Logo" style={{ height:24, width:'auto' }} />
