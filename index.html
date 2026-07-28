@@ -95,6 +95,25 @@ function personMinutes(p) {
 }
 const calcSubtotal = (items) => items.reduce((s, it) => s + (Number(it.cantitate) || 0) * pretFinal(it), 0);
 
+// Un rând din „Lucrări pe apartamente" poate avea o listă de lucrări (model nou, nested)
+// sau o singură lucrare scrisă direct în rând (model vechi). Întoarce mereu o listă uniformă.
+function lucrariDinRand(l) {
+  if (l && Array.isArray(l.lucrari) && l.lucrari.length) return l.lucrari;
+  if (l && (String(l.tipLucrare||'').trim() || (Number(l.cantitate)||0))) return [{ denumire: l.tipLucrare||'', cantitate: l.cantitate||'', um: l.um||'buc' }];
+  return [];
+}
+// Normalizează rapoartele vechi (o lucrare per rând) la modelul nou (listă de lucrări per rând).
+function normalizeLucrariApart(arr) {
+  return (arr || []).map((g) => {
+    if (Array.isArray(g.lucrari)) return g;
+    const w = (String(g.tipLucrare||'').trim() || (Number(g.cantitate)||0))
+      ? [{ id: uid(), denumire: g.tipLucrare||'', cantitate: g.cantitate||'', um: g.um||'buc' }]
+      : [{ id: uid(), denumire:'', cantitate:'', um:'buc' }];
+    const { tipLucrare, cantitate, um, ...rest } = g;
+    return { ...rest, lucrari: w };
+  });
+}
+
 // Echipa unui șantier: listă de {userId, status}. Compatibil cu formatul vechi
 // (listă simplă de userId), tratat ca status:'activ' implicit.
 function echipaNormalizata(echipa) {
@@ -2295,57 +2314,69 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
   // Dacă șantierul n-are echipă asignată și n-ai adăugat încă persoane la raport,
   // arătăm toți electricienii ca să poți selecta oricând cine a lucrat.
   const numePersoane = bazaEchipa.length ? bazaEchipa : totiElectricieni;
-  const update = (id,f,v)=>setLucrari(lucrari.map((x)=>x.id===id?{...x,[f]:v}:x));
-  const remove = (id)=>setLucrari(lucrari.filter((x)=>x.id!==id));
-  const add = ()=>setLucrari([...(lucrari||[]),{ id:uid(), persoanaNume:numePersoane[0]||'', etajId: etaje[0]?.id||'', apartamenteIds:[], tipLucrare:'', cantitate:'', um:'buc', ore:'' }]);
-  const toggleAp = (x,apId)=>{ const cur=x.apartamenteIds||[]; update(x.id,'apartamenteIds', cur.includes(apId)? cur.filter((i)=>i!==apId):[...cur,apId]); };
-  // „Încă o lucrare" pentru aceeași persoană și același apartament: clonează persoana + etajul + apartamentele,
-  // și lasă gol doar ce a lucrat + cantitatea, ca să adaugi rapid mai multe lucrări sub aceeași persoană.
-  const altaLucrare = (x)=>{
-    const idx = (lucrari||[]).findIndex((y)=>y.id===x.id);
-    const nou = { id:uid(), persoanaNume:x.persoanaNume, etajId:x.etajId, apartamenteIds:[...(x.apartamenteIds||[])], tipLucrare:'', cantitate:'', um:'buc', ore:'' };
-    const next = [...(lucrari||[])]; next.splice(idx+1, 0, nou); setLucrari(next);
+  const grupuri = (lucrari||[]).map((g)=> Array.isArray(g.lucrari) ? g : normalizeLucrariApart([g])[0]);
+  const updateGrup = (id,f,v)=>setLucrari(grupuri.map((x)=>x.id===id?{...x,[f]:v}:x));
+  const removeGrup = (id)=>setLucrari(grupuri.filter((x)=>x.id!==id));
+  const toggleAp = (g,apId)=>{ const cur=g.apartamenteIds||[]; updateGrup(g.id,'apartamenteIds', cur.includes(apId)? cur.filter((i)=>i!==apId):[...cur,apId]); };
+  const setWorks = (gid, works)=>setLucrari(grupuri.map((g)=>g.id===gid?{...g, lucrari:works}:g));
+  const addWork = (g)=>setWorks(g.id, [...(g.lucrari||[]), { id:uid(), denumire:'', cantitate:'', um:'buc' }]);
+  const updateWork = (g,wid,f,v)=>setWorks(g.id, (g.lucrari||[]).map((w)=>w.id===wid?{...w,[f]:v}:w));
+  const pickWork = (g,wid,o)=>{
+    // Nu vrem același material de două ori la aceeași persoană/apartament → oferim să completeze rândul existent.
+    const dup = (g.lucrari||[]).find((w)=>w.id!==wid && normL(w.denumire)===normL(o.label));
+    if (dup && window.confirm(`„${o.label}" există deja aici pentru ${g.persoanaNume||'această persoană'}. Completează cantitatea la rândul existent în loc de un rând nou?`)) {
+      const rest = (g.lucrari||[]).filter((w)=>w.id!==wid);
+      setWorks(g.id, rest.length?rest:[{ id:uid(), denumire:'', cantitate:'', um:'buc' }]);
+      return;
+    }
+    setWorks(g.id, (g.lucrari||[]).map((w)=>w.id===wid?{...w,denumire:o.label,um:o.um||w.um}:w));
   };
+  const removeWork = (g,wid)=>{ const rest=(g.lucrari||[]).filter((w)=>w.id!==wid); setWorks(g.id, rest.length?rest:[{ id:uid(), denumire:'', cantitate:'', um:'buc' }]); };
+  const add = ()=>{ const ultimul = grupuri[grupuri.length-1]; setLucrari([...grupuri, { id:uid(), persoanaNume:(ultimul?.persoanaNume)||numePersoane[0]||'', etajId:(ultimul?.etajId)||etaje[0]?.id||'', apartamenteIds:[], ore:'', lucrari:[{ id:uid(), denumire:'', cantitate:'', um:'buc' }] }]); };
   return (
     <div>
-      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Cine, ce a lucrat, cantitatea, în care apartament(e) și cât timp. Un rând per persoană/lucrare — dacă 3 persoane fac lucruri diferite în același apartament, treci 3 rânduri. Ex: Attila — doze — 15 buc — Ap.402 — 3h.</p>
-      {(lucrari||[]).map((x)=>{
-        const etaj = etaje.find((e)=>e.id===x.etajId);
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Alegi persoana și apartamentul, apoi treci lucrările una sub alta (1, 2, 3...). Când persoana se mută în alt apartament, apeși „+ Adaugă" jos și pornești o listă nouă.</p>
+      {grupuri.map((g)=>{
+        const etaj = etaje.find((e)=>e.id===g.etajId);
         const aps = (etaj?.apartamente||[]).slice().sort(cmp);
         return (
-          <div key={x.id} className="rounded-lg p-2 mb-1.5" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+          <div key={g.id} className="rounded-lg p-2 mb-1.5" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
             <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-              <select value={x.persoanaNume} onChange={(e)=>update(x.id,'persoanaNume',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle}>
+              <select value={g.persoanaNume} onChange={(e)=>updateGrup(g.id,'persoanaNume',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle}>
                 <option value="" style={{ background:'#1B2127' }}>Persoană...</option>
                 {numePersoane.map((n)=><option key={n} value={n} style={{ background:'#1B2127' }}>{n}</option>)}
               </select>
-              <select value={x.etajId} onChange={(e)=>update(x.id,'etajId',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle}>
+              <select value={g.etajId} onChange={(e)=>updateGrup(g.id,'etajId',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle}>
                 <option value="" style={{ background:'#1B2127' }}>Etaj...</option>
                 {etaje.map((e)=><option key={e.id} value={e.id} style={{ background:'#1B2127' }}>{e.nume}</option>)}
               </select>
-              <span className="flex items-center gap-1 text-[11px]" style={{ color:'#8B93A0' }}>⏱<input type="number" inputMode="decimal" value={x.ore} onChange={(e)=>update(x.id,'ore',e.target.value)} placeholder="ore" className="w-14 rounded-lg px-1.5 py-1 text-xs outline-none text-center" style={inputStyle}/></span>
-              <button onClick={()=>remove(x.id)} className="ml-auto opacity-60" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+              <span className="flex items-center gap-1 text-[11px]" style={{ color:'#8B93A0' }}>⏱<input type="number" inputMode="decimal" value={g.ore} onChange={(e)=>updateGrup(g.id,'ore',e.target.value)} placeholder="ore" className="w-14 rounded-lg px-1.5 py-1 text-xs outline-none text-center" style={inputStyle}/></span>
+              <button onClick={()=>removeGrup(g.id)} className="ml-auto opacity-60" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
             </div>
             {etaj && (
               <div className="flex flex-wrap gap-1 mb-1.5">
                 {aps.length===0 && <span className="text-[11px]" style={{ color:'#5C6570' }}>Etajul n-are apartamente în structură.</span>}
-                {aps.map((a)=>{ const on=(x.apartamenteIds||[]).includes(a.id); return (
-                  <button key={a.id} onClick={()=>toggleAp(x,a.id)} className="text-[11px] px-2 py-1 rounded-lg" style={{ color:on?'#14181C':'#8B93A0', background:on?'#2E8BD1':'#1B2127', border:'1px solid #2A323B' }}>{a.nume}</button>
+                {aps.map((a)=>{ const on=(g.apartamenteIds||[]).includes(a.id); return (
+                  <button key={a.id} onClick={()=>toggleAp(g,a.id)} className="text-[11px] px-2 py-1 rounded-lg" style={{ color:on?'#14181C':'#8B93A0', background:on?'#2E8BD1':'#1B2127', border:'1px solid #2A323B' }}>{a.nume}</button>
                 ); })}
               </div>
             )}
-            <div className="flex items-center gap-1.5">
-              <AutocompleteInput value={x.tipLucrare} onChange={(v)=>update(x.id,'tipLucrare',v)} onPick={(o)=>setLucrari(lucrari.map((y)=>y.id===x.id?{...y,tipLucrare:o.label,um:o.um||y.um}:y))} options={optiuniLucrare} placeholder="Ce a lucrat (caută în poziții/materiale sau scrie liber)" minWidth="150px" />
-              <input type="number" inputMode="decimal" value={x.cantitate||''} onChange={(e)=>update(x.id,'cantitate',e.target.value)} placeholder="Cant." className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
-              <input value={x.um||''} onChange={(e)=>update(x.id,'um',e.target.value)} placeholder="UM" className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+            <div className="space-y-1">
+              {(g.lucrari||[]).map((w,i)=>(
+                <div key={w.id} className="flex items-center gap-1.5">
+                  <span className="text-[11px] w-4 text-center shrink-0" style={{ color:'#5C6570' }}>{i+1}</span>
+                  <AutocompleteInput value={w.denumire} onChange={(v)=>updateWork(g,w.id,'denumire',v)} onPick={(o)=>pickWork(g,w.id,o)} options={optiuniLucrare} placeholder="Ce a lucrat (caută în poziții/materiale sau scrie liber)" minWidth="130px" />
+                  <input type="number" inputMode="decimal" value={w.cantitate||''} onChange={(e)=>updateWork(g,w.id,'cantitate',e.target.value)} placeholder="Cant." className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                  <input value={w.um||''} onChange={(e)=>updateWork(g,w.id,'um',e.target.value)} placeholder="UM" className="w-12 rounded-lg px-1.5 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+                  <button onClick={()=>removeWork(g,w.id)} className="shrink-0 opacity-60" style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                </div>
+              ))}
             </div>
-            {x.persoanaNume && (x.apartamenteIds||[]).length>0 && (
-              <button onClick={()=>altaLucrare(x)} className="mt-1.5 text-[11px] px-2.5 py-1 rounded-lg font-medium" style={{ color:'#2E8BD1', background:'#1B2127', border:'1px solid #2E8BD166' }}>➕ Încă o lucrare pentru {x.persoanaNume} aici</button>
-            )}
+            <button onClick={()=>addWork(g)} className="mt-1.5 text-[11px] px-2.5 py-1 rounded-lg font-medium" style={{ color:'#2E8BD1', background:'#1B2127', border:'1px solid #2E8BD166' }}>➕ Adaugă lucrare{g.persoanaNume?' pentru '+g.persoanaNume:''}</button>
           </div>
         );
       })}
-      <button onClick={add} disabled={etaje.length===0} className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>+ Adaugă lucrare pe apartament</button>
+      <button onClick={add} disabled={etaje.length===0} className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>+ Adaugă persoană / apartament</button>
       {etaje.length===0 && <span className="text-[11px] ml-2" style={{ color:'#5C6570' }}>Adaugă întâi etaje/apartamente la „🏢 Structură".</span>}
     </div>
   );
@@ -2368,7 +2399,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
   const [materialeFolosite, setMaterialeFolosite] = useState(initial?.materialeFolosite || []);
   const [pozitiiExecutate, setPozitiiExecutate] = useState(initial?.pozitiiExecutate || []);
   const [tipuriLucrari, setTipuriLucrari] = useState(initial?.tipuriLucrari || []);
-  const [lucrariApartamente, setLucrariApartamente] = useState(initial?.lucrariApartamente || []);
+  const [lucrariApartamente, setLucrariApartamente] = useState(()=>normalizeLucrariApart(initial?.lucrariApartamente || []));
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const totalOreMin = persoane.reduce((s,p)=>s+personMinutes(p),0);
   return (
@@ -2457,7 +2488,10 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     const out = [];
     (rapoarte || []).filter((r)=>r.santierId===santierId).forEach((r)=>{
       (r.lucrariApartamente || []).forEach((l)=>{
-        if ((l.apartamenteIds || []).includes(apId) && (l.persoanaNume || l.tipLucrare)) out.push({ data:r.data, persoanaNume:l.persoanaNume, tipLucrare:l.tipLucrare, cantitate:l.cantitate, um:l.um, ore:l.ore });
+        if (!(l.apartamenteIds || []).includes(apId)) return;
+        const works = lucrariDinRand(l);
+        if (!works.length && l.persoanaNume) { out.push({ data:r.data, persoanaNume:l.persoanaNume, tipLucrare:'', cantitate:'', um:'', ore:l.ore }); return; }
+        works.forEach((w,idx)=> out.push({ data:r.data, persoanaNume:l.persoanaNume, tipLucrare:w.denumire, cantitate:w.cantitate, um:w.um, ore: idx===0?l.ore:'' }));
       });
     });
     return out.sort((a,b)=> a.data<b.data?1:-1);
@@ -3233,12 +3267,14 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                       📋 {(r.pozitiiExecutate||[]).filter((pe)=>pe.pozitieId && (Number(pe.cantitate)||0)>0).length} poziții executate
                     </div>
                   )}
-                  {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||l.tipLucrare).length > 0 && (
+                  {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||lucrariDinRand(l).length).length > 0 && (
                     <div className="text-xs mt-1 space-y-0.5" style={{ color:'#C08CE0' }}>
-                      {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||l.tipLucrare).map((l)=>{
+                      {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||lucrariDinRand(l).length).flatMap((l)=>{
                         const etaj = structuraSantier.find((e)=>e.id===l.etajId);
                         const apNames = (l.apartamenteIds||[]).map((id)=>etaj?.apartamente?.find((a)=>a.id===id)?.nume).filter(Boolean).join(', ');
-                        return <div key={l.id}>🏢 <b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>: {l.tipLucrare||''}{(Number(l.cantitate)||0)>0?` (${l.cantitate} ${l.um||''})`.replace(' )',')'):''}{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{l.ore?` · ${l.ore}h`:''}</div>;
+                        const works = lucrariDinRand(l);
+                        if (!works.length) return [<div key={l.id}>🏢 <b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{l.ore?` · ${l.ore}h`:''}</div>];
+                        return works.map((w,i)=><div key={l.id+'_'+i}>🏢 <b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>: {w.denumire||''}{(Number(w.cantitate)||0)>0?` (${w.cantitate} ${w.um||''})`.replace(' )',')'):''}{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{i===0&&l.ore?` · ${l.ore}h`:''}</div>);
                       })}
                     </div>
                   )}
@@ -4367,7 +4403,6 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     <div>
       <div className="flex items-start justify-between gap-3 mb-8 flex-wrap">
         <div className="flex items-center gap-3">
-          <img src="/logo.png" alt="Logo" style={{ height:36, width:'auto' }} />
           <div>
             <div className="text-base" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600 }}>{company?.nume || 'Panou intern'}</div>
             <div className="text-xs" style={{ color:'#5C6570' }}>
@@ -5003,10 +5038,12 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr,
     // potrivim denumirea lucrării cu pozițiile importate (după nume).
     (rapoarte || []).forEach((r)=>{
       (r.lucrariApartamente || []).forEach((l)=>{
-        const den = normP(l.tipLucrare); if (!den) return;
-        const poz = (pozitii || []).find((p)=>normP(p.denumire)===den);
-        if (!poz) return;
-        exec[poz.id] = (exec[poz.id] || 0) + (Number(l.cantitate) || 0);
+        lucrariDinRand(l).forEach((w)=>{
+          const den = normP(w.denumire); if (!den) return;
+          const poz = (pozitii || []).find((p)=>normP(p.denumire)===den);
+          if (!poz) return;
+          exec[poz.id] = (exec[poz.id] || 0) + (Number(w.cantitate) || 0);
+        });
       });
     });
   } else {
@@ -5095,7 +5132,7 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr,
 function openDevizPoz({ santier, company, rapoarte, pozitii, dinLucrari, nr, data }) {
   const normP = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
   const exista = dinLucrari
-    ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> (Number(l.cantitate)||0) > 0 && (pozitii||[]).some((p)=>normP(p.denumire)===normP(l.tipLucrare))))
+    ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> lucrariDinRand(l).some((w)=> (Number(w.cantitate)||0) > 0 && (pozitii||[]).some((p)=>normP(p.denumire)===normP(w.denumire)))))
     : (rapoarte || []).some((r)=> (r.pozitiiExecutate || []).some((pe)=> pe.pozitieId && (Number(pe.cantitate)||0) > 0));
   if (!exista) { window.alert(dinLucrari ? 'Nu există cantități pe poziții în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de poziții.' : 'Nu există poziții executate raportate în perioada selectată pentru acest șantier.'); return; }
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data })}</body></html>`;
@@ -5115,12 +5152,14 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
     // luăm doar rândurile care se potrivesc cu lista de materiale/operațiuni importată.
     (rapoarte || []).forEach((r)=>{
       (r.lucrariApartamente || []).forEach((l)=>{
-        const den = String(l.tipLucrare||'').trim(); if (!den) return;
-        const fromList = (materialeLista||[]).find((x)=>norm(x.denumire)===norm(den));
-        if (!fromList) return;
-        const key = norm(den)+'|'+norm(l.um||fromList.um);
-        if (!grup[key]) grup[key] = { denumire:den, um:l.um||fromList.um||'buc', cantitate:0, pret:0 };
-        grup[key].cantitate += Number(l.cantitate)||0;
+        lucrariDinRand(l).forEach((w)=>{
+          const den = String(w.denumire||'').trim(); if (!den) return;
+          const fromList = (materialeLista||[]).find((x)=>norm(x.denumire)===norm(den));
+          if (!fromList) return;
+          const key = norm(den)+'|'+norm(w.um||fromList.um);
+          if (!grup[key]) grup[key] = { denumire:den, um:w.um||fromList.um||'buc', cantitate:0, pret:0 };
+          grup[key].cantitate += Number(w.cantitate)||0;
+        });
       });
     });
   } else {
@@ -5204,7 +5243,7 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
 function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data }) {
   const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
   const exista = dinLucrari
-    ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> (Number(l.cantitate)||0) > 0 && (materialeLista||[]).some((x)=>norm(x.denumire)===norm(l.tipLucrare))))
+    ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> lucrariDinRand(l).some((w)=> (Number(w.cantitate)||0) > 0 && (materialeLista||[]).some((x)=>norm(x.denumire)===norm(w.denumire)))))
     : (rapoarte || []).some((r)=> (r.materialeFolosite || []).some((m)=> m.denumire && String(m.denumire).trim()));
   if (!exista) { window.alert(dinLucrari ? 'Nu există cantități de materiale în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de materiale importată.' : (realExecutat ? 'Nu există cantități raportate în perioada selectată pentru acest șantier.' : 'Nu există materiale folosite raportate în perioada selectată pentru acest șantier.')); return; }
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data })}</body></html>`;
