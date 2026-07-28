@@ -2097,6 +2097,11 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
                   <input placeholder="Nume beneficiar (ex: SKYLINE ENGINEERING SRL)" value={form.benefNume} onChange={(e)=>setForm({...form, benefNume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
                   <textarea placeholder={"Detalii beneficiar (adresă, CUI, J.., telefon)\nEx:\nStr. Buftea Nr.1 Ap.Birou Nr.2, Cluj-Napoca\nCUI RO30835569  J2012002885125\nTel: 0728 252 268"} value={form.benefInfo} onChange={(e)=>setForm({...form, benefInfo:e.target.value})} rows={4} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
                   <input placeholder="Cine semnează din partea beneficiarului (nume)" value={form.benefSemnatar || ''} onChange={(e)=>setForm({...form, benefSemnatar:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+                  <div className="flex gap-2">
+                    <input placeholder="Responsabil șantier (beneficiar)" value={form.benefResponsabil || ''} onChange={(e)=>setForm({...form, benefResponsabil:e.target.value})} className="flex-1 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+                    <input type="tel" inputMode="tel" placeholder="Telefon" value={form.benefResponsabilTel || ''} onChange={(e)=>setForm({...form, benefResponsabilTel:e.target.value})} className="w-36 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+                  </div>
+                  <div className="text-[11px]" style={{ color:'#5C6570' }}>Persoana de contact de pe șantier din partea beneficiarului — apare la șantier cu buton de sunat.</div>
                 </div>
               </div>
 
@@ -3131,6 +3136,12 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             <a href={mapsUrl(santier)} target="_blank" rel="noopener noreferrer" style={{ color:'#2E8BD1' }}>📍 {santier.adresa}</a>
           )}{currentUser?.rol === 'Manager' && <> · Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreSantierMin)}</span></>}
         </p>
+        {santier?.benefResponsabil && (
+          <div className="flex items-center gap-2 mb-3 rounded-lg px-3 py-2 flex-wrap" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+            <span className="text-xs" style={{ color:'#8B93A0' }}>👤 Responsabil beneficiar: <b style={{ color:'#E9E7E2' }}>{santier.benefResponsabil}</b></span>
+            {santier?.benefResponsabilTel && <a href={`tel:${String(santier.benefResponsabilTel).replace(/\s/g,'')}`} className="ml-auto text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>📞 Sună · {santier.benefResponsabilTel}</a>}
+          </div>
+        )}
         {!reportForm && <button onClick={()=>setReportForm({})} className="w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
         <div className="mb-3">
           {santier?.lat ? (
@@ -3451,6 +3462,7 @@ function LoginScreen({ onLogin }) {
   const [status, setStatus] = useState({ loading:false, error:'' });
   const [showPassword, setShowPassword] = useState(false);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const motiv = (()=>{ try { const m = sessionStorage.getItem('logoutMotiv'); if (m) sessionStorage.removeItem('logoutMotiv'); return m; } catch { return null; } })();
 
   const submit = async () => {
     setStatus({ loading:true, error:'' });
@@ -3469,6 +3481,7 @@ function LoginScreen({ onLogin }) {
         <div className="flex flex-col items-center mb-5">
           <img src="/logo.png" alt="Logo" style={{ height:40, width:'auto', marginBottom:10 }} />
         </div>
+        {motiv === 'inactivitate' && <div className="text-xs mb-3 text-center px-3 py-2 rounded-lg" style={{ color:'#E9A23B', background:'#3a2a14', border:'1px solid #E9A23B44' }}>Te-am delogat după 5 minute de inactivitate. Autentifică-te din nou.</div>}
 
         <div className="space-y-2">
           <input placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck="false" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
@@ -4647,7 +4660,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
           <div className="space-y-2">
             {maineList.map(({ s, suntInPauza, activ, echipaS })=>{
               const colegiActivi = activ
-                ? echipaS.filter((e)=>e.status==='activ' && e.userId!==currentUser?.id).map((e)=>colegiUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)
+                ? echipaS.filter((e)=>e.status==='activ' && e.userId!==currentUser?.id).map((e)=>colegiUsers.find((u)=>u.id===e.userId)).filter(Boolean)
                 : [];
               const culoare = suntInPauza ? '#E9A23B' : '#4CAF7D';
               return (
@@ -4664,7 +4677,15 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
                       {s.adresa && (
                         <a href={mapsUrl(s)} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} className="inline-flex items-center gap-1" style={{ color:'#2E8BD1' }}>📍 {s.adresa}</a>
                       )}
-                      {colegiActivi.length > 0 && <div className="mt-0.5">👥 {colegiActivi.join(', ')}</div>}
+                      {colegiActivi.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                          {colegiActivi.map((u)=>(
+                            <span key={u.id} className="inline-flex items-center gap-1">👤 {u.nume}
+                              {u.telefon && <a href={`tel:${String(u.telefon).replace(/\s/g,'')}`} onClick={(e)=>e.stopPropagation()} className="font-semibold" style={{ color:'#4CAF7D' }}>📞 {u.telefon}</a>}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </button>
@@ -5311,11 +5332,23 @@ function App() {
     setCurrentUser(data.user);
     try { localStorage.setItem('currentUser', JSON.stringify(data.user)); } catch {}
   };
-  const logout = () => {
+  const logout = (motiv) => {
     setAuthToken(null);
     setCurrentUser(null);
     try { localStorage.removeItem('currentUser'); } catch {}
+    try { if (motiv) sessionStorage.setItem('logoutMotiv', motiv); } catch {}
   };
+  // Securitate: după 5 minute fără activitate, cerem autentificarea din nou.
+  // Datele rămân salvate (local + server) — nu se pierde nimic la delogare.
+  useEffect(() => {
+    if (!currentUser) return;
+    let timer;
+    const reset = () => { clearTimeout(timer); timer = setTimeout(() => logout('inactivitate'), 5 * 60 * 1000); };
+    const eventList = ['mousemove','mousedown','keydown','touchstart','touchmove','scroll','click'];
+    eventList.forEach((e)=>window.addEventListener(e, reset, { capture:true, passive:true }));
+    reset();
+    return () => { clearTimeout(timer); eventList.forEach((e)=>window.removeEventListener(e, reset, { capture:true })); };
+  }, [currentUser]);
 
   // --- "Vezi ca" — doar Managerul real poate testa ce vede fiecare rol/utilizator, fără să se deloge. ---
   const [viewAsUserId, setViewAsUserId] = useState(null);
