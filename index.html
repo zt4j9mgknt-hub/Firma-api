@@ -2393,7 +2393,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
           </div>
           {showStructEdit && (
             <div className="rounded-lg p-2 mb-2" style={{ background:'#14181C', border:'1px solid #2A323B' }}>
-              <SiteStructuraTab santierId={santierId} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} />
+              <SiteStructuraTab santierId={santierId} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} materials={materials} materialeLista={materialeLista} />
             </div>
           )}
           {structura && structura.length > 0 ? (
@@ -2415,7 +2415,19 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
   );
 }
 
-function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack, rapoarte }) {
+function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack, rapoarte, materials, materialeLista }) {
+  const normM = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
+  const optiuniMat = (()=>{
+    const seen = new Set(), out = [];
+    const push = (key, denumire, um)=>{ const k=normM(denumire); if(denumire && !seen.has(k)){ seen.add(k); out.push({ key, label:denumire, um }); } };
+    (materialeLista||[]).forEach((m)=>push('l'+m.id, m.denumire, m.um));
+    (materials||[]).filter((m)=>!m.arhivat).forEach((m)=>push('c'+m.id, m.denumire, m.um));
+    // materiale deja introduse în structura acestui șantier → devin sugestii chiar fără import
+    (structuraSantier||[]).filter((e)=>e.santierId===santierId).forEach((e)=>{
+      (e.apartamente||[]).forEach((a)=>{ (a.materiale||[]).forEach((m)=>push('s'+m.id, m.denumire, m.um)); });
+    });
+    return out;
+  })();
   const lucrariApart = (apId) => {
     const out = [];
     (rapoarte || []).filter((r)=>r.santierId===santierId).forEach((r)=>{
@@ -2449,20 +2461,29 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
   const norm = (s) => String(s||'').toLowerCase().replace(/[\s.]/g,'');
   // Căutare deșteaptă pe tokeni: "etaj 1" → tot etajul 1; "ap1 etaj 2" → apartamentul 1 de la etajul 2; "ap1" → toate ap. 1.
   const parseCautare = (text) => {
-    const floorNums = [], apNums = [], textTerms = [];
+    const floorNums = [], apNums = [], genericNums = [], textTerms = [];
+    let pending = null; // ultimul cuvânt-cheie ("etaj" / "ap") așteaptă un număr
     String(text||'').toLowerCase().trim().split(/\s+/).filter(Boolean).forEach((tokRaw)=>{
       const tok = tokRaw.replace(/\./g,'');
       let m;
-      if ((m = tok.match(/^(?:ap|apartament|apt)(\d+)$/))) apNums.push(parseInt(m[1],10));
-      else if ((m = tok.match(/^(?:etaj|et|e)(\d+)$/))) floorNums.push(parseInt(m[1],10));
-      else if (/^\d+$/.test(tok)) floorNums.push(parseInt(tok,10));
-      else if (['etaj','et','ap','apartament','apt','e'].includes(tok)) { /* doar cuvânt-cheie */ }
-      else textTerms.push(tok);
+      if ((m = tok.match(/^(?:ap|apartament|apt)(\d+)$/))) { apNums.push(parseInt(m[1],10)); pending=null; }
+      else if ((m = tok.match(/^(?:etaj|et|e)(\d+)$/))) { floorNums.push(parseInt(m[1],10)); pending=null; }
+      else if (['etaj','et'].includes(tok)) { pending='floor'; }
+      else if (['ap','apartament','apt'].includes(tok)) { pending='ap'; }
+      else if (/^\d+$/.test(tok)) {
+        const n = parseInt(tok,10);
+        if (pending==='floor') floorNums.push(n);
+        else if (pending==='ap') apNums.push(n);
+        else genericNums.push(n); // număr liber (ex: „401") → caută peste tot, ca subșir
+        pending=null;
+      }
+      else if (tok==='e') { pending='floor'; }
+      else { textTerms.push(tok); pending=null; }
     });
-    return { floorNums, apNums, textTerms };
+    return { floorNums, apNums, genericNums, textTerms };
   };
   const cauta = parseCautare(cautare);
-  const areCautare = cauta.floorNums.length>0 || cauta.apNums.length>0 || cauta.textTerms.length>0;
+  const areCautare = cauta.floorNums.length>0 || cauta.apNums.length>0 || cauta.genericNums.length>0 || cauta.textTerms.length>0;
   const save = (next) => { setStructuraSantier(next); persist('structuraSantier', next); };
   const getForm = (apId) => matForm[apId] || { denumire:'', cantitate:1, um:'buc', descriere:'' };
   const setApartOre = (etajId, apId, ore) => { save(structuraSantier.map((e)=> e.id===etajId ? {...e, apartamente:(e.apartamente||[]).map((a)=> a.id===apId ? {...a, ore} : a)} : e)); };
@@ -2512,22 +2533,25 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     if (!areCautare) return { e, aps, isOpen: !!openEtaj[e.id], show: true };
     const fnum = numDin(e.nume);
     const floorText = norm(e.nume);
-    // filtru pe numărul etajului
+    // filtru explicit pe numărul etajului ("etaj N")
     if (cauta.floorNums.length && (fnum === null || !cauta.floorNums.includes(fnum))) return { e, aps: [], isOpen: true, show: false };
-    const floorTextOK = cauta.textTerms.every((t)=>floorText.includes(t));
-    const needApFilter = cauta.apNums.length > 0 || (cauta.textTerms.length > 0 && !floorTextOK);
-    if (needApFilter) {
-      const apOut = aps.filter((a)=>{
-        const anum = numDin(a.nume), at = norm(a.nume);
-        const apNumOK = !cauta.apNums.length || cauta.apNums.includes(anum);
-        const apTextOK = !cauta.textTerms.length || floorTextOK || cauta.textTerms.every((t)=>at.includes(t) || floorText.includes(t));
-        return apNumOK && apTextOK;
-      });
-      return { e, aps: apOut, isOpen: true, show: apOut.length > 0 };
-    }
-    // fără constrângere pe apartament → tot etajul (dar dacă e text liber, trebuie să se potrivească pe etaj)
-    if (cauta.textTerms.length && !floorTextOK) return { e, aps: [], isOpen: true, show: false };
-    return { e, aps, isOpen: true, show: true };
+    // etajul însuși se potrivește? (număr liber egal cu nr. etajului sau subșir în nume, ori text liber)
+    const floorHit =
+      cauta.genericNums.some((n)=> fnum===n || floorText.includes(String(n))) ||
+      (cauta.textTerms.length>0 && cauta.textTerms.every((t)=>floorText.includes(t)));
+    // predicat pe apartament: numărul liber („401") se potrivește dacă e egal cu nr. ap. SAU apare ca subșir în nume
+    const apOut = aps.filter((a)=>{
+      const anum = numDin(a.nume), at = norm(a.nume);
+      if (cauta.apNums.length && (anum===null || !cauta.apNums.includes(anum))) return false;
+      if (cauta.genericNums.length && !cauta.genericNums.some((n)=> anum===n || at.includes(String(n)))) return false;
+      if (cauta.textTerms.length && !cauta.textTerms.every((t)=> at.includes(t) || floorText.includes(t))) return false;
+      return true;
+    });
+    // doar „etaj N", fără altă constrângere → arată tot etajul
+    if (cauta.floorNums.length && !cauta.apNums.length && !cauta.genericNums.length && !cauta.textTerms.length) return { e, aps, isOpen: true, show: true };
+    // etajul se potrivește ca întreg (și nu s-a cerut un apartament anume) → arată tot etajul
+    if (floorHit && !cauta.apNums.length) return { e, aps, isOpen: true, show: true };
+    return { e, aps: apOut, isOpen: true, show: apOut.length > 0 };
   }).filter((x)=>x.show);
 
   const activeEtaj = etajeVizibile.find((x)=>x.e.id===selEtaj) || (areCautare ? etajeVizibile[0] : null);
@@ -2616,7 +2640,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
               </div>
               <div className="space-y-1.5">
                 <div className="flex gap-1.5">
-                  <input placeholder="Material" value={f.denumire} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, denumire:ev.target.value}})} className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                  <AutocompleteInput value={f.denumire} onChange={(v)=>setMatForm({...matForm, [a.id]:{...f, denumire:v}})} onPick={(o)=>setMatForm({...matForm, [a.id]:{...f, denumire:o.label, um:o.um||f.um}})} options={optiuniMat} placeholder="Material (caută: doze, tablou, intek...)" minWidth="110px" />
                   <input type="number" value={f.cantitate} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, cantitate:ev.target.value}})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
                   <input placeholder="UM" value={f.um} onChange={(ev)=>setMatForm({...matForm, [a.id]:{...f, um:ev.target.value}})} className="w-12 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
                 </div>
@@ -3254,7 +3278,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         )}
         {accHeader('structura','🏢','Structură — etaje')}
         {siteView === 'structura' && (
-          <SiteStructuraTab santierId={selected} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} rapoarte={rapoarte} />
+          <SiteStructuraTab santierId={selected} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} rapoarte={rapoarte} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} />
         )}
         {accHeader('devizpoz','📋','Poziții / Materiale')}
         {siteView === 'devizpoz' && (
