@@ -2175,7 +2175,7 @@ function AutocompleteInput({ value, onChange, onPick, options, placeholder, minW
   );
 }
 
-function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials, materialeLista, materialClient }) {
+function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials, materialeLista, materialClient, isManager }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const activeMaterials = (materials || []).filter((m)=>!m.arhivat);
   const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
@@ -2193,7 +2193,7 @@ function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, mate
   return (
     <div>
       <div className="text-sm font-medium mb-1.5" style={{ color:'#E9E7E2' }}>🧰 Materiale folosite</div>
-      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>{materialClient ? 'Materialele clientului — trece cantitatea și prețul unitar convenit.' : 'Tastează și alege din listă (sugestii din lista importată + gestiune).'}</p>
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>{materialClient ? (isManager ? 'Materialele clientului — trece cantitatea și prețul unitar convenit.' : 'Materialele clientului — trece doar cantitatea folosită.') : 'Tastează și alege din listă (sugestii din lista importată + gestiune).'}</p>
       {materialeFolosite.length > 0 && (
         <div className="space-y-1 mb-2">
           {materialeFolosite.map((m)=>(
@@ -2201,7 +2201,7 @@ function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, mate
               <AutocompleteInput value={m.denumire} onChange={(v)=>update(m.id,'denumire',v)} onPick={(o)=>pick(m.id,o)} options={optiuni} placeholder="Material" minWidth="140px" />
               <input type="number" value={m.cantitate} onChange={(e)=>update(m.id,'cantitate',e.target.value)} placeholder="Cant." className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />
               <input value={m.um} onChange={(e)=>update(m.id,'um',e.target.value)} placeholder="UM" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-14" style={inputStyle} />
-              {materialClient && <input type="number" value={m.pret||''} onChange={(e)=>update(m.id,'pret',e.target.value)} placeholder="Preț" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />}
+              {materialClient && isManager && <input type="number" value={m.pret||''} onChange={(e)=>update(m.id,'pret',e.target.value)} placeholder="Preț" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />}
               {!materialClient && (
                 <button onClick={()=>update(m.id,'sursa', m.sursa==='proprie'?'client':'proprie')} className="text-[11px] px-2 py-1 rounded-lg font-medium"
                   style={{ color:'#14181C', background: m.sursa==='proprie'?'#2E8BD1':'#E9A23B' }}>
@@ -2272,12 +2272,20 @@ function TipuriLucrariEditor({ tipuriLucrari, setTipuriLucrari }) {
   );
 }
 
-function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane }) {
+function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, echipaNume }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [totiElectricieni, setTotiElectricieni] = useState([]);
+  useEffect(() => {
+    authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((data)=>setTotiElectricieni((data.users||[]).filter((u)=>u.rol==='Electrician').map((u)=>u.nume).filter(Boolean))).catch(()=>setTotiElectricieni([]));
+  }, []);
   const numDin = (s)=>{ const m=String(s||'').match(/-?\d+/); return m?parseInt(m[0],10):null; };
   const cmp = (a,b)=>{ const na=numDin(a?.nume),nb=numDin(b?.nume); if(na==null&&nb==null) return String(a?.nume||'').localeCompare(String(b?.nume||''),'ro'); if(na==null)return -1; if(nb==null)return 1; return na-nb; };
   const etaje = (structura||[]).slice().sort(cmp);
-  const numePersoane = (persoane||[]).map((p)=>p.nume).filter((n)=>n&&n.trim());
+  const bazaEchipa = Array.from(new Set([ ...(echipaNume||[]), ...(persoane||[]).map((p)=>p.nume) ].filter((n)=>n&&String(n).trim())));
+  // Dacă șantierul n-are echipă asignată și n-ai adăugat încă persoane la raport,
+  // arătăm toți electricienii ca să poți selecta oricând cine a lucrat.
+  const numePersoane = bazaEchipa.length ? bazaEchipa : totiElectricieni;
   const update = (id,f,v)=>setLucrari(lucrari.map((x)=>x.id===id?{...x,[f]:v}:x));
   const remove = (id)=>setLucrari(lucrari.filter((x)=>x.id!==id));
   const add = ()=>setLucrari([...(lucrari||[]),{ id:uid(), persoanaNume:numePersoane[0]||'', etajId: etaje[0]?.id||'', apartamenteIds:[], tipLucrare:'', ore:'' }]);
@@ -2320,7 +2328,7 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane }) 
   );
 }
 
-function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, onCancel, onSave }) {
+function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, onCancel, onSave }) {
   const modR = mod || 'orar';
   const estePozitie = modR==='pozitie_propriu' || modR==='pozitie_client';
   const [showStructEdit, setShowStructEdit] = useState(false);
@@ -2366,7 +2374,7 @@ function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, 
       )}
       {estePozitie && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
-          <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} materialClient={modR==='pozitie_client'} />
+          <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} materialClient={modR==='pozitie_client'} isManager={isManager} />
         </div>
       )}
       {modR==='orar_lucrari' && (
@@ -2386,7 +2394,7 @@ function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, 
             </div>
           )}
           {structura && structura.length > 0 ? (
-            <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} />
+            <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} echipaNume={echipaNume} />
           ) : (
             <p className="text-xs" style={{ color:'#5C6570' }}>Adaugă etaje/apartamente cu butonul „✎ Etaje / apartamente" de sus, apoi poți nota cine a lucrat unde.</p>
           )}
@@ -2696,6 +2704,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   const setLista = isPoz ? setPozitiiSantier : setMaterialeListaSantier;
   const cheie = isPoz ? 'pozitiiSantier' : 'materialeListaSantier';
   const items = lista.filter((x)=>x.santierId===santierId);
+  const gridCols = isManager ? '24px 1fr 42px 52px 64px 70px 44px' : '24px 1fr 42px 52px 44px';
   const save = (nextAll) => { setLista(nextAll); persist(cheie, nextAll); };
   const totalVal = items.reduce((s,x)=> s + ((Number(x.cantitate)||0) * (Number(x.pretUnitar)||0)), 0);
 
@@ -2746,60 +2755,58 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
       )}
 
       {items.length === 0 ? (
-        <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>{isManager ? `Nicio ${isPoz?'poziție':'listă de materiale'} încă. Importă din Excel sau adaugă manual mai jos.` : 'Managerul nu a adăugat încă nimic aici.'}</div>
+        <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>{isManager ? `Nicio ${isPoz?'poziție':'listă de materiale'} încă. Importă din Excel sau adaugă manual mai jos.` : 'Nimic adăugat încă la acest șantier.'}</div>
       ) : (
         <div className="rounded-lg overflow-hidden" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-          <div className="grid gap-1 px-2 py-1.5 text-[10px] uppercase tracking-wide" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', color:'#8B93A0', background:'#20272e' }}>
-            <span>Nr</span><span>Denumire</span><span>U.M.</span><span>Cant.</span><span>Preț</span><span>Valoare</span><span></span>
+          <div className="grid gap-1 px-2 py-1.5 text-[10px] uppercase tracking-wide" style={{ gridTemplateColumns:gridCols, color:'#8B93A0', background:'#20272e' }}>
+            <span>Nr</span><span>Denumire</span><span>U.M.</span><span>Cant.</span>{isManager && <span>Preț</span>}{isManager && <span>Valoare</span>}<span></span>
           </div>
           {items.map((x, i)=> editId===x.id ? (
-            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', borderTop:'1px solid #2A323B', background:'#232C34' }}>
+            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1px solid #2A323B', background:'#232C34' }}>
               <span className="text-[11px]" style={{ color:'#5C6570' }}>{i+1}</span>
               <input value={editRow.denumire} onChange={(e)=>setEditRow({...editRow, denumire:e.target.value})} className="rounded px-1.5 py-1 text-xs outline-none" style={inputStyle} />
               <input value={editRow.um} onChange={(e)=>setEditRow({...editRow, um:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
               <input type="number" value={editRow.cantitate} onChange={(e)=>setEditRow({...editRow, cantitate:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
-              <input type="number" value={editRow.pretUnitar} onChange={(e)=>setEditRow({...editRow, pretUnitar:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
-              <span className="text-xs text-right" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(editRow.cantitate)||0)*(Number(editRow.pretUnitar)||0))}</span>
+              {isManager && <input type="number" value={editRow.pretUnitar} onChange={(e)=>setEditRow({...editRow, pretUnitar:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />}
+              {isManager && <span className="text-xs text-right" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(editRow.cantitate)||0)*(Number(editRow.pretUnitar)||0))}</span>}
               <div className="flex items-center gap-1.5 justify-end">
                 <button onClick={saveEdit} style={{ color:'#4CAF7D' }}>✓</button>
                 <button onClick={()=>setEditId(null)} style={{ color:'#8B93A0' }}>✕</button>
               </div>
             </div>
           ) : (
-            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', borderTop:'1px solid #2A323B' }}>
+            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1px solid #2A323B' }}>
               <span className="text-[11px]" style={{ color:'#5C6570' }}>{i+1}</span>
               <span className="text-xs truncate" style={{ color:'#E9E7E2' }}>{x.denumire}</span>
               <span className="text-[11px] text-center" style={{ color:'#8B93A0' }}>{x.um}</span>
               <span className="text-xs text-center" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }}>{x.cantitate}</span>
-              <span className="text-xs text-center" style={{ color:'#8B93A0', fontFamily:"'JetBrains Mono', monospace" }}>{x.pretUnitar}</span>
-              <span className="text-xs text-right" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(x.cantitate)||0)*(Number(x.pretUnitar)||0))}</span>
-              {isManager ? (
-                <div className="flex items-center gap-1.5 justify-end shrink-0">
-                  <button onClick={()=>startEdit(x)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
-                  <button onClick={()=>delRow(x.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
-                </div>
-              ) : <span></span>}
+              {isManager && <span className="text-xs text-center" style={{ color:'#8B93A0', fontFamily:"'JetBrains Mono', monospace" }}>{x.pretUnitar}</span>}
+              {isManager && <span className="text-xs text-right" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money((Number(x.cantitate)||0)*(Number(x.pretUnitar)||0))}</span>}
+              <div className="flex items-center gap-1.5 justify-end shrink-0">
+                <button onClick={()=>startEdit(x)} title="Editează" style={{ color:'#8B93A0' }}><Icon size={11}>✎</Icon></button>
+                <button onClick={()=>delRow(x.id)} title="Șterge" style={{ color:'#E05252' }}><Icon size={11}>🗑</Icon></button>
+              </div>
             </div>
           ))}
-          <div className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:'24px 1fr 42px 52px 64px 70px 44px', borderTop:'1.5px solid #2A323B', background:'#20272e' }}>
+          {isManager && (
+          <div className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1.5px solid #2A323B', background:'#20272e' }}>
             <span></span><span className="text-xs font-semibold" style={{ color:'#E9E7E2' }}>TOTAL (fără TVA)</span><span></span><span></span><span></span>
             <span className="text-xs text-right font-semibold" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalVal)}</span><span></span>
           </div>
+          )}
         </div>
       )}
 
-      {isManager && (
       <div className="rounded-lg p-2.5" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
         <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Adaugă manual un rând:</div>
         <div className="flex gap-1.5 flex-wrap">
           <input placeholder={isPoz?'Denumire poziție':'Denumire material'} value={addRow.denumire} onChange={(e)=>setAddRow({...addRow, denumire:e.target.value})} className="flex-1 min-w-[140px] rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
           <input placeholder="U.M." value={addRow.um} onChange={(e)=>setAddRow({...addRow, um:e.target.value})} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
           <input type="number" placeholder="Cant." value={addRow.cantitate} onChange={(e)=>setAddRow({...addRow, cantitate:e.target.value})} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
-          <input type="number" placeholder="Preț" value={addRow.pretUnitar} onChange={(e)=>setAddRow({...addRow, pretUnitar:e.target.value})} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+          {isManager && <input type="number" placeholder="Preț" value={addRow.pretUnitar} onChange={(e)=>setAddRow({...addRow, pretUnitar:e.target.value})} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />}
           <button onClick={addNew} disabled={!addRow.denumire.trim()} className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>+ Adaugă</button>
         </div>
       </div>
-      )}
     </div>
   );
 }
@@ -3096,7 +3103,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           );
         })()}
 
-        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : !raporteShowAll ? (
@@ -3110,7 +3117,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               if (reportForm && reportForm.id === r.id) {
-                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
+                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
               }
               return (
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -3240,7 +3247,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         )}
         {accHeader('devizpoz','📋','Poziții / Materiale')}
         {siteView === 'devizpoz' && (
-          <SiteDevizPozTab santierId={selected} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} persist={persist} isManager={true} />
+          <SiteDevizPozTab santierId={selected} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} persist={persist} isManager={currentUser?.rol === 'Manager'} />
         )}
         </div>
       </div>
