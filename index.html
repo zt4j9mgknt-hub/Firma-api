@@ -4790,8 +4790,13 @@ function CompanyTab({ company, setCompany, persist }) {
 
 const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const PRINT_CSS = `
+  /* Elimină antetul/subsolul automat al browserului (URL, data, „pagina 1 din…"). */
+  @page { size: A4; margin: 0; }
   * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; background:#fff; color:#1a1a1a; }
-  .print-page { width:190mm; margin:0 auto; padding:14mm; page-break-after:always; }
+  .print-page { width:202mm; margin:0 auto; padding:10mm 7mm 16mm; page-break-after:always; }
+  /* Footer propriu, centrat jos — apare doar când tipărim/salvăm PDF. */
+  .pp-pagefoot { display:none; }
+  @media print { .pp-pagefoot { display:block; position:fixed; left:0; right:0; bottom:6mm; text-align:center; font-size:9px; color:#777; } }
   .print-page:last-child { page-break-after:auto; }
   .pp-header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8mm; }
   .pp-logo { height:30px; width:auto; }
@@ -4804,9 +4809,12 @@ const PRINT_CSS = `
   .pp-party-col { flex:1; font-size:11px; line-height:1.6; }
   .pp-label { font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#888; margin-bottom:1mm; font-weight:700; }
   .pp-party-name { font-weight:700; font-size:13px; margin-bottom:1mm; }
-  .pp-table { width:100%; border-collapse:collapse; font-size:10.5px; margin-bottom:6mm; }
-  .pp-table th { text-align:center; border:1px solid #999; padding:2mm; font-size:9.5px; text-transform:uppercase; background:#f2f2f2; }
-  .pp-table td { text-align:center; border:1px solid #ccc; padding:2mm; }
+  .pp-table { width:100%; border-collapse:collapse; font-size:11px; margin-bottom:6mm; }
+  .pp-table thead th { text-align:center; border:1px solid #b6c2cc; padding:2.6mm 2mm; font-size:9.5px; text-transform:uppercase; letter-spacing:.3px; background:#e9eef3; color:#28323b; font-weight:700; }
+  .pp-table td { text-align:center; border:1px solid #d6dee4; padding:2.3mm 2mm; }
+  .pp-table tbody tr:nth-child(even) td { background:#f6f8fa; }
+  .pp-table tbody td:last-child { font-weight:600; color:#123049; }
+  .pp-table tfoot td { font-weight:700; background:#eef2f6; border-color:#b6c2cc; }
   .pp-totals { margin-left:auto; width:65mm; font-size:12px; margin-bottom:10mm; }
   .pp-totals-row { display:flex; justify-content:space-between; padding:1.5mm 0; }
   .pp-totals-final { border-top:1.5px solid #1a1a1a; font-weight:700; font-size:14px; margin-top:1mm; padding-top:2mm; }
@@ -4815,7 +4823,6 @@ const PRINT_CSS = `
   .pp-sign-label { font-size:10px; text-transform:uppercase; color:#888; margin-bottom:1mm; font-weight:700; }
   .pp-sign-line { margin-top:14mm; border-top:1px solid #999; width:70%; }
   .pp-status { margin-top:6mm; font-size:10px; color:#888; }
-  @page { size:A4; margin:0; }
   .doc-toolbar { position:sticky; top:0; z-index:9999; display:flex; gap:10px; justify-content:space-between; align-items:center; background:#14181C; padding:10px 14px; border-bottom:1px solid #2A323B; }
   .doc-toolbar button { border-radius:8px; padding:11px 16px; font-size:15px; font-weight:700; cursor:pointer; border:none; }
   .doc-tb-back { background:#21262d; color:#e6edf3; border:1px solid #30363d !important; }
@@ -5054,7 +5061,7 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrar
 function openDevizOrar({ santier, company, rapoarte, nr, data, includeLucrari }) {
   const validPers = (rapoarte || []).some((r)=> (r.persoane || []).some((p)=> p.nume && String(p.nume).trim()));
   if (!validPers) { window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.'); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrari })}</body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrari })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
@@ -5168,7 +5175,7 @@ function openDevizPoz({ santier, company, rapoarte, pozitii, dinLucrari, nr, dat
     ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> lucrariDinRand(l).some((w)=> (Number(w.cantitate)||0) > 0 && (pozitii||[]).some((p)=>normP(p.denumire)===normP(w.denumire)))))
     : (rapoarte || []).some((r)=> (r.pozitiiExecutate || []).some((pe)=> pe.pozitieId && (Number(pe.cantitate)||0) > 0));
   if (!exista) { window.alert(dinLucrari ? 'Nu există cantități pe poziții în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de poziții.' : 'Nu există poziții executate raportate în perioada selectată pentru acest șantier.'); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data })}</body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
@@ -5279,7 +5286,7 @@ function openDevizMateriale({ santier, company, rapoarte, materialeLista, materi
     ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> lucrariDinRand(l).some((w)=> (Number(w.cantitate)||0) > 0 && (materialeLista||[]).some((x)=>norm(x.denumire)===norm(w.denumire)))))
     : (rapoarte || []).some((r)=> (r.materialeFolosite || []).some((m)=> m.denumire && String(m.denumire).trim()));
   if (!exista) { window.alert(dinLucrari ? 'Nu există cantități de materiale în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de materiale importată.' : (realExecutat ? 'Nu există cantități raportate în perioada selectată pentru acest șantier.' : 'Nu există materiale folosite raportate în perioada selectată pentru acest șantier.')); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data })}</body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
