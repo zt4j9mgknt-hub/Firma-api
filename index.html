@@ -2154,7 +2154,56 @@ function TipuriLucrariEditor({ tipuriLucrari, setTipuriLucrari }) {
   );
 }
 
-function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, onCancel, onSave }) {
+function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const numDin = (s)=>{ const m=String(s||'').match(/-?\d+/); return m?parseInt(m[0],10):null; };
+  const cmp = (a,b)=>{ const na=numDin(a?.nume),nb=numDin(b?.nume); if(na==null&&nb==null) return String(a?.nume||'').localeCompare(String(b?.nume||''),'ro'); if(na==null)return -1; if(nb==null)return 1; return na-nb; };
+  const etaje = (structura||[]).slice().sort(cmp);
+  const numePersoane = (persoane||[]).map((p)=>p.nume).filter((n)=>n&&n.trim());
+  const update = (id,f,v)=>setLucrari(lucrari.map((x)=>x.id===id?{...x,[f]:v}:x));
+  const remove = (id)=>setLucrari(lucrari.filter((x)=>x.id!==id));
+  const add = ()=>setLucrari([...(lucrari||[]),{ id:uid(), persoanaNume:numePersoane[0]||'', etajId: etaje[0]?.id||'', apartamenteIds:[], tipLucrare:'', ore:'' }]);
+  const toggleAp = (x,apId)=>{ const cur=x.apartamenteIds||[]; update(x.id,'apartamenteIds', cur.includes(apId)? cur.filter((i)=>i!==apId):[...cur,apId]); };
+  return (
+    <div>
+      <div className="text-sm font-medium mb-1.5" style={{ color:'#E9E7E2' }}>🏢 Lucrări pe apartamente</div>
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Cine, ce a lucrat, în care apartament(e) și cât timp. Ex: Attila — tablouri — Ap.5 — 3h.</p>
+      {(lucrari||[]).map((x)=>{
+        const etaj = etaje.find((e)=>e.id===x.etajId);
+        const aps = (etaj?.apartamente||[]).slice().sort(cmp);
+        return (
+          <div key={x.id} className="rounded-lg p-2 mb-1.5" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
+            <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+              <select value={x.persoanaNume} onChange={(e)=>update(x.id,'persoanaNume',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle}>
+                <option value="" style={{ background:'#1B2127' }}>Persoană...</option>
+                {numePersoane.map((n)=><option key={n} value={n} style={{ background:'#1B2127' }}>{n}</option>)}
+              </select>
+              <select value={x.etajId} onChange={(e)=>update(x.id,'etajId',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle}>
+                <option value="" style={{ background:'#1B2127' }}>Etaj...</option>
+                {etaje.map((e)=><option key={e.id} value={e.id} style={{ background:'#1B2127' }}>{e.nume}</option>)}
+              </select>
+              <span className="flex items-center gap-1 text-[11px]" style={{ color:'#8B93A0' }}>⏱<input type="number" inputMode="decimal" value={x.ore} onChange={(e)=>update(x.id,'ore',e.target.value)} placeholder="ore" className="w-14 rounded-lg px-1.5 py-1 text-xs outline-none text-center" style={inputStyle}/></span>
+              <button onClick={()=>remove(x.id)} className="ml-auto opacity-60" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
+            </div>
+            {etaj && (
+              <div className="flex flex-wrap gap-1 mb-1.5">
+                {aps.length===0 && <span className="text-[11px]" style={{ color:'#5C6570' }}>Etajul n-are apartamente în structură.</span>}
+                {aps.map((a)=>{ const on=(x.apartamenteIds||[]).includes(a.id); return (
+                  <button key={a.id} onClick={()=>toggleAp(x,a.id)} className="text-[11px] px-2 py-1 rounded-lg" style={{ color:on?'#14181C':'#8B93A0', background:on?'#2E8BD1':'#1B2127', border:'1px solid #2A323B' }}>{a.nume}</button>
+                ); })}
+              </div>
+            )}
+            <input value={x.tipLucrare} onChange={(e)=>update(x.id,'tipLucrare',e.target.value)} placeholder="Ce a lucrat (ex: pus tablouri, slit în perete, copex)" className="w-full rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+          </div>
+        );
+      })}
+      <button onClick={add} disabled={etaje.length===0} className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40" style={{ color:'#14181C', background:'#4CAF7D' }}>+ Adaugă lucrare pe apartament</button>
+      {etaje.length===0 && <span className="text-[11px] ml-2" style={{ color:'#5C6570' }}>Adaugă întâi etaje/apartamente la „🏢 Structură".</span>}
+    </div>
+  );
+}
+
+function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, structura, onCancel, onSave }) {
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
@@ -2164,6 +2213,7 @@ function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, onCance
   const [materialeFolosite, setMaterialeFolosite] = useState(initial?.materialeFolosite || []);
   const [pozitiiExecutate, setPozitiiExecutate] = useState(initial?.pozitiiExecutate || []);
   const [tipuriLucrari, setTipuriLucrari] = useState(initial?.tipuriLucrari || []);
+  const [lucrariApartamente, setLucrariApartamente] = useState(initial?.lucrariApartamente || []);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const totalOreMin = persoane.reduce((s,p)=>s+personMinutes(p),0);
   return (
@@ -2197,6 +2247,11 @@ function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, onCance
           <PozitiiExecutateEditor pozitiiExecutate={pozitiiExecutate} setPozitiiExecutate={setPozitiiExecutate} pozitii={pozitii} />
         </div>
       )}
+      {structura && structura.length > 0 && (
+        <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} />
+        </div>
+      )}
       <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
         <TipuriLucrariEditor tipuriLucrari={tipuriLucrari} setTipuriLucrari={setTipuriLucrari} />
       </div>
@@ -2205,7 +2260,7 @@ function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, onCance
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMin)}</span></span>
         <div className="flex gap-2">
           <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'#8B93A0', background:'#171C21' }}>Renunță</button>
-          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          <button onClick={()=>onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, explicatii })} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
         </div>
       </div>
     </div>
@@ -2888,7 +2943,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           )
         )}
 
-        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : !raporteShowAll ? (
@@ -2902,7 +2957,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               if (reportForm && reportForm.id === r.id) {
-                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
+                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
               }
               return (
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -2935,6 +2990,15 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                   {(r.pozitiiExecutate||[]).filter((pe)=>pe.pozitieId && (Number(pe.cantitate)||0)>0).length > 0 && (
                     <div className="text-xs mt-1" style={{ color:'#2E8BD1' }}>
                       📋 {(r.pozitiiExecutate||[]).filter((pe)=>pe.pozitieId && (Number(pe.cantitate)||0)>0).length} poziții executate
+                    </div>
+                  )}
+                  {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||l.tipLucrare).length > 0 && (
+                    <div className="text-xs mt-1 space-y-0.5" style={{ color:'#C08CE0' }}>
+                      {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||l.tipLucrare).map((l)=>{
+                        const etaj = structuraSantier.find((e)=>e.id===l.etajId);
+                        const apNames = (l.apartamenteIds||[]).map((id)=>etaj?.apartamente?.find((a)=>a.id===id)?.nume).filter(Boolean).join(', ');
+                        return <div key={l.id}>🏢 <b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>: {l.tipLucrare||''}{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{l.ore?` · ${l.ore}h`:''}</div>;
+                      })}
                     </div>
                   )}
                 </div>
