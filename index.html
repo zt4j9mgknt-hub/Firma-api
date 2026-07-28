@@ -27,11 +27,12 @@
   input::placeholder { color:#5C6570; }
   select { color-scheme: dark; }
   /* Antet: un fir subțire prin care „curge" un puls de curent — discret, tema electrică. */
-  .curent-antet { position:relative; height:3px; width:100%; overflow:hidden; background:linear-gradient(90deg,#1d3247,#2E6C9E,#1d3247); flex:0 0 auto; box-shadow:0 0 6px rgba(46,139,209,.35); }
-  .curent-antet::before { content:''; position:absolute; top:0; height:100%; width:42%; left:-42%; background:linear-gradient(90deg, transparent, rgba(200,240,255,1), rgba(46,139,209,1), transparent); box-shadow:0 0 16px 3px rgba(124,212,255,.9); animation:curentAntet 2.8s linear infinite; }
-  .curent-antet::after { content:''; position:absolute; top:0; height:100%; width:26%; left:-26%; background:linear-gradient(90deg, transparent, rgba(76,175,125,.8), transparent); box-shadow:0 0 12px 2px rgba(76,175,125,.5); animation:curentAntet 2.8s linear infinite; animation-delay:1.4s; }
-  @keyframes curentAntet { 0% { left:-42%; } 100% { left:106%; } }
-  @media (prefers-reduced-motion: reduce) { .curent-antet::before, .curent-antet::after { animation:none; opacity:.4; } }
+  .curent-antet { position:relative; height:4px; width:100%; overflow:hidden; flex:0 0 auto; background:linear-gradient(90deg,#0e1a26,#1d4e78,#2E8BD1,#1d4e78,#0e1a26); background-size:220% 100%; animation:curentShimmer 5s linear infinite; box-shadow:0 0 12px rgba(46,139,209,.55); }
+  .curent-antet::before { content:''; position:absolute; top:0; height:100%; width:34%; left:-34%; border-radius:50%; background:linear-gradient(90deg, transparent, rgba(124,212,255,.35), rgba(210,245,255,1), #ffffff, rgba(46,139,209,1), transparent); box-shadow:0 0 22px 5px rgba(160,225,255,.95); animation:curentZip 2.1s cubic-bezier(.45,0,.55,1) infinite; }
+  .curent-antet::after { content:''; position:absolute; top:0; height:100%; width:18%; left:-18%; border-radius:50%; background:linear-gradient(90deg, transparent, rgba(76,175,125,.95), transparent); box-shadow:0 0 16px 4px rgba(76,175,125,.75); animation:curentZip 2.1s linear infinite; animation-delay:1.05s; }
+  @keyframes curentShimmer { 0% { background-position:0% 0; } 100% { background-position:220% 0; } }
+  @keyframes curentZip { 0% { left:-34%; } 100% { left:112%; } }
+  @media (prefers-reduced-motion: reduce) { .curent-antet, .curent-antet::before, .curent-antet::after { animation:none; } .curent-antet::before { left:40%; } }
 </style>
 </head>
 <body>
@@ -142,6 +143,48 @@ function authFetch(url, options = {}) {
   return fetch(url, { ...options, headers });
 }
 
+// ---- Amprentă / FaceID: deblocare LOCALĂ pe acest dispozitiv (WebAuthn platform authenticator).
+// Nu e verificare pe server (nu putem modifica serverul) — biometricul deblochează sesiunea salvată
+// local. Parola rămâne mereu disponibilă ca rezervă. Totul e defensiv: dacă biometricul nu merge,
+// nu blochează nimic. ----
+const bufToB64u = (buf)=>{ const b=new Uint8Array(buf); let s=''; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); };
+const b64uToBuf = (str)=>{ str=String(str).replace(/-/g,'+').replace(/_/g,'/'); const pad='='.repeat((4-str.length%4)%4); const bin=atob(str+pad); const b=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) b[i]=bin.charCodeAt(i); return b; };
+function bioSuportat(){ try { return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext); } catch { return false; } }
+function bioInrolat(){ try { return !!localStorage.getItem('bioCredId'); } catch { return false; } }
+async function bioInroleaza(user, token){
+  if (!bioSuportat()) throw new Error('Dispozitivul nu suportă amprentă/FaceID (sau nu ești pe HTTPS).');
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const userId = crypto.getRandomValues(new Uint8Array(16));
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge,
+    rp: { name: 'SMART ELECTROCONECT' },
+    user: { id: userId, name: String(user?.username||user?.nume||'user'), displayName: String(user?.nume||'user') },
+    pubKeyCredParams: [{ type:'public-key', alg:-7 }, { type:'public-key', alg:-257 }],
+    authenticatorSelection: { authenticatorAttachment:'platform', userVerification:'required', residentKey:'preferred' },
+    timeout: 60000,
+  }});
+  if (!cred) throw new Error('Înrolare anulată.');
+  localStorage.setItem('bioCredId', bufToB64u(cred.rawId));
+  localStorage.setItem('bioSession', JSON.stringify({ user, token }));
+}
+function bioActualizeazaSesiune(user, token){ try { if (bioInrolat()) localStorage.setItem('bioSession', JSON.stringify({ user, token })); } catch {} }
+function bioSterge(){ try { localStorage.removeItem('bioCredId'); localStorage.removeItem('bioSession'); } catch {} }
+async function bioDeblocheaza(){
+  if (!bioSuportat() || !bioInrolat()) throw new Error('Amprenta nu e activată pe acest dispozitiv.');
+  const credId = localStorage.getItem('bioCredId');
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const asrt = await navigator.credentials.get({ publicKey: {
+    challenge,
+    allowCredentials: [{ id: b64uToBuf(credId), type:'public-key' }],
+    userVerification:'required',
+    timeout: 60000,
+  }});
+  if (!asrt) throw new Error('Deblocare anulată.');
+  const raw = localStorage.getItem('bioSession');
+  if (!raw) throw new Error('Nu există o sesiune salvată. Intră o dată cu parola.');
+  return JSON.parse(raw); // { user, token }
+}
+
 // ---- OFFLINE: cache local + coadă de trimitere. Aplicația merge fără net; se sincronizează când revine. ----
 const CACHE_PREFIX = 'cache_';
 function cacheGet(key){ try{ const r=localStorage.getItem(CACHE_PREFIX+key); return r!=null?JSON.parse(r):undefined; }catch{ return undefined; } }
@@ -233,7 +276,9 @@ const ROLES = [
 
 // Perioadă de test: cât timp e true, colegii (non-Manager) pot intra DOAR la Șantiere.
 // Când se termină testul, pune false ca să revină accesul complet.
-const PERIOADA_TEST = true;
+const PERIOADA_TEST = false;
+// Etichetă de versiune — apare jos în meniu, ca să confirmi că s-a încărcat ultima versiune.
+const APP_VERSION = 'v28.07-bio';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const INVOICE_STATUSES = ['Neplătită', 'Plătită', 'Restantă'];
@@ -2839,6 +2884,8 @@ function parseDevizRows(rows) {
   if (um < 0) um = den + 1;
   if (nr < 0) nr = 0;
   if (pret < 0) pret = (idxVal >= 0 && idxVal !== idxTotal) ? idxVal : -1;
+  // Dacă nu există coloană U.M. reală și „um" a nimerit peste coloana de preț → n-o folosim (default „buc").
+  if (um >= 0 && (um === pret || um === idxCant)) um = -1;
   const cantCol = idxCant; // dacă nu există coloană „cantitate" (ex: cantități pe etaje) → 0, se completează din rapoarte
   const valCol = idxTotal >= 0 ? idxTotal : (idxVal >= 0 ? idxVal : -1);
   const out = [];
@@ -2871,6 +2918,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   const [editId, setEditId] = useState(null);
   const [editRow, setEditRow] = useState({});
   const [addRow, setAddRow] = useState({ denumire:'', um:'buc', cantitate:'', pretUnitar:'' });
+  const [sheetPick, setSheetPick] = useState(null);
   const isPoz = innerTab === 'pozitii';
   const lista = isPoz ? (pozitiiSantier || []) : (materialeListaSantier || []);
   const setLista = isPoz ? setPozitiiSantier : setMaterialeListaSantier;
@@ -2886,19 +2934,31 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   const save = (nextAll) => { setLista(nextAll); persist(cheie, nextAll); };
   const totalVal = items.reduce((s,x)=> s + ((Number(x.cantitate)||0) * (Number(x.pretUnitar)||0)), 0);
 
+  const importaFoaia = (wb, sheetName) => {
+    try {
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+      const parsed = parseDevizRows(rows);
+      if (!parsed.length) { window.alert(`Foaia „${sheetName}" nu are rânduri valide (denumire + preț). Alege altă foaie.`); return; }
+      const flatC = rows.flat().map((c)=>String(c==null?'':c).toLowerCase().replace(/\s+/g,' ').trim());
+      const esteF3 = flatC.includes('manopera:') && flatC.includes('material:');
+      const cuPret = parsed.filter((p)=>Number(p.pretUnitar)>0).length;
+      const info = `Foaia „${sheetName}" · format ${esteF3?'F3 (manoperă pe rânduri)':'simplu'}\n${parsed.length} rânduri · ${cuPret} cu preț · cantitatea rămâne goală (se completează din rapoarte).`;
+      if (items.length && !window.confirm(`${info}\n\nÎnlocuiești lista curentă (${items.length} rânduri) cu cele ${parsed.length} din Excel?`)) return;
+      const rest = lista.filter((x)=>x.santierId!==santierId);
+      save([...rest, ...parsed.map((p)=>({ ...p, id: uid(), santierId }))]);
+      setSheetPick(null);
+      if (!items.length) window.alert(info);
+    } catch (err) { window.alert('Nu am putut citi foaia. Verifică formatul (.xlsx).'); }
+  };
   const importExcel = (file) => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const wb = XLSX.read(ev.target.result, { type:'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
-        const parsed = parseDevizRows(rows);
-        if (!parsed.length) { window.alert('Nu am găsit rânduri valide în Excel. Verifică să existe coloana „Denumire".'); return; }
-        if (items.length && !window.confirm(`Înlocuiești lista curentă (${items.length} rânduri) cu cele ${parsed.length} din Excel?`)) return;
-        const rest = lista.filter((x)=>x.santierId!==santierId);
-        save([...rest, ...parsed.map((p)=>({ ...p, id: uid(), santierId }))]);
+        if (wb.SheetNames.length > 1) { setSheetPick({ wb, names: wb.SheetNames }); return; }
+        importaFoaia(wb, wb.SheetNames[0]);
       } catch (err) { window.alert('Nu am putut citi fișierul Excel. Verifică formatul (.xlsx).'); }
     };
     reader.readAsArrayBuffer(file);
@@ -2929,6 +2989,17 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
         </label>
         {items.length > 0 && <button onClick={golesteTot} className="text-xs px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#171C21' }}>🗑 Golește lista</button>}
         <span className="text-[11px] w-full" style={{ color:'#5C6570' }}>Coloane așteptate: Nr. crt · Denumire · U.M. · Cantitate · Preț unitar · Valoare. Importul înlocuiește lista curentă a acestui șantier.</span>
+        {sheetPick && (
+          <div className="w-full rounded-lg p-2.5 mt-1" style={{ background:'#171C21', border:'1px solid #E9A23B66' }}>
+            <div className="text-xs mb-2" style={{ color:'#E9E7E2' }}>📑 Fișierul are mai multe foi. Alege foaia de importat:</div>
+            <div className="flex flex-wrap gap-2">
+              {sheetPick.names.map((n)=>(
+                <button key={n} onClick={()=>importaFoaia(sheetPick.wb, n)} className="text-xs px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>📄 {n}</button>
+              ))}
+              <button onClick={()=>setSheetPick(null)} className="text-xs px-3 py-2 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>Renunță</button>
+            </div>
+          </div>
+        )}
       </div>
       )}
 
@@ -3413,6 +3484,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                     <div key={e.userId} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
                       <span style={{ color:'#E9E7E2' }}>👷 {u?.nume || '(cont șters)'}</span>
                       <div className="flex items-center gap-1">
+                        {u?.telefon && <a href={`tel:${String(u.telefon).replace(/\s/g,'')}`} title={u.telefon} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📞</a>}
                         <button onClick={()=>setEchipaMemberStatus(santier.id, e.userId, 'activ')} className="px-2 py-0.5 rounded" style={{ color: e.status==='activ'?'#14181C':'#8B93A0', background: e.status==='activ'?'#4CAF7D':'#1B2127' }}>Activ</button>
                         <button onClick={()=>setEchipaMemberStatus(santier.id, e.userId, 'pauza')} className="px-2 py-0.5 rounded" style={{ color: e.status==='pauza'?'#14181C':'#8B93A0', background: e.status==='pauza'?'#E9A23B':'#1B2127' }}>Pauză</button>
                         <button onClick={()=>removeFromEchipa(santier.id, e.userId)} style={{ color:'#E05252', opacity:0.8 }}>✕</button>
@@ -3442,7 +3514,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                   return (
                     <div key={e.userId} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
                       <span style={{ color:'#E9E7E2' }}>👷 {u?.nume || '(cont șters)'}{e.userId===currentUser?.id && <span style={{ color:'#5C6570' }}> (tu)</span>}</span>
-                      <span className="px-2 py-0.5 rounded" style={{ color:'#14181C', background: e.status==='pauza'?'#E9A23B':'#4CAF7D' }}>{e.status==='pauza'?'Pauză':'Activ'}</span>
+                      <div className="flex items-center gap-2">
+                        {u?.telefon && e.userId!==currentUser?.id && <a href={`tel:${String(u.telefon).replace(/\s/g,'')}`} className="px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>📞 {u.telefon}</a>}
+                        <span className="px-2 py-0.5 rounded" style={{ color:'#14181C', background: e.status==='pauza'?'#E9A23B':'#4CAF7D' }}>{e.status==='pauza'?'Pauză':'Activ'}</span>
+                      </div>
                     </div>
                   );
                 })}
@@ -3499,12 +3574,21 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   );
 }
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, onBioUnlock }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState({ loading:false, error:'' });
   const [showPassword, setShowPassword] = useState(false);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const areBio = bioSuportat() && bioInrolat();
+  const [parolaVizibila, setParolaVizibila] = useState(!areBio);
+
+  const bioSubmit = async () => {
+    setStatus({ loading:true, error:'' });
+    try { await onBioUnlock(); }
+    catch (e) { setStatus({ loading:false, error: (e && e.message) ? e.message : 'Deblocarea a eșuat. Folosește parola.' }); setParolaVizibila(true); return; }
+    setStatus({ loading:false, error:'' });
+  };
 
   const submit = async () => {
     setStatus({ loading:true, error:'' });
@@ -3523,21 +3607,35 @@ function LoginScreen({ onLogin }) {
         <div className="flex flex-col items-center mb-5">
           <img src="/logo.png" alt="Logo" style={{ height:40, width:'auto', marginBottom:10 }} />
         </div>
-        <div className="space-y-2">
-          <input placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck="false" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-          <div style={{ position:'relative' }}>
-            <input type={showPassword ? 'text' : 'password'} placeholder="Parolă" value={password} onChange={(e)=>setPassword(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && submit()} autoCapitalize="off" autoCorrect="off" spellCheck="false" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, paddingRight:36 }} />
-            <button type="button" onClick={()=>setShowPassword(!showPassword)} style={{ position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', color:'#5C6570' }}>
-              {showPassword ? '🙈' : '👁'}
+
+        {areBio && (
+          <button onClick={bioSubmit} disabled={status.loading} className="w-full mb-3 py-3 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50" style={{ color:'#14181C', background:'#4CAF7D' }}>
+            <span style={{ fontSize:18 }}>🔒</span> {status.loading ? 'Se deblochează...' : 'Intră cu amprenta / FaceID'}
+          </button>
+        )}
+
+        {parolaVizibila ? (
+          <>
+            <div className="space-y-2">
+              <input placeholder="Username" value={username} onChange={(e)=>setUsername(e.target.value)} autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck="false" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+              <div style={{ position:'relative' }}>
+                <input type={showPassword ? 'text' : 'password'} placeholder="Parolă" value={password} onChange={(e)=>setPassword(e.target.value)} onKeyDown={(e)=>e.key==='Enter' && submit()} autoCapitalize="off" autoCorrect="off" spellCheck="false" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, paddingRight:36 }} />
+                <button type="button" onClick={()=>setShowPassword(!showPassword)} style={{ position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', color:'#5C6570' }}>
+                  {showPassword ? '🙈' : '👁'}
+                </button>
+              </div>
+            </div>
+            {status.error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{status.error}</p>}
+            <button onClick={submit} disabled={status.loading} className="w-full mt-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>
+              {status.loading ? '...' : 'Intră în aplicație'}
             </button>
-          </div>
-        </div>
-
-        {status.error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{status.error}</p>}
-
-        <button onClick={submit} disabled={status.loading} className="w-full mt-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ color:'#14181C', background:'#2E8BD1' }}>
-          {status.loading ? '...' : 'Intră în aplicație'}
-        </button>
+          </>
+        ) : (
+          <>
+            {status.error && <p className="text-xs mt-2 text-center" style={{ color:'#E05252' }}>{status.error}</p>}
+            <button onClick={()=>setParolaVizibila(true)} className="w-full mt-1 py-2 text-xs" style={{ color:'#8B93A0' }}>sau intră cu parola</button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -3554,6 +3652,14 @@ function ProfileTab({ currentUser, onLogout }) {
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
   const [recStatus, setRecStatus] = useState('');
   const [recLoading, setRecLoading] = useState(false);
+  const [bioOn, setBioOn] = useState(bioInrolat());
+  const [bioStatus, setBioStatus] = useState('');
+  const activeazaBio = async () => {
+    setBioStatus('');
+    try { await bioInroleaza(currentUser, AUTH_TOKEN); setBioOn(true); setBioStatus('✅ Activată. La următoarea deschidere intri cu amprenta/FaceID.'); }
+    catch (e) { setBioStatus((e && e.message) ? e.message : 'Nu s-a putut activa pe acest dispozitiv.'); }
+  };
+  const dezactiveazaBio = () => { bioSterge(); setBioOn(false); setBioStatus('Dezactivată pe acest dispozitiv. Intri doar cu parola.'); };
   const CHEI_RECUP = ['santiere','clients','rapoarte','etape','structuraSantier','pozitiiSantier','materialeListaSantier','materials','stockMoves','devize','offers','invoices','concedii','cereriSantier','miscariSantier','sculeSantier','planseSantier','mediaSantier','achizitii','pontajCorectii'];
   const recupereaza = async () => {
     setRecLoading(true); setRecStatus('Caut date salvate local...');
@@ -3630,6 +3736,18 @@ function ProfileTab({ currentUser, onLogout }) {
         </div>
         </div>
       </div>
+      )}
+      {bioSuportat() && (
+        <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <div className="text-sm font-semibold mb-1" style={{ color:'#E9E7E2' }}>🔐 Amprentă / FaceID pe acest dispozitiv</div>
+          <p className="text-xs mb-3" style={{ color:'#8B93A0' }}>Intri rapid, fără să scrii parola. Deblocarea se face doar pe acest telefon/calculator (parola rămâne mereu disponibilă ca rezervă).</p>
+          {bioOn ? (
+            <button onClick={dezactiveazaBio} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#E05252', background:'#171C21', border:'1px solid #E0525266' }}>Dezactivează amprenta pe acest dispozitiv</button>
+          ) : (
+            <button onClick={activeazaBio} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🔒 Activează amprenta / FaceID</button>
+          )}
+          {bioStatus && <p className="text-xs mt-2" style={{ color: bioStatus.startsWith('✅') ? '#4CAF7D' : '#E9A23B' }}>{bioStatus}</p>}
+        </div>
       )}
       {currentUser?.rol === 'Manager' && (
         <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -4599,6 +4717,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
     }, {})
   );
   const azi = new Date().toISOString().slice(0,10);
+  const oraAcum = new Date().getHours();
   const concediiInAsteptare = concedii ? concedii.filter((c)=>c.status==='Cerut') : [];
   const santiereActiveFaraRaportAzi = santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
 
@@ -4665,7 +4784,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
         <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>✅ Nimic de făcut acum.</div>
       )}
 
-      {!isManager && santiereFaraRaportAzi.length > 0 && (
+      {!isManager && oraAcum >= 17 && santiereFaraRaportAzi.length > 0 && (
         <div className="mb-6">
           <button onClick={()=>setMementoOpen(!mementoOpen)} className="w-full flex items-center justify-between rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #E05252' }}>
             <span className="text-sm font-medium" style={{ color:'#E05252' }}>⏰ {santiereFaraRaportAzi.length} {santiereFaraRaportAzi.length===1?'raport netrimis':'rapoarte netrimise'} azi</span>
@@ -4688,11 +4807,12 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
         const acum = new Date();
         const zi = acum.getDay();
         const ora = acum.getHours();
+        // „Unde lucrezi mâine" apare doar după ora 16:00 (în timpul săptămânii).
         let ziuaLabel = null, targetDate = null;
-        if (zi >= 1 && zi <= 4) {
+        if (zi >= 1 && zi <= 4 && ora >= 16) {
           ziuaLabel = 'Mâine';
           targetDate = new Date(acum); targetDate.setDate(acum.getDate() + 1);
-        } else if (zi === 5 && ora >= 17) {
+        } else if (zi === 5 && ora >= 16) {
           ziuaLabel = 'Luni';
           targetDate = new Date(acum); targetDate.setDate(acum.getDate() + 3);
         } else if (zi === 0) {
@@ -4731,7 +4851,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
           <div className="space-y-2">
             {maineList.map(({ s, suntInPauza, activ, echipaS })=>{
               const colegiActivi = activ
-                ? echipaS.filter((e)=>e.status==='activ' && e.userId!==currentUser?.id).map((e)=>colegiUsers.find((u)=>u.id===e.userId)).filter(Boolean)
+                ? echipaS.filter((e)=>e.status==='activ' && e.userId!==currentUser?.id).map((e)=>colegiUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)
                 : [];
               const culoare = suntInPauza ? '#E9A23B' : '#4CAF7D';
               return (
@@ -4748,15 +4868,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
                       {s.adresa && (
                         <a href={mapsUrl(s)} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} className="inline-flex items-center gap-1" style={{ color:'#2E8BD1' }}>📍 {s.adresa}</a>
                       )}
-                      {colegiActivi.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                          {colegiActivi.map((u)=>(
-                            <span key={u.id} className="inline-flex items-center gap-1">👤 {u.nume}
-                              {u.telefon && <a href={`tel:${String(u.telefon).replace(/\s/g,'')}`} onClick={(e)=>e.stopPropagation()} className="font-semibold" style={{ color:'#4CAF7D' }}>📞 {u.telefon}</a>}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      {colegiActivi.length > 0 && <div className="mt-0.5">👥 {colegiActivi.join(', ')}</div>}
                     </div>
                   )}
                 </button>
@@ -4858,19 +4970,6 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
               </button>
             </div>
           )}
-        </div>
-      )}
-      {colegiUsers.filter((u)=>u.rol==='Electrician' && u.telefon && u.id!==currentUser?.id).length > 0 && (
-        <div className="mt-6">
-          <div className="text-[11px] uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>📞 Colegi — sună direct</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {colegiUsers.filter((u)=>u.rol==='Electrician' && u.telefon && u.id!==currentUser?.id).map((u)=>(
-              <a key={u.id} href={`tel:${String(u.telefon).replace(/\s/g,'')}`} className="flex items-center justify-between rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
-                <span className="text-sm" style={{ color:'#E9E7E2' }}>👷 {u.nume}</span>
-                <span className="text-sm font-semibold" style={{ color:'#4CAF7D' }}>📞 {u.telefon}</span>
-              </a>
-            ))}
-          </div>
         </div>
       )}
     </div>
@@ -5406,7 +5505,12 @@ function openDevizMateriale({ santier, company, rapoarte, materialeLista, materi
 function App() {
   const [tab, setTab] = useState(null);
   const [currentUser, setCurrentUser] = useState(() => {
-    try { const raw = localStorage.getItem('currentUser'); return raw ? JSON.parse(raw) : null; } catch { return null; }
+    try {
+      // Dacă amprenta/FaceID e activată pe acest dispozitiv, cerem deblocare la deschidere
+      // (nu intrăm automat). Altfel, restaurăm sesiunea ca înainte.
+      if (bioInrolat()) return null;
+      const raw = localStorage.getItem('currentUser'); return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
   });
   const handleAuth = async (payload) => {
     const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
@@ -5415,6 +5519,14 @@ function App() {
     setAuthToken(data.token);
     setCurrentUser(data.user);
     try { localStorage.setItem('currentUser', JSON.stringify(data.user)); } catch {}
+    bioActualizeazaSesiune(data.user, data.token);
+  };
+  // Deblocare cu amprentă/FaceID: restaurează sesiunea salvată local, fără parolă.
+  const handleBioUnlock = async () => {
+    const { user, token } = await bioDeblocheaza();
+    setAuthToken(token);
+    setCurrentUser(user);
+    try { localStorage.setItem('currentUser', JSON.stringify(user)); } catch {}
   };
   const logout = (motiv) => {
     setAuthToken(null);
@@ -5747,7 +5859,7 @@ function App() {
   );
 
   if (!currentUser) {
-    return <LoginScreen onLogin={handleAuth} />;
+    return <LoginScreen onLogin={handleAuth} onBioUnlock={handleBioUnlock} />;
   }
 
   return (
@@ -5835,6 +5947,7 @@ function App() {
             <span>{ROLES.find((r)=>r.id===currentUser.rol)?.icon} {currentUser.nume}</span>
             <button onClick={logout} style={{ color:'#E05252' }}>Ieși</button>
           </div>
+          <div className="px-3 pb-1 text-[10px]" style={{ color:'#3d4650' }}>{APP_VERSION}</div>
         </div>
       </aside>
       <main className="flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0">
