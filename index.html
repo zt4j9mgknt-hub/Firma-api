@@ -1157,13 +1157,13 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
 
           <div className="grid grid-cols-2 gap-2 mb-3">
             <input placeholder="Nr. contract" value={nrContract} onChange={(e)=>setNrContract(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-            <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data contract
-              <input type="date" value={dataContract} onChange={(e)=>setDataContract(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-            </label>
+            <div className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data contract
+              <RoCalendarPicker value={dataContract} onChange={setDataContract} />
+            </div>
             <input placeholder="Act adițional" value={actAditional} onChange={(e)=>setActAditional(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-            <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data act adițional
-              <input type="date" value={dataActAditional} onChange={(e)=>setDataActAditional(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-            </label>
+            <div className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data act adițional
+              <RoCalendarPicker value={dataActAditional} onChange={setDataActAditional} />
+            </div>
             <input placeholder="Adresă șantier" value={adresaLucrare} onChange={(e)=>setAdresaLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
             <input placeholder="Lucrare (ex: Instalații electrice interioare)" value={lucrare} onChange={(e)=>setLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
           </div>
@@ -2263,9 +2263,9 @@ function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, 
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
       <div className="flex gap-3 mb-2 flex-wrap items-end">
-        <label className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data
-          <input type="date" value={data} onChange={(e)=>setData(e.target.value)} className="rounded-lg px-3 py-2 text-sm outline-none w-40" style={inputStyle} />
-        </label>
+        <div className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Data
+          <RoCalendarPicker value={data} onChange={setData} />
+        </div>
         <div className="text-xs flex flex-col gap-1" style={{ color:'#8B93A0' }}>Ora implicită început
           <RoTimePicker value={oraInceput} onChange={setOraInceput} />
         </div>
@@ -2727,10 +2727,14 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [siteView, setSiteView] = useState('rapoarte');
   // Istoric de navigare între sub-taburi (Materiale, Structură, Scule...) pentru back pas cu pas.
   const [viewHistory, setViewHistory] = useState([]);
-  const navTo = (v) => { if (v !== siteView) setViewHistory((h)=>[...h, siteView]); setSiteView(v); };
+  const [viewForward, setViewForward] = useState([]);
+  const navTo = (v) => { if (v !== siteView) { setViewHistory((h)=>[...h, siteView]); setViewForward([]); } setSiteView(v); };
   const goBack = () => {
-    if (viewHistory.length) { const prev = viewHistory[viewHistory.length-1]; setViewHistory(viewHistory.slice(0,-1)); setSiteView(prev); }
+    if (viewHistory.length) { const prev = viewHistory[viewHistory.length-1]; setViewHistory(viewHistory.slice(0,-1)); setViewForward((f)=>[siteView, ...f]); setSiteView(prev); }
     else { setSelected(null); }
+  };
+  const goForward = () => {
+    if (viewForward.length) { const nx = viewForward[0]; setViewForward(viewForward.slice(1)); setViewHistory((h)=>[...h, siteView]); setSiteView(nx); }
   };
   const [allUsers, setAllUsers] = useState([]);
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
@@ -2753,7 +2757,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     if (!pendingSiteNav) return;
     setSelected(pendingSiteNav.santierId);
     setSiteView(pendingSiteNav.siteView || 'rapoarte');
-    setViewHistory([]);
+    setViewHistory([]); setViewForward([]);
     setPendingSiteNav(null);
   }, [pendingSiteNav]);
 
@@ -2878,6 +2882,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
       <div>
         <div className="flex items-center gap-4 mb-2">
           <button onClick={goBack} className="text-xs font-semibold" style={{ color:'#2E8BD1' }}>← Înapoi</button>
+          <button onClick={goForward} disabled={viewForward.length===0} className="text-xs font-semibold disabled:opacity-30" style={{ color:'#2E8BD1' }}>Înainte →</button>
           <button onClick={()=>setSelected(null)} className="text-xs" style={{ color:'#5C6570' }}>Toate șantierele</button>
         </div>
         <h2 className="text-xl mb-0.5" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
@@ -3169,7 +3174,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             const nrRapoarte = rapoarte.filter((r)=>r.santierId===s.id).length;
             const areAcces = currentUser?.rol === 'Manager' || inEchipa(s.echipa, currentUser?.id);
             return (
-              <div key={s.id} className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${areAcces ? 'cursor-pointer' : ''}`} onClick={()=>{ if (areAcces) { setSelected(s.id); setSiteView('rapoarte'); setViewHistory([]); } }} style={{ background:'#1B2127', border:'1px solid #2A323B', opacity: areAcces?1:0.5 }}>
+              <div key={s.id} className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${areAcces ? 'cursor-pointer' : ''}`} onClick={()=>{ if (areAcces) { setSelected(s.id); setSiteView('rapoarte'); setViewHistory([]); setViewForward([]); } }} style={{ background:'#1B2127', border:'1px solid #2A323B', opacity: areAcces?1:0.5 }}>
                 <div className="min-w-0">
                   <div className="text-sm" style={{ color:'#E9E7E2' }}>{!areAcces && '🔒 '}{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':s.status==='Pauză'?'#E9A23B':'#8B93A0' }}>{s.status}</span></div>
                   <div className="text-xs" style={{ color:'#8B93A0' }}>{s.adresa} · {nrRapoarte} rapoarte{!areAcces && ' · Nu ești asignat aici'}</div>
