@@ -2745,45 +2745,68 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
 // Parsează rândurile dintr-un Excel de deviz (Poziții sau Listă cantități).
 // Caută rândul de antet (care conține „Denumire") și mapează coloanele; ignoră rândurile TOTAL/TVA.
 function parseDevizRows(rows) {
-  const norm = (s) => String(s == null ? '' : s).toLowerCase();
-  const num = (v) => Number(String(v == null ? '' : v).replace(/\s/g,'').replace(',','.')) || 0;
-  let headerIdx = rows.findIndex((r)=> Array.isArray(r) && r.some((c)=>norm(c).includes('denumire')));
-  let cols = { nr:0, den:1, um:2, cant:3, pret:4, val:5 };
-  if (headerIdx >= 0) {
-    const h = rows[headerIdx].map(norm);
-    const find = (kw, def) => { const i = h.findIndex((c)=> kw.some((k)=>c.includes(k))); return i>=0 ? i : def; };
-    const nr = find(['nr','crt'], 0);
-    const den = find(['denumire','descriere','articol'], 1);
-    const cant = find(['cant'], 3);
-    // „um" strict — altfel prinde „DENUMIRE" (conține „um")
-    let um = find(['u.m','u/m','unitate'], -1);
-    if (um < 0) um = h.findIndex((c)=> String(c).trim() === 'um' || String(c).trim() === 'u m');
-    if (um < 0 || um === den) um = den + 1;
-    const idxTotal = find(['total'], -1);
-    const idxValoare = find(['valoare'], -1);
-    let pret = find(['pret','preț','p.u.','p.u','unitar'], -1);
-    // Dacă nu există coloană explicită „preț", prețul unitar e coloana „valoare" (când există și „total")
-    // sau coloana imediat după „cantitate".
-    if (pret < 0) pret = (idxValoare >= 0 && idxValoare !== idxTotal) ? idxValoare : (cant >= 0 ? cant + 1 : 4);
-    const val = idxTotal >= 0 ? idxTotal : (idxValoare >= 0 ? idxValoare : -1);
-    cols = { nr, den, um, cant, pret, val };
+  const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g,' ').trim();
+  // Acceptă numere din Excel (deja numerice) și text cu format românesc (1.234,56) sau englez (1234.56).
+  const num = (v) => {
+    if (typeof v === 'number') return isFinite(v) ? v : 0;
+    let s = String(v == null ? '' : v).trim().replace(/[^\d.,-]/g, '');
+    if (s.includes(',') && s.includes('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(',', '.');
+    const n = Number(s);
+    return isFinite(n) ? n : 0;
+  };
+  const round4 = (n) => Math.round((Number(n)||0) * 10000) / 10000;
+  // 1) Găsim rândul de antet: rândul cu cel puțin 2 cuvinte-cheie de coloană
+  //    (unele Excel-uri au titluri/antet firmă deasupra, iar coloana „Denumire" poate fi fără titlu).
+  const headerKw = ['denumire','descriere','articol','unitate','u.m','u/m','cantit','pret','preț','p.u','valoare','total','nr.'];
+  let headerIdx = rows.findIndex((r)=> Array.isArray(r) && r.filter((c)=>{ const n = norm(c); return n && headerKw.some((k)=>n.includes(k)); }).length >= 2);
+  const h = headerIdx >= 0 ? rows[headerIdx].map(norm) : [];
+  const findCol = (kw) => h.findIndex((c)=> c && kw.some((k)=>c.includes(k)));
+  let den = findCol(['denumire','descriere','articol']);
+  let um = (()=>{ let i = findCol(['unitate','u.m','u/m']); if (i < 0) i = h.findIndex((c)=> c === 'um' || c === 'u m'); return i; })();
+  let pret = findCol(['pret unitar','preț unitar','pret','preț','p.u','unitar','manoper']);
+  let nr = findCol(['nr']);
+  const idxCant = findCol(['cantit']);
+  const idxTotal = findCol(['total']);
+  const idxVal = findCol(['valoare']);
+  const dataStart = (headerIdx >= 0 ? headerIdx : -1) + 1;
+  const sample = rows.slice(dataStart, dataStart + 15).filter(Array.isArray);
+  // Dacă „Denumire" n-are titlu, o găsim ca fiind coloana cu cel mai lung text din primele rânduri.
+  if (den < 0) {
+    let best = -1, bestLen = 0; const ncols = Math.max(0, ...sample.map((r)=>r.length));
+    for (let c = 0; c < ncols; c++) {
+      if (c === um || c === pret) continue;
+      let len = 0, cnt = 0;
+      sample.forEach((r)=>{ const v = r[c]; if (typeof v === 'string' && v.trim()) { len += v.trim().length; cnt++; } });
+      const avg = cnt ? len / cnt : 0;
+      if (avg > bestLen) { bestLen = avg; best = c; }
+    }
+    den = best >= 0 ? best : 1;
   }
-  const dataRows = rows.slice((headerIdx >= 0 ? headerIdx : -1) + 1);
+  if (um < 0) um = den + 1;
+  if (nr < 0) nr = 0;
+  if (pret < 0) pret = (idxVal >= 0 && idxVal !== idxTotal) ? idxVal : -1;
+  const cantCol = idxCant; // dacă nu există coloană „cantitate" (ex: cantități pe etaje) → 0, se completează din rapoarte
+  const valCol = idxTotal >= 0 ? idxTotal : (idxVal >= 0 ? idxVal : -1);
   const out = [];
-  dataRows.forEach((r)=>{
+  rows.slice(dataStart).forEach((r)=>{
     if (!Array.isArray(r)) return;
-    const den = r[cols.den];
-    if (!den || !String(den).trim()) return;
-    if (/^(total|tva|total cu tva)/i.test(String(den).trim())) return;
-    const cant = num(r[cols.cant]);
-    const pret = num(r[cols.pret]);
+    const den0 = r[den];
+    if (!den0 || !String(den0).trim()) return;
+    const denStr = String(den0).replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/^(total|tva|subtotal|total cu tva)/i.test(denStr)) return;
+    const umStr = String(r[um] == null ? '' : r[um]).trim();
+    const pretV = pret >= 0 ? num(r[pret]) : 0;
+    // Rând de secțiune (ex: „1.TABLOURI ELECTRICE"): fără U.M. și fără preț → îl sărim.
+    if (!umStr && !(pretV > 0)) return;
+    const cantV = cantCol >= 0 ? num(r[cantCol]) : 0;
     out.push({
-      nrCrt: String(r[cols.nr] == null ? '' : r[cols.nr]).trim(),
-      denumire: String(den).trim(),
-      um: String(r[cols.um] == null ? '' : r[cols.um]).trim() || 'buc',
-      cantitate: cant,
-      pretUnitar: pret,
-      valoare: num(r[cols.val]) || (cant * pret),
+      nrCrt: String(r[nr] == null ? '' : r[nr]).trim(),
+      denumire: denStr,
+      um: umStr || 'buc',
+      cantitate: round4(cantV),
+      pretUnitar: round4(pretV),
+      valoare: round4(valCol >= 0 ? num(r[valCol]) : (cantV * pretV)),
     });
   });
   return out;
@@ -5295,9 +5318,11 @@ function App() {
     ? (allAppUsers.find((u)=>u.id===viewAsUserId) || currentUser)
     : currentUser;
 
-  // Perioadă de test: colegii (non-Manager) au acces DOAR la Șantiere.
-  const doarSantiere = PERIOADA_TEST && effectiveUser?.rol !== 'Manager';
-  useEffect(() => { if (doarSantiere && tab !== 'santiere') setTab('santiere'); }, [doarSantiere, tab]);
+  // Perioadă de test: colegii (non-Manager) pot FOLOSI doar Dashboard, Activitatea mea, Șantiere și Profil.
+  // Restul taburilor de electrician le VĂD în meniu, dar deschid un mesaj „disponibil după test".
+  const accesLimitat = PERIOADA_TEST && effectiveUser?.rol !== 'Manager';
+  const TABURI_TEST = [null, 'activitate', 'santiere', 'profil'];
+  const tabBlocatTest = accesLimitat && !!tab && !TABURI_TEST.includes(tab);
 
   const CONTAB_TABS = ['devize', 'oferte', 'facturi', 'clienti'];
   const [contabOpen, setContabOpen] = useState(false);
@@ -5620,12 +5645,7 @@ function App() {
         <button onClick={()=>{ setTab(null); setSidebarOpen(false); }} className="flex items-center gap-2 px-2 mb-4">
           <img src="/logo.png" alt="Logo" style={{ height: 32, width: 'auto' }} />
         </button>
-        {doarSantiere ? (
-          <>
-            <NavItem id="santiere" label="🏗 Șantiere" />
-            <div className="px-3 mt-2 text-[11px]" style={{ color:'#5C6570' }}>🧪 Perioadă de test — deocamdată lucrezi doar la Șantiere.</div>
-          </>
-        ) : (<>
+        {accesLimitat && <div className="px-3 mb-2 text-[11px]" style={{ color:'#8B93A0', background:'#1B2127', border:'1px solid #2A323B', borderRadius:8, padding:'8px 10px' }}>🧪 Perioadă de test — poți folosi <b style={{color:'#E9E7E2'}}>Șantiere, Activitatea mea, Dashboard, Profil</b>. Restul le vezi, dar se activează după test.</div>}
         <NavItem id={null} label="🏠 Dashboard" />
         <NavItem id="activitate" label="⚡ Activitatea mea" />
         <div style={{ height:1, background:'#2A323B', margin:'4px 4px 8px' }} />
@@ -5663,7 +5683,6 @@ function App() {
         {effectiveUser.rol === 'Manager' && <NavItem id="firma" label="⚙ Firma mea" />}
         <NavItem id="profil" label="👤 Profilul meu" />
         {effectiveUser.rol === 'Manager' && <NavItem id="utilizatori" label="🔑 Utilizatori" />}
-        </>)}
         <div className="mt-auto pt-3" style={{ borderTop:'1px solid #2A323B' }}>
           {currentUser.rol === 'Manager' && (
             <div className="px-3 mb-2">
@@ -5690,8 +5709,15 @@ function App() {
       <main className="flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0">
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
-        ) : (!tab && !doarSantiere) ? (
+        ) : !tab ? (
           <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} setTab={setTab} currentUser={effectiveUser} />
+        ) : tabBlocatTest ? (
+          <div className="max-w-md mx-auto mt-16 text-center rounded-xl p-6" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+            <div style={{ fontSize:34 }}>🔒</div>
+            <div className="text-base mt-2" style={{ color:'#E9E7E2', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600 }}>Secțiune în pregătire</div>
+            <p className="text-sm mt-2" style={{ color:'#8B93A0' }}>Această parte a aplicației se activează după perioada de test. Deocamdată poți lucra la <b style={{color:'#E9E7E2'}}>Șantiere</b>, <b style={{color:'#E9E7E2'}}>Activitatea mea</b>, <b style={{color:'#E9E7E2'}}>Dashboard</b> și <b style={{color:'#E9E7E2'}}>Profil</b>.</p>
+            <button onClick={()=>setTab('santiere')} className="mt-4 text-sm px-4 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🏗 Mergi la Șantiere</button>
+          </div>
         ) : (
           <>
             {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
