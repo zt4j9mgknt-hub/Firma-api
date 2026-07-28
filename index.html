@@ -160,15 +160,20 @@ function mergeById(serverVal, clientVal){
 }
 
 async function loadKey(key, fallback) {
+  // Dacă avem o scriere nesincronizată pentru cheia asta, ea e mai nouă decât serverul
+  // → o păstrăm (combinată cu ce e pe server), ca să NU pierdem date create offline.
+  const pending = getPending().find((x)=>x.key===key);
   try {
     const r = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
     const data = await r.json();
-    const val = data.value ?? fallback;
+    let val = data.value ?? fallback;
+    if (pending !== undefined) val = mergeById(val, pending.value);
     cacheSet(key, val);
     return val;
   } catch {
     const c = cacheGet(key);
-    return c !== undefined ? c : fallback;
+    if (c !== undefined) return pending !== undefined ? mergeById(c, pending.value) : c;
+    return pending !== undefined ? pending.value : fallback;
   }
 }
 async function saveKey(key, value) {
@@ -5366,6 +5371,8 @@ function App() {
 
   const loadAllData = async (showSpinner) => {
     if (showSpinner) setLoading(true);
+    // Întâi trimitem pe server ce e nesincronizat (creat offline), apoi încărcăm — ca să nu pierdem nimic.
+    try { await syncQueue(); } catch {}
     try {
       setClients(await loadKey('clients', []));
       setOffers(await loadKey('offers', []));
