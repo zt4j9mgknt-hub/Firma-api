@@ -27,10 +27,10 @@
   input::placeholder { color:#5C6570; }
   select { color-scheme: dark; }
   /* Antet: un fir subțire prin care „curge" un puls de curent — discret, tema electrică. */
-  .curent-antet { position:relative; height:2px; width:100%; overflow:hidden; background:linear-gradient(90deg,#1a232d,#243441,#1a232d); flex:0 0 auto; }
-  .curent-antet::before { content:''; position:absolute; top:0; height:100%; width:38%; left:-38%; background:linear-gradient(90deg, transparent, rgba(124,212,255,.95), rgba(46,139,209,.95), transparent); box-shadow:0 0 10px 1px rgba(46,139,209,.65); animation:curentAntet 3.4s linear infinite; }
-  .curent-antet::after { content:''; position:absolute; top:0; height:100%; width:22%; left:-22%; background:linear-gradient(90deg, transparent, rgba(76,175,125,.55), transparent); animation:curentAntet 3.4s linear infinite; animation-delay:1.6s; }
-  @keyframes curentAntet { 0% { left:-40%; } 100% { left:105%; } }
+  .curent-antet { position:relative; height:3px; width:100%; overflow:hidden; background:linear-gradient(90deg,#1d3247,#2E6C9E,#1d3247); flex:0 0 auto; box-shadow:0 0 6px rgba(46,139,209,.35); }
+  .curent-antet::before { content:''; position:absolute; top:0; height:100%; width:42%; left:-42%; background:linear-gradient(90deg, transparent, rgba(200,240,255,1), rgba(46,139,209,1), transparent); box-shadow:0 0 16px 3px rgba(124,212,255,.9); animation:curentAntet 2.8s linear infinite; }
+  .curent-antet::after { content:''; position:absolute; top:0; height:100%; width:26%; left:-26%; background:linear-gradient(90deg, transparent, rgba(76,175,125,.8), transparent); box-shadow:0 0 12px 2px rgba(76,175,125,.5); animation:curentAntet 2.8s linear infinite; animation-delay:1.4s; }
+  @keyframes curentAntet { 0% { left:-42%; } 100% { left:106%; } }
   @media (prefers-reduced-motion: reduce) { .curent-antet::before, .curent-antet::after { animation:none; opacity:.4; } }
 </style>
 </head>
@@ -218,6 +218,10 @@ const ROLES = [
   { id: 'Manager', icon: '👔' },
   { id: 'Electrician', icon: '👷' },
 ];
+
+// Perioadă de test: cât timp e true, colegii (non-Manager) pot intra DOAR la Șantiere.
+// Când se termină testul, pune false ca să revină accesul complet.
+const PERIOADA_TEST = true;
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const INVOICE_STATUSES = ['Neplătită', 'Plătită', 'Restantă'];
@@ -4795,7 +4799,7 @@ const PRINT_CSS = `
   .doc-tb-print { background:#2E8BD1; color:#fff; }
   @media print { .doc-toolbar { display:none !important; } }
 `;
-const PRINT_TOOLBAR = '<style>@media print{.doc-toolbar{display:none!important}}</style><div class="doc-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;gap:10px;justify-content:space-between;align-items:center;background:#14181C;padding:10px 14px;border-bottom:1px solid #2A323B;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"><button onclick="window.close()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">← Închide</button><button onclick="window.print()" style="background:#2E8BD1;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">🖨 Salvează / Printează PDF</button></div>';
+const PRINT_TOOLBAR = '<style>@media print{.doc-toolbar{display:none!important}}</style><div class="doc-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;gap:8px;justify-content:space-between;align-items:center;background:#14181C;padding:10px 14px;border-bottom:1px solid #2A323B;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"><button onclick="window.close()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">← Închide</button><div style="display:flex;gap:8px;"><button onclick="window.print()" title="Trimite la imprimantă" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">🖨 Printează</button><button onclick="window.print()" title="În fereastra care se deschide, alege Salvează ca PDF și folderul" style="background:#2E8BD1;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">💾 Salvează PDF</button></div></div>';
 function pageHtml({ doc, kind, client, company }) {
   const subtotal = calcSubtotal(doc.items);
   const tvaVal = subtotal * (doc.tva/100);
@@ -5291,6 +5295,10 @@ function App() {
     ? (allAppUsers.find((u)=>u.id===viewAsUserId) || currentUser)
     : currentUser;
 
+  // Perioadă de test: colegii (non-Manager) au acces DOAR la Șantiere.
+  const doarSantiere = PERIOADA_TEST && effectiveUser?.rol !== 'Manager';
+  useEffect(() => { if (doarSantiere && tab !== 'santiere') setTab('santiere'); }, [doarSantiere, tab]);
+
   const CONTAB_TABS = ['devize', 'oferte', 'facturi', 'clienti'];
   const [contabOpen, setContabOpen] = useState(false);
   const MATERIALE_TABS = ['gestiune', 'stocuri'];
@@ -5612,6 +5620,12 @@ function App() {
         <button onClick={()=>{ setTab(null); setSidebarOpen(false); }} className="flex items-center gap-2 px-2 mb-4">
           <img src="/logo.png" alt="Logo" style={{ height: 32, width: 'auto' }} />
         </button>
+        {doarSantiere ? (
+          <>
+            <NavItem id="santiere" label="🏗 Șantiere" />
+            <div className="px-3 mt-2 text-[11px]" style={{ color:'#5C6570' }}>🧪 Perioadă de test — deocamdată lucrezi doar la Șantiere.</div>
+          </>
+        ) : (<>
         <NavItem id={null} label="🏠 Dashboard" />
         <NavItem id="activitate" label="⚡ Activitatea mea" />
         <div style={{ height:1, background:'#2A323B', margin:'4px 4px 8px' }} />
@@ -5649,6 +5663,7 @@ function App() {
         {effectiveUser.rol === 'Manager' && <NavItem id="firma" label="⚙ Firma mea" />}
         <NavItem id="profil" label="👤 Profilul meu" />
         {effectiveUser.rol === 'Manager' && <NavItem id="utilizatori" label="🔑 Utilizatori" />}
+        </>)}
         <div className="mt-auto pt-3" style={{ borderTop:'1px solid #2A323B' }}>
           {currentUser.rol === 'Manager' && (
             <div className="px-3 mb-2">
@@ -5675,7 +5690,7 @@ function App() {
       <main className="flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0">
         {loading ? (
           <div className="text-sm mt-10" style={{ color:'#8B93A0' }}>Se încarcă...</div>
-        ) : !tab ? (
+        ) : (!tab && !doarSantiere) ? (
           <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} setTab={setTab} currentUser={effectiveUser} />
         ) : (
           <>
