@@ -1851,7 +1851,14 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
 }
 
 function SantierForm({ initial, onCancel, onSave, clients }) {
-  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ', echipa:[], tipFacturare:'orar', tarifOrar:75, materialeSursa:'noastre', benefNume:'', benefInfo:'', benefSemnatar:'', contract:'', obiectiv:'', lucrare:'Instalații electrice interioare' });
+  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ', echipa:[], modFacturare:'orar', tipFacturare:'orar', tarifOrar:75, materialeSursa:'noastre', benefNume:'', benefInfo:'', benefSemnatar:'', contract:'', obiectiv:'', lucrare:'Instalații electrice interioare' });
+  const setMod = (m) => {
+    const patch = { modFacturare: m };
+    if (m==='orar' || m==='orar_lucrari') patch.tipFacturare = 'orar';
+    else { patch.tipFacturare = 'pozitie'; patch.materialeSursa = (m==='pozitie_client') ? 'client' : 'noastre'; }
+    setForm({ ...form, ...patch });
+  };
+  const modCurent = form.modFacturare || (form.tipFacturare==='pozitie' ? (form.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar');
   const [showDeviz, setShowDeviz] = useState(false);
   const [users, setUsers] = useState([]);
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
@@ -1926,31 +1933,36 @@ function SantierForm({ initial, onCancel, onSave, clients }) {
           {showDeviz && (
             <div className="px-3 pb-3 space-y-3" style={{ borderTop:'1px solid #2A323B' }}>
               <div className="pt-2">
-                <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Tip facturare (cum se face devizul):</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={()=>setForm({...form, tipFacturare:'orar'})} className="text-xs px-2.5 py-2 rounded-lg font-medium"
-                    style={{ color: form.tipFacturare==='orar'?'#14181C':'#8B93A0', background: form.tipFacturare==='orar'?'#2E8BD1':'#1B2127' }}>⏱️ Tarif orar</button>
-                  <button type="button" onClick={()=>setForm({...form, tipFacturare:'pozitie'})} className="text-xs px-2.5 py-2 rounded-lg font-medium"
-                    style={{ color: form.tipFacturare==='pozitie'?'#14181C':'#8B93A0', background: form.tipFacturare==='pozitie'?'#2E8BD1':'#1B2127' }}>📋 La poziție (real executat)</button>
+                <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Mod de facturare (decide ce completează angajații și cum iese devizul):</div>
+                <div className="space-y-1.5">
+                  {[
+                    ['orar','⏱️ Tarif orar','Angajații trec doar orele. Deviz pe ore.'],
+                    ['orar_lucrari','⏱️ Tarif orar + tipuri de lucrări','Ore + ce lucrări s-au făcut. Deviz pe ore, cu rubrică de lucrări.'],
+                    ['pozitie_propriu','📋 La poziție + material propriu','Poziții + materiale. Două devize: poziții și materiale (cu prețurile lor).'],
+                    ['pozitie_client','📋 La poziție + material client','Poziții + materialele clientului, cu prețul convenit.'],
+                  ].map(([m,label,desc])=>{
+                    const on = modCurent===m;
+                    return (
+                      <button key={m} type="button" onClick={()=>setMod(m)} className="w-full text-left px-3 py-2 rounded-lg" style={{ background: on?'#1d4e78':'#1B2127', border:'1px solid '+(on?'#2E8BD1':'#2A323B') }}>
+                        <div className="text-sm font-semibold" style={{ color: on?'#fff':'#E9E7E2' }}>{label}</div>
+                        <div className="text-[11px]" style={{ color: on?'#cfe4f5':'#5C6570' }}>{desc}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {form.tipFacturare==='orar' && (
+              {(modCurent==='orar' || modCurent==='orar_lucrari') && (
                 <div>
                   <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Preț pe oră (lei, fără TVA):</div>
                   <input type="number" inputMode="decimal" placeholder="75" value={form.tarifOrar} onChange={(e)=>setForm({...form, tarifOrar: e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
                 </div>
               )}
-
-              <div>
-                <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Cu ale cui materiale se lucrează (implicit — se poate schimba per material la raport):</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={()=>setForm({...form, materialeSursa:'noastre'})} className="text-xs px-2.5 py-2 rounded-lg font-medium"
-                    style={{ color: form.materialeSursa==='noastre'?'#14181C':'#8B93A0', background: form.materialeSursa==='noastre'?'#4CAF7D':'#1B2127' }}>🏢 Ale noastre</button>
-                  <button type="button" onClick={()=>setForm({...form, materialeSursa:'client'})} className="text-xs px-2.5 py-2 rounded-lg font-medium"
-                    style={{ color: form.materialeSursa==='client'?'#14181C':'#8B93A0', background: form.materialeSursa==='client'?'#4CAF7D':'#1B2127' }}>👤 Ale clientului</button>
+              {(modCurent==='pozitie_propriu' || modCurent==='pozitie_client') && (
+                <div className="text-[11px] rounded-lg px-3 py-2" style={{ background:'#171C21', color:'#8B93A0', border:'1px solid #2A323B' }}>
+                  📥 Lista de poziții și materiale (cu prețuri) se importă din Excel la <b>„📋 Poziții/Materiale"</b> pe șantier.
                 </div>
-              </div>
+              )}
 
               <div className="pt-1" style={{ borderTop:'1px solid #2A323B' }}>
                 <div className="text-xs mb-1.5 mt-2 font-semibold" style={{ color:'#8B93A0' }}>BENEFICIAR (apare pe deviz/factură)</div>
@@ -2087,7 +2099,7 @@ function AutocompleteInput({ value, onChange, onPick, options, placeholder, minW
   );
 }
 
-function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials, materialeLista }) {
+function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials, materialeLista, materialClient }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const activeMaterials = (materials || []).filter((m)=>!m.arhivat);
   const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
@@ -2100,23 +2112,26 @@ function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, mate
   const update = (id, f, v) => setMaterialeFolosite(materialeFolosite.map((m)=> m.id===id ? {...m, [f]:v} : m));
   const pick = (id, o) => setMaterialeFolosite(materialeFolosite.map((m)=> m.id===id ? {...m, denumire:o.label, um:o.um||m.um} : m));
   const remove = (id) => setMaterialeFolosite(materialeFolosite.filter((m)=>m.id!==id));
-  const add = () => setMaterialeFolosite([...materialeFolosite, { id: uid(), denumire:'', cantitate:1, um:'buc', sursa:'proprie' }]);
+  const add = () => setMaterialeFolosite([...materialeFolosite, { id: uid(), denumire:'', cantitate:1, um:'buc', sursa: materialClient?'client':'proprie', pret:'' }]);
 
   return (
     <div>
       <div className="text-sm font-medium mb-1.5" style={{ color:'#E9E7E2' }}>🧰 Materiale folosite</div>
-      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Tastează și alege din listă (sugestii din lista importată + gestiune). „Proprii" se scad din Gestiune la deviz; „Client" apar doar informativ.</p>
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>{materialClient ? 'Materialele clientului — trece cantitatea și prețul unitar convenit.' : 'Tastează și alege din listă (sugestii din lista importată + gestiune).'}</p>
       {materialeFolosite.length > 0 && (
         <div className="space-y-1 mb-2">
           {materialeFolosite.map((m)=>(
             <div key={m.id} className="flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1.5" style={{ background:'#171C21' }}>
               <AutocompleteInput value={m.denumire} onChange={(v)=>update(m.id,'denumire',v)} onPick={(o)=>pick(m.id,o)} options={optiuni} placeholder="Material" minWidth="140px" />
-              <input type="number" value={m.cantitate} onChange={(e)=>update(m.id,'cantitate',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />
-              <input value={m.um} onChange={(e)=>update(m.id,'um',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-14" style={inputStyle} />
-              <button onClick={()=>update(m.id,'sursa', m.sursa==='proprie'?'client':'proprie')} className="text-[11px] px-2 py-1 rounded-lg font-medium"
-                style={{ color:'#14181C', background: m.sursa==='proprie'?'#2E8BD1':'#E9A23B' }}>
-                {m.sursa==='proprie' ? 'Proprii' : 'Client'}
-              </button>
+              <input type="number" value={m.cantitate} onChange={(e)=>update(m.id,'cantitate',e.target.value)} placeholder="Cant." className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />
+              <input value={m.um} onChange={(e)=>update(m.id,'um',e.target.value)} placeholder="UM" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-14" style={inputStyle} />
+              {materialClient && <input type="number" value={m.pret||''} onChange={(e)=>update(m.id,'pret',e.target.value)} placeholder="Preț" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />}
+              {!materialClient && (
+                <button onClick={()=>update(m.id,'sursa', m.sursa==='proprie'?'client':'proprie')} className="text-[11px] px-2 py-1 rounded-lg font-medium"
+                  style={{ color:'#14181C', background: m.sursa==='proprie'?'#2E8BD1':'#E9A23B' }}>
+                  {m.sursa==='proprie' ? 'Proprii' : 'Client'}
+                </button>
+              )}
               <button onClick={()=>remove(m.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
             </div>
           ))}
@@ -2230,7 +2245,9 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane }) 
   );
 }
 
-function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, pozitii, structura, onCancel, onSave }) {
+function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, pozitii, structura, mod, onCancel, onSave }) {
+  const modR = mod || 'orar';
+  const estePozitie = modR==='pozitie_propriu' || modR==='pozitie_client';
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
@@ -2266,12 +2283,19 @@ function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, 
       </div>
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
       <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} />
-      <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
-        <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} />
-      </div>
-      {pozitii && pozitii.length > 0 && (
+      {estePozitie && pozitii && pozitii.length > 0 && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
           <PozitiiExecutateEditor pozitiiExecutate={pozitiiExecutate} setPozitiiExecutate={setPozitiiExecutate} pozitii={pozitii} />
+        </div>
+      )}
+      {estePozitie && (
+        <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} materialClient={modR==='pozitie_client'} />
+        </div>
+      )}
+      {modR==='orar_lucrari' && (
+        <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          <TipuriLucrariEditor tipuriLucrari={tipuriLucrari} setTipuriLucrari={setTipuriLucrari} />
         </div>
       )}
       {structura && structura.length > 0 && (
@@ -2279,9 +2303,6 @@ function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, 
           <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} />
         </div>
       )}
-      <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
-        <TipuriLucrariEditor tipuriLucrari={tipuriLucrari} setTipuriLucrari={setTipuriLucrari} />
-      </div>
       <textarea placeholder="Alte observații (opțional)..." value={explicatii} onChange={(e)=>setExplicatii(e.target.value)} rows={2} className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={inputStyle} />
       <div className="flex justify-between items-center mt-3">
         <span className="text-sm" style={{ color:'#8B93A0' }}>Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMin)}</span></span>
@@ -2946,11 +2967,17 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         </div>
         )}
 
-        {/* ---- Generează deviz din rapoarte (Manager) — depinde de tipul de facturare al șantierului ---- */}
-        {currentUser?.rol === 'Manager' && (
-          (santier?.tipFacturare === 'orar' || !santier?.tipFacturare) ? (
+        {/* ---- Generează deviz(e) — după modul de facturare al șantierului ---- */}
+        {currentUser?.rol === 'Manager' && (()=>{
+          const modS = santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar');
+          const rapInterval = () => rapoarte.filter((r)=>r.santierId===selected && (!devizFrom || r.data>=devizFrom) && (!devizTo || r.data<=devizTo));
+          const pozitiiS = pozitiiSantier.filter((p)=>p.santierId===selected);
+          const materialeListaS = materialeListaSantier.filter((m)=>m.santierId===selected);
+          const estePoz = modS==='pozitie_propriu' || modS==='pozitie_client';
+          const titlu = modS==='orar' ? '🧾 Deviz tarif orar' : modS==='orar_lucrari' ? '🧾 Deviz tarif orar + tipuri de lucrări' : modS==='pozitie_client' ? '📋 Devize la poziție (material client)' : '📋 Devize la poziție (material propriu)';
+          return (
             <div className="rounded-xl p-3 mb-4 flex items-center gap-2 flex-wrap" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
-              <span className="text-sm font-semibold w-full" style={{ color:'#E9E7E2' }}>🧾 Deviz tarif orar</span>
+              <span className="text-sm font-semibold w-full" style={{ color:'#E9E7E2' }}>{titlu}</span>
               <span className="text-xs" style={{ color:'#5C6570' }}>Perioada de la</span>
               <RoCalendarPicker value={devizFrom} onChange={setDevizFrom} />
               <span className="text-xs" style={{ color:'#5C6570' }}>până la</span>
@@ -2959,40 +2986,23 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               <input value={devizNr} onChange={(e)=>setDevizNr(e.target.value)} placeholder="ex: 2" className="w-16 rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#1B2127', color:'#E9E7E2', border:'1px solid #2A323B' }} />
               <span className="text-xs" style={{ color:'#5C6570' }}>Data deviz</span>
               <RoCalendarPicker value={devizData} onChange={setDevizData} />
-              <button
-                onClick={()=>{
-                  const rapInterval = rapoarte.filter((r)=>r.santierId===selected && (!devizFrom || r.data>=devizFrom) && (!devizTo || r.data<=devizTo));
-                  openDevizOrar({ santier, company, rapoarte: rapInterval, nr: devizNr || '—', data: fmtData(devizData) });
-                }}
-                className="text-sm px-4 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>Generează deviz (PDF)</button>
+              {!estePoz && (
+                <button onClick={()=>openDevizOrar({ santier, company, rapoarte: rapInterval(), nr: devizNr||'—', data: fmtData(devizData), includeLucrari: modS==='orar_lucrari' })} className="text-sm px-4 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>Generează deviz (PDF)</button>
+              )}
+              {estePoz && (
+                <>
+                  <button onClick={()=>openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>📋 Deviz poziții</button>
+                  <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: modS==='pozitie_client', nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🧰 Deviz materiale{modS==='pozitie_client'?' (client)':''}</button>
+                </>
+              )}
               {(!santier?.benefNume) && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Completează „Detalii pentru deviz" la editarea șantierului (beneficiar, contract).</span>}
-              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Implicit e luna curentă (1 → sfârșit). Preț/oră: {Number(santier?.tarifOrar)||75} lei · TVA 21%.</span>
+              {estePoz && pozitiiS.length===0 && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Importă pozițiile la „📋 Poziții/Materiale".</span>}
+              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Implicit e luna curentă (1 → sfârșit). {estePoz ? 'Poziții și materiale se adună din rapoarte.' : (modS==='orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar)||75} lei.`)} TVA 21%.</span>
             </div>
-          ) : (
-            <div className="rounded-xl p-3 mb-4 flex items-center gap-2 flex-wrap" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
-              <span className="text-sm font-semibold w-full" style={{ color:'#E9E7E2' }}>📋 Deviz la poziție (real executat)</span>
-              <span className="text-xs" style={{ color:'#5C6570' }}>Perioada de la</span>
-              <RoCalendarPicker value={devizFrom} onChange={setDevizFrom} />
-              <span className="text-xs" style={{ color:'#5C6570' }}>până la</span>
-              <RoCalendarPicker value={devizTo} onChange={setDevizTo} />
-              <span className="text-xs" style={{ color:'#5C6570' }}>Nr.</span>
-              <input value={devizNr} onChange={(e)=>setDevizNr(e.target.value)} placeholder="ex: 2" className="w-16 rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#1B2127', color:'#E9E7E2', border:'1px solid #2A323B' }} />
-              <span className="text-xs" style={{ color:'#5C6570' }}>Data deviz</span>
-              <RoCalendarPicker value={devizData} onChange={setDevizData} />
-              <button
-                onClick={()=>{
-                  const rapInterval = rapoarte.filter((r)=>r.santierId===selected && (!devizFrom || r.data>=devizFrom) && (!devizTo || r.data<=devizTo));
-                  openDevizPoz({ santier, company, rapoarte: rapInterval, pozitii: pozitiiSantier.filter((p)=>p.santierId===selected), nr: devizNr || '—', data: fmtData(devizData) });
-                }}
-                className="text-sm px-4 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>Generează deviz (PDF)</button>
-              {(pozitiiSantier.filter((p)=>p.santierId===selected).length === 0) && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Importă întâi pozițiile la „📋 Poziții/Materiale". Angajații raportează apoi pozițiile executate.</span>}
-              {(!santier?.benefNume) && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Completează „Detalii pentru deviz" la editarea șantierului (beneficiar, contract).</span>}
-              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Se adună cantitățile executate raportate de angajați, pe fiecare poziție × preț unitar. TVA 21%.</span>
-            </div>
-          )
-        )}
+          );
+        })()}
 
-        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : !raporteShowAll ? (
@@ -3006,7 +3016,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               if (reportForm && reportForm.id === r.id) {
-                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
+                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
               }
               return (
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -4695,7 +4705,7 @@ function openPrintWindow(items) {
 // --- Deviz pe TARIF ORAR generat din rapoartele zilnice ale unui șantier ---
 // Tabel: DATA · NR PERSOANE · NR ORE/PERS · TOTAL ORE · PREȚ UNITAR · VALOARE.
 // Antetul (Executant / Beneficiar / Contract / Obiectiv) vine din setările șantierului (Etapa 1).
-function devizOrarPageHtml({ santier, company, rapoarte, nr, data }) {
+function devizOrarPageHtml({ santier, company, rapoarte, nr, data, tipuriLucrari }) {
   const tarif = Number(santier?.tarifOrar) || 75;
   const tva = 21;
   const zile = (rapoarte || [])
@@ -4760,6 +4770,8 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data }) {
       <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
     </div>
 
+    ${(tipuriLucrari && tipuriLucrari.length) ? `<div style="font-size:11px; margin:0 0 4mm; padding-bottom:3mm; border-bottom:1px solid #ccc;"><b>Tipuri de lucrări executate:</b><div style="margin-top:1.5mm;">${tipuriLucrari.map((t)=>`• ${esc(t)}`).join('<br/>')}</div></div>` : ''}
+
     <table class="pp-table"><thead><tr><th>Nr. crt</th><th>Data</th><th>Nr. persoane</th><th>Ore / pers.</th><th>Total ore</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7">Niciun raport în perioada selectată.</td></tr>'}</tbody>
       <tfoot><tr><td colspan="4"></td><td style="font-weight:700">${totalOreGeneral.toFixed(2)}</td><td></td><td style="font-weight:700">${esc(money(subtotal))}</td></tr></tfoot>
@@ -4787,10 +4799,16 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data }) {
   </div>`;
 }
 
-function openDevizOrar({ santier, company, rapoarte, nr, data }) {
+function openDevizOrar({ santier, company, rapoarte, nr, data, includeLucrari }) {
   const validPers = (rapoarte || []).some((r)=> (r.persoane || []).some((p)=> p.nume && String(p.nume).trim()));
   if (!validPers) { window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.'); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, nr, data })}</body></html>`;
+  let tipuriLucrari = null;
+  if (includeLucrari) {
+    const set = [];
+    (rapoarte || []).forEach((r)=> (r.tipuriLucrari || []).forEach((t)=>{ const d=(t.denumire||'').trim(); if (d && !set.includes(d)) set.push(d); }));
+    tipuriLucrari = set;
+  }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, nr, data, tipuriLucrari })}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
@@ -4886,6 +4904,97 @@ function openDevizPoz({ santier, company, rapoarte, pozitii, nr, data }) {
   const exista = (rapoarte || []).some((r)=> (r.pozitiiExecutate || []).some((pe)=> pe.pozitieId && (Number(pe.cantitate)||0) > 0));
   if (!exista) { window.alert('Nu există poziții executate raportate în perioada selectată pentru acest șantier.'); return; }
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, rapoarte, pozitii, nr, data })}</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  w.focus();
+}
+
+// --- Deviz de MATERIALE: adună materialele folosite din rapoarte × preț (din listă/gestiune, sau prețul convenit la client) ---
+function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, nr, data }) {
+  const tva = 21;
+  const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
+  const grup = {};
+  (rapoarte || []).forEach((r)=>{
+    (r.materialeFolosite || []).forEach((m)=>{
+      if (!m.denumire || !String(m.denumire).trim()) return;
+      const key = norm(m.denumire)+'|'+norm(m.um);
+      if (!grup[key]) grup[key] = { denumire:String(m.denumire).trim(), um:m.um||'buc', cantitate:0, pret:0 };
+      grup[key].cantitate += Number(m.cantitate)||0;
+      if (materialClient) { const p = Number(m.pret)||0; if (p>0) grup[key].pret = p; }
+    });
+  });
+  if (!materialClient) {
+    Object.values(grup).forEach((g)=>{
+      const fromList = (materialeLista||[]).find((x)=>norm(x.denumire)===norm(g.denumire));
+      const fromCentral = (materials||[]).find((x)=>norm(x.denumire)===norm(g.denumire) && !x.arhivat);
+      g.pret = Number(fromList?.pretUnitar) || Number(fromCentral?.pret) || 0;
+    });
+  }
+  const items = Object.values(grup).filter((g)=>g.cantitate>0);
+  let subtotal = 0;
+  const rows = items.map((g,i)=>{ const val = g.cantitate*g.pret; subtotal += val; return `<tr><td>${i+1}</td><td style="text-align:left">${esc(g.denumire)}</td><td>${esc(g.um)}</td><td>${g.cantitate}</td><td>${esc(money(g.pret))}</td><td>${esc(money(val))}</td></tr>`; }).join('');
+  const tvaVal = subtotal*tva/100, total = subtotal+tvaVal;
+  const benefLines = String(santier?.benefInfo || '').split('\n').map((l)=>l.trim()).filter(Boolean).map((l)=>`<div>${esc(l)}</div>`).join('');
+  const dataDot = String(data).replace(/\//g,'.');
+  const execCuiReg = [company?.cui ? `C.U.I ${esc(company.cui)}` : '', company?.regCom ? esc(company.regCom) : ''].filter(Boolean).join('&nbsp;&nbsp;&nbsp;&nbsp;');
+  return `<div class="print-page">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:6mm; margin-bottom:2mm;">
+      <div style="flex:1; font-size:10px; line-height:1.55;">
+        <div style="font-weight:700;">EXECUTANT:</div>
+        <div style="font-weight:700;">${esc(company?.nume) || '(completează datele firmei în „Firma mea")'}</div>
+        ${company?.adresa?`<div>${esc(company.adresa)}</div>`:''}
+        ${execCuiReg?`<div>${execCuiReg}</div>`:''}
+        ${company?.email?`<div>e-mail: ${esc(company.email)}</div>`:''}
+        ${company?.telefon?`<div>Tel: ${esc(company.telefon)}</div>`:''}
+      </div>
+      <div style="flex:0 0 auto; text-align:center; padding:0 2mm;">
+        <img src="${window.location.origin}/logo.png" alt="Logo" style="height:80px; width:auto;" />
+      </div>
+      <div style="flex:1; font-size:10px; line-height:1.55; text-align:right;">
+        <div style="font-weight:700;">BENEFICIAR:</div>
+        <div style="font-weight:700;">${esc(santier?.benefNume) || '—'}</div>
+        ${benefLines}
+      </div>
+    </div>
+    <div style="text-align:center; margin:5mm 0 2mm;">
+      <div style="font-weight:700; font-size:15px;">Deviz materiale</div>
+      <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
+      ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}
+    </div>
+    <div style="font-size:11px; line-height:1.9; margin:4mm 0; padding-bottom:3mm; border-bottom:1px solid #ccc;">
+      <div><b>Obiectiv:</b> ${esc(santier?.obiectiv || '')}</div>
+      <div><b>Adresa:</b> ${esc(santier?.adresa || '')}</div>
+      <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
+    </div>
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire material</th><th>U.M.</th><th>Cantitate</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6">Niciun material folosit raportat în perioada selectată.</td></tr>'}</tbody>
+    </table>
+    <div class="pp-totals">
+      <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
+      <div class="pp-totals-row"><span>TVA ${tva}%</span><span>${esc(money(tvaVal))}</span></div>
+      <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
+    </div>
+    <div class="pp-signatures">
+      <div class="pp-sign-col">
+        <div class="pp-sign-label">Executant</div>
+        <div>${esc(company?.nume) || ''}</div>
+        ${company?.administrator ? `<div>${esc(company.administrator)}</div>` : ''}
+        <img src="${company?.stampila || STAMPILA_EXECUTANT}" alt="" style="height:26mm; width:auto; display:block; margin:1mm 0 0;" />
+      </div>
+      <div class="pp-sign-col" style="text-align:right;">
+        <div class="pp-sign-label">Beneficiar</div>
+        <div>${esc(santier?.benefNume) || ''}</div>
+        ${santier?.benefSemnatar ? `<div>${esc(santier.benefSemnatar)}</div>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, nr, data }) {
+  const exista = (rapoarte || []).some((r)=> (r.materialeFolosite || []).some((m)=> m.denumire && String(m.denumire).trim()));
+  if (!exista) { window.alert('Nu există materiale folosite raportate în perioada selectată pentru acest șantier.'); return; }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz materiale ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, nr, data })}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
