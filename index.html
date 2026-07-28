@@ -2064,26 +2064,57 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
   );
 }
 
-function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials }) {
+// Câmp cu autocomplete: tastezi orice bucată din text și îți arată sugestii care conțin ce ai scris (nu doar început).
+function AutocompleteInput({ value, onChange, onPick, options, placeholder, minWidth }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const [open, setOpen] = useState(false);
+  const norm = (s)=>String(s==null?'':s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim();
+  const q = norm(value);
+  const matches = q ? (options||[]).filter((o)=>norm(o.label).includes(q)).slice(0,10) : [];
+  return (
+    <div style={{ position:'relative', flex:1, minWidth: minWidth||'120px' }}>
+      <input value={value} onChange={(e)=>{ onChange(e.target.value); setOpen(true); }} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),150)} placeholder={placeholder} className="w-full rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+      {open && matches.length>0 && (
+        <div style={{ position:'absolute', zIndex:60, left:0, right:0, top:'100%', marginTop:2, background:'#0f1317', border:'1px solid #2A323B', borderRadius:8, maxHeight:200, overflowY:'auto', boxShadow:'0 6px 18px rgba(0,0,0,.45)' }}>
+          {matches.map((o)=>(
+            <div key={o.key} onMouseDown={(e)=>{ e.preventDefault(); onPick(o); setOpen(false); }} style={{ padding:'8px 10px', fontSize:12, cursor:'pointer', color:'#E9E7E2', borderBottom:'1px solid #1a2027' }}>
+              {o.label}{o.um?<span style={{ color:'#5C6570' }}> · {o.um}</span>:null}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials, materialeLista }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const activeMaterials = (materials || []).filter((m)=>!m.arhivat);
+  const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
+  const optiuni = (()=>{
+    const seen = new Set(); const out = [];
+    (materialeLista || []).forEach((m)=>{ const k=norm(m.denumire); if(m.denumire && !seen.has(k)){ seen.add(k); out.push({ key:'l'+m.id, label:m.denumire, um:m.um }); } });
+    activeMaterials.forEach((m)=>{ const k=norm(m.denumire); if(m.denumire && !seen.has(k)){ seen.add(k); out.push({ key:'c'+m.id, label:m.denumire, um:m.um }); } });
+    return out;
+  })();
   const update = (id, f, v) => setMaterialeFolosite(materialeFolosite.map((m)=> m.id===id ? {...m, [f]:v} : m));
+  const pick = (id, o) => setMaterialeFolosite(materialeFolosite.map((m)=> m.id===id ? {...m, denumire:o.label, um:o.um||m.um} : m));
   const remove = (id) => setMaterialeFolosite(materialeFolosite.filter((m)=>m.id!==id));
   const add = () => setMaterialeFolosite([...materialeFolosite, { id: uid(), denumire:'', cantitate:1, um:'buc', sursa:'proprie' }]);
 
   return (
     <div>
       <div className="text-sm font-medium mb-1.5" style={{ color:'#E9E7E2' }}>🧰 Materiale folosite</div>
-      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>„Proprii" se scad automat din Gestiune la emiterea devizului. „Client" apar în deviz doar ca informație, fără să afecteze stocul tău.</p>
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Tastează și alege din listă (sugestii din lista importată + gestiune). „Proprii" se scad din Gestiune la deviz; „Client" apar doar informativ.</p>
       {materialeFolosite.length > 0 && (
         <div className="space-y-1 mb-2">
           {materialeFolosite.map((m)=>(
             <div key={m.id} className="flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1.5" style={{ background:'#171C21' }}>
-              <input list="materiale-folosite-catalog" placeholder="Material" value={m.denumire} onChange={(e)=>update(m.id,'denumire',e.target.value)} className="bg-transparent outline-none text-sm py-1 flex-1 min-w-[120px]" style={{ color:'#E9E7E2' }} />
-              <input type="number" value={m.cantitate} onChange={(e)=>update(m.id,'cantitate',e.target.value)} className="bg-transparent outline-none text-sm py-1 w-16" style={{ color:'#E9E7E2', fontFamily:"'JetBrains Mono', monospace" }} />
-              <input value={m.um} onChange={(e)=>update(m.id,'um',e.target.value)} className="bg-transparent outline-none text-sm py-1 w-16" style={{ color:'#E9E7E2' }} />
+              <AutocompleteInput value={m.denumire} onChange={(v)=>update(m.id,'denumire',v)} onPick={(o)=>pick(m.id,o)} options={optiuni} placeholder="Material" minWidth="140px" />
+              <input type="number" value={m.cantitate} onChange={(e)=>update(m.id,'cantitate',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />
+              <input value={m.um} onChange={(e)=>update(m.id,'um',e.target.value)} className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-14" style={inputStyle} />
               <button onClick={()=>update(m.id,'sursa', m.sursa==='proprie'?'client':'proprie')} className="text-[11px] px-2 py-1 rounded-lg font-medium"
-                style={{ color: m.sursa==='proprie'?'#14181C':'#14181C', background: m.sursa==='proprie'?'#2E8BD1':'#E9A23B' }}>
+                style={{ color:'#14181C', background: m.sursa==='proprie'?'#2E8BD1':'#E9A23B' }}>
                 {m.sursa==='proprie' ? 'Proprii' : 'Client'}
               </button>
               <button onClick={()=>remove(m.id)} className="opacity-50 hover:opacity-100" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
@@ -2091,9 +2122,6 @@ function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, mate
           ))}
         </div>
       )}
-      <datalist id="materiale-folosite-catalog">
-        {activeMaterials.map((m)=><option key={m.id} value={m.denumire} />)}
-      </datalist>
       <button onClick={add} className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21' }}><Icon>+</Icon> Adaugă material folosit</button>
     </div>
   );
@@ -2112,12 +2140,11 @@ function PozitiiExecutateEditor({ pozitiiExecutate, setPozitiiExecutate, pozitii
         <div className="space-y-1 mb-2">
           {pozitiiExecutate.map((x)=>{
             const poz = pozitii.find((p)=>p.id===x.pozitieId);
+            const optiuni = (pozitii||[]).map((p)=>({ key:p.id, label:(p.nrCrt?p.nrCrt+'. ':'')+String(p.denumire), um:p.um, id:p.id }));
+            const displayVal = x.cautaText != null ? x.cautaText : (poz ? poz.denumire : '');
             return (
               <div key={x.id} className="flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1.5" style={{ background:'#171C21' }}>
-                <select value={x.pozitieId} onChange={(e)=>update(x.id,'pozitieId',e.target.value)} className="flex-1 min-w-[150px] rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle}>
-                  <option value="" style={{ background:'#1B2127' }}>Alege poziția...</option>
-                  {pozitii.map((p)=><option key={p.id} value={p.id} style={{ background:'#1B2127' }}>{p.nrCrt?p.nrCrt+'. ':''}{String(p.denumire).slice(0,60)} ({p.um})</option>)}
-                </select>
+                <AutocompleteInput value={displayVal} onChange={(v)=>update(x.id,'cautaText',v)} onPick={(o)=>setPozitiiExecutate(pozitiiExecutate.map((y)=> y.id===x.id ? {...y, pozitieId:o.id, cautaText:o.label} : y))} options={optiuni} placeholder="Caută poziția..." minWidth="150px" />
                 <input type="number" inputMode="decimal" placeholder="Cant." value={x.cantitate} onChange={(e)=>update(x.id,'cantitate',e.target.value)} className="w-20 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
                 <span className="text-[11px]" style={{ color:'#8B93A0' }}>{poz?.um || ''}</span>
                 <button onClick={()=>remove(x.id)} className="opacity-60" style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
@@ -2203,7 +2230,7 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane }) 
   );
 }
 
-function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, structura, onCancel, onSave }) {
+function RaportForm({ initial, etape, echipaPermisa, materials, materialeLista, pozitii, structura, onCancel, onSave }) {
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
   const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
@@ -2240,7 +2267,7 @@ function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, structu
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
       <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} />
       <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
-        <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} />
+        <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} />
       </div>
       {pozitii && pozitii.length > 0 && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
@@ -2267,7 +2294,16 @@ function RaportForm({ initial, etape, echipaPermisa, materials, pozitii, structu
   );
 }
 
-function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack }) {
+function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack, rapoarte }) {
+  const lucrariApart = (apId) => {
+    const out = [];
+    (rapoarte || []).filter((r)=>r.santierId===santierId).forEach((r)=>{
+      (r.lucrariApartamente || []).forEach((l)=>{
+        if ((l.apartamenteIds || []).includes(apId) && (l.persoanaNume || l.tipLucrare)) out.push({ data:r.data, persoanaNume:l.persoanaNume, tipLucrare:l.tipLucrare, ore:l.ore });
+      });
+    });
+    return out.sort((a,b)=> a.data<b.data?1:-1);
+  };
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   // Sortare după NUMĂRUL din nume, indiferent cum e scris prefixul ("Et.2", "Etaj 2", "et2" → toate = 2).
   // Fără număr (Parter, Subsol, Demisol) → înaintea etajelor numerotate. Ordinea iese 1,2,3...10 corect.
@@ -2469,6 +2505,19 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
                   {editMatId[a.id] && <button onClick={()=>cancelEditMat(a.id)} className="text-xs px-2 py-1.5 rounded-lg" style={{ color:'#8B93A0', background:'#1B2127' }}>✕</button>}
                 </div>
               </div>
+              {(()=>{ const ll = lucrariApart(a.id); return ll.length > 0 ? (
+                <div className="mt-2 pt-1.5" style={{ borderTop:'1px solid #232C34' }}>
+                  <div className="text-[11px] mb-1" style={{ color:'#8B93A0' }}>👷 Cine a lucrat aici:</div>
+                  <div className="space-y-0.5">
+                    {ll.map((l,i)=>(
+                      <div key={i} className="text-[11px] flex items-center justify-between gap-2">
+                        <span style={{ color:'#C08CE0' }}><b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>{l.tipLucrare?' — '+l.tipLucrare:''}</span>
+                        <span className="shrink-0" style={{ color:'#8B93A0' }}>{l.ore?l.ore+'h · ':''}{fmtData(l.data)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null; })()}
             </div>
             );
           })}
@@ -2943,7 +2992,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           )
         )}
 
-        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         {rapoarteSantier.length === 0 && !reportForm ? (
           <div className="text-center py-12 text-sm" style={{ color:'#8B93A0' }}>Niciun raport zilnic încă.</div>
         ) : !raporteShowAll ? (
@@ -2957,7 +3006,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               if (reportForm && reportForm.id === r.id) {
-                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
+                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
               }
               return (
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
@@ -3083,7 +3132,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         )}
         {accHeader('structura','🏢','Structură — etaje')}
         {siteView === 'structura' && (
-          <SiteStructuraTab santierId={selected} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} />
+          <SiteStructuraTab santierId={selected} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} rapoarte={rapoarte} />
         )}
         {accHeader('devizpoz','📋','Poziții / Materiale')}
         {siteView === 'devizpoz' && (
