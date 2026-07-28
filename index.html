@@ -2274,8 +2274,15 @@ function TipuriLucrariEditor({ tipuriLucrari, setTipuriLucrari }) {
   );
 }
 
-function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, echipaNume }) {
+function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, echipaNume, pozitii, materialeLista }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const normL = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
+  const optiuniLucrare = (()=>{
+    const seen = new Set(), out = [];
+    (pozitii||[]).forEach((p)=>{ const k=normL(p.denumire); if(p.denumire && !seen.has(k)){ seen.add(k); out.push({ key:'p'+p.id, label:p.denumire, um:p.um }); } });
+    (materialeLista||[]).forEach((m)=>{ const k=normL(m.denumire); if(m.denumire && !seen.has(k)){ seen.add(k); out.push({ key:'m'+m.id, label:m.denumire, um:m.um }); } });
+    return out;
+  })();
   const [totiElectricieni, setTotiElectricieni] = useState([]);
   useEffect(() => {
     authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
@@ -2320,7 +2327,9 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
                 ); })}
               </div>
             )}
-            <input value={x.tipLucrare} onChange={(e)=>update(x.id,'tipLucrare',e.target.value)} placeholder="Ce a lucrat (ex: pus tablouri, slit în perete, copex)" className="w-full rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+            <div className="flex">
+              <AutocompleteInput value={x.tipLucrare} onChange={(v)=>update(x.id,'tipLucrare',v)} onPick={(o)=>update(x.id,'tipLucrare',o.label)} options={optiuniLucrare} placeholder="Ce a lucrat (caută în poziții/materiale sau scrie liber)" minWidth="180px" />
+            </div>
           </div>
         );
       })}
@@ -2397,7 +2406,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
             </div>
           )}
           {structura && structura.length > 0 ? (
-            <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} echipaNume={echipaNume} />
+            <LucrariApartamenteEditor lucrari={lucrariApartamente} setLucrari={setLucrariApartamente} structura={structura} persoane={persoane} echipaNume={echipaNume} pozitii={pozitii} materialeLista={materialeLista} />
           ) : (
             <p className="text-xs" style={{ color:'#5C6570' }}>Adaugă etaje/apartamente cu butonul „✎ Etaje / apartamente" de sus, apoi poți nota cine a lucrat unde.</p>
           )}
@@ -2731,6 +2740,12 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   const setLista = isPoz ? setPozitiiSantier : setMaterialeListaSantier;
   const cheie = isPoz ? 'pozitiiSantier' : 'materialeListaSantier';
   const items = lista.filter((x)=>x.santierId===santierId);
+  const [cautaLista, setCautaLista] = useState('');
+  const [showAllLista, setShowAllLista] = useState(false);
+  const LIM_LISTA = 8;
+  const qLista = cautaLista.trim().toLowerCase();
+  const filtrate = qLista ? items.filter((x)=> String(x.denumire||'').toLowerCase().includes(qLista) || String(x.um||'').toLowerCase().includes(qLista)) : items;
+  const vizibile = (qLista || showAllLista) ? filtrate : filtrate.slice(0, LIM_LISTA);
   const gridCols = isManager ? '24px 1fr 42px 52px 64px 70px 44px' : '24px 1fr 42px 52px 44px';
   const save = (nextAll) => { setLista(nextAll); persist(cheie, nextAll); };
   const totalVal = items.reduce((s,x)=> s + ((Number(x.cantitate)||0) * (Number(x.pretUnitar)||0)), 0);
@@ -2781,14 +2796,23 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
       </div>
       )}
 
+      {items.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <input value={cautaLista} onChange={(e)=>setCautaLista(e.target.value)} placeholder={`🔍 Caută în ${isPoz?'poziții':'materiale'} (ex: doze, cablu...)`} className="flex-1 min-w-[160px] rounded-lg px-2.5 py-1.5 text-sm outline-none" style={inputStyle} />
+          <span className="text-[11px]" style={{ color:'#5C6570' }}>{qLista ? `${filtrate.length} din ${items.length}` : `${items.length} rânduri`}</span>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <div className="text-center py-8 text-sm" style={{ color:'#8B93A0' }}>{isManager ? `Nicio ${isPoz?'poziție':'listă de materiale'} încă. Importă din Excel sau adaugă manual mai jos.` : 'Nimic adăugat încă la acest șantier.'}</div>
+      ) : filtrate.length === 0 ? (
+        <div className="text-center py-6 text-sm" style={{ color:'#8B93A0' }}>Niciun rezultat pentru „{cautaLista}".</div>
       ) : (
         <div className="rounded-lg overflow-hidden" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
           <div className="grid gap-1 px-2 py-1.5 text-[10px] uppercase tracking-wide" style={{ gridTemplateColumns:gridCols, color:'#8B93A0', background:'#20272e' }}>
             <span>Nr</span><span>Denumire</span><span>U.M.</span><span>Cant.</span>{isManager && <span>Preț</span>}{isManager && <span>Valoare</span>}<span></span>
           </div>
-          {items.map((x, i)=> editId===x.id ? (
+          {vizibile.map((x, i)=> editId===x.id ? (
             <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1px solid #2A323B', background:'#232C34' }}>
               <span className="text-[11px]" style={{ color:'#5C6570' }}>{i+1}</span>
               <input value={editRow.denumire} onChange={(e)=>setEditRow({...editRow, denumire:e.target.value})} className="rounded px-1.5 py-1 text-xs outline-none" style={inputStyle} />
@@ -2820,6 +2844,11 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
             <span></span><span className="text-xs font-semibold" style={{ color:'#E9E7E2' }}>TOTAL (fără TVA)</span><span></span><span></span><span></span>
             <span className="text-xs text-right font-semibold" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalVal)}</span><span></span>
           </div>
+          )}
+          {!qLista && filtrate.length > LIM_LISTA && (
+            <button onClick={()=>setShowAllLista(!showAllLista)} className="w-full text-xs py-2 font-medium" style={{ color:'#2E8BD1', background:'#20272e', borderTop:'1px solid #2A323B' }}>
+              {showAllLista ? '▲ Restrânge' : `▼ Arată toate (${filtrate.length})`}
+            </button>
           )}
         </div>
       )}
