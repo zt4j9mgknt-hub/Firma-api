@@ -2297,11 +2297,11 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
   const numePersoane = bazaEchipa.length ? bazaEchipa : totiElectricieni;
   const update = (id,f,v)=>setLucrari(lucrari.map((x)=>x.id===id?{...x,[f]:v}:x));
   const remove = (id)=>setLucrari(lucrari.filter((x)=>x.id!==id));
-  const add = ()=>setLucrari([...(lucrari||[]),{ id:uid(), persoanaNume:numePersoane[0]||'', etajId: etaje[0]?.id||'', apartamenteIds:[], tipLucrare:'', ore:'' }]);
+  const add = ()=>setLucrari([...(lucrari||[]),{ id:uid(), persoanaNume:numePersoane[0]||'', etajId: etaje[0]?.id||'', apartamenteIds:[], tipLucrare:'', cantitate:'', um:'buc', ore:'' }]);
   const toggleAp = (x,apId)=>{ const cur=x.apartamenteIds||[]; update(x.id,'apartamenteIds', cur.includes(apId)? cur.filter((i)=>i!==apId):[...cur,apId]); };
   return (
     <div>
-      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Cine, ce a lucrat, în care apartament(e) și cât timp. Ex: Attila — tablouri — Ap.5 — 3h.</p>
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Cine, ce a lucrat, cantitatea, în care apartament(e) și cât timp. Un rând per persoană/lucrare — dacă 3 persoane fac lucruri diferite în același apartament, treci 3 rânduri. Ex: Attila — doze — 15 buc — Ap.402 — 3h.</p>
       {(lucrari||[]).map((x)=>{
         const etaj = etaje.find((e)=>e.id===x.etajId);
         const aps = (etaj?.apartamente||[]).slice().sort(cmp);
@@ -2327,8 +2327,10 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
                 ); })}
               </div>
             )}
-            <div className="flex">
-              <AutocompleteInput value={x.tipLucrare} onChange={(v)=>update(x.id,'tipLucrare',v)} onPick={(o)=>update(x.id,'tipLucrare',o.label)} options={optiuniLucrare} placeholder="Ce a lucrat (caută în poziții/materiale sau scrie liber)" minWidth="180px" />
+            <div className="flex items-center gap-1.5">
+              <AutocompleteInput value={x.tipLucrare} onChange={(v)=>update(x.id,'tipLucrare',v)} onPick={(o)=>setLucrari(lucrari.map((y)=>y.id===x.id?{...y,tipLucrare:o.label,um:o.um||y.um}:y))} options={optiuniLucrare} placeholder="Ce a lucrat (caută în poziții/materiale sau scrie liber)" minWidth="150px" />
+              <input type="number" inputMode="decimal" value={x.cantitate||''} onChange={(e)=>update(x.id,'cantitate',e.target.value)} placeholder="Cant." className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
+              <input value={x.um||''} onChange={(e)=>update(x.id,'um',e.target.value)} placeholder="UM" className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center" style={inputStyle} />
             </div>
           </div>
         );
@@ -2441,7 +2443,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     const out = [];
     (rapoarte || []).filter((r)=>r.santierId===santierId).forEach((r)=>{
       (r.lucrariApartamente || []).forEach((l)=>{
-        if ((l.apartamenteIds || []).includes(apId) && (l.persoanaNume || l.tipLucrare)) out.push({ data:r.data, persoanaNume:l.persoanaNume, tipLucrare:l.tipLucrare, ore:l.ore });
+        if ((l.apartamenteIds || []).includes(apId) && (l.persoanaNume || l.tipLucrare)) out.push({ data:r.data, persoanaNume:l.persoanaNume, tipLucrare:l.tipLucrare, cantitate:l.cantitate, um:l.um, ore:l.ore });
       });
     });
     return out.sort((a,b)=> a.data<b.data?1:-1);
@@ -2665,7 +2667,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
                   <div className="space-y-0.5">
                     {ll.map((l,i)=>(
                       <div key={i} className="text-[11px] flex items-center justify-between gap-2">
-                        <span style={{ color:'#C08CE0' }}><b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>{l.tipLucrare?' — '+l.tipLucrare:''}</span>
+                        <span style={{ color:'#C08CE0' }}><b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>{l.tipLucrare?' — '+l.tipLucrare:''}{(Number(l.cantitate)||0)>0?` — ${l.cantitate} ${l.um||''}`.trimEnd():''}</span>
                         <span className="shrink-0" style={{ color:'#8B93A0' }}>{l.ore?l.ore+'h · ':''}{fmtData(l.data)}</span>
                       </div>
                     ))}
@@ -3221,7 +3223,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                       {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||l.tipLucrare).map((l)=>{
                         const etaj = structuraSantier.find((e)=>e.id===l.etajId);
                         const apNames = (l.apartamenteIds||[]).map((id)=>etaj?.apartamente?.find((a)=>a.id===id)?.nume).filter(Boolean).join(', ');
-                        return <div key={l.id}>🏢 <b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>: {l.tipLucrare||''}{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{l.ore?` · ${l.ore}h`:''}</div>;
+                        return <div key={l.id}>🏢 <b style={{ color:'#E9E7E2' }}>{l.persoanaNume||'?'}</b>: {l.tipLucrare||''}{(Number(l.cantitate)||0)>0?` (${l.cantitate} ${l.um||''})`.replace(' )',')'):''}{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{l.ore?` · ${l.ore}h`:''}</div>;
                       })}
                     </div>
                   )}
