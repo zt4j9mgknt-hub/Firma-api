@@ -2345,6 +2345,9 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
   const modR = mod || 'orar';
   const arePozitii = modR==='pozitie_propriu' || modR==='pozitie_client';
   const areMateriale = modR==='pozitie_propriu' || modR==='real_executat';
+  // Dacă șantierul are structură (etaje/apartamente), materialele și pozițiile se trec
+  // individual la „Lucrări pe apartamente" — nu mai dublăm cu rubrici separate.
+  const areStructura = !!(structura && structura.length > 0);
   const [showStructEdit, setShowStructEdit] = useState(false);
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
@@ -2381,12 +2384,12 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
       </div>
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
       <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} />
-      {arePozitii && pozitii && pozitii.length > 0 && (
+      {arePozitii && !areStructura && pozitii && pozitii.length > 0 && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
           <PozitiiExecutateEditor pozitiiExecutate={pozitiiExecutate} setPozitiiExecutate={setPozitiiExecutate} pozitii={pozitii} />
         </div>
       )}
-      {areMateriale && (
+      {areMateriale && !areStructura && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
           <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} materialClient={false} pretDinLista={modR==='real_executat'} isManager={isManager} />
         </div>
@@ -2402,6 +2405,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
             <div className="text-sm font-medium" style={{ color:'#E9E7E2' }}>🏢 Lucrări pe apartamente</div>
             <button type="button" onClick={()=>setShowStructEdit(!showStructEdit)} className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#2E8BD1', background:'#171C21', border:'1px solid #2E8BD166' }}>{showStructEdit ? 'Ascunde etaje/apart.' : '✎ Etaje / apartamente'}</button>
           </div>
+          {areStructura && (areMateriale || arePozitii) && <p className="text-[11px] mb-1.5" style={{ color:'#4CAF7D' }}>ℹ️ Aici treci tot: cine, ce material/poziție, cantitatea și în care apartament. Devizul se face din aceste rânduri — nu mai e nevoie de rubrică separată de materiale/poziții.</p>}
           {showStructEdit && (
             <div className="rounded-lg p-2 mb-2" style={{ background:'#14181C', border:'1px solid #2A323B' }}>
               <SiteStructuraTab santierId={santierId} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} materials={materials} materialeLista={materialeLista} />
@@ -3132,6 +3136,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           const rapInterval = () => rapoarte.filter((r)=>r.santierId===selected && (!devizFrom || r.data>=devizFrom) && (!devizTo || r.data<=devizTo));
           const pozitiiS = pozitiiSantier.filter((p)=>p.santierId===selected);
           const materialeListaS = materialeListaSantier.filter((m)=>m.santierId===selected);
+          const areStructuraS = structuraSantier.some((e)=>e.santierId===selected);
           const estePoz = modS==='pozitie_propriu' || modS==='pozitie_client';
           const esteReal = modS==='real_executat';
           const areOre = !estePoz && !esteReal;
@@ -3152,19 +3157,19 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               )}
               {estePoz && (
                 <>
-                  <button onClick={()=>openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>📋 Deviz manoperă</button>
+                  <button onClick={()=>openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, dinLucrari: areStructuraS, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>📋 Deviz manoperă</button>
                   {modS==='pozitie_propriu' && (
-                    <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🧰 Deviz materiale</button>
+                    <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, dinLucrari: areStructuraS, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🧰 Deviz materiale</button>
                   )}
                 </>
               )}
               {esteReal && (
-                <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-4 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>🧾 Deviz real executat</button>
+                <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, dinLucrari: areStructuraS, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-4 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>🧾 Deviz real executat</button>
               )}
               {(!santier?.benefNume) && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Completează „Detalii pentru deviz" la editarea șantierului (beneficiar, contract).</span>}
               {estePoz && pozitiiS.length===0 && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Importă pozițiile la „📋 Poziții/Materiale".</span>}
               {esteReal && materialeListaS.length===0 && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Importă lista de materiale/operațiuni cu prețuri la „📋 Poziții/Materiale".</span>}
-              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Implicit e luna curentă (1 → sfârșit). {estePoz ? 'Manopera pe poziții' + (modS==='pozitie_propriu'?' + materialele':'') + ' se adună din rapoarte.' : esteReal ? 'Cantitățile se adună din rapoarte × prețul de manoperă din listă.' : (modS==='orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar)||75} lei.`)} TVA 21%.</span>
+              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Implicit e luna curentă (1 → sfârșit). {(estePoz || esteReal) && areStructuraS ? 'Cantitățile se adună din „Lucrări pe apartamente" × prețul din listă.' : estePoz ? 'Manopera pe poziții' + (modS==='pozitie_propriu'?' + materialele':'') + ' se adună din rapoarte.' : esteReal ? 'Cantitățile se adună din rapoarte × prețul de manoperă din listă.' : (modS==='orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar)||75} lei.`)} TVA 21%.</span>
             </div>
           );
         })()}
@@ -4979,15 +4984,29 @@ function openDevizOrar({ santier, company, rapoarte, nr, data, includeLucrari })
 }
 
 // --- Deviz LA POZIȚIE: adună cantitățile executate (din rapoarte) pe fiecare poziție × preț unitar ---
-function devizPozPageHtml({ santier, company, rapoarte, pozitii, nr, data }) {
+function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data }) {
   const tva = 21;
+  const normP = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
   const exec = {};
-  (rapoarte || []).forEach((r)=>{
-    (r.pozitiiExecutate || []).forEach((pe)=>{
-      if (!pe.pozitieId) return;
-      exec[pe.pozitieId] = (exec[pe.pozitieId] || 0) + (Number(pe.cantitate) || 0);
+  if (dinLucrari) {
+    // La șantierele cu structură, cantitățile vin din „Lucrări pe apartamente":
+    // potrivim denumirea lucrării cu pozițiile importate (după nume).
+    (rapoarte || []).forEach((r)=>{
+      (r.lucrariApartamente || []).forEach((l)=>{
+        const den = normP(l.tipLucrare); if (!den) return;
+        const poz = (pozitii || []).find((p)=>normP(p.denumire)===den);
+        if (!poz) return;
+        exec[poz.id] = (exec[poz.id] || 0) + (Number(l.cantitate) || 0);
+      });
     });
-  });
+  } else {
+    (rapoarte || []).forEach((r)=>{
+      (r.pozitiiExecutate || []).forEach((pe)=>{
+        if (!pe.pozitieId) return;
+        exec[pe.pozitieId] = (exec[pe.pozitieId] || 0) + (Number(pe.cantitate) || 0);
+      });
+    });
+  }
   const rowsArr = [];
   let idx = 0, subtotal = 0;
   (pozitii || []).forEach((p)=>{
@@ -5063,10 +5082,13 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, nr, data }) {
   </div>`;
 }
 
-function openDevizPoz({ santier, company, rapoarte, pozitii, nr, data }) {
-  const exista = (rapoarte || []).some((r)=> (r.pozitiiExecutate || []).some((pe)=> pe.pozitieId && (Number(pe.cantitate)||0) > 0));
-  if (!exista) { window.alert('Nu există poziții executate raportate în perioada selectată pentru acest șantier.'); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, rapoarte, pozitii, nr, data })}</body></html>`;
+function openDevizPoz({ santier, company, rapoarte, pozitii, dinLucrari, nr, data }) {
+  const normP = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
+  const exista = dinLucrari
+    ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> (Number(l.cantitate)||0) > 0 && (pozitii||[]).some((p)=>normP(p.denumire)===normP(l.tipLucrare))))
+    : (rapoarte || []).some((r)=> (r.pozitiiExecutate || []).some((pe)=> pe.pozitieId && (Number(pe.cantitate)||0) > 0));
+  if (!exista) { window.alert(dinLucrari ? 'Nu există cantități pe poziții în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de poziții.' : 'Nu există poziții executate raportate în perioada selectată pentru acest șantier.'); return; }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data })}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
@@ -5074,19 +5096,34 @@ function openDevizPoz({ santier, company, rapoarte, pozitii, nr, data }) {
 }
 
 // --- Deviz de MATERIALE: adună materialele folosite din rapoarte × preț (din listă/gestiune, sau prețul convenit la client) ---
-function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, nr, data }) {
+function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data }) {
   const tva = 21;
   const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
   const grup = {};
-  (rapoarte || []).forEach((r)=>{
-    (r.materialeFolosite || []).forEach((m)=>{
-      if (!m.denumire || !String(m.denumire).trim()) return;
-      const key = norm(m.denumire)+'|'+norm(m.um);
-      if (!grup[key]) grup[key] = { denumire:String(m.denumire).trim(), um:m.um||'buc', cantitate:0, pret:0 };
-      grup[key].cantitate += Number(m.cantitate)||0;
-      if (materialClient) { const p = Number(m.pret)||0; if (p>0) grup[key].pret = p; }
+  if (dinLucrari) {
+    // La șantierele cu structură, cantitățile vin din „Lucrări pe apartamente":
+    // luăm doar rândurile care se potrivesc cu lista de materiale/operațiuni importată.
+    (rapoarte || []).forEach((r)=>{
+      (r.lucrariApartamente || []).forEach((l)=>{
+        const den = String(l.tipLucrare||'').trim(); if (!den) return;
+        const fromList = (materialeLista||[]).find((x)=>norm(x.denumire)===norm(den));
+        if (!fromList) return;
+        const key = norm(den)+'|'+norm(l.um||fromList.um);
+        if (!grup[key]) grup[key] = { denumire:den, um:l.um||fromList.um||'buc', cantitate:0, pret:0 };
+        grup[key].cantitate += Number(l.cantitate)||0;
+      });
     });
-  });
+  } else {
+    (rapoarte || []).forEach((r)=>{
+      (r.materialeFolosite || []).forEach((m)=>{
+        if (!m.denumire || !String(m.denumire).trim()) return;
+        const key = norm(m.denumire)+'|'+norm(m.um);
+        if (!grup[key]) grup[key] = { denumire:String(m.denumire).trim(), um:m.um||'buc', cantitate:0, pret:0 };
+        grup[key].cantitate += Number(m.cantitate)||0;
+        if (materialClient) { const p = Number(m.pret)||0; if (p>0) grup[key].pret = p; }
+      });
+    });
+  }
   if (!materialClient) {
     Object.values(grup).forEach((g)=>{
       const fromList = (materialeLista||[]).find((x)=>norm(x.denumire)===norm(g.denumire));
@@ -5154,10 +5191,13 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
   </div>`;
 }
 
-function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, nr, data }) {
-  const exista = (rapoarte || []).some((r)=> (r.materialeFolosite || []).some((m)=> m.denumire && String(m.denumire).trim()));
-  if (!exista) { window.alert(realExecutat ? 'Nu există cantități raportate în perioada selectată pentru acest șantier.' : 'Nu există materiale folosite raportate în perioada selectată pentru acest șantier.'); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, nr, data })}</body></html>`;
+function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data }) {
+  const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
+  const exista = dinLucrari
+    ? (rapoarte || []).some((r)=> (r.lucrariApartamente || []).some((l)=> (Number(l.cantitate)||0) > 0 && (materialeLista||[]).some((x)=>norm(x.denumire)===norm(l.tipLucrare))))
+    : (rapoarte || []).some((r)=> (r.materialeFolosite || []).some((m)=> m.denumire && String(m.denumire).trim()));
+  if (!exista) { window.alert(dinLucrari ? 'Nu există cantități de materiale în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de materiale importată.' : (realExecutat ? 'Nu există cantități raportate în perioada selectată pentru acest șantier.' : 'Nu există materiale folosite raportate în perioada selectată pentru acest șantier.')); return; }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data })}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
