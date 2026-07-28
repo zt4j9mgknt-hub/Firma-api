@@ -1914,7 +1914,7 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
   const setMod = (m) => {
     const patch = { modFacturare: m };
     if (m==='orar' || m==='orar_lucrari') patch.tipFacturare = 'orar';
-    else { patch.tipFacturare = 'pozitie'; patch.materialeSursa = (m==='pozitie_client') ? 'client' : 'noastre'; }
+    else { patch.tipFacturare = 'pozitie'; patch.materialeSursa = (m==='pozitie_client' || m==='real_executat') ? 'client' : 'noastre'; }
     setForm({ ...form, ...patch });
   };
   const modCurent = form.modFacturare || (form.tipFacturare==='pozitie' ? (form.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar');
@@ -2012,10 +2012,11 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
                 <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Mod de facturare (decide ce completează angajații și cum iese devizul):</div>
                 <div className="space-y-1.5">
                   {[
-                    ['orar','⏱️ Tarif orar','Angajații trec doar orele. Deviz pe ore.'],
-                    ['orar_lucrari','⏱️ Tarif orar + tipuri de lucrări','Ore + ce lucrări s-au făcut. Deviz pe ore, cu rubrică de lucrări.'],
-                    ['pozitie_propriu','📋 La poziție + material propriu','Poziții + materiale. Două devize: poziții și materiale (cu prețurile lor).'],
-                    ['pozitie_client','📋 La poziție + material client','Poziții + materialele clientului, cu prețul convenit.'],
+                    ['orar','⏱️ Tarif orar','Angajații trec doar orele. Deviz pe ore × preț/oră.'],
+                    ['orar_lucrari','⏱️ Tarif orar + tipuri de lucrări','Ore + ce lucrări s-au făcut. Deviz pe ore, cu o coloană de lucrări efectuate.'],
+                    ['pozitie_propriu','📋 La poziție + material propriu','Poziții + materiale. Două devize: manoperă (poziții) și materiale (preț de vânzare).'],
+                    ['pozitie_client','📋 La poziție + material client','Doar manopera pe poziții. Materialele sunt ale clientului — nu se facturează.'],
+                    ['real_executat','🧾 Real executat (material client)','Materialul clientului. Angajații trec cantitățile; deviz = cantitate × preț manoperă din lista importată.'],
                   ].map(([m,label,desc])=>{
                     const on = modCurent===m;
                     return (
@@ -2034,9 +2035,9 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
                   <input type="number" inputMode="decimal" placeholder="75" value={form.tarifOrar} onChange={(e)=>setForm({...form, tarifOrar: e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
                 </div>
               )}
-              {(modCurent==='pozitie_propriu' || modCurent==='pozitie_client') && (
+              {(modCurent==='pozitie_propriu' || modCurent==='pozitie_client' || modCurent==='real_executat') && (
                 <div className="text-[11px] rounded-lg px-3 py-2" style={{ background:'#171C21', color:'#8B93A0', border:'1px solid #2A323B' }}>
-                  📥 Lista de poziții și materiale (cu prețuri) se importă din Excel la <b>„📋 Poziții/Materiale"</b> pe șantier.
+                  📥 {modCurent==='real_executat' ? 'Lista de materiale/operațiuni cu prețul de manoperă' : 'Lista de poziții și materiale (cu prețuri)'} se importă din Excel la <b>„📋 Poziții/Materiale"</b> pe șantier. Prețurile le vezi doar tu.
                 </div>
               )}
 
@@ -2175,7 +2176,8 @@ function AutocompleteInput({ value, onChange, onPick, options, placeholder, minW
   );
 }
 
-function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials, materialeLista, materialClient, isManager }) {
+function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, materials, materialeLista, materialClient, isManager, pretDinLista }) {
+  const clientMat = materialClient || pretDinLista;
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
   const activeMaterials = (materials || []).filter((m)=>!m.arhivat);
   const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
@@ -2188,12 +2190,12 @@ function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, mate
   const update = (id, f, v) => setMaterialeFolosite(materialeFolosite.map((m)=> m.id===id ? {...m, [f]:v} : m));
   const pick = (id, o) => setMaterialeFolosite(materialeFolosite.map((m)=> m.id===id ? {...m, denumire:o.label, um:o.um||m.um} : m));
   const remove = (id) => setMaterialeFolosite(materialeFolosite.filter((m)=>m.id!==id));
-  const add = () => setMaterialeFolosite([...materialeFolosite, { id: uid(), denumire:'', cantitate:1, um:'buc', sursa: materialClient?'client':'proprie', pret:'' }]);
+  const add = () => setMaterialeFolosite([...materialeFolosite, { id: uid(), denumire:'', cantitate:1, um:'buc', sursa: clientMat?'client':'proprie', pret:'' }]);
 
   return (
     <div>
       <div className="text-sm font-medium mb-1.5" style={{ color:'#E9E7E2' }}>🧰 Materiale folosite</div>
-      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>{materialClient ? (isManager ? 'Materialele clientului — trece cantitatea și prețul unitar convenit.' : 'Materialele clientului — trece doar cantitatea folosită.') : 'Tastează și alege din listă (sugestii din lista importată + gestiune).'}</p>
+      <p className="text-xs mb-2" style={{ color:'#5C6570' }}>{pretDinLista ? 'Materialul clientului — trece doar cantitatea folosită. Prețul de manoperă îl știe managerul din lista importată.' : materialClient ? (isManager ? 'Materialele clientului — trece cantitatea și prețul unitar convenit.' : 'Materialele clientului — trece doar cantitatea folosită.') : 'Tastează și alege din listă (sugestii din lista importată + gestiune).'}</p>
       {materialeFolosite.length > 0 && (
         <div className="space-y-1 mb-2">
           {materialeFolosite.map((m)=>(
@@ -2201,8 +2203,8 @@ function MaterialeFolositeEditor({ materialeFolosite, setMaterialeFolosite, mate
               <AutocompleteInput value={m.denumire} onChange={(v)=>update(m.id,'denumire',v)} onPick={(o)=>pick(m.id,o)} options={optiuni} placeholder="Material" minWidth="140px" />
               <input type="number" value={m.cantitate} onChange={(e)=>update(m.id,'cantitate',e.target.value)} placeholder="Cant." className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />
               <input value={m.um} onChange={(e)=>update(m.id,'um',e.target.value)} placeholder="UM" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-14" style={inputStyle} />
-              {materialClient && isManager && <input type="number" value={m.pret||''} onChange={(e)=>update(m.id,'pret',e.target.value)} placeholder="Preț" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />}
-              {!materialClient && (
+              {materialClient && !pretDinLista && isManager && <input type="number" value={m.pret||''} onChange={(e)=>update(m.id,'pret',e.target.value)} placeholder="Preț" className="rounded-lg px-2 py-1.5 text-xs outline-none text-center w-16" style={inputStyle} />}
+              {!clientMat && (
                 <button onClick={()=>update(m.id,'sursa', m.sursa==='proprie'?'client':'proprie')} className="text-[11px] px-2 py-1 rounded-lg font-medium"
                   style={{ color:'#14181C', background: m.sursa==='proprie'?'#2E8BD1':'#E9A23B' }}>
                   {m.sursa==='proprie' ? 'Proprii' : 'Client'}
@@ -2330,7 +2332,8 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
 
 function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, onCancel, onSave }) {
   const modR = mod || 'orar';
-  const estePozitie = modR==='pozitie_propriu' || modR==='pozitie_client';
+  const arePozitii = modR==='pozitie_propriu' || modR==='pozitie_client';
+  const areMateriale = modR==='pozitie_propriu' || modR==='real_executat';
   const [showStructEdit, setShowStructEdit] = useState(false);
   const [data, setData] = useState(initial?.data || new Date().toISOString().slice(0,10));
   const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
@@ -2367,14 +2370,14 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
       </div>
       <p className="text-xs mb-2" style={{ color:'#5C6570' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
       <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} />
-      {estePozitie && pozitii && pozitii.length > 0 && (
+      {arePozitii && pozitii && pozitii.length > 0 && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
           <PozitiiExecutateEditor pozitiiExecutate={pozitiiExecutate} setPozitiiExecutate={setPozitiiExecutate} pozitii={pozitii} />
         </div>
       )}
-      {estePozitie && (
+      {areMateriale && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
-          <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} materialClient={modR==='pozitie_client'} isManager={isManager} />
+          <MaterialeFolositeEditor materialeFolosite={materialeFolosite} setMaterialeFolosite={setMaterialeFolosite} materials={materials} materialeLista={materialeLista} materialClient={false} pretDinLista={modR==='real_executat'} isManager={isManager} />
         </div>
       )}
       {modR==='orar_lucrari' && (
@@ -3075,7 +3078,9 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           const pozitiiS = pozitiiSantier.filter((p)=>p.santierId===selected);
           const materialeListaS = materialeListaSantier.filter((m)=>m.santierId===selected);
           const estePoz = modS==='pozitie_propriu' || modS==='pozitie_client';
-          const titlu = modS==='orar' ? '🧾 Deviz tarif orar' : modS==='orar_lucrari' ? '🧾 Deviz tarif orar + tipuri de lucrări' : modS==='pozitie_client' ? '📋 Devize la poziție (material client)' : '📋 Devize la poziție (material propriu)';
+          const esteReal = modS==='real_executat';
+          const areOre = !estePoz && !esteReal;
+          const titlu = modS==='orar' ? '🧾 Deviz tarif orar' : modS==='orar_lucrari' ? '🧾 Deviz tarif orar + lucrări' : modS==='pozitie_client' ? '📋 Deviz manoperă (material client)' : modS==='real_executat' ? '🧾 Deviz real executat' : '📋 Devize la poziție (material propriu)';
           return (
             <div className="rounded-xl p-3 mb-4 flex items-center gap-2 flex-wrap" style={{ background:'#171C21', border:'1px solid #2A323B' }}>
               <span className="text-sm font-semibold w-full" style={{ color:'#E9E7E2' }}>{titlu}</span>
@@ -3087,18 +3092,24 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               <input value={devizNr} onChange={(e)=>setDevizNr(e.target.value)} placeholder="ex: 2" className="w-16 rounded-lg px-2 py-1.5 text-sm outline-none" style={{ background:'#1B2127', color:'#E9E7E2', border:'1px solid #2A323B' }} />
               <span className="text-xs" style={{ color:'#5C6570' }}>Data deviz</span>
               <RoCalendarPicker value={devizData} onChange={setDevizData} />
-              {!estePoz && (
+              {areOre && (
                 <button onClick={()=>openDevizOrar({ santier, company, rapoarte: rapInterval(), nr: devizNr||'—', data: fmtData(devizData), includeLucrari: modS==='orar_lucrari' })} className="text-sm px-4 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>Generează deviz (PDF)</button>
               )}
               {estePoz && (
                 <>
-                  <button onClick={()=>openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>📋 Deviz poziții</button>
-                  <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: modS==='pozitie_client', nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🧰 Deviz materiale{modS==='pozitie_client'?' (client)':''}</button>
+                  <button onClick={()=>openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>📋 Deviz manoperă</button>
+                  {modS==='pozitie_propriu' && (
+                    <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🧰 Deviz materiale</button>
+                  )}
                 </>
+              )}
+              {esteReal && (
+                <button onClick={()=>openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, nr: devizNr||'—', data: fmtData(devizData) })} className="text-sm px-4 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>🧾 Deviz real executat</button>
               )}
               {(!santier?.benefNume) && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Completează „Detalii pentru deviz" la editarea șantierului (beneficiar, contract).</span>}
               {estePoz && pozitiiS.length===0 && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Importă pozițiile la „📋 Poziții/Materiale".</span>}
-              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Implicit e luna curentă (1 → sfârșit). {estePoz ? 'Poziții și materiale se adună din rapoarte.' : (modS==='orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar)||75} lei.`)} TVA 21%.</span>
+              {esteReal && materialeListaS.length===0 && <span className="text-xs w-full" style={{ color:'#E05252' }}>⚠ Importă lista de materiale/operațiuni cu prețuri la „📋 Poziții/Materiale".</span>}
+              <span className="text-xs w-full" style={{ color:'#5C6570' }}>Implicit e luna curentă (1 → sfârșit). {estePoz ? 'Manopera pe poziții' + (modS==='pozitie_propriu'?' + materialele':'') + ' se adună din rapoarte.' : esteReal ? 'Cantitățile se adună din rapoarte × prețul de manoperă din listă.' : (modS==='orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar)||75} lei.`)} TVA 21%.</span>
             </div>
           );
         })()}
@@ -4806,7 +4817,7 @@ function openPrintWindow(items) {
 // --- Deviz pe TARIF ORAR generat din rapoartele zilnice ale unui șantier ---
 // Tabel: DATA · NR PERSOANE · NR ORE/PERS · TOTAL ORE · PREȚ UNITAR · VALOARE.
 // Antetul (Executant / Beneficiar / Contract / Obiectiv) vine din setările șantierului (Etapa 1).
-function devizOrarPageHtml({ santier, company, rapoarte, nr, data, tipuriLucrari }) {
+function devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrari }) {
   const tarif = Number(santier?.tarifOrar) || 75;
   const tva = 21;
   const zile = (rapoarte || [])
@@ -4819,15 +4830,19 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, tipuriLucrari
   let idx = 0;
   zile.forEach((r)=>{
     const pv = r.persoane.filter((p)=> p.nume && String(p.nume).trim());
+    const lucrariZi = includeLucrari ? (r.tipuriLucrari || []).map((t)=>String(t.denumire||'').trim()).filter(Boolean).join(', ') : '';
     const grupe = {};
     pv.forEach((p)=>{ const oreP = personMinutes(p) / 60; const k = oreP.toFixed(2); grupe[k] = (grupe[k] || 0) + 1; });
+    let firstOfDay = true;
     Object.keys(grupe).sort((a,b)=> Number(b) - Number(a)).forEach((k)=>{
       const ore = Number(k), nrPers = grupe[k];
       const totalOre = nrPers * ore;
       const valoare = totalOre * tarif;
       totalOreGeneral += totalOre;
       idx++;
-      rowsArr.push(`<tr><td>${idx}</td><td>${esc(fmtData(r.data))}</td><td>${nrPers}</td><td>${ore.toFixed(2)}</td><td>${totalOre.toFixed(2)}</td><td>${esc(money(tarif))}</td><td>${esc(money(valoare))}</td></tr>`);
+      const lucrariCell = includeLucrari ? `<td style="text-align:left">${firstOfDay ? esc(lucrariZi) : ''}</td>` : '';
+      rowsArr.push(`<tr><td>${idx}</td><td>${esc(fmtData(r.data))}</td>${lucrariCell}<td>${nrPers}</td><td>${ore.toFixed(2)}</td><td>${totalOre.toFixed(2)}</td><td>${esc(money(tarif))}</td><td>${esc(money(valoare))}</td></tr>`);
+      firstOfDay = false;
     });
   });
   const rows = rowsArr.join('');
@@ -4871,11 +4886,9 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, tipuriLucrari
       <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
     </div>
 
-    ${(tipuriLucrari && tipuriLucrari.length) ? `<div style="font-size:11px; margin:0 0 4mm; padding-bottom:3mm; border-bottom:1px solid #ccc;"><b>Tipuri de lucrări executate:</b><div style="margin-top:1.5mm;">${tipuriLucrari.map((t)=>`• ${esc(t)}`).join('<br/>')}</div></div>` : ''}
-
-    <table class="pp-table"><thead><tr><th>Nr. crt</th><th>Data</th><th>Nr. persoane</th><th>Ore / pers.</th><th>Total ore</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="7">Niciun raport în perioada selectată.</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="4"></td><td style="font-weight:700">${totalOreGeneral.toFixed(2)}</td><td></td><td style="font-weight:700">${esc(money(subtotal))}</td></tr></tfoot>
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th>Data</th>${includeLucrari?'<th style="text-align:left">Lucrări efectuate</th>':''}<th>Nr. persoane</th><th>Ore / pers.</th><th>Total ore</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="${includeLucrari?8:7}">Niciun raport în perioada selectată.</td></tr>`}</tbody>
+      <tfoot><tr><td colspan="${includeLucrari?5:4}"></td><td style="font-weight:700">${totalOreGeneral.toFixed(2)}</td><td></td><td style="font-weight:700">${esc(money(subtotal))}</td></tr></tfoot>
     </table>
 
     <div class="pp-totals">
@@ -4903,13 +4916,7 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, tipuriLucrari
 function openDevizOrar({ santier, company, rapoarte, nr, data, includeLucrari }) {
   const validPers = (rapoarte || []).some((r)=> (r.persoane || []).some((p)=> p.nume && String(p.nume).trim()));
   if (!validPers) { window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.'); return; }
-  let tipuriLucrari = null;
-  if (includeLucrari) {
-    const set = [];
-    (rapoarte || []).forEach((r)=> (r.tipuriLucrari || []).forEach((t)=>{ const d=(t.denumire||'').trim(); if (d && !set.includes(d)) set.push(d); }));
-    tipuriLucrari = set;
-  }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, nr, data, tipuriLucrari })}</body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrari })}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
@@ -4964,7 +4971,7 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, nr, data }) {
     </div>
 
     <div style="text-align:center; margin:5mm 0 2mm;">
-      <div style="font-weight:700; font-size:15px;">Deviz lucrări</div>
+      <div style="font-weight:700; font-size:15px;">Deviz manoperă</div>
       <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
       ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}
     </div>
@@ -4975,7 +4982,7 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, nr, data }) {
       <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
     </div>
 
-    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire</th><th>U.M.</th><th>Cantitate</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire poziție (manoperă)</th><th>U.M.</th><th>Cantitate</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="6">Nicio poziție executată în perioada selectată.</td></tr>'}</tbody>
     </table>
 
@@ -5012,7 +5019,7 @@ function openDevizPoz({ santier, company, rapoarte, pozitii, nr, data }) {
 }
 
 // --- Deviz de MATERIALE: adună materialele folosite din rapoarte × preț (din listă/gestiune, sau prețul convenit la client) ---
-function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, nr, data }) {
+function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, nr, data }) {
   const tva = 21;
   const norm = (s)=>String(s==null?'':s).toLowerCase().replace(/\s+/g,' ').trim();
   const grup = {};
@@ -5059,7 +5066,7 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
       </div>
     </div>
     <div style="text-align:center; margin:5mm 0 2mm;">
-      <div style="font-weight:700; font-size:15px;">Deviz materiale</div>
+      <div style="font-weight:700; font-size:15px;">${realExecutat ? 'Deviz real executat' : 'Deviz materiale'}</div>
       <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
       ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}
     </div>
@@ -5068,8 +5075,8 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
       <div><b>Adresa:</b> ${esc(santier?.adresa || '')}</div>
       <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
     </div>
-    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire material</th><th>U.M.</th><th>Cantitate</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6">Niciun material folosit raportat în perioada selectată.</td></tr>'}</tbody>
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">${realExecutat ? 'Denumire (operațiune / material)' : 'Denumire material'}</th><th>U.M.</th><th>Cantitate</th><th>${realExecutat ? 'Preț manoperă' : 'Preț unitar'}</th><th>Valoare</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6">${realExecutat ? 'Nicio cantitate raportată în perioada selectată.' : 'Niciun material folosit raportat în perioada selectată.'}</td></tr>`}</tbody>
     </table>
     <div class="pp-totals">
       <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
@@ -5092,10 +5099,10 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
   </div>`;
 }
 
-function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, nr, data }) {
+function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, nr, data }) {
   const exista = (rapoarte || []).some((r)=> (r.materialeFolosite || []).some((m)=> m.denumire && String(m.denumire).trim()));
-  if (!exista) { window.alert('Nu există materiale folosite raportate în perioada selectată pentru acest șantier.'); return; }
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz materiale ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, nr, data })}</body></html>`;
+  if (!exista) { window.alert(realExecutat ? 'Nu există cantități raportate în perioada selectată pentru acest șantier.' : 'Nu există materiale folosite raportate în perioada selectată pentru acest șantier.'); return; }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, nr, data })}</body></html>`;
   const w = window.open('', '_blank');
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
