@@ -163,16 +163,23 @@ async function loadKey(key, fallback) {
   // Dacă avem o scriere nesincronizată pentru cheia asta, ea e mai nouă decât serverul
   // → o păstrăm (combinată cu ce e pe server), ca să NU pierdem date create offline.
   const pending = getPending().find((x)=>x.key===key);
+  const cached = cacheGet(key);
   try {
     const r = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
     const data = await r.json();
     let val = data.value ?? fallback;
     if (pending !== undefined) val = mergeById(val, pending.value);
+    // PLASĂ DE SIGURANȚĂ: serverul întoarce GOL dar avem date locale → probabil pierdere pe server.
+    // Nu ștergem — păstrăm datele locale și le re-trimitem pe server.
+    if (Array.isArray(val) && val.length === 0 && Array.isArray(cached) && cached.length > 0) {
+      enqueueWrite(key, cached);
+      try { syncQueue(); } catch {}
+      return cached;
+    }
     cacheSet(key, val);
     return val;
   } catch {
-    const c = cacheGet(key);
-    if (c !== undefined) return pending !== undefined ? mergeById(c, pending.value) : c;
+    if (cached !== undefined) return pending !== undefined ? mergeById(cached, pending.value) : cached;
     return pending !== undefined ? pending.value : fallback;
   }
 }
@@ -2110,6 +2117,10 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
                 <input placeholder="ex: SKL024.1_SBR din 08.05.2026" value={form.contract} onChange={(e)=>setForm({...form, contract:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
               </div>
               <div>
+                <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Act adițional nr. (opțional, apare pe deviz):</div>
+                <input placeholder="ex: 1 din 12.06.2026" value={form.actAditional || ''} onChange={(e)=>setForm({...form, actAditional:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+              </div>
+              <div>
                 <div className="text-xs mb-1.5" style={{ color:'#8B93A0' }}>Obiectiv (apare pe deviz):</div>
                 <input placeholder="ex: UTCN" value={form.obiectiv} onChange={(e)=>setForm({...form, obiectiv:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
               </div>
@@ -2766,6 +2777,38 @@ function parseDevizRows(rows) {
     return isFinite(n) ? n : 0;
   };
   const round4 = (n) => Math.round((Number(n)||0) * 10000) / 10000;
+
+  // FORMAT F3 („Listă cu cantități de lucrări"): fiecare articol are prețul pe rânduri separate
+  // (material: / manopera: / utilaj:), sub coloana „Cantitatea". Luăm prețul de manoperă.
+  const flatCells = rows.flat().map(norm);
+  if (flatCells.includes('manopera:') && flatCells.includes('material:')) {
+    const hIdx = rows.findIndex((r)=> Array.isArray(r) && r.some((c)=>norm(c).includes('cantit')) && r.some((c)=>norm(c).includes('pret')||norm(c).includes('preț')));
+    const hh = hIdx >= 0 ? rows[hIdx].map(norm) : [];
+    const fc = (kw) => hh.findIndex((c)=> c && kw.some((k)=>c.includes(k)));
+    let umColF = fc(['u.m','u/m','unitate']); if (umColF < 0) umColF = hh.findIndex((c)=> c === 'um');
+    const cantColF = fc(['cantit']);
+    const pretColF = fc(['pret unitar','preț unitar','pretul unitar','pret','preț']);
+    const scorText = (v)=>{ const m = String(v).match(/[a-zăâîșț]/g); return m ? m.length : 0; };
+    const denOf = (r)=>{ let best='', bs=-1; const lim = umColF > 0 ? umColF : r.length; for (let c=1;c<lim;c++){ const v=r[c]; if (typeof v!=='string' || !v.trim()) continue; const sc=scorText(v); if (sc>bs || (sc===bs && v.trim().length>best.length)) { bs=sc; best=v.trim(); } } return best; };
+    const items = []; let cur = null;
+    rows.forEach((r,i)=>{
+      if (!Array.isArray(r) || i <= hIdx) return;
+      const umv = String(r[umColF]==null?'':r[umColF]).trim();
+      const den = denOf(r);
+      const lbl = norm(r[cantColF]);
+      if (umv && den && den.length > 3) {
+        if (cur) items.push(cur);
+        cur = { nrCrt:String(r[0]==null?'':r[0]).trim(), denumire:den.replace(/\s+/g,' '), um:umv, cantitate:0, pretUnitar:0, valoare:0, _mat:0 };
+      } else if (cur) {
+        if (lbl==='manopera:' || lbl==='manopera') cur.pretUnitar = round4(num(r[pretColF]));
+        else if (lbl==='material:' || lbl==='material') cur._mat = round4(num(r[pretColF]));
+      }
+    });
+    if (cur) items.push(cur);
+    items.forEach((o)=>{ if (!(o.pretUnitar>0) && o._mat>0) o.pretUnitar = o._mat; delete o._mat; });
+    return items;
+  }
+
   // 1) Găsim rândul de antet: rândul cu cel puțin 2 cuvinte-cheie de coloană
   //    (unele Excel-uri au titluri/antet firmă deasupra, iar coloana „Denumire" poate fi fără titlu).
   const headerKw = ['denumire','descriere','articol','unitate','u.m','u/m','cantit','pret','preț','p.u','valoare','total','nr.'];
@@ -4817,6 +4860,19 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
           )}
         </div>
       )}
+      {colegiUsers.filter((u)=>u.rol==='Electrician' && u.telefon && u.id!==currentUser?.id).length > 0 && (
+        <div className="mt-6">
+          <div className="text-[11px] uppercase tracking-wider mb-2" style={{ color:'#8B93A0' }}>📞 Colegi — sună direct</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {colegiUsers.filter((u)=>u.rol==='Electrician' && u.telefon && u.id!==currentUser?.id).map((u)=>(
+              <a key={u.id} href={`tel:${String(u.telefon).replace(/\s/g,'')}`} className="flex items-center justify-between rounded-xl px-4 py-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+                <span className="text-sm" style={{ color:'#E9E7E2' }}>👷 {u.nume}</span>
+                <span className="text-sm font-semibold" style={{ color:'#4CAF7D' }}>📞 {u.telefon}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5076,7 +5132,7 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrar
     <div style="text-align:center; margin:5mm 0 2mm;">
       <div style="font-weight:700; font-size:15px;">Deviz lucrări</div>
       <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
-      ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}
+      ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}${santier?.actAditional?`<div style="font-size:11px; margin-top:1mm;">Act adițional Nr. ${esc(santier.actAditional)}</div>`:''}
     </div>
 
     <div style="font-size:11px; line-height:1.9; margin:4mm 0; padding-bottom:3mm; border-bottom:1px solid #ccc;">
@@ -5188,7 +5244,7 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr,
     <div style="text-align:center; margin:5mm 0 2mm;">
       <div style="font-weight:700; font-size:15px;">Deviz manoperă</div>
       <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
-      ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}
+      ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}${santier?.actAditional?`<div style="font-size:11px; margin-top:1mm;">Act adițional Nr. ${esc(santier.actAditional)}</div>`:''}
     </div>
 
     <div style="font-size:11px; line-height:1.9; margin:4mm 0; padding-bottom:3mm; border-bottom:1px solid #ccc;">
@@ -5303,7 +5359,7 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
     <div style="text-align:center; margin:5mm 0 2mm;">
       <div style="font-weight:700; font-size:15px;">${realExecutat ? 'Deviz real executat' : 'Deviz materiale'}</div>
       <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
-      ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}
+      ${santier?.contract?`<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>`:''}${santier?.actAditional?`<div style="font-size:11px; margin-top:1mm;">Act adițional Nr. ${esc(santier.actAditional)}</div>`:''}
     </div>
     <div style="font-size:11px; line-height:1.9; margin:4mm 0; padding-bottom:3mm; border-bottom:1px solid #ccc;">
       <div><b>Obiectiv:</b> ${esc(santier?.obiectiv || '')}</div>
