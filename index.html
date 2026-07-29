@@ -1846,6 +1846,8 @@ function GhidTab({ isManager }) {
 
         <Sec icon="📥" title="Cereri de materiale (aprobare)">{'• Când un angajat trimite o cerere, primești o singură notificare pe cerere (chiar dacă are mai multe materiale).\n• În tab-ul Materiale al șantierului, cererile cu mai multe materiale apar grupate („📋 Cerere · N materiale · nume angajat").\n• Poți aproba sau respinge FIECARE material în parte (✓ Aprobă / ✕ Respinge), sau tot grupul deodată („✓ Aprobă toate" / „✕ Respinge toate").\n• Angajatul primește notificare cu răspunsul tău.\n• Materialele aprobate le poți marca „📦 Livrată" — atunci intră automat în stocul șantierului.\n• Poți exporta cererile în Excel sau PDF (semnătură solicitant/aprobat de).'}</Sec>
 
+        <Sec icon="🔔" title="Notificări (ce primești ca manager)">{'• Primești notificare pentru tot ce fac colegii în aplicație: raport trimis / modificat / șters, cerere de materiale, sculă adusă sau mutată, planșă PDF încărcată, poză/video adăugat, consum sau trimitere de material din stoc, checklist confirmat, șantier finalizat, cerere de concediu.\n• Colegii primesc doar ce îi privește: când sunt asignați pe un șantier, când le aprobi/respingi materialele, când le răspunzi la concediu.'}</Sec>
+
         <Sec icon="🛒" title="Achiziții">{'• Ții evidența a ce ai de cumpărat / ai cumpărat pentru firmă.'}</Sec>
 
         <Sec icon="🧾" title="Facturi · Oferte · Clienți">{'• Clienți — baza de clienți (folosită la devize/oferte/facturi).\n• Oferte / Facturi — le întocmești și le urmărești (trimisă/plătită etc.).\n• Poți trimite consumul/materialele folosite direct într-un deviz.'}</Sec>
@@ -1860,7 +1862,7 @@ function GhidTab({ isManager }) {
   );
 }
 
-function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, currentUser }) {
+function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier, persist, currentUser }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [viewing, setViewing] = useState(null);
@@ -1888,6 +1890,7 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
       setError(`${ok>0 ? `S-au încărcat ${ok}. ` : ''}${e.message || 'A eșuat.'}`);
     }
     setUploading(false);
+    if (ok > 0) notifica('manageri', { title: ok===1 ? 'Planșă nouă' : 'Planșe noi', body:`${currentUser?.nume || 'Un coleg'} a adăugat ${ok} ${ok===1?'planșă':'planșe'} la ${santierNume || 'șantier'}.`, tag:'planse-'+santierId }, currentUser?.id);
   };
 
   const remove = async (p) => {
@@ -1940,7 +1943,7 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
   );
 }
 
-function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, currentUser }) {
+function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, persist, currentUser }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [viewing, setViewing] = useState(null);
@@ -1964,6 +1967,7 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
       setError(`${ok>0 ? `S-au încărcat ${ok}. ` : ''}${e.message || 'A eșuat.'}`);
     }
     setUploading(false);
+    if (ok > 0) notifica('manageri', { title: ok===1 ? 'Poză/video nou' : 'Poze/video noi', body:`${currentUser?.nume || 'Un coleg'} a adăugat ${ok} ${ok===1?'fișier':'fișiere'} la ${santierNume || 'șantier'}.`, tag:'media-'+santierId }, currentUser?.id);
   };
 
   const remove = async (m) => {
@@ -2025,15 +2029,17 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
   );
 }
 
-function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
+function SiteToolsTab({ santierId, santierNume, sculeSantier, setSculeSantier, persist, currentUser }) {
   const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
   const [sculaNoua, setSculaNoua] = useState('');
   const [sculaAdusaDe, setSculaAdusaDe] = useState('');
   const sculeAici = sculeSantier.filter((s)=>s.santierId===santierId);
   const addScula = () => {
     if (!sculaNoua.trim()) return;
-    const next = [...sculeSantier, { id: uid(), santierId, denumire: sculaNoua.trim(), adusaDe: sculaAdusaDe.trim(), data: new Date().toISOString().slice(0,10) }];
+    const den = sculaNoua.trim();
+    const next = [...sculeSantier, { id: uid(), santierId, denumire: den, adusaDe: sculaAdusaDe.trim(), data: new Date().toISOString().slice(0,10) }];
     setSculeSantier(next); persist('sculeSantier', next); setSculaNoua(''); setSculaAdusaDe('');
+    notifica('manageri', { title:'Sculă adăugată', body:`${currentUser?.nume || 'Un coleg'} a adus „${den}" la ${santierNume || 'șantier'}.`, tag:'scula-'+santierId }, currentUser?.id);
   };
   const delScula = (id) => { if (!window.confirm('Ștergi această sculă din lista șantierului?')) return; const next = sculeSantier.filter((s)=>s.id!==id); setSculeSantier(next); persist('sculeSantier', next); };
   const [trimiteSculaId, setTrimiteSculaId] = useState(null);
@@ -2041,6 +2047,7 @@ function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
     if (!window.confirm(`Trimiți „${s.denumire}" la ${dest}? Va fi scoasă din lista șantierului.`)) return;
     const next = sculeSantier.filter((x)=>x.id!==s.id);
     setSculeSantier(next); persist('sculeSantier', next); setTrimiteSculaId(null);
+    notifica('manageri', { title:'Sculă mutată', body:`${currentUser?.nume || 'Un coleg'} a trimis „${s.denumire}" la ${dest} (de la ${santierNume || 'șantier'}).`, tag:'scula-'+santierId }, currentUser?.id);
   };
 
   return (
@@ -2171,6 +2178,7 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
   const confirmMembru = (userId) => {
     if (confirmari.some((c)=>c.userId===userId)) return;
     saveConfirmari([...(checklistConfirmari||[]), { id: uid(), santierId, userId, nume: numeUser(userId), data: azi() }]);
+    if (userId === currentUser?.id) notifica('manageri', { title:'Checklist confirmat', body:`${currentUser?.nume || 'Un coleg'} a confirmat checklist-ul de final la ${santier?.nume || 'șantier'}.`, tag:'checklist-'+santierId }, currentUser?.id);
   };
   const scoateConfirmare = (userId) => saveConfirmari((checklistConfirmari||[]).filter((c)=>!(c.santierId===santierId && c.userId===userId)));
 
@@ -2559,6 +2567,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     const miscare = { id: uid(), santierId, denumire, um, tip:'iesire', cantitate: Number(cantitate)||0, data: new Date().toISOString().slice(0,10), nota:'Consum șantier' };
     const next = [miscare, ...miscariSantier];
     setMiscariSantier(next); persist('miscariSantier', next); setConsumState(null);
+    notifica('manageri', { title:'Consum material', body:`${currentUser?.nume || 'Un coleg'} a consumat ${Number(cantitate)||0} ${um} ${denumire} la ${santierNume || 'șantier'}.`, tag:'stoc-'+santierId }, currentUser?.id);
   };
   const [returnMatState, setReturnMatState] = useState(null);
   const [returnMatQty, setReturnMatQty] = useState('');
@@ -2568,6 +2577,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     const miscare = { id: uid(), santierId, denumire: m.denumire, um: m.um, tip:'iesire', cantitate: cant, data: new Date().toISOString().slice(0,10), nota:`Trimis la ${dest}` };
     const next = [miscare, ...miscariSantier];
     setMiscariSantier(next); persist('miscariSantier', next); setReturnMatState(null); setReturnMatQty('');
+    notifica('manageri', { title:'Material trimis', body:`${currentUser?.nume || 'Un coleg'} a trimis ${cant} ${m.um} ${m.denumire} la ${dest} (de la ${santierNume || 'șantier'}).`, tag:'stoc-'+santierId }, currentUser?.id);
   };
 
   const consumPeMaterial = {};
@@ -3895,8 +3905,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     setSantiere(next); persist('santiere', next);
   };
   const finalizeSantier = (santierId) => {
+    const s0 = santiere.find((s)=>s.id===santierId);
     const next = santiere.map((s)=>s.id===santierId ? {...s, status:'Finalizat'} : s);
     setSantiere(next); persist('santiere', next);
+    notifica('manageri', { title:'Șantier finalizat', body:`${currentUser?.nume || 'Un coleg'} a marcat „${s0?.nume || 'un șantier'}" ca finalizat.`, tag:'finalizat' }, currentUser?.id);
   };
   const addToEchipa = (santierId, userId) => {
     const s = santiere.find((x)=>x.id===santierId);
@@ -3935,9 +3947,14 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const withSite = { ...r, santierId: selected };
     const next = esteNou ? [...rapoarte, withSite] : rapoarte.map((x)=>x.id===r.id?withSite:x);
     setRapoarte(next); persist('rapoarte', next); setReportForm(null);
-    if (esteNou) notifica('manageri', { title:'Raport zilnic nou', body:`${currentUser?.nume || 'Un coleg'} a trimis raport la ${santier?.nume || 'un șantier'}.`, tag:'raport' }, currentUser?.id);
+    notifica('manageri', { title: esteNou ? 'Raport zilnic nou' : 'Raport modificat', body:`${currentUser?.nume || 'Un coleg'} ${esteNou ? 'a trimis raport' : 'a modificat raportul'} la ${santier?.nume || 'un șantier'}${r.data ? ` (${r.data})` : ''}.`, tag:'raport' }, currentUser?.id);
   };
-  const delReport = (id) => { if (!window.confirm('Ștergi definitiv acest raport zilnic? Orele din el vor dispărea din Pontaj.')) return; const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next); };
+  const delReport = (id) => {
+    if (!window.confirm('Ștergi definitiv acest raport zilnic? Orele din el vor dispărea din Pontaj.')) return;
+    const rap = rapoarte.find((r)=>r.id===id);
+    const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next);
+    notifica('manageri', { title:'Raport șters', body:`${currentUser?.nume || 'Un coleg'} a șters un raport de la ${santier?.nume || 'un șantier'}${rap?.data ? ` (${rap.data})` : ''}.`, tag:'raport' }, currentUser?.id);
+  };
 
   const addEtapa = () => {
     if (!etapaNoua.trim()) return;
@@ -4235,17 +4252,17 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         {accHeader('scule','🔧','Scule')}
         {siteView === 'scule' && <HelpNote text={HELP.scule} />}
         {siteView === 'scule' && (
-          <SiteToolsTab santierId={selected} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} persist={persist} />
+          <SiteToolsTab santierId={selected} santierNume={santier?.nume || ''} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} persist={persist} currentUser={currentUser} />
         )}
         {accHeader('planse','📐','Planșe')}
         {siteView === 'planse' && <HelpNote text={HELP.planse} />}
         {siteView === 'planse' && (
-          <SitePlanseTab santierId={selected} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} persist={persist} currentUser={currentUser} />
+          <SitePlanseTab santierId={selected} santierNume={santier?.nume || ''} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} persist={persist} currentUser={currentUser} />
         )}
         {accHeader('media','📸','Foto / Video')}
         {siteView === 'media' && <HelpNote text={HELP.media} />}
         {siteView === 'media' && (
-          <SiteMediaTab santierId={selected} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} persist={persist} currentUser={currentUser} />
+          <SiteMediaTab santierId={selected} santierNume={santier?.nume || ''} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} persist={persist} currentUser={currentUser} />
         )}
         {accHeader('checklist','✅','Checklist')}
         {siteView === 'checklist' && <HelpNote text={HELP.checklist} />}
