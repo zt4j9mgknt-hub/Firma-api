@@ -76,7 +76,7 @@
   </div>
 </div>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useMemo } = React;
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
@@ -1829,7 +1829,7 @@ function GhidTab({ isManager }) {
 
       <Sec icon="🏖" title="Concedii">{'• Ceri concediu de aici (dată de început → dată de sfârșit).\n• Managerul primește notificare și aprobă/refuză; tu primești notificare cu răspunsul.\n• Zilele aprobate apar la Pontaj.'}</Sec>
 
-      <Sec icon="🔔" title="Notificări">{'• Din Profil → 🔔 Activează notificările (o singură dată pe fiecare telefon).\n• Primești pe telefon, cu sunet, evenimentele care te privesc (asignare pe șantier, răspuns la concediu etc.).\n• Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo.'}</Sec>
+      <Sec icon="🔔" title="Notificări">{'• Din Profil → 🔔 Activează notificările (o singură dată pe fiecare telefon).\n• Primești pe telefon, cu sunet, evenimentele care te privesc (asignare pe șantier, răspuns la concediu etc.).\n• Pe iconiță apare și o bulină cu numărul de notificări necitite; se șterge singură când deschizi aplicația.\n• Butonul „📨 Trimite notificare de test" verifică pe loc că totul merge.\n• Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo.'}</Sec>
 
       <Sec icon="🎨" title="Aspect (Zi / Noapte)">{'• Din Profil → Aspect alegi Zi, Noapte sau Automat.\n• „Automat" urmează setarea telefonului.'}</Sec>
 
@@ -6476,14 +6476,47 @@ function App() {
   const [pendingCount, setPendingCount] = useState((typeof getPending === 'function') ? getPending().length : 0);
   useEffect(() => {
     if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
+    // Când aplicația e adusă în față, reîmprospătăm datele: bulina de pe iconiță reflectă
+    // exact ce mai ai de rezolvat (scade doar când rezolvi, nu doar pentru că ai deschis-o).
+    const onVis = () => { if (document.visibilityState === 'visible' && navigator.onLine) { loadAllData(false); } };
+    document.addEventListener('visibilitychange', onVis);
     const upOnline = () => { setOnline(navigator.onLine); if (navigator.onLine) { syncQueue(); loadAllData(false); } };
     const upPending = () => setPendingCount(getPending().length);
     window.addEventListener('online', upOnline);
     window.addEventListener('offline', upOnline);
     window.addEventListener('offline-queue-change', upPending);
     const iv = setInterval(upPending, 4000);
-    return () => { window.removeEventListener('online', upOnline); window.removeEventListener('offline', upOnline); window.removeEventListener('offline-queue-change', upPending); clearInterval(iv); };
+    return () => { window.removeEventListener('online', upOnline); window.removeEventListener('offline', upOnline); window.removeEventListener('offline-queue-change', upPending); document.removeEventListener('visibilitychange', onVis); clearInterval(iv); };
   }, []);
+
+  // --- Bulină cu cifre pe iconiță (ca la WhatsApp): numărul de lucruri de rezolvat.
+  // Rămâne pe iconiță până rezolvi efectiv (aprobi cererea, trimiți raportul etc.). ---
+  const badgeCount = useMemo(() => {
+    const u = currentUser;
+    if (!u) return 0;
+    const aziB = new Date().toISOString().slice(0,10);
+    let n = 0;
+    if (u.rol === 'Manager') {
+      n += cereriSantier.filter((c)=>c.status==='Cerută').length;                 // materiale cerute, de aprobat/respins
+      n += (concedii||[]).filter((c)=>c.status==='Cerut').length;                 // cereri de concediu, de aprobat/refuzat
+      n += santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziB)).length; // șantiere active fără raport azi
+    } else {
+      n += santiere.filter((s)=> s.status==='Activ' && inEchipa(s.echipa, u.id) && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziB)).length; // rapoartele tale de trimis azi
+    }
+    return n;
+  }, [currentUser, cereriSantier, concedii, santiere, rapoarte]);
+  useEffect(() => {
+    try {
+      if (navigator.setAppBadge) {
+        if (badgeCount > 0) navigator.setAppBadge(badgeCount);
+        else if (navigator.clearAppBadge) navigator.clearAppBadge();
+      }
+      // ține service worker-ul sincronizat cu numărul real (baza pentru push-urile primite cât e închisă)
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type:'set-badge', count: badgeCount });
+      }
+    } catch (_) {}
+  }, [badgeCount]);
 
   // Sincronizare in timp real: cand oricine salveaza ceva, primim un semnal instant
   // (prin Pusher) si reincarcam DOAR acea bucata de date - nu verificam constant.
