@@ -75,7 +75,7 @@
   </div>
 </div>
 <script type="text/babel" data-presets="react">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
@@ -1475,7 +1475,7 @@ function SiteAlertsPanel({ santierId, categorie, categorieLabel, alerte, setAler
   const delAlerta = (id) => { if (!window.confirm('Ștergi această alertă?')) return; const next = alerte.filter((a)=>a.id!==id); setAlerte(next); persist('alerteSantier', next); };
 
   return (
-    <div className="rounded-xl p-3" style={{ background: alerteActive.length ? '#2A1518' : 'var(--panel)', border:`1px solid ${alerteActive.length?'#E0525266':'var(--border)'}` }}>
+    <div className="rounded-xl p-3" style={{ background: alerteActive.length ? 'rgba(224,82,82,.12)' : 'var(--panel)', border:`1px solid ${alerteActive.length?'#E0525266':'var(--border)'}` }}>
       <div className="text-sm font-medium mb-2" style={{ color:'var(--text)' }}>⚠ Sesizări {categorieLabel}{alerteActive.length>0 && <span style={{ color:'#E05252' }}> ({alerteActive.length} deschise)</span>}</div>
       <div className="flex gap-2 mb-2 flex-wrap">
         {itemOptions && itemOptions.length > 0 ? (
@@ -1550,10 +1550,54 @@ async function uploadFileToBlob(file, folder) {
 // trebuie mereu cerute prin acest "pod" (proxy autentificat), altfel nu se văd.
 const blobViewUrl = (pathname) => `/api/files?pathname=${encodeURIComponent(pathname)}&token=${encodeURIComponent(AUTH_TOKEN || '')}`;
 
+// Vizualizator de imagine cu zoom (pinch pe telefon, rotiță pe laptop, butoane +/−) și pan (tragere).
+function ZoomImage({ src, alt }) {
+  const [scale, setScale] = useState(1);
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
+  const st = useRef({ mode:null, lastX:0, lastY:0, startDist:0, startScale:1 });
+  const clamp = (s) => Math.min(6, Math.max(1, s));
+  const reset = () => { setScale(1); setTx(0); setTy(0); };
+  const zoomBy = (f) => setScale((s)=>{ const ns = clamp(s*f); if (ns===1){ setTx(0); setTy(0);} return ns; });
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const onWheel = (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.12 : 1/1.12); };
+  const onTouchStart = (e) => {
+    if (e.touches.length === 2) { st.current.mode='pinch'; st.current.startDist=dist(e.touches); st.current.startScale=scale; }
+    else if (e.touches.length === 1 && scale > 1) { st.current.mode='pan'; st.current.lastX=e.touches[0].clientX; st.current.lastY=e.touches[0].clientY; }
+    else st.current.mode=null;
+  };
+  const onTouchMove = (e) => {
+    if (st.current.mode==='pinch' && e.touches.length===2) { e.preventDefault(); const d=dist(e.touches); setScale(clamp(st.current.startScale * (d/(st.current.startDist||d)))); }
+    else if (st.current.mode==='pan' && e.touches.length===1) { e.preventDefault(); const t=e.touches[0]; setTx((x)=>x + (t.clientX-st.current.lastX)); setTy((y)=>y + (t.clientY-st.current.lastY)); st.current.lastX=t.clientX; st.current.lastY=t.clientY; }
+  };
+  const onTouchEnd = (e) => { if (e.touches.length===0) st.current.mode=null; };
+  const onMouseDown = (e) => { if (scale>1){ st.current.mode='pan'; st.current.lastX=e.clientX; st.current.lastY=e.clientY; } };
+  const onMouseMove = (e) => { if (st.current.mode==='pan'){ setTx((x)=>x+(e.clientX-st.current.lastX)); setTy((y)=>y+(e.clientY-st.current.lastY)); st.current.lastX=e.clientX; st.current.lastY=e.clientY; } };
+  const endMouse = () => { st.current.mode=null; };
+  const onDouble = () => { scale>1 ? reset() : setScale(2.5); };
+  return (
+    <div style={{ position:'relative', flex:1, minHeight:0, overflow:'hidden', touchAction:'none' }}
+      onWheel={onWheel} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+      onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={endMouse} onMouseLeave={endMouse} onDoubleClick={onDouble}>
+      <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <img src={src} alt={alt} draggable="false" style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', transform:`translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin:'center', transition: st.current.mode ? 'none' : 'transform .12s', cursor: scale>1?'grab':'default', userSelect:'none' }} />
+      </div>
+      <div style={{ position:'absolute', bottom:14, left:'50%', transform:'translateX(-50%)', display:'flex', gap:8, background:'rgba(10,14,20,.7)', border:'1px solid rgba(255,255,255,.12)', borderRadius:12, padding:'6px 8px', backdropFilter:'blur(6px)' }}>
+        <button onClick={()=>zoomBy(1/1.4)} style={{ color:'#fff', fontSize:20, width:34, height:34, borderRadius:8, background:'#2E8BD1' }}>−</button>
+        <button onClick={reset} style={{ color:'#fff', fontSize:12, padding:'0 10px', height:34, borderRadius:8, background:'#3a424c' }}>{Math.round(scale*100)}%</button>
+        <button onClick={()=>zoomBy(1.4)} style={{ color:'#fff', fontSize:20, width:34, height:34, borderRadius:8, background:'#2E8BD1' }}>+</button>
+      </div>
+    </div>
+  );
+}
+
 function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, currentUser }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [viewing, setViewing] = useState(null);
+  const [pdfZoom, setPdfZoom] = useState(1);
+  const openPlan = (p) => { setPdfZoom(1); setViewing(p); };
+  const pdfZoomBy = (f) => setPdfZoom((z)=>Math.min(4, Math.max(1, Math.round(z*f*10)/10)));
   const planseAici = planseSantier.filter((p)=>p.santierId===santierId);
 
   const handleFiles = async (fileList) => {
@@ -1561,14 +1605,16 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
     const files = Array.from(fileList).filter((f)=>f.type === 'application/pdf');
     if (files.length === 0) { setError('Doar fișiere PDF sunt acceptate aici.'); return; }
     setUploading(true);
+    let acc = planseSantier;
+    let ok = 0;
     try {
       for (const file of files) {
         const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/planse`);
-        const next = [...planseSantier, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, data: new Date().toISOString().slice(0,10), incarcatDe: currentUser?.nume || '' }];
-        setPlanseSantier(next); persist('planseSantier', next);
+        acc = [...acc, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, data: new Date().toISOString().slice(0,10), incarcatDe: currentUser?.nume || '' }];
+        setPlanseSantier(acc); persist('planseSantier', acc); ok++;
       }
     } catch (e) {
-      setError(e.message || 'A eșuat.');
+      setError(`${ok>0 ? `S-au încărcat ${ok}. ` : ''}${e.message || 'A eșuat.'}`);
     }
     setUploading(false);
   };
@@ -1584,12 +1630,18 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
   if (viewing) {
     return (
       <div style={{ position:'fixed', inset:0, zIndex:200, background:'var(--appbg)', display:'flex', flexDirection:'column' }}>
-        <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom:'1px solid var(--border)' }}>
-          <button onClick={()=>setViewing(null)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>← Înapoi la planșe</button>
-          <span className="text-sm truncate ml-2" style={{ color:'var(--muted)' }}>{viewing.nume}</span>
+        <div className="flex items-center justify-between px-3 py-2 shrink-0 gap-2" style={{ borderBottom:'1px solid var(--border)' }}>
+          <button onClick={()=>setViewing(null)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0" style={{ color:'#14181C', background:'#2E8BD1' }}>← Înapoi</button>
+          <span className="text-xs truncate flex-1" style={{ color:'var(--muted)' }}>{viewing.nume}</span>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={()=>pdfZoomBy(1/1.3)} className="rounded-lg font-bold" style={{ color:'#fff', background:'#2E8BD1', width:32, height:32, fontSize:18 }}>−</button>
+            <button onClick={()=>setPdfZoom(1)} className="rounded-lg text-xs px-2" style={{ color:'#fff', background:'#3a424c', height:32 }}>{Math.round(pdfZoom*100)}%</button>
+            <button onClick={()=>pdfZoomBy(1.3)} className="rounded-lg font-bold" style={{ color:'#fff', background:'#2E8BD1', width:32, height:32, fontSize:18 }}>+</button>
+            <a href={blobViewUrl(viewing.pathname)} target="_blank" rel="noopener noreferrer" className="rounded-lg text-xs px-2 flex items-center font-semibold" style={{ color:'#14181C', background:'#4CAF7D', height:32 }} title="Deschide în tab nou (zoom nativ)">⤢</a>
+          </div>
         </div>
-        <div style={{ flex:1, minHeight:0 }}>
-          <iframe src={blobViewUrl(viewing.pathname)} title={viewing.nume} style={{ width:'100%', height:'100%', border:'none', display:'block' }} />
+        <div style={{ flex:1, minHeight:0, overflow:'auto', WebkitOverflowScrolling:'touch' }}>
+          <iframe src={blobViewUrl(viewing.pathname)} title={viewing.nume} style={{ width:`${100*pdfZoom}%`, height:`${100*pdfZoom}%`, minHeight:'100%', border:'none', display:'block' }} />
         </div>
       </div>
     );
@@ -1610,7 +1662,7 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
           <div className="space-y-2 mt-3">
             {planseAici.map((p)=>(
               <div key={p.id} className="flex items-center justify-between text-sm px-3 py-2 rounded-lg" style={{ background:'var(--panel2)' }}>
-                <button onClick={()=>setViewing(p)} className="truncate text-left" style={{ color:'#2E8BD1' }}>📄 {p.nume}</button>
+                <button onClick={()=>openPlan(p)} className="truncate text-left" style={{ color:'#2E8BD1' }}>📄 {p.nume}</button>
                 <div className="flex items-center gap-2 shrink-0 ml-2">
                   <span className="text-xs" style={{ color:'var(--muted2)' }}>{fmtData(p.data)}</span>
                   <button onClick={()=>remove(p)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
@@ -1635,14 +1687,16 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
     const files = Array.from(fileList).filter((f)=>f.type.startsWith('image/') || f.type.startsWith('video/'));
     if (files.length === 0) { setError('Doar poze sau video sunt acceptate aici.'); return; }
     setUploading(true);
+    let acc = mediaSantier;
+    let ok = 0;
     try {
       for (const file of files) {
         const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/media`);
-        const next = [...mediaSantier, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, tip: file.type.startsWith('video/') ? 'video' : 'foto', data: new Date().toISOString().slice(0,10), incarcatDe: currentUser?.nume || '' }];
-        setMediaSantier(next); persist('mediaSantier', next);
+        acc = [...acc, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, tip: file.type.startsWith('video/') ? 'video' : 'foto', data: new Date().toISOString().slice(0,10), incarcatDe: currentUser?.nume || '' }];
+        setMediaSantier(acc); persist('mediaSantier', acc); ok++;
       }
     } catch (e) {
-      setError(e.message || 'A eșuat.');
+      setError(`${ok>0 ? `S-au încărcat ${ok}. ` : ''}${e.message || 'A eșuat.'}`);
     }
     setUploading(false);
   };
@@ -1662,9 +1716,13 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
           <button onClick={()=>setViewing(null)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>← Înapoi la foto/video</button>
           <span className="text-sm truncate ml-2" style={{ color:'var(--muted)' }}>{viewing.nume}</span>
         </div>
-        <div className="flex items-center justify-center" style={{ flex:1, minHeight:0, overflow:'auto' }}>
-          <img src={blobViewUrl(viewing.pathname)} alt={viewing.nume} style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain' }} />
-        </div>
+        {viewing.tip === 'video' ? (
+          <div className="flex items-center justify-center" style={{ flex:1, minHeight:0, overflow:'auto' }}>
+            <video src={blobViewUrl(viewing.pathname)} controls autoPlay style={{ maxWidth:'100%', maxHeight:'100%' }} />
+          </div>
+        ) : (
+          <ZoomImage src={blobViewUrl(viewing.pathname)} alt={viewing.nume} />
+        )}
       </div>
     );
   }
@@ -2026,7 +2084,7 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
         {/* Stare finalizare */}
         <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
           {esteFinalizat ? (
-            <div className="text-sm font-semibold text-center py-2 rounded-lg" style={{ color:'#4CAF7D', background:'#14251B' }}>✅ Șantier finalizat</div>
+            <div className="text-sm font-semibold text-center py-2 rounded-lg" style={{ color:'#4CAF7D', background:'rgba(76,175,125,.16)' }}>✅ Șantier finalizat</div>
           ) : (
             <>
               <div className="text-xs mb-2" style={{ color: potFinaliza?'#4CAF7D':'#E9A23B' }}>
@@ -3092,7 +3150,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
               <div className="space-y-1 mb-1.5">
                 {(a.materiale||[]).length === 0 && <div className="text-[11px]" style={{ color:'var(--muted2)' }}>Niciun material adăugat.</div>}
                 {(a.materiale||[]).map((m)=>(
-                  <div key={m.id} className="text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? '#232C34' : 'var(--panel)' }}>
+                  <div key={m.id} className="text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? 'var(--panelA)' : 'var(--panel)' }}>
                     <div className="flex items-center justify-between">
                       <span style={{ color:'var(--text)' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
                       <div className="flex items-center gap-2 shrink-0">
@@ -3117,7 +3175,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
                 </div>
               </div>
               {(()=>{ const ll = lucrariApart(a.id); return ll.length > 0 ? (
-                <div className="mt-2 pt-1.5" style={{ borderTop:'1px solid #232C34' }}>
+                <div className="mt-2 pt-1.5" style={{ borderTop:'1px solid var(--border)' }}>
                   <div className="text-[11px] mb-1" style={{ color:'var(--muted)' }}>👷 Cine a lucrat aici:</div>
                   <div className="space-y-0.5">
                     {ll.map((l,i)=>(
@@ -3351,7 +3409,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
             <span>Nr</span><span>Denumire</span><span>U.M.</span><span>Cant.</span>{isManager && <span>Preț</span>}{isManager && <span>Valoare</span>}<span></span>
           </div>
           {vizibile.map((x, i)=> editId===x.id ? (
-            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1px solid var(--border)', background:'#232C34' }}>
+            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1px solid var(--border)', background:'var(--panelA)' }}>
               <span className="text-[11px]" style={{ color:'var(--muted2)' }}>{i+1}</span>
               <input value={editRow.denumire} onChange={(e)=>setEditRow({...editRow, denumire:e.target.value})} className="rounded px-1.5 py-1 text-xs outline-none" style={inputStyle} />
               <input value={editRow.um} onChange={(e)=>setEditRow({...editRow, um:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
@@ -3642,7 +3700,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               )}
 
               {santier?.lat && (
-                <div className="mt-3 rounded-lg p-3" style={{ background:'#14231A', border:'1px solid #4CAF7D66' }}>
+                <div className="mt-3 rounded-lg p-3" style={{ background:'rgba(76,175,125,.12)', border:'1px solid #4CAF7D66' }}>
                   <div className="text-sm font-semibold" style={{ color:'#4CAF7D' }}>✅ Pin exact setat</div>
                   <div className="text-sm mb-2" style={{ color:'var(--text)', fontFamily:"'JetBrains Mono', monospace" }}>{Number(santier.lat).toFixed(6)}, {Number(santier.lng).toFixed(6)}</div>
                   <div className="flex gap-1.5">
@@ -6341,7 +6399,7 @@ function App() {
           </div>
         ) : (
           <>
-            {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
+            {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'rgba(224,82,82,.14)' }}>{error}</div>}
 
             {tab === 'devize' && (
               <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} prefill={devizPrefill} onConsumePrefill={()=>setDevizPrefill(null)} />
