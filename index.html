@@ -1551,32 +1551,51 @@ async function uploadFileToBlob(file, folder) {
 // trebuie mereu cerute prin acest "pod" (proxy autentificat), altfel nu se văd.
 const blobViewUrl = (pathname) => `/api/files?pathname=${encodeURIComponent(pathname)}&token=${encodeURIComponent(AUTH_TOKEN || '')}`;
 
-// Hook de zoom/pan: pinch pe telefon, rotiță pe laptop, butoane; pan prin tragere.
+// Hook de zoom/pan robust: pinch pe telefon (cu pan simultan), rotiță pe laptop, butoane, tragere.
+// Folosește numărul de degete curent ca sursă de adevăr, ca gestul să nu rămână „blocat".
 function useZoomPan({ maxScale = 6, alwaysPan = false } = {}) {
   const [scale, setScale] = useState(1);
   const [tx, setTx] = useState(0);
   const [ty, setTy] = useState(0);
-  const st = useRef({ mode:null, lastX:0, lastY:0, startDist:0, startScale:1, cx:0, cy:0 });
+  const st = useRef({ active:false, lastX:0, lastY:0, startDist:0, startScale:1, mouse:false });
   const clamp = (s) => Math.min(maxScale, Math.max(1, s));
   const reset = () => { setScale(1); setTx(0); setTy(0); };
   const zoomBy = (f) => setScale((s)=>{ const ns = clamp(s*f); if (ns===1){ setTx(0); setTy(0);} return ns; });
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const mid = (t) => ({ x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2 });
   const canPan = () => alwaysPan || scale > 1;
   const handlers = {
     onWheel: (e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 1.12 : 1/1.12); },
     onTouchStart: (e) => {
-      if (e.touches.length === 2) { st.current.mode='pinch'; st.current.startDist=dist(e.touches); st.current.startScale=scale; }
-      else if (e.touches.length === 1 && canPan()) { st.current.mode='pan'; st.current.lastX=e.touches[0].clientX; st.current.lastY=e.touches[0].clientY; }
-      else st.current.mode=null;
+      st.current.active = true;
+      const t = e.touches;
+      if (t.length === 2) { st.current.startDist = dist(t); st.current.startScale = scale; const m = mid(t); st.current.lastX = m.x; st.current.lastY = m.y; }
+      else if (t.length === 1) { st.current.lastX = t[0].clientX; st.current.lastY = t[0].clientY; }
     },
     onTouchMove: (e) => {
-      if (st.current.mode==='pinch' && e.touches.length===2) { e.preventDefault(); const d=dist(e.touches); setScale(clamp(st.current.startScale * (d/(st.current.startDist||d)))); }
-      else if (st.current.mode==='pan' && e.touches.length===1) { e.preventDefault(); const t=e.touches[0]; setTx((x)=>x + (t.clientX-st.current.lastX)); setTy((y)=>y + (t.clientY-st.current.lastY)); st.current.lastX=t.clientX; st.current.lastY=t.clientY; }
+      const t = e.touches;
+      if (t.length === 2) {
+        e.preventDefault();
+        const d = dist(t);
+        setScale(clamp(st.current.startScale * (d / (st.current.startDist || d))));
+        const m = mid(t);
+        setTx((x)=>x + (m.x - st.current.lastX)); setTy((y)=>y + (m.y - st.current.lastY));
+        st.current.lastX = m.x; st.current.lastY = m.y;
+      } else if (t.length === 1 && canPan()) {
+        e.preventDefault();
+        const x = t[0].clientX, y = t[0].clientY;
+        setTx((px)=>px + (x - st.current.lastX)); setTy((py)=>py + (y - st.current.lastY));
+        st.current.lastX = x; st.current.lastY = y;
+      }
     },
-    onTouchEnd: (e) => { if (e.touches.length===0) st.current.mode=null; },
-    onMouseDown: (e) => { if (canPan()){ st.current.mode='pan'; st.current.lastX=e.clientX; st.current.lastY=e.clientY; } },
-    onMouseMove: (e) => { if (st.current.mode==='pan'){ setTx((x)=>x+(e.clientX-st.current.lastX)); setTy((y)=>y+(e.clientY-st.current.lastY)); st.current.lastX=e.clientX; st.current.lastY=e.clientY; } },
-    onMouseUp: () => { st.current.mode=null; }, onMouseLeave: () => { st.current.mode=null; },
+    onTouchEnd: (e) => {
+      const t = e.touches;
+      if (t.length === 1) { st.current.startScale = scale; st.current.lastX = t[0].clientX; st.current.lastY = t[0].clientY; }
+      else if (t.length === 0) { st.current.active = false; }
+    },
+    onMouseDown: (e) => { if (canPan()){ st.current.mouse=true; st.current.active=true; st.current.lastX=e.clientX; st.current.lastY=e.clientY; } },
+    onMouseMove: (e) => { if (st.current.mouse){ setTx((x)=>x+(e.clientX-st.current.lastX)); setTy((y)=>y+(e.clientY-st.current.lastY)); st.current.lastX=e.clientX; st.current.lastY=e.clientY; } },
+    onMouseUp: () => { st.current.mouse=false; st.current.active=false; }, onMouseLeave: () => { st.current.mouse=false; st.current.active=false; },
     onDoubleClick: () => { scale>1 ? reset() : setScale(2.5); },
   };
   return { scale, tx, ty, reset, zoomBy, handlers, moving: st };
@@ -1605,7 +1624,7 @@ function ZoomImage({ src, alt, onClose }) {
   return (
     <div style={{ position:'relative', flex:1, minHeight:0, overflow:'hidden', touchAction:'none' }} {...zp.handlers}>
       <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
-        <img src={src} alt={alt} draggable="false" style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', transform:`translate(${zp.tx}px, ${zp.ty}px) scale(${zp.scale})`, transformOrigin:'center', transition: zp.moving.current.mode ? 'none' : 'transform .12s', cursor: zp.scale>1?'grab':'default', userSelect:'none' }} />
+        <img src={src} alt={alt} draggable="false" style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', transform:`translate(${zp.tx}px, ${zp.ty}px) scale(${zp.scale})`, transformOrigin:'center', transition: zp.moving.current.active ? 'none' : 'transform .12s', cursor: zp.scale>1?'grab':'default', userSelect:'none' }} />
       </div>
       {onClose && <CloseX onClose={onClose} />}
       <ZoomControls scale={zp.scale} zoomBy={zp.zoomBy} reset={zp.reset} />
@@ -1650,7 +1669,7 @@ function PdfViewer({ src, nume, onClose }) {
   return (
     <div style={{ position:'relative', flex:1, minHeight:0, overflow:'hidden', touchAction:'none', background:'#0c0f13' }} {...zp.handlers}>
       <div style={{ position:'absolute', inset:0 }}>
-        <div style={{ transform:`translate(${zp.tx}px, ${zp.ty}px) scale(${zp.scale})`, transformOrigin:'top center', transition: zp.moving.current.mode ? 'none' : 'transform .12s', display:'flex', flexDirection:'column', alignItems:'center', gap:10, padding:'10px 0', minHeight:'100%' }}>
+        <div style={{ transform:`translate(${zp.tx}px, ${zp.ty}px) scale(${zp.scale})`, transformOrigin:'top center', transition: zp.moving.current.active ? 'none' : 'transform .12s', display:'flex', flexDirection:'column', alignItems:'center', gap:10, padding:'10px 0', minHeight:'100%' }}>
           {status && (
             <div style={{ color:'#9fb0c0', padding:'24px 16px', textAlign:'center', fontSize:13 }}>
               {status}
