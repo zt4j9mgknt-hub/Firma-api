@@ -1762,7 +1762,7 @@ function PdfViewer({ src, nume, onClose, onFull }) {
 // Texte scurte de ajutor pentru fiecare secțiune (afișate cu butonul ℹ️ „Cum se folosește").
 const HELP = {
   rapoarte: 'La final de zi apeși „Raport zilnic nou".\n• Alege data și bifează cine a lucrat, cu orele fiecăruia.\n• Trece lucrările făcute și materialele folosite.\n• Apeși Salvează. Un raport din listă se poate edita cu ✏️ sau șterge cu 🗑.',
-  materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Poți cere mai multe materiale într-o SINGURĂ cerere: scrii materialul + cantitatea și apeși „➕ Adaugă în listă", apoi repeți pentru fiecare material.\n• Lista „De trimis" arată tot ce ai adăugat; poți scoate un rând cu ✕.\n• La final apeși „📤 Trimite cererea" — pleacă o singură notificare la manager, nu câte una pentru fiecare material.\n• Managerul poate aproba sau respinge fiecare material în parte, ori tot grupul deodată. Ești anunțat când răspunde.\n• Tot aici vezi ce s-a cerut, ce s-a aprobat/respins și ce s-a livrat.',
+  materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Poți cere mai multe materiale într-o SINGURĂ cerere: scrii materialul + cantitatea și apeși „➕ Adaugă în listă", apoi repeți pentru fiecare material.\n• Dacă ceri același material de două ori în aceeași zi (pe același șantier), te întreabă: linie nouă separată SAU aduni cantitatea la linia existentă.\n• Lista „De trimis" arată tot ce ai adăugat; poți scoate un rând cu ✕.\n• La final apeși „📤 Trimite cererea" — pleacă o singură notificare la manager, nu câte una pentru fiecare material.\n• Managerul poate aproba sau respinge fiecare material în parte, ori tot grupul deodată. Ești anunțat când răspunde.\n• Tot aici vezi ce s-a cerut, ce s-a aprobat/respins și ce s-a livrat.',
   scule: 'Ține evidența sculelor aduse la șantier.\n• Adaugi scula și cine a adus-o.\n• Când o duci în altă parte (depozit, alt șantier, service), apeși „Trimite".',
   planse: 'Planurile PDF ale șantierului.\n• Apeși pe o planșă ca s-o deschizi pe tot ecranul.\n• Zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși.\n• Dacă ai multe planșe, caută după nume (ex: „prize parter").',
   media: 'Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe deodată.\n• Apeși pe o poză ca s-o deschizi cu zoom (pinch).',
@@ -1811,7 +1811,7 @@ function GhidTab({ isManager }) {
 
       <Sec icon="📋" title="Rapoarte zilnice">{'• La final de zi apeși „Raport zilnic nou".\n• Alegi data și bifezi cine a lucrat, cu orele fiecăruia (orele intră automat și în Pontaj).\n• Poți adăuga tipurile de lucrări făcute și, unde e cazul, „Lucrări pe apartamente" (persoană + apartament + ce a făcut + cantități).\n• La „Materiale folosite" scrii materialul (ai search cu sugestii) și cantitatea.\n• Apeși Salvează. Un raport din listă se editează cu ✏️ sau se șterge cu 🗑.\n• Când trimiți un raport, managerul primește notificare.'}</Sec>
 
-      <Sec icon="📦" title="Materiale (cereri)">{'• Ceri materiale de care ai nevoie pe șantier. Poți cere mai multe deodată, ca o listă.\n• Scrii materialul + cantitatea și apeși „➕ Adaugă în listă"; repeți pentru fiecare material. Lista „De trimis" arată tot ce ai adăugat (poți scoate un rând cu ✕).\n• La final apeși „📤 Trimite cererea" — pleacă o SINGURĂ notificare la manager, nu câte una pentru fiecare material.\n• Vezi statusul fiecărui material (Cerută / Aprobată / Respinsă / Livrată) și primești notificare când managerul răspunde.\n• Poți căuta rapid în listă după nume sau dată.'}</Sec>
+      <Sec icon="📦" title="Materiale (cereri)">{'• Ceri materiale de care ai nevoie pe șantier. Poți cere mai multe deodată, ca o listă.\n• Scrii materialul + cantitatea și apeși „➕ Adaugă în listă"; repeți pentru fiecare material. Lista „De trimis" arată tot ce ai adăugat (poți scoate un rând cu ✕).\n• Dacă ceri același material de două ori în aceeași zi pe același șantier, ești întrebat dacă vrei o linie nouă sau aduni cantitatea la linia existentă.\n• La final apeși „📤 Trimite cererea" — pleacă o SINGURĂ notificare la manager, nu câte una pentru fiecare material.\n• Vezi statusul fiecărui material (Cerută / Aprobată / Respinsă / Livrată) și primești notificare când managerul răspunde.\n• Poți căuta rapid în listă după nume sau dată.'}</Sec>
 
       <Sec icon="🔧" title="Scule">{'• Ține evidența sculelor aduse la șantier: adaugi scula și cine a adus-o.\n• Când o duci în altă parte (Depozit / Alt șantier / Service), apeși „Trimite" și dispare din listă.'}</Sec>
 
@@ -2379,19 +2379,55 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
   const [cerereShowAll, setCerereShowAll] = useState(false);
   const normalizeSearchLocal = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
   const cereriAici = cereriSantier.filter((c)=>c.santierId===santierId);
-  // adaugă rândul curent în lista (draft), fără a trimite încă
+  // adaugă rândul curent în lista (draft), fără a trimite încă.
+  // Dacă același material a fost deja cerut AZI pe ACEST șantier (în listă sau deja trimis, încă în așteptare),
+  // întreabă: linie nouă separată SAU adună cantitatea la linia existentă.
   const adaugaInLista = () => {
     if (!cerereForm.denumire.trim()) return;
-    const item = { key: uid(), denumire: cerereForm.denumire.trim(), cantitate: Number(cerereForm.cantitate)||0, um: (cerereForm.um||'buc').trim() };
-    setCerereDraft((prev)=>[...prev, item]);
+    const den = cerereForm.denumire.trim();
+    const cant = Number(cerereForm.cantitate)||0;
+    const um = (cerereForm.um||'buc').trim();
+    const aziL = new Date().toISOString().slice(0,10);
+    const laFel = (a,b) => normalizeSearchLocal(a)===normalizeSearchLocal(b);
+    const inDraft = cerereDraft.find((x)=> laFel(x.denumire, den) && (x.um||'')===um);
+    const inTrimise = !inDraft ? cereriAici.find((c)=> c.data===aziL && c.status==='Cerută' && laFel(c.denumire, den) && (c.um||'')===um) : null;
+    const existent = inDraft || inTrimise;
+    if (existent) {
+      const unde = inDraft ? 'pe lista de trimis' : 'cerut azi';
+      const linieNoua = window.confirm(`„${den}" e deja ${unde} pe acest șantier (${existent.cantitate} ${existent.um}).\n\n• OK = adaugă o LINIE NOUĂ separată (${cant} ${um})\n• Anulează = ADUNĂ ${cant} ${um} la linia existentă (total ${(Number(existent.cantitate)||0)+cant} ${um})`);
+      if (linieNoua) {
+        setCerereDraft((prev)=>[...prev, { key: uid(), denumire: den, cantitate: cant, um }]);
+      } else if (inDraft) {
+        setCerereDraft((prev)=>prev.map((x)=> x.key===inDraft.key ? {...x, cantitate:(Number(x.cantitate)||0)+cant} : x));
+      } else {
+        const next = cereriSantier.map((c)=> c.id===inTrimise.id ? {...c, cantitate:(Number(c.cantitate)||0)+cant} : c);
+        setCereriSantier(next); persist('cereriSantier', next);
+      }
+      setCerereForm({ denumire:'', cantitate:1, um:'buc' });
+      return;
+    }
+    setCerereDraft((prev)=>[...prev, { key: uid(), denumire: den, cantitate: cant, um }]);
     setCerereForm({ denumire:'', cantitate:1, um:'buc' });
   };
   const scoateDinLista = (key) => setCerereDraft((prev)=>prev.filter((x)=>x.key!==key));
   // trimite toată lista ca O SINGURĂ cerere (un grup) → o singură notificare
   const trimiteCerere = () => {
-    // dacă a scris ceva în câmp fără să apese „Adaugă", îl includem automat
+    // dacă a scris ceva în câmp fără să apese „Adaugă", îl includem — cu aceeași verificare de duplicat
     let lista = cerereDraft.slice();
-    if (cerereForm.denumire.trim()) lista = [...lista, { key: uid(), denumire: cerereForm.denumire.trim(), cantitate: Number(cerereForm.cantitate)||0, um: (cerereForm.um||'buc').trim() }];
+    if (cerereForm.denumire.trim()) {
+      const den = cerereForm.denumire.trim();
+      const cant = Number(cerereForm.cantitate)||0;
+      const um = (cerereForm.um||'buc').trim();
+      const laFel = (a,b)=>normalizeSearchLocal(a)===normalizeSearchLocal(b);
+      const idx = lista.findIndex((x)=> laFel(x.denumire, den) && (x.um||'')===um);
+      if (idx >= 0) {
+        const linieNoua = window.confirm(`„${den}" e deja pe lista de trimis (${lista[idx].cantitate} ${lista[idx].um}).\n\n• OK = linie nouă separată\n• Anulează = adună ${cant} ${um} la linia existentă`);
+        if (linieNoua) lista = [...lista, { key: uid(), denumire: den, cantitate: cant, um }];
+        else lista = lista.map((x,i)=> i===idx ? {...x, cantitate:(Number(x.cantitate)||0)+cant} : x);
+      } else {
+        lista = [...lista, { key: uid(), denumire: den, cantitate: cant, um }];
+      }
+    }
     if (!lista.length) return;
     const grupId = uid();
     const data = new Date().toISOString().slice(0,10);
