@@ -1773,7 +1773,7 @@ function PdfViewer({ src, nume, onClose, onFull }) {
 
 // Texte scurte de ajutor pentru fiecare secțiune (afișate cu butonul ℹ️ „Cum se folosește").
 const HELP = {
-  rapoarte: 'La final de zi apeși „Raport zilnic nou".\n• Alege data și bifează cine a lucrat, cu orele fiecăruia.\n• Trece lucrările făcute și materialele folosite.\n• Apeși Salvează. Un raport din listă se poate edita cu ✏️ sau șterge cu 🗑.',
+  rapoarte: 'La final de zi apeși „Raport zilnic nou".\n• Alege data și bifează cine a lucrat, cu orele fiecăruia.\n• Trece lucrările făcute și materialele folosite.\n• Apeși Salvează. Un raport din listă se poate edita cu ✏️ sau șterge cu 🗑.\n• Când trimiți raportul, managerul primește notificare. Seara, dacă un raport n-a fost trimis, pleacă un memento (angajatului „nu uita raportul", managerului „nu s-a trimis raport la...").',
   materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Poți cere mai multe materiale într-o SINGURĂ cerere: scrii materialul + cantitatea și apeși „➕ Adaugă în listă", apoi repeți pentru fiecare material.\n• Dacă ceri același material de două ori în aceeași zi (pe același șantier), te întreabă: linie nouă separată SAU aduni cantitatea la linia existentă.\n• Lista „De trimis" arată tot ce ai adăugat; poți scoate un rând cu ✕.\n• La final apeși „📤 Trimite cererea" — pleacă o singură notificare la manager, nu câte una pentru fiecare material.\n• Managerul poate aproba sau respinge fiecare material în parte, ori tot grupul deodată. Ești anunțat când răspunde.\n• Tot aici vezi ce s-a cerut, ce s-a aprobat/respins și ce s-a livrat.',
   scule: 'Ține evidența sculelor aduse la șantier.\n• Adaugi scula și cine a adus-o.\n• Când o duci în altă parte (depozit, alt șantier, service), apeși „Trimite".',
   planse: 'Planurile PDF ale șantierului.\n• Apeși pe o planșă ca s-o deschizi pe tot ecranul.\n• Zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși.\n• Dacă ai multe planșe, caută după nume (ex: „prize parter").',
@@ -5599,7 +5599,11 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 }
 
 function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, concedii, setTab, setPendingSiteNav, currentUser }) {
-  const goToSite = (santierId, siteView) => { setPendingSiteNav({ santierId, siteView: siteView || 'rapoarte' }); setTab('santiere'); };
+  const goToSite = (santierId, siteView) => {
+    // Managerul intră cu totul închis (compact) când merge spre rapoarte; celelalte ținte rămân.
+    const v = (currentUser?.rol === 'Manager' && (!siteView || siteView === 'rapoarte')) ? '__closed__' : (siteView || 'rapoarte');
+    setPendingSiteNav({ santierId, siteView: v }); setTab('santiere');
+  };
 
   const materialeSubStoc = materials.filter((m)=>!m.arhivat && Number(m.stoc) < Number(m.stocMinim));
   const cereriInAsteptare = cereriSantier.filter((c)=>c.status==='Cerută');
@@ -6623,6 +6627,34 @@ function App() {
       }
     } catch (_) {}
   }, [badgeCount]);
+
+  // --- Memento „raport netrimis" (push seara, o dată pe zi). Manager: cine n-a trimis.
+  //     Angajat: pe ce șantier mai are de trimis. Se declanșează când aplicația e deschisă după ora 17. ---
+  useEffect(() => {
+    if (!currentUser) return;
+    const acum = new Date();
+    const zi = acum.getDay();
+    if (zi === 0 || zi === 6) return;            // sâmbătă/duminică — fără memento
+    if (acum.getHours() < 17) return;            // doar seara
+    const aziR = acum.toISOString().slice(0,10);
+    const activeFaraRaport = santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziR));
+    if (currentUser.rol === 'Manager') {
+      if (!activeFaraRaport.length) return;
+      const flag = 'memRaportMgr_' + aziR + '_' + activeFaraRaport.length;
+      if (localStorage.getItem(flag)) return;
+      try { localStorage.setItem(flag, '1'); } catch {}
+      const nume = activeFaraRaport.map((s)=>s.nume).slice(0,4).join(', ');
+      notifica(currentUser.id, { title:'⛔ Rapoarte netrimise azi', body:`Nu s-a trimis raport la: ${nume}${activeFaraRaport.length>4?` +${activeFaraRaport.length-4}`:''}.`, tag:'raport-netrimis' });
+    } else {
+      const meleFara = activeFaraRaport.filter((s)=>inEchipa(s.echipa, currentUser.id));
+      if (!meleFara.length) return;
+      const flag = 'memRaportEu_' + aziR + '_' + meleFara.length;
+      if (localStorage.getItem(flag)) return;
+      try { localStorage.setItem(flag, '1'); } catch {}
+      const nume = meleFara.map((s)=>s.nume).slice(0,3).join(', ');
+      notifica(currentUser.id, { title:'📋 Nu uita raportul de azi', body:`Mai ai de trimis raport la: ${nume}.`, tag:'raport-netrimis' });
+    }
+  }, [currentUser, santiere, rapoarte]);
 
   // Sincronizare in timp real: cand oricine salveaza ceva, primim un semnal instant
   // (prin Pusher) si reincarcam DOAR acea bucata de date - nu verificam constant.
