@@ -2,7 +2,7 @@
 <html lang="ro">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Panou intern — Oferte &amp; Facturi</title>
 <link rel="icon" href="/logo-icon.png" type="image/png" />
 <link rel="apple-touch-icon" href="/logo-icon.png" />
@@ -1611,22 +1611,36 @@ function ZoomControls({ scale, zoomBy, reset }) {
   );
 }
 
-// Buton mic „X" flotant într-un colț, pentru a ieși din vizualizatorul pe tot ecranul.
-function CloseX({ onClose }) {
+// Ecran complet real (ascunde bara browserului). Merge pe Android/desktop; pe iPhone poate fi limitat.
+function toggleFullscreen(el) {
+  try {
+    const d = document;
+    const fsEl = d.fullscreenElement || d.webkitFullscreenElement;
+    if (fsEl) { (d.exitFullscreen || d.webkitExitFullscreen || function(){}).call(d); }
+    else if (el) { (el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen || function(){}).call(el); }
+  } catch (e) {}
+}
+
+// Butoane flotante (colț dreapta-sus): ecran complet + închide. Țin cont de „notch"/safe-area (și pe landscape).
+function CloseX({ onClose, onFull }) {
+  const btn = { width:44, height:44, borderRadius:'50%', background:'rgba(10,14,20,.66)', color:'#fff', fontSize:20, fontWeight:700, lineHeight:1, border:'1px solid rgba(255,255,255,.22)', backdropFilter:'blur(6px)', display:'flex', alignItems:'center', justifyContent:'center' };
   return (
-    <button onClick={onClose} aria-label="Închide" style={{ position:'absolute', top:'max(10px, env(safe-area-inset-top))', right:12, zIndex:20, width:42, height:42, borderRadius:'50%', background:'rgba(10,14,20,.62)', color:'#fff', fontSize:22, fontWeight:700, lineHeight:1, border:'1px solid rgba(255,255,255,.20)', backdropFilter:'blur(6px)', display:'flex', alignItems:'center', justifyContent:'center' }}>✕</button>
+    <div style={{ position:'absolute', top:'calc(env(safe-area-inset-top, 0px) + 10px)', right:'calc(env(safe-area-inset-right, 0px) + 10px)', zIndex:30, display:'flex', gap:8 }}>
+      {onFull && <button onClick={onFull} aria-label="Ecran complet" style={btn}>⛶</button>}
+      <button onClick={onClose} aria-label="Închide" style={btn}>✕</button>
+    </div>
   );
 }
 
 // Vizualizator de imagine cu zoom (pinch pe telefon).
-function ZoomImage({ src, alt, onClose }) {
+function ZoomImage({ src, alt, onClose, onFull }) {
   const zp = useZoomPan({ maxScale:6 });
   return (
     <div style={{ position:'relative', flex:1, minHeight:0, overflow:'hidden', touchAction:'none' }} {...zp.handlers}>
       <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
         <img src={src} alt={alt} draggable="false" style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', transform:`translate(${zp.tx}px, ${zp.ty}px) scale(${zp.scale})`, transformOrigin:'center', transition: zp.moving.current.active ? 'none' : 'transform .12s', cursor: zp.scale>1?'grab':'default', userSelect:'none' }} />
       </div>
-      {onClose && <CloseX onClose={onClose} />}
+      {onClose && <CloseX onClose={onClose} onFull={onFull} />}
       <ZoomControls scale={zp.scale} zoomBy={zp.zoomBy} reset={zp.reset} />
     </div>
   );
@@ -1634,7 +1648,7 @@ function ZoomImage({ src, alt, onClose }) {
 
 // Vizualizator PDF: randează paginile cu PDF.js, apoi le afișează într-un container cu SCROLL NATIV
 // (te plimbi sus-jos-stânga-dreapta ca la orice pagină) + zoom cu două degete sau butoane.
-function PdfViewer({ src, nume, onClose }) {
+function PdfViewer({ src, nume, onClose, onFull }) {
   const [zoom, setZoom] = useState(1);
   const pz = useRef({ startDist:0, startZoom:1 });
   const clampZ = (z) => Math.min(5, Math.max(1, z));
@@ -1695,7 +1709,7 @@ function PdfViewer({ src, nume, onClose }) {
         </div>
       </div>
       {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'55%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
-      {onClose && <CloseX onClose={onClose} />}
+      {onClose && <CloseX onClose={onClose} onFull={onFull} />}
       <ZoomControls scale={zoom} zoomBy={zoomBy} reset={resetZ} />
     </div>
   );
@@ -1706,6 +1720,7 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
   const [error, setError] = useState('');
   const [viewing, setViewing] = useState(null);
   const [cauta, setCauta] = useState('');
+  const planFsRef = useRef(null);
   const openPlan = (p) => setViewing(p);
   const normPl = (s) => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[\s._\-]/g,'');
   const planseAici = planseSantier.filter((p)=>p.santierId===santierId);
@@ -1740,8 +1755,8 @@ function SitePlanseTab({ santierId, planseSantier, setPlanseSantier, persist, cu
 
   if (viewing) {
     return (
-      <div style={{ position:'fixed', inset:0, zIndex:200, background:'#0c0f13', display:'flex', flexDirection:'column' }}>
-        <PdfViewer src={blobViewUrl(viewing.pathname)} nume={viewing.nume} onClose={()=>setViewing(null)} />
+      <div ref={planFsRef} style={{ position:'fixed', inset:0, zIndex:200, background:'#0c0f13', display:'flex', flexDirection:'column' }}>
+        <PdfViewer src={blobViewUrl(viewing.pathname)} nume={viewing.nume} onClose={()=>setViewing(null)} onFull={()=>toggleFullscreen(planFsRef.current)} />
       </div>
     );
   }
@@ -1785,6 +1800,7 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
   const [error, setError] = useState('');
   const [viewing, setViewing] = useState(null);
   const mediaAici = mediaSantier.filter((m)=>m.santierId===santierId);
+  const mediaFsRef = useRef(null);
 
   const handleFiles = async (fileList) => {
     setError('');
@@ -1815,14 +1831,14 @@ function SiteMediaTab({ santierId, mediaSantier, setMediaSantier, persist, curre
 
   if (viewing) {
     return (
-      <div style={{ position:'fixed', inset:0, zIndex:200, background:'#0c0f13', display:'flex', flexDirection:'column' }}>
+      <div ref={mediaFsRef} style={{ position:'fixed', inset:0, zIndex:200, background:'#0c0f13', display:'flex', flexDirection:'column' }}>
         {viewing.tip === 'video' ? (
           <div style={{ position:'relative', flex:1, minHeight:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
-            <video src={blobViewUrl(viewing.pathname)} controls autoPlay style={{ maxWidth:'100%', maxHeight:'100%' }} />
-            <CloseX onClose={()=>setViewing(null)} />
+            <video src={blobViewUrl(viewing.pathname)} controls autoPlay playsInline style={{ maxWidth:'100%', maxHeight:'100%' }} />
+            <CloseX onClose={()=>setViewing(null)} onFull={()=>toggleFullscreen(mediaFsRef.current)} />
           </div>
         ) : (
-          <ZoomImage src={blobViewUrl(viewing.pathname)} alt={viewing.nume} onClose={()=>setViewing(null)} />
+          <ZoomImage src={blobViewUrl(viewing.pathname)} alt={viewing.nume} onClose={()=>setViewing(null)} onFull={()=>toggleFullscreen(mediaFsRef.current)} />
         )}
       </div>
     );
