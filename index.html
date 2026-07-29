@@ -156,6 +156,16 @@ function echipaNormalizata(echipa) {
 const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e)=>e.userId);
 const inEchipa = (echipa, userId) => echipaUserIds(echipa).includes(userId);
 
+// De la ce dată se cere raport zilnic pe un șantier.
+// Prioritate: raportDeLa (ales de manager) → altfel a doua zi de la înființare (dataCreare + 1) → altfel fără restricție (șantiere vechi).
+function raportStartPentru(s){
+  if (s && s.raportDeLa) return s.raportDeLa;
+  if (s && s.dataCreare) { try { const d = new Date(s.dataCreare + 'T00:00:00'); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); } catch(_) { return null; } }
+  return null;
+}
+// Se cere raport în ziua `azi`? Nu, dacă șantierul e prea nou (înainte de data de start).
+function seCereRaport(s, azi){ const st = raportStartPentru(s); return !(st && azi < st); }
+
 // --- Token de sesiune (bilet de acces) — trimis la fiecare cerere către server,
 // ca sa nu mai poata fi cerute datele direct, fara sa fii logat. ---
 let AUTH_TOKEN = null;
@@ -1848,7 +1858,7 @@ function GhidTab({ isManager }) {
       {isManager && (<>
         <Titlu sub="Vizibil doar pentru Manager">Ghid Manager (administrare)</Titlu>
 
-        <Sec icon="🏗" title="Administrarea șantierului">{'• Creezi/editezi șantiere: nume, adresă, beneficiar, contract nr., act adițional, responsabil beneficiar cu telefon.\n• Alegi modul de facturare al șantierului (vezi „Devize").\n• Asignezi/scoți colegi din echipă și le pui statusul Activ/Pauză (asignarea trimite notificare).\n• Marchezi șantierul „Finalizat" din Checklist, când e totul bifat și confirmat.'}</Sec>
+        <Sec icon="🏗" title="Administrarea șantierului">{'• Creezi/editezi șantiere: nume, adresă, beneficiar, contract nr., act adițional, responsabil beneficiar cu telefon.\n• „Raport zilnic cerut începând de:" — alegi Azi, De mâine, sau o dată. Până atunci echipa NU primește memento de raport. Implicit e de mâine (a doua zi de la înființare), ca să nu ceri raport chiar în ziua în care ai creat șantierul.\n• „Descrierea lucrărilor de efectuat" — scrii ce e de făcut; apare cu albastru sus pe șantier, o vede toată echipa.\n• Alegi modul de facturare al șantierului (vezi „Devize"). Pentru lucrări mărunte fără planuri, folosește „🔧 Lucrare mică (fără planuri)" — se facturează pe ore.\n• Asignezi/scoți colegi din echipă și le pui statusul Activ/Pauză (asignarea trimite notificare).\n• Marchezi șantierul „Finalizat" din Checklist, când e totul bifat și confirmat.'}</Sec>
 
         <Sec icon="🧮" title="Devize — moduri de facturare">{'Din antetul șantierului, alegi perioada, nr. și data devizului, apoi generezi PDF-ul. Modul se ia din setarea șantierului:\n• Tarif orar — preț/oră × orele din rapoarte.\n• Tarif orar + lucrări — la fel, dar apar și tipurile de lucrări.\n• La poziție (material propriu) — deviz manoperă + deviz materiale, din poziții/lucrări.\n• La poziție (material client) — doar manopera; materialul e al clientului.\n• Real executat — cantitățile din rapoarte × prețul din lista importată.\n• Ai butoane separate de Print și Salvează PDF.'}</Sec>
 
@@ -2783,10 +2793,12 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
 }
 
 function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, setStructuraSantier, persist }) {
-  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ', echipa:[], modFacturare:'orar', tipFacturare:'orar', tarifOrar:75, materialeSursa:'noastre', benefNume:'', benefInfo:'', benefSemnatar:'', contract:'', obiectiv:'', lucrare:'Instalații electrice interioare' });
+  const _maine = (()=>{ const d=new Date(); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); })();
+  const _azi = new Date().toISOString().slice(0,10);
+  const [form, setForm] = useState(initial || { id: uid(), nume:'', adresa:'', status:'Activ', echipa:[], modFacturare:'orar', tipFacturare:'orar', tarifOrar:75, materialeSursa:'noastre', benefNume:'', benefInfo:'', benefSemnatar:'', contract:'', obiectiv:'', lucrare:'Instalații electrice interioare', descriereLucrari:'', dataCreare: _azi, raportDeLa: _maine });
   const setMod = (m) => {
     const patch = { modFacturare: m };
-    if (m==='orar' || m==='orar_lucrari') patch.tipFacturare = 'orar';
+    if (m==='orar' || m==='orar_lucrari' || m==='lucrare_mica') patch.tipFacturare = 'orar';
     else { patch.tipFacturare = 'pozitie'; patch.materialeSursa = (m==='pozitie_client' || m==='real_executat') ? 'client' : 'noastre'; }
     setForm({ ...form, ...patch });
   };
@@ -2822,6 +2834,22 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
             <button key={s} onClick={()=>setForm({...form, status:s, statusSchimbatLa: new Date().toISOString().slice(0,10)})} className="text-xs px-2.5 py-1.5 rounded-lg"
               style={{ color: form.status===s?'#14181C':'var(--muted)', background: form.status===s?'#2E8BD1':'var(--panel2)' }}>{s}</button>
           ))}
+        </div>
+
+        <div className="rounded-lg p-2.5" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
+          <div className="text-xs mb-1.5" style={{ color:'var(--muted)' }}>📋 Raport zilnic cerut începând de:</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button type="button" onClick={()=>setForm({...form, raportDeLa:_azi})} className="text-xs px-3 py-1.5 rounded-lg" style={{ color: form.raportDeLa===_azi?'#14181C':'var(--muted)', background: form.raportDeLa===_azi?'#2E8BD1':'var(--panel)' }}>Azi</button>
+            <button type="button" onClick={()=>setForm({...form, raportDeLa:_maine})} className="text-xs px-3 py-1.5 rounded-lg" style={{ color: form.raportDeLa===_maine?'#14181C':'var(--muted)', background: form.raportDeLa===_maine?'#2E8BD1':'var(--panel)' }}>De mâine</button>
+            <span className="text-[11px]" style={{ color:'var(--muted2)' }}>sau o dată:</span>
+            <RoCalendarPicker value={form.raportDeLa||''} onChange={(v)=>setForm({...form, raportDeLa:v})} />
+          </div>
+          <div className="text-[11px] mt-1" style={{ color:'var(--muted2)' }}>Până la data asta, echipa NU primește memento de raport. Implicit: de mâine (a doua zi de la înființare).</div>
+        </div>
+
+        <div>
+          <div className="text-xs mb-1.5" style={{ color:'var(--muted)' }}>📝 Descrierea lucrărilor de efectuat (o vede echipa pe șantier):</div>
+          <textarea placeholder={"Ex: Tras cabluri și montat prize la parter, verificat tablou, montat corpuri de iluminat pe hol."} value={form.descriereLucrari||''} onChange={(e)=>setForm({...form, descriereLucrari:e.target.value})} rows={3} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         </div>
         <div>
           <div className="text-xs mb-1.5" style={{ color:'var(--muted)' }}>Echipă asignată (doar aceștia pot accesa șantierul; Activ/Pauză controlează dacă lucrează acolo mâine):</div>
@@ -2887,6 +2915,7 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
                   {[
                     ['orar','⏱️ Tarif orar','Angajații trec doar orele. Deviz pe ore × preț/oră.'],
                     ['orar_lucrari','⏱️ Tarif orar + tipuri de lucrări','Ore + ce lucrări s-au făcut. Deviz pe ore, cu o coloană de lucrări efectuate.'],
+                    ['lucrare_mica','🔧 Lucrare mică (fără planuri)','Lucrări mărunte, fără planșe/poziții. Se facturează pe ore. Folosește câmpul „Descrierea lucrărilor" de sus.'],
                     ['pozitie_propriu','📋 La poziție + material propriu','Poziții + materiale. Două devize: manoperă (poziții) și materiale (preț de vânzare).'],
                     ['pozitie_client','📋 La poziție + material client','Doar manopera pe poziții. Materialele sunt ale clientului — nu se facturează.'],
                     ['real_executat','🧾 Real executat (material client)','Materialul clientului. Angajații trec cantitățile; deviz = cantitate × preț manoperă din lista importată.'],
@@ -2902,7 +2931,7 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
                 </div>
               </div>
 
-              {(modCurent==='orar' || modCurent==='orar_lucrari') && (
+              {(modCurent==='orar' || modCurent==='orar_lucrari' || modCurent==='lucrare_mica') && (
                 <div>
                   <div className="text-xs mb-1.5" style={{ color:'var(--muted)' }}>Preț pe oră (lei, fără TVA):</div>
                   <input type="number" inputMode="decimal" placeholder="75" value={form.tarifOrar} onChange={(e)=>setForm({...form, tarifOrar: e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
@@ -4053,6 +4082,12 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             <a href={mapsUrl(santier)} target="_blank" rel="noopener noreferrer" style={{ color:'#2E8BD1' }}>📍 {santier.adresa}</a>
           )}{currentUser?.rol === 'Manager' && <> · Total ore: <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreSantierMin)}</span></>}
         </p>
+        {santier?.descriereLucrari && santier.descriereLucrari.trim() && (
+          <div className="mb-3 rounded-lg px-3 py-2.5" style={{ background:'#2E8BD114', border:'1px solid #2E8BD166', borderLeft:'4px solid #2E8BD1' }}>
+            <div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color:'#2E8BD1' }}>📝 De făcut pe șantier</div>
+            <div className="text-sm whitespace-pre-wrap" style={{ color:'var(--text)' }}>{santier.descriereLucrari}</div>
+          </div>
+        )}
         {santier?.benefResponsabil && (
           <div className="flex items-center gap-2 mb-3 rounded-lg px-3 py-2 flex-wrap" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
             <span className="text-xs" style={{ color:'var(--muted)' }}>👤 Responsabil beneficiar: <b style={{ color:'var(--text)' }}>{santier.benefResponsabil}</b></span>
@@ -4152,7 +4187,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           const estePoz = modS==='pozitie_propriu' || modS==='pozitie_client';
           const esteReal = modS==='real_executat';
           const areOre = !estePoz && !esteReal;
-          const titlu = modS==='orar' ? '🧾 Deviz tarif orar' : modS==='orar_lucrari' ? '🧾 Deviz tarif orar + lucrări' : modS==='pozitie_client' ? '📋 Deviz manoperă (material client)' : modS==='real_executat' ? '🧾 Deviz real executat' : '📋 Devize la poziție (material propriu)';
+          const titlu = modS==='orar' ? '🧾 Deviz tarif orar' : modS==='lucrare_mica' ? '🧾 Deviz lucrare mică (orar)' : modS==='orar_lucrari' ? '🧾 Deviz tarif orar + lucrări' : modS==='pozitie_client' ? '📋 Deviz manoperă (material client)' : modS==='real_executat' ? '🧾 Deviz real executat' : '📋 Devize la poziție (material propriu)';
           return (
             <div className="rounded-xl p-3 mb-4 flex items-center gap-2 flex-wrap" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
               <span className="text-sm font-semibold w-full" style={{ color:'var(--text)' }}>{titlu}</span>
@@ -5485,11 +5520,11 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   if (isManager) {
     totalDeFacut += materials.filter((m)=>!m.arhivat && Number(m.stoc) < Number(m.stocMinim)).length > 0 ? 1 : 0;
     totalDeFacut += new Set(cereriSantier.filter((c)=>c.status==='Cerută').map((c)=>c.santierId)).size;
-    totalDeFacut += santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)).length;
+    totalDeFacut += santiere.filter((s)=> s.status==='Activ' && seCereRaport(s, azi) && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)).length;
     totalDeFacut += (concedii || []).filter((c)=>c.status==='Cerut').length > 0 ? 1 : 0;
   } else {
     const santiereMele = santiere.filter((s)=>inEchipa(s.echipa, currentUser?.id));
-    totalDeFacut += santiereMele.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)).length;
+    totalDeFacut += santiereMele.filter((s)=> s.status==='Activ' && seCereRaport(s, azi) && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)).length;
   }
 
   // --- Respinse (material/concediu) care mă privesc, neconfirmate încă — banner roșu ---
@@ -5629,7 +5664,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
   const azi = new Date().toISOString().slice(0,10);
   const oraAcum = new Date().getHours();
   const concediiInAsteptare = concedii ? concedii.filter((c)=>c.status==='Cerut') : [];
-  const santiereActiveFaraRaportAzi = santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
+  const santiereActiveFaraRaportAzi = santiere.filter((s)=> s.status==='Activ' && seCereRaport(s, azi) && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
 
   const isManager = currentUser?.rol === 'Manager';
   // --- Respinse: ce mi-a respins managerul (material sau concediu) — apar cu ROȘU în aplicație ---
@@ -5652,7 +5687,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
 
   // --- Date specifice Electricianului: șantierele lui, memento raport, materiale cerute acolo ---
   const santiereMele = santiere.filter((s)=>inEchipa(s.echipa, currentUser?.id));
-  const santiereFaraRaportAzi = santiereMele.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
+  const santiereFaraRaportAzi = santiereMele.filter((s)=> s.status==='Activ' && seCereRaport(s, azi) && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
   const idSantiereMele = new Set(santiereMele.map((s)=>s.id));
   const cereriLaSantiereleMele = cereriSantier.filter((c)=>idSantiereMele.has(c.santierId)).slice().reverse().slice(0,6);
 
@@ -6621,9 +6656,9 @@ function App() {
     if (u.rol === 'Manager') {
       n += cereriSantier.filter((c)=>c.status==='Cerută').length;                 // materiale cerute, de aprobat/respins
       n += (concedii||[]).filter((c)=>c.status==='Cerut').length;                 // cereri de concediu, de aprobat/refuzat
-      n += santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziB)).length; // șantiere active fără raport azi
+      n += santiere.filter((s)=> s.status==='Activ' && seCereRaport(s, aziB) && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziB)).length; // șantiere active fără raport azi
     } else {
-      n += santiere.filter((s)=> s.status==='Activ' && inEchipa(s.echipa, u.id) && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziB)).length; // rapoartele tale de trimis azi
+      n += santiere.filter((s)=> s.status==='Activ' && inEchipa(s.echipa, u.id) && seCereRaport(s, aziB) && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziB)).length; // rapoartele tale de trimis azi
     }
     return n;
   }, [currentUser, cereriSantier, concedii, santiere, rapoarte]);
@@ -6649,7 +6684,7 @@ function App() {
     if (zi === 0 || zi === 6) return;            // sâmbătă/duminică — fără memento
     if (acum.getHours() < 17) return;            // doar seara
     const aziR = acum.toISOString().slice(0,10);
-    const activeFaraRaport = santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziR));
+    const activeFaraRaport = santiere.filter((s)=> s.status==='Activ' && seCereRaport(s, aziR) && !rapoarte.some((r)=>r.santierId===s.id && r.data===aziR));
     if (currentUser.rol === 'Manager') {
       if (!activeFaraRaport.length) return;
       const flag = 'memRaportMgr_' + aziR + '_' + activeFaraRaport.length;
