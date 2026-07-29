@@ -282,7 +282,7 @@ async function pushInroleaza(user){
     if(!sub){ sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:urlB64ToUint8Array(VAPID_PUBLIC) }); }
     const subJson=JSON.parse(JSON.stringify(sub));
     const list=(cacheGet('pushSubs')||[]).filter((x)=> x && x.sub && x.sub.endpoint!==subJson.endpoint);
-    list.push({ userId:user.id, nume:user.nume, rol:user.rol, sub:subJson, data:new Date().toISOString() });
+    list.push({ id:subJson.endpoint, userId:user.id, nume:user.nume, rol:user.rol, sub:subJson, data:new Date().toISOString() });
     cacheSet('pushSubs', list);
     try{ await saveKey('pushSubs', list); }catch{}
     return 'ok';
@@ -299,9 +299,11 @@ async function notifica(audience, msg, exceptUserId){
     else if(Array.isArray(audience)) sel=list.filter((x)=>audience.includes(x.userId));
     else sel=list.filter((x)=>x.userId===audience);
     const subs=sel.map((x)=>x.sub).filter(Boolean);
-    if(!subs.length) return;
-    await authFetch(`/api/push-send?token=${encodeURIComponent(AUTH_TOKEN||'')}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subscriptions:subs, title:msg.title, body:msg.body, url:msg.url||'/', tag:msg.tag }) });
-  }catch(e){}
+    if(!subs.length) return { ok:false, reason:'fara-abonati' };
+    const r = await authFetch(`/api/push-send?token=${encodeURIComponent(AUTH_TOKEN||'')}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subscriptions:subs, title:msg.title, body:msg.body, url:msg.url||'/', tag:msg.tag }) });
+    let data={}; try{ data=await r.json(); }catch{}
+    return { ok:r.ok, status:r.status, data };
+  }catch(e){ return { ok:false, error: (e&&e.message)||'eroare' }; }
 }
 
 let syncingQueue = false;
@@ -1760,7 +1762,7 @@ function PdfViewer({ src, nume, onClose, onFull }) {
 // Texte scurte de ajutor pentru fiecare secțiune (afișate cu butonul ℹ️ „Cum se folosește").
 const HELP = {
   rapoarte: 'La final de zi apeși „Raport zilnic nou".\n• Alege data și bifează cine a lucrat, cu orele fiecăruia.\n• Trece lucrările făcute și materialele folosite.\n• Apeși Salvează. Un raport din listă se poate edita cu ✏️ sau șterge cu 🗑.',
-  materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Apeși +, scrii materialul și cantitatea, trimiți cererea.\n• Managerul o vede și o procesează.\n• Tot aici vezi ce s-a cerut și ce s-a livrat.',
+  materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Poți cere mai multe materiale într-o SINGURĂ cerere: scrii materialul + cantitatea și apeși „➕ Adaugă în listă", apoi repeți pentru fiecare material.\n• Lista „De trimis" arată tot ce ai adăugat; poți scoate un rând cu ✕.\n• La final apeși „📤 Trimite cererea" — pleacă o singură notificare la manager, nu câte una pentru fiecare material.\n• Managerul poate aproba sau respinge fiecare material în parte, ori tot grupul deodată. Ești anunțat când răspunde.\n• Tot aici vezi ce s-a cerut, ce s-a aprobat/respins și ce s-a livrat.',
   scule: 'Ține evidența sculelor aduse la șantier.\n• Adaugi scula și cine a adus-o.\n• Când o duci în altă parte (depozit, alt șantier, service), apeși „Trimite".',
   planse: 'Planurile PDF ale șantierului.\n• Apeși pe o planșă ca s-o deschizi pe tot ecranul.\n• Zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși.\n• Dacă ai multe planșe, caută după nume (ex: „prize parter").',
   media: 'Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe deodată.\n• Apeși pe o poză ca s-o deschizi cu zoom (pinch).',
@@ -1809,7 +1811,7 @@ function GhidTab({ isManager }) {
 
       <Sec icon="📋" title="Rapoarte zilnice">{'• La final de zi apeși „Raport zilnic nou".\n• Alegi data și bifezi cine a lucrat, cu orele fiecăruia (orele intră automat și în Pontaj).\n• Poți adăuga tipurile de lucrări făcute și, unde e cazul, „Lucrări pe apartamente" (persoană + apartament + ce a făcut + cantități).\n• La „Materiale folosite" scrii materialul (ai search cu sugestii) și cantitatea.\n• Apeși Salvează. Un raport din listă se editează cu ✏️ sau se șterge cu 🗑.\n• Când trimiți un raport, managerul primește notificare.'}</Sec>
 
-      <Sec icon="📦" title="Materiale (cereri)">{'• Ceri materiale de care ai nevoie pe șantier: apeși +, scrii materialul și cantitatea, trimiți.\n• Poți căuta rapid în listă și vezi statusul (Cerută / Livrată).\n• Managerul primește notificare la fiecare cerere și o procesează.'}</Sec>
+      <Sec icon="📦" title="Materiale (cereri)">{'• Ceri materiale de care ai nevoie pe șantier. Poți cere mai multe deodată, ca o listă.\n• Scrii materialul + cantitatea și apeși „➕ Adaugă în listă"; repeți pentru fiecare material. Lista „De trimis" arată tot ce ai adăugat (poți scoate un rând cu ✕).\n• La final apeși „📤 Trimite cererea" — pleacă o SINGURĂ notificare la manager, nu câte una pentru fiecare material.\n• Vezi statusul fiecărui material (Cerută / Aprobată / Respinsă / Livrată) și primești notificare când managerul răspunde.\n• Poți căuta rapid în listă după nume sau dată.'}</Sec>
 
       <Sec icon="🔧" title="Scule">{'• Ține evidența sculelor aduse la șantier: adaugi scula și cine a adus-o.\n• Când o duci în altă parte (Depozit / Alt șantier / Service), apeși „Trimite" și dispare din listă.'}</Sec>
 
@@ -1841,6 +1843,8 @@ function GhidTab({ isManager }) {
         <Sec icon="🏢" title="Structură etaje & Poziții / Materiale">{'• „Structură — etaje" — definești etajele și apartamentele; se folosesc la „Lucrări pe apartamente".\n• „Poziții / Materiale" — imporți din Excel lista de poziții/manoperă și de materiale cu prețuri (folosite la devize). Recunoaște mai multe formate și îți lasă să alegi foaia din fișier.'}</Sec>
 
         <Sec icon="🗂" title="Gestiune & Stocuri">{'• Gestiune — lista de materiale ale firmei cu preț, stoc, stoc minim.\n• Când un angajat cere material dintr-un șantier, stocul scade automat (ieșire) și apare la Stocuri.\n• Stocuri — istoricul intrărilor/ieșirilor.'}</Sec>
+
+        <Sec icon="📥" title="Cereri de materiale (aprobare)">{'• Când un angajat trimite o cerere, primești o singură notificare pe cerere (chiar dacă are mai multe materiale).\n• În tab-ul Materiale al șantierului, cererile cu mai multe materiale apar grupate („📋 Cerere · N materiale · nume angajat").\n• Poți aproba sau respinge FIECARE material în parte (✓ Aprobă / ✕ Respinge), sau tot grupul deodată („✓ Aprobă toate" / „✕ Respinge toate").\n• Angajatul primește notificare cu răspunsul tău.\n• Materialele aprobate le poți marca „📦 Livrată" — atunci intră automat în stocul șantierului.\n• Poți exporta cererile în Excel sau PDF (semnătură solicitant/aprobat de).'}</Sec>
 
         <Sec icon="🛒" title="Achiziții">{'• Ții evidența a ce ai de cumpărat / ai cumpărat pentru firmă.'}</Sec>
 
@@ -2369,24 +2373,58 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
 
   // --- Cerere materiale ---
   const [cerereForm, setCerereForm] = useState({ denumire:'', cantitate:1, um:'buc' });
+  const [cerereDraft, setCerereDraft] = useState([]); // lista de materiale ce vor fi trimise împreună (o singură cerere)
   const [cerereFilter, setCerereFilter] = useState('');
   const [cerereDataFiltru, setCerereDataFiltru] = useState('');
   const [cerereShowAll, setCerereShowAll] = useState(false);
   const normalizeSearchLocal = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
   const cereriAici = cereriSantier.filter((c)=>c.santierId===santierId);
-  const addCerere = () => {
+  // adaugă rândul curent în lista (draft), fără a trimite încă
+  const adaugaInLista = () => {
     if (!cerereForm.denumire.trim()) return;
-    const denumireFinala = cerereForm.denumire.trim();
-    const cantitateFinala = Number(cerereForm.cantitate)||0;
-    const next = [...cereriSantier, { id: uid(), santierId, denumire: denumireFinala, cantitate: cantitateFinala, um: cerereForm.um, data: new Date().toISOString().slice(0,10), status:'Cerută' }];
-    setCereriSantier(next); persist('cereriSantier', next); setCerereForm({ denumire:'', cantitate:1, um:'buc' });
-    if (onCerereMaterial) onCerereMaterial(denumireFinala, cerereForm.um, cantitateFinala, santierNume);
-    notifica('manageri', { title:'Cerere de material', body:`${cantitateFinala} ${cerereForm.um} ${denumireFinala} — ${santierNume || 'șantier'} (${currentUser?.nume || ''}).`, tag:'cerere' }, currentUser?.id);
+    const item = { key: uid(), denumire: cerereForm.denumire.trim(), cantitate: Number(cerereForm.cantitate)||0, um: (cerereForm.um||'buc').trim() };
+    setCerereDraft((prev)=>[...prev, item]);
+    setCerereForm({ denumire:'', cantitate:1, um:'buc' });
+  };
+  const scoateDinLista = (key) => setCerereDraft((prev)=>prev.filter((x)=>x.key!==key));
+  // trimite toată lista ca O SINGURĂ cerere (un grup) → o singură notificare
+  const trimiteCerere = () => {
+    // dacă a scris ceva în câmp fără să apese „Adaugă", îl includem automat
+    let lista = cerereDraft.slice();
+    if (cerereForm.denumire.trim()) lista = [...lista, { key: uid(), denumire: cerereForm.denumire.trim(), cantitate: Number(cerereForm.cantitate)||0, um: (cerereForm.um||'buc').trim() }];
+    if (!lista.length) return;
+    const grupId = uid();
+    const data = new Date().toISOString().slice(0,10);
+    const noi = lista.map((d)=>({ id: uid(), grupId, santierId, denumire: d.denumire, cantitate: d.cantitate, um: d.um, data, status:'Cerută', cerutDe: currentUser?.nume || '', cerutId: currentUser?.id || '' }));
+    const next = [...cereriSantier, ...noi];
+    setCereriSantier(next); persist('cereriSantier', next);
+    setCerereDraft([]); setCerereForm({ denumire:'', cantitate:1, um:'buc' });
+    noi.forEach((d)=>{ if (onCerereMaterial) onCerereMaterial(d.denumire, d.um, d.cantitate, santierNume); });
+    const rezumat = noi.length===1
+      ? `${noi[0].cantitate} ${noi[0].um} ${noi[0].denumire}`
+      : `${noi.length} materiale: ` + noi.slice(0,3).map((x)=>`${x.denumire} (${x.cantitate} ${x.um})`).join(', ') + (noi.length>3?` +${noi.length-3}`:'');
+    notifica('manageri', { title: noi.length===1 ? 'Cerere de material' : 'Cerere de materiale', body:`${rezumat} — ${santierNume || 'șantier'} (${currentUser?.nume || ''}).`, tag:'cerere-'+grupId }, currentUser?.id);
   };
   const delCerere = (id) => { if (!window.confirm('Ștergi definitiv această cerere de materiale?')) return; const next = cereriSantier.filter((c)=>c.id!==id); setCereriSantier(next); persist('cereriSantier', next); };
   const setCerereStatus = (id, status) => {
-    const next = cereriSantier.map((c)=>c.id===id?{...c, status}:c);
+    const c = cereriSantier.find((x)=>x.id===id);
+    const next = cereriSantier.map((x)=>x.id===id?{...x, status}:x);
     setCereriSantier(next); persist('cereriSantier', next);
+    // anunță solicitantul (dacă îl știm) că materialul a fost aprobat/respins
+    if (c && c.cerutId && (status==='Aprobată' || status==='Respinsă')) {
+      notifica(c.cerutId, { title: status==='Aprobată' ? 'Material aprobat ✓' : 'Material respins', body:`${c.denumire} (${c.cantitate} ${c.um}) — ${santierNume || 'șantier'}: ${status.toLowerCase()}.`, tag:'cerere-raspuns' }, currentUser?.id);
+    }
+  };
+  // acțiune pe tot grupul (aprobă/respinge toate materialele rămase în așteptare)
+  const setGrupStatus = (items, status) => {
+    const ids = new Set(items.filter((c)=>c.status==='Cerută').map((c)=>c.id));
+    if (!ids.size) return;
+    const next = cereriSantier.map((c)=> ids.has(c.id) ? {...c, status} : c);
+    setCereriSantier(next); persist('cereriSantier', next);
+    const prima = items.find((c)=>c.cerutId);
+    if (prima && prima.cerutId && (status==='Aprobată' || status==='Respinsă')) {
+      notifica(prima.cerutId, { title: status==='Aprobată' ? 'Cerere aprobată ✓' : 'Cerere respinsă', body:`${ids.size} ${ids.size===1?'material':'materiale'} — ${santierNume || 'șantier'}: ${status.toLowerCase()}.`, tag:'cerere-raspuns' }, currentUser?.id);
+    }
   };
   const marcheazaLivrata = (cerere) => {
     const next = cereriSantier.map((c)=>c.id===cerere.id?{...c, status:'Livrată'}:c);
@@ -2520,6 +2558,13 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
   });
   const ziledisponibile = Object.keys(cereriPeZi).sort((a,b)=> b.localeCompare(a));
   const cereriShow = cerereSearching || cerereShowAll;
+  // grupează cererile dintr-o zi după grupId (cererile mai vechi, fără grupId, rămân individuale)
+  const grupeazaCereri = (items) => {
+    const map = {}; const ordine = [];
+    items.forEach((c)=>{ const g = c.grupId || c.id; if(!map[g]){ map[g]=[]; ordine.push(g); } map[g].push(c); });
+    return ordine.map((g)=>({ grupId:g, items:map[g] }));
+  };
+  const culoareStatus = (s) => s==='Livrată'?'#4CAF7D':s==='Aprobată'?'#2E8BD1':s==='Respinsă'?'#E05252':'#E9A23B';
 
   return (
     <div className="space-y-4">
@@ -2534,13 +2579,27 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
           )}
         </div>
         <div className="mb-3">
-          <input list="materiale-catalog-santier" placeholder="Material (ex: Cablu CYY-F 3x2.5)" value={cerereForm.denumire} onChange={(e)=>setCerereForm({...cerereForm, denumire:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
+          <input list="materiale-catalog-santier" placeholder="Material (ex: Cablu CYY-F 3x2.5)" value={cerereForm.denumire} onChange={(e)=>setCerereForm({...cerereForm, denumire:e.target.value})} onKeyDown={(e)=>{ if(e.key==='Enter') adaugaInLista(); }} className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
           <datalist id="materiale-catalog-santier">{materials.filter((m)=>!m.arhivat).map((m)=><option key={m.id} value={m.denumire} />)}</datalist>
           <div className="flex gap-2">
             <input type="number" value={cerereForm.cantitate} onChange={(e)=>setCerereForm({...cerereForm, cantitate:e.target.value})} className="w-20 rounded-lg px-3 py-2 text-sm outline-none text-center" style={inputStyle} />
             <input placeholder="UM" value={cerereForm.um} onChange={(e)=>setCerereForm({...cerereForm, um:e.target.value})} className="w-20 rounded-lg px-3 py-2 text-sm outline-none text-center" style={inputStyle} />
-            <button onClick={addCerere} className="flex-1 text-sm px-4 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Cere material</button>
+            <button onClick={adaugaInLista} className="flex-1 text-sm px-4 py-2 rounded-lg font-semibold" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>➕ Adaugă în listă</button>
           </div>
+          {cerereDraft.length > 0 && (
+            <div className="mt-2 rounded-lg p-2" style={{ background:'var(--panel2)', border:'1px dashed var(--border)' }}>
+              <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'var(--muted2)' }}>De trimis ({cerereDraft.length})</div>
+              <div className="space-y-1">
+                {cerereDraft.map((d)=>(
+                  <div key={d.key} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background:'var(--panel)' }}>
+                    <span style={{ color:'var(--text)' }}>{d.denumire} — {d.cantitate} {d.um}</span>
+                    <button onClick={()=>scoateDinLista(d.key)} style={{ color:'#E05252' }}><Icon size={12}>✕</Icon></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <button onClick={trimiteCerere} disabled={cerereDraft.length===0 && !cerereForm.denumire.trim()} className="w-full mt-2 text-sm px-4 py-2 rounded-lg font-semibold disabled:opacity-40" style={{ color:'#14181C', background:'#2E8BD1' }}>📤 Trimite cererea{cerereDraft.length>0 ? ` (${cerereDraft.length})` : ''}</button>
         </div>
 
         <div className="flex items-center gap-1.5 mb-2 flex-wrap">
@@ -2562,26 +2621,48 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
             {ziledisponibile.map((zi)=>(
               <div key={zi}>
                 <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color:'var(--muted2)' }}>{zi} ({cereriPeZi[zi].length})</div>
-                <div className="space-y-1">
-                  {cereriPeZi[zi].map((c)=>(
-                    <div key={c.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'var(--panel2)' }}>
-                      <span style={{ color:'var(--text)' }}>{c.denumire} — {c.cantitate} {c.um}</span>
-                      <div className="flex items-center gap-2">
-                        <span style={{ color: c.status==='Livrată'?'#4CAF7D':c.status==='Aprobată'?'#2E8BD1':c.status==='Respinsă'?'#E05252':'#E9A23B' }}>{c.status}</span>
-                        {c.status==='Cerută' && currentUser?.rol === 'Manager' && (
-                          <>
-                            <button onClick={()=>setCerereStatus(c.id,'Aprobată')} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă</button>
-                            <button onClick={()=>setCerereStatus(c.id,'Respinsă')} className="px-2 py-0.5 rounded" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid #E0525266' }}>✕ Respinge</button>
-                          </>
-                        )}
-                        {c.status==='Cerută' && currentUser?.rol !== 'Manager' && (
-                          <span className="text-xs" style={{ color:'var(--muted2)' }}>Așteaptă aprobare manager</span>
-                        )}
-                        {c.status==='Aprobată' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📦 Livrată</button>}
-                        <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                <div className="space-y-2">
+                  {grupeazaCereri(cereriPeZi[zi]).map((grup)=>{
+                    const items = grup.items;
+                    const single = items.length===1;
+                    const auInAsteptare = items.some((c)=>c.status==='Cerută');
+                    const cerutDe = (items.find((c)=>c.cerutDe)||{}).cerutDe;
+                    const isMgr = currentUser?.rol === 'Manager';
+                    const linie = (c)=>(
+                      <div key={c.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg" style={{ background:'var(--panel2)' }}>
+                        <span style={{ color:'var(--text)' }}>{c.denumire} — {c.cantitate} {c.um}</span>
+                        <div className="flex items-center gap-2">
+                          <span style={{ color: culoareStatus(c.status) }}>{c.status}</span>
+                          {c.status==='Cerută' && isMgr && (
+                            <>
+                              <button onClick={()=>setCerereStatus(c.id,'Aprobată')} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă</button>
+                              <button onClick={()=>setCerereStatus(c.id,'Respinsă')} className="px-2 py-0.5 rounded" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid #E0525266' }}>✕ Respinge</button>
+                            </>
+                          )}
+                          {c.status==='Cerută' && !isMgr && (
+                            <span className="text-xs" style={{ color:'var(--muted2)' }}>Așteaptă aprobare</span>
+                          )}
+                          {c.status==='Aprobată' && <button onClick={()=>marcheazaLivrata(c)} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📦 Livrată</button>}
+                          <button onClick={()=>delCerere(c.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                    if (single) return <div key={grup.grupId}>{linie(items[0])}</div>;
+                    return (
+                      <div key={grup.grupId} className="rounded-lg p-2" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[11px] font-semibold" style={{ color:'var(--muted)' }}>📋 Cerere · {items.length} materiale{cerutDe ? ` · ${cerutDe}` : ''}</span>
+                          {isMgr && auInAsteptare && (
+                            <div className="flex gap-1.5">
+                              <button onClick={()=>setGrupStatus(items,'Aprobată')} className="text-[11px] px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#2E8BD1' }}>✓ Aprobă toate</button>
+                              <button onClick={()=>setGrupStatus(items,'Respinsă')} className="text-[11px] px-2 py-0.5 rounded" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid #E0525266' }}>✕ Respinge toate</button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="space-y-1">{items.map((c)=>linie(c))}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -4335,6 +4416,33 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
     const r = await pushInroleaza(currentUser);
     setNotifStatus(r==='ok' ? '✅ Notificări activate pe acest dispozitiv.' : r==='refuzat' ? 'Notificările sunt blocate. Le poți permite din setările telefonului/browserului.' : r==='nesuportat' ? 'Acest dispozitiv nu suportă notificări (pe iPhone: adaugă aplicația pe ecranul de start și deschide-o de acolo).' : 'Nu s-a putut activa. Încearcă din nou.');
   };
+  const [testStatus, setTestStatus] = useState('');
+  const trimiteTest = async () => {
+    setTestStatus('Se trimite…');
+    // Asigură-te că acest dispozitiv e abonat înainte de test
+    const ab = await pushInroleaza(currentUser);
+    if (ab === 'refuzat') { setTestStatus('❌ Notificările sunt blocate din setările telefonului/browserului. Permite-le și reîncearcă.'); return; }
+    if (ab === 'nesuportat') { setTestStatus('❌ Dispozitivul nu suportă notificări. Pe iPhone: adaugă aplicația pe ecranul de start și deschide-o de acolo.'); return; }
+    if (ab !== 'ok') { setTestStatus('❌ Nu s-a putut abona dispozitivul. Reîncearcă.'); return; }
+    const res = await notifica(currentUser?.id, { title:'Test ✅', body:'Notificările funcționează!', tag:'test' });
+    if (res && res.ok) {
+      const trimise = res.data && typeof res.data.sent === 'number' ? res.data.sent : '?';
+      if (trimise === 0) setTestStatus('⚠️ Serverul a răspuns OK, dar 0 trimise. Verifică: acest dispozitiv are notificările activate și e deschis din ecranul de start (iPhone).');
+      else setTestStatus('✅ Trimis către ' + trimise + ' dispozitiv(e). Ar trebui să apară notificarea în câteva secunde.');
+    } else if (res && res.reason === 'fara-abonati') {
+      setTestStatus('⚠️ Niciun dispozitiv abonat. Apasă întâi „🔔 Activează notificările" pe fiecare telefon.');
+    } else if (res && res.status === 401) {
+      setTestStatus('❌ Server 401: token lipsă/invalid. Reautentifică-te (ieși și intră din nou).');
+    } else if (res && res.status === 500) {
+      const m = res.data && res.data.error ? (' — ' + res.data.error) : '';
+      setTestStatus('❌ Server 500: lipsesc cheile VAPID din Vercel sau ruta /api/push-send' + m);
+    } else if (res && (res.status === 404 || res.status === 405)) {
+      setTestStatus('❌ Server ' + res.status + ': ruta /api/push-send nu există. Verifică că fișierul push-send.js e în folderul api/ pe GitHub.');
+    } else {
+      const m = res && (res.error || (res.data && res.data.error)) ? (' — ' + (res.error || res.data.error)) : '';
+      setTestStatus('❌ Nu s-a putut trimite (status ' + (res && res.status || '?') + ')' + m);
+    }
+  };
   const activeazaBio = async () => {
     setBioStatus('');
     try { await bioInroleaza(currentUser, AUTH_TOKEN); setBioOn(true); setBioStatus('✅ Activată. La următoarea deschidere intri cu amprenta/FaceID.'); }
@@ -4430,8 +4538,12 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
       <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
         <div className="text-sm font-semibold mb-1" style={{ color:'var(--text)' }}>🔔 Notificări</div>
         <p className="text-xs mb-3" style={{ color:'var(--muted)' }}>Primești notificări cu sunet pe telefon: raport nou, cerere de material, asignare pe șantier, concediu etc. Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo.</p>
-        <button onClick={activeazaNotif} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🔔 Activează notificările</button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={activeazaNotif} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🔔 Activează notificările</button>
+          <button onClick={trimiteTest} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>📨 Trimite notificare de test</button>
+        </div>
         {notifStatus && <p className="text-xs mt-2" style={{ color: notifStatus.startsWith('✅') ? '#4CAF7D' : '#E9A23B' }}>{notifStatus}</p>}
+        {testStatus && <p className="text-xs mt-2" style={{ color: testStatus.startsWith('✅') ? '#4CAF7D' : testStatus.startsWith('⚠️') ? '#E9A23B' : '#E05252' }}>{testStatus}</p>}
       </div>
       {bioSuportat() && (
         <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
