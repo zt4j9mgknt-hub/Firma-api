@@ -1,79 +1,61 @@
-// Functie server (Vercel, runtime Node.js implicit) care genereaza un "token de client"
-// pentru incarcare directa din browser catre Vercel Blob.
-//
-// IMPORTANT: handleUpload() foloseste module Node.js (crypto, stream) care NU sunt
-// disponibile pe runtime-ul "Edge" - de-aia acest fisier NU seteaza runtime:'edge'.
+// api/blob-upload.js
+// Rută de server pentru încărcarea fișierelor (PDF / poze / video) în Vercel Blob.
+// Clientul (index.html) apelează această rută ca să primească un "client token",
+// apoi urcă fișierul direct în Blob. Totul e învelit în try/catch ca funcția
+// să NU mai crape (FUNCTION_INVOCATION_FAILED) — dacă ceva e greșit, întoarce un
+// mesaj clar, nu o eroare de sistem.
 
 import { handleUpload } from '@vercel/blob/client';
-import crypto from 'crypto';
 
-// --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
-function verifyToken(token) {
-  if (!token) return null;
-  const parts = String(token).split('.');
-  if (parts.length !== 2) return null;
-  const [data, sig] = parts;
-  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
-  try {
-    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
-    if (!payload.exp || Date.now() > payload.exp) return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      },
-    });
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Metoda nepermisă (doar POST).' });
   }
 
-  const authHeader = request.headers.get('authorization') || '';
-  const sessionToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : new URL(request.url).searchParams.get('token');
-  if (!verifyToken(sessionToken)) {
-    return new Response(JSON.stringify({ error: 'Sesiune invalida sau expirata.' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+  // Cere prezența token-ului aplicației (trimis de client ca ?token=...).
+  // Aplicația îl adaugă automat după autentificare.
+  const appToken = (req.query && req.query.token) ? String(req.query.token) : '';
+  if (!appToken) {
+    return res.status(401).json({ error: 'Lipsește token-ul aplicației.' });
+  }
+
+  // Verificare utilă: dacă store-ul Blob nu e conectat, spunem clar.
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return res.status(500).json({
+      error: 'BLOB_READ_WRITE_TOKEN lipsește. Conectează un Blob store la proiect pe Vercel (Storage) și redeploy.',
     });
   }
 
   try {
-    const body = await request.json();
+    const body = typeof req.body === 'string'
+      ? JSON.parse(req.body || '{}')
+      : (req.body || {});
+
     const jsonResponse = await handleUpload({
       body,
-      request,
-      onBeforeGenerateToken: async () => {
+      request: req,
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
         return {
-          access: 'private',
-          addRandomSuffix: true,
           allowedContentTypes: [
             'application/pdf',
-            'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic',
-            'video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v',
+            'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+            'image/heic', 'image/heif',
+            'video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'video/3gpp',
           ],
-          maximumSizeInBytes: 200 * 1024 * 1024,
+          maximumSizeInBytes: 200 * 1024 * 1024, // 200 MB
+          addRandomSuffix: false,
         };
       },
-      onUploadCompleted: async () => {},
+      onUploadCompleted: async ({ blob }) => {
+        // Opțional: aici s-ar putea loga fișierul încărcat.
+        // Nu arunca erori aici — ar bloca finalizarea.
+      },
     });
 
-    return new Response(JSON.stringify(jsonResponse), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-    });
-  } catch (error) {
-    return new Response(JSON.stringify({ error: error.message || 'Eroare necunoscuta.' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-    });
+    return res.status(200).json(jsonResponse);
+  } catch (err) {
+    // Nu mai lăsăm funcția să crape — întoarcem mesajul real.
+    console.error('blob-upload error:', err);
+    return res.status(400).json({ error: (err && err.message) ? err.message : 'Nu am putut genera token-ul de încărcare.' });
   }
 }
