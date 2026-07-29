@@ -266,6 +266,44 @@ async function saveKey(key, value) {
   try { data = await res.json(); } catch {}
   if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
 }
+
+// ---- Notificări (Web Push) ----
+const VAPID_PUBLIC = 'BL2zeAif4sj-0ix4-_AoDmfXo3QnXC5YAh1aplsoTFX0TiiQC99gzO_vXSJZ9o53XtB218YlvzfkWYfb6ISbSyI';
+function urlB64ToUint8Array(b64){ const pad='='.repeat((4-(b64.length%4))%4); const base=(b64+pad).replace(/-/g,'+').replace(/_/g,'/'); const raw=atob(base); const arr=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i); return arr; }
+async function pushInroleaza(user){
+  try{
+    if(!user || !('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification==='undefined') return 'nesuportat';
+    if(Notification.permission==='denied') return 'refuzat';
+    let perm=Notification.permission;
+    if(perm==='default') perm=await Notification.requestPermission();
+    if(perm!=='granted') return 'refuzat';
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub){ sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:urlB64ToUint8Array(VAPID_PUBLIC) }); }
+    const subJson=JSON.parse(JSON.stringify(sub));
+    const list=(cacheGet('pushSubs')||[]).filter((x)=> x && x.sub && x.sub.endpoint!==subJson.endpoint);
+    list.push({ userId:user.id, nume:user.nume, rol:user.rol, sub:subJson, data:new Date().toISOString() });
+    cacheSet('pushSubs', list);
+    try{ await saveKey('pushSubs', list); }catch{}
+    return 'ok';
+  }catch(e){ return 'eroare'; }
+}
+// Trimite o notificare către: 'manageri' | 'toti' | un userId | [userId,...]. exceptUserId = nu te notifica pe tine.
+async function notifica(audience, msg, exceptUserId){
+  try{
+    let list=cacheGet('pushSubs')||[];
+    if(exceptUserId) list=list.filter((x)=>x.userId!==exceptUserId);
+    let sel;
+    if(audience==='manageri') sel=list.filter((x)=>x.rol==='Manager');
+    else if(audience==='toti') sel=list;
+    else if(Array.isArray(audience)) sel=list.filter((x)=>audience.includes(x.userId));
+    else sel=list.filter((x)=>x.userId===audience);
+    const subs=sel.map((x)=>x.sub).filter(Boolean);
+    if(!subs.length) return;
+    await authFetch(`/api/push-send?token=${encodeURIComponent(AUTH_TOKEN||'')}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subscriptions:subs, title:msg.title, body:msg.body, url:msg.url||'/', tag:msg.tag }) });
+  }catch(e){}
+}
+
 let syncingQueue = false;
 async function syncQueue() {
   if (syncingQueue || (typeof navigator!=='undefined' && !navigator.onLine)) return;
@@ -2298,6 +2336,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     const next = [...cereriSantier, { id: uid(), santierId, denumire: denumireFinala, cantitate: cantitateFinala, um: cerereForm.um, data: new Date().toISOString().slice(0,10), status:'Cerută' }];
     setCereriSantier(next); persist('cereriSantier', next); setCerereForm({ denumire:'', cantitate:1, um:'buc' });
     if (onCerereMaterial) onCerereMaterial(denumireFinala, cerereForm.um, cantitateFinala, santierNume);
+    notifica('manageri', { title:'Cerere de material', body:`${cantitateFinala} ${cerereForm.um} ${denumireFinala} — ${santierNume || 'șantier'} (${currentUser?.nume || ''}).`, tag:'cerere' }, currentUser?.id);
   };
   const delCerere = (id) => { if (!window.confirm('Ștergi definitiv această cerere de materiale?')) return; const next = cereriSantier.filter((c)=>c.id!==id); setCereriSantier(next); persist('cereriSantier', next); };
   const setCerereStatus = (id, status) => {
@@ -3700,7 +3739,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const addToEchipa = (santierId, userId) => {
     const s = santiere.find((x)=>x.id===santierId);
     const echipa = echipaNormalizata(s.echipa);
-    if (!echipa.some((e)=>e.userId===userId)) updateEchipa(santierId, [...echipa, { userId, status:'activ' }]);
+    if (!echipa.some((e)=>e.userId===userId)) {
+      updateEchipa(santierId, [...echipa, { userId, status:'activ' }]);
+      notifica(userId, { title:'Ai fost asignat pe un șantier', body:`${s?.nume || 'Șantier'} — deschide aplicația pentru detalii.`, tag:'asignare' }, currentUser?.id);
+    }
   };
   const removeFromEchipa = (santierId, userId) => {
     const s = santiere.find((x)=>x.id===santierId);
@@ -3727,9 +3769,11 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     if (selected === id) setSelected(null);
   };
   const saveReport = (r) => {
+    const esteNou = !rapoarte.some((x)=>x.id===r.id);
     const withSite = { ...r, santierId: selected };
-    const next = rapoarte.some((x)=>x.id===r.id) ? rapoarte.map((x)=>x.id===r.id?withSite:x) : [...rapoarte, withSite];
+    const next = esteNou ? [...rapoarte, withSite] : rapoarte.map((x)=>x.id===r.id?withSite:x);
     setRapoarte(next); persist('rapoarte', next); setReportForm(null);
+    if (esteNou) notifica('manageri', { title:'Raport zilnic nou', body:`${currentUser?.nume || 'Un coleg'} a trimis raport la ${santier?.nume || 'un șantier'}.`, tag:'raport' }, currentUser?.id);
   };
   const delReport = (id) => { if (!window.confirm('Ștergi definitiv acest raport zilnic? Orele din el vor dispărea din Pontaj.')) return; const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next); };
 
@@ -4240,6 +4284,12 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
   const [recLoading, setRecLoading] = useState(false);
   const [bioOn, setBioOn] = useState(bioInrolat());
   const [bioStatus, setBioStatus] = useState('');
+  const [notifStatus, setNotifStatus] = useState('');
+  const activeazaNotif = async () => {
+    setNotifStatus('Se activează…');
+    const r = await pushInroleaza(currentUser);
+    setNotifStatus(r==='ok' ? '✅ Notificări activate pe acest dispozitiv.' : r==='refuzat' ? 'Notificările sunt blocate. Le poți permite din setările telefonului/browserului.' : r==='nesuportat' ? 'Acest dispozitiv nu suportă notificări (pe iPhone: adaugă aplicația pe ecranul de start și deschide-o de acolo).' : 'Nu s-a putut activa. Încearcă din nou.');
+  };
   const activeazaBio = async () => {
     setBioStatus('');
     try { await bioInroleaza(currentUser, AUTH_TOKEN); setBioOn(true); setBioStatus('✅ Activată. La următoarea deschidere intri cu amprenta/FaceID.'); }
@@ -4331,6 +4381,12 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
             <button key={val} onClick={()=>setTema(val)} className="flex-1 text-sm px-3 py-2 rounded-lg font-semibold" style={{ color: tema===val?'#14181C':'var(--muted)', background: tema===val?'#2E8BD1':'var(--panel2)', border:'1px solid var(--border)' }}>{lbl}</button>
           ))}
         </div>
+      </div>
+      <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
+        <div className="text-sm font-semibold mb-1" style={{ color:'var(--text)' }}>🔔 Notificări</div>
+        <p className="text-xs mb-3" style={{ color:'var(--muted)' }}>Primești notificări cu sunet pe telefon: raport nou, cerere de material, asignare pe șantier, concediu etc. Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo.</p>
+        <button onClick={activeazaNotif} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🔔 Activează notificările</button>
+        {notifStatus && <p className="text-xs mt-2" style={{ color: notifStatus.startsWith('✅') ? '#4CAF7D' : '#E9A23B' }}>{notifStatus}</p>}
       </div>
       {bioSuportat() && (
         <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
@@ -4876,12 +4932,17 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) 
       const c = { id: uid(), userId: currentUser.id, nume: currentUser.nume, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', status:'Cerut' };
       const next = [c, ...concedii];
       setConcedii(next); persist('concedii', next);
+      notifica('manageri', { title:'Cerere de concediu', body:`${currentUser.nume}: ${form.dataInceput} → ${form.dataSfarsit}.`, tag:'concediu' }, currentUser?.id);
     }
     setForm(null);
   };
   const setStatus = (id, status) => {
-    const next = concedii.map((c)=> c.id===id ? {...c, status} : c);
+    const c = concedii.find((x)=>x.id===id);
+    const next = concedii.map((x)=> x.id===id ? {...x, status} : x);
     setConcedii(next); persist('concedii', next);
+    if (c && (status==='Aprobat' || status==='Refuzat')) {
+      notifica(c.userId, { title: status==='Aprobat' ? 'Concediu aprobat ✅' : 'Concediu refuzat', body:`${c.dataInceput} → ${c.dataSfarsit}.`, tag:'concediu-raspuns' }, currentUser?.id);
+    }
   };
   const delCerere = (id) => {
     if (!window.confirm('Ștergi definitiv această cerere de concediu?')) return;
@@ -6240,6 +6301,7 @@ function App() {
       setConcedii(await loadKey('concedii', []));
       setAchizitii(await loadKey('achizitii', []));
       setPontajCorectii(await loadKey('pontajCorectii', []));
+      try { await loadKey('pushSubs', []); } catch {}
       setError(null);
     } catch (e) {
       if (showSpinner) setError('Nu am putut încărca datele.');
@@ -6249,6 +6311,8 @@ function App() {
   };
 
   useEffect(() => { loadAllData(true); }, []);
+  // Reînnoiește abonarea la notificări dacă permisiunea e deja acordată (fără să deranjeze).
+  useEffect(() => { if (currentUser && typeof Notification !== 'undefined' && Notification.permission === 'granted') { pushInroleaza(currentUser); } }, [currentUser]);
 
   // --- Offline: service worker + indicator „fără net / se sincronizează" ---
   const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
