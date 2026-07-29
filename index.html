@@ -1521,11 +1521,29 @@ async function uploadFileToBlob(file, folder) {
     throw new Error('Componenta de încărcare nu s-a încărcat încă — așteaptă o clipă și încearcă din nou.');
   }
   const pathname = `${folder}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_')}`;
-  const blob = await window.__vercelBlobUpload(pathname, file, {
-    access: 'private',
-    handleUploadUrl: `/api/blob-upload?token=${encodeURIComponent(AUTH_TOKEN || '')}`,
-  });
-  return { url: blob.url, pathname: blob.pathname };
+  const handleUploadUrl = `/api/blob-upload?token=${encodeURIComponent(AUTH_TOKEN || '')}`;
+  try {
+    const blob = await window.__vercelBlobUpload(pathname, file, {
+      access: 'private',
+      handleUploadUrl,
+    });
+    return { url: blob.url, pathname: blob.pathname };
+  } catch (e) {
+    // Diagnostic: întrebăm direct ruta de server ca să aflăm CAUZA reală (status + mesaj),
+    // în loc de mesajul vag „Failed to retrieve the client token".
+    let detaliu = '';
+    try {
+      const r = await fetch(handleUploadUrl, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'blob.generate-client-token', payload: { pathname, callbackUrl: (typeof location!=='undefined'? location.origin : '') + '/api/blob-upload', multipart: false, clientPayload: null } }),
+      });
+      const txt = await r.text();
+      detaliu = ` [server /api/blob-upload → ${r.status}: ${String(txt).slice(0,200)}]`;
+    } catch (e2) {
+      detaliu = ' [ruta /api/blob-upload nu răspunde deloc — lipsește pe server sau altă adresă]';
+    }
+    throw new Error((e && e.message ? e.message : 'Încărcare eșuată') + detaliu);
+  }
 }
 
 // Fișierele sunt într-un magazin Blob privat — nu au un URL accesibil direct,
