@@ -1475,7 +1475,7 @@ function SiteAlertsPanel({ santierId, categorie, categorieLabel, alerte, setAler
   const delAlerta = (id) => { if (!window.confirm('Ștergi această alertă?')) return; const next = alerte.filter((a)=>a.id!==id); setAlerte(next); persist('alerteSantier', next); };
 
   return (
-    <div className="rounded-xl p-3" style={{ background: alerteActive.length ? '#2A1518' : 'var(--panel)', border:`1px solid ${alerteActive.length?'#E0525266':'var(--border)'}` }}>
+    <div className="rounded-xl p-3" style={{ background: alerteActive.length ? 'rgba(224,82,82,.12)' : 'var(--panel)', border:`1px solid ${alerteActive.length?'#E0525266':'var(--border)'}` }}>
       <div className="text-sm font-medium mb-2" style={{ color:'var(--text)' }}>⚠ Sesizări {categorieLabel}{alerteActive.length>0 && <span style={{ color:'#E05252' }}> ({alerteActive.length} deschise)</span>}</div>
       <div className="flex gap-2 mb-2 flex-wrap">
         {itemOptions && itemOptions.length > 0 ? (
@@ -2084,7 +2084,7 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
         {/* Stare finalizare */}
         <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
           {esteFinalizat ? (
-            <div className="text-sm font-semibold text-center py-2 rounded-lg" style={{ color:'#4CAF7D', background:'#14251B' }}>✅ Șantier finalizat</div>
+            <div className="text-sm font-semibold text-center py-2 rounded-lg" style={{ color:'#4CAF7D', background:'rgba(76,175,125,.16)' }}>✅ Șantier finalizat</div>
           ) : (
             <>
               <div className="text-xs mb-2" style={{ color: potFinaliza?'#4CAF7D':'#E9A23B' }}>
@@ -3150,7 +3150,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
               <div className="space-y-1 mb-1.5">
                 {(a.materiale||[]).length === 0 && <div className="text-[11px]" style={{ color:'var(--muted2)' }}>Niciun material adăugat.</div>}
                 {(a.materiale||[]).map((m)=>(
-                  <div key={m.id} className="text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? '#232C34' : 'var(--panel)' }}>
+                  <div key={m.id} className="text-xs px-2 py-1 rounded" style={{ background: editMatId[a.id]===m.id ? 'var(--panelA)' : 'var(--panel)' }}>
                     <div className="flex items-center justify-between">
                       <span style={{ color:'var(--text)' }}>{m.denumire} <span style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{m.cantitate} {m.um}</span></span>
                       <div className="flex items-center gap-2 shrink-0">
@@ -3175,7 +3175,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
                 </div>
               </div>
               {(()=>{ const ll = lucrariApart(a.id); return ll.length > 0 ? (
-                <div className="mt-2 pt-1.5" style={{ borderTop:'1px solid #232C34' }}>
+                <div className="mt-2 pt-1.5" style={{ borderTop:'1px solid var(--border)' }}>
                   <div className="text-[11px] mb-1" style={{ color:'var(--muted)' }}>👷 Cine a lucrat aici:</div>
                   <div className="space-y-0.5">
                     {ll.map((l,i)=>(
@@ -3409,7 +3409,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
             <span>Nr</span><span>Denumire</span><span>U.M.</span><span>Cant.</span>{isManager && <span>Preț</span>}{isManager && <span>Valoare</span>}<span></span>
           </div>
           {vizibile.map((x, i)=> editId===x.id ? (
-            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1px solid var(--border)', background:'#232C34' }}>
+            <div key={x.id} className="grid gap-1 px-2 py-1.5 items-center" style={{ gridTemplateColumns:gridCols, borderTop:'1px solid var(--border)', background:'var(--panelA)' }}>
               <span className="text-[11px]" style={{ color:'var(--muted2)' }}>{i+1}</span>
               <input value={editRow.denumire} onChange={(e)=>setEditRow({...editRow, denumire:e.target.value})} className="rounded px-1.5 py-1 text-xs outline-none" style={inputStyle} />
               <input value={editRow.um} onChange={(e)=>setEditRow({...editRow, um:e.target.value})} className="rounded px-1 py-1 text-xs outline-none text-center" style={inputStyle} />
@@ -3700,7 +3700,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               )}
 
               {santier?.lat && (
-                <div className="mt-3 rounded-lg p-3" style={{ background:'#14231A', border:'1px solid #4CAF7D66' }}>
+                <div className="mt-3 rounded-lg p-3" style={{ background:'rgba(76,175,125,.12)', border:'1px solid #4CAF7D66' }}>
                   <div className="text-sm font-semibold" style={{ color:'#4CAF7D' }}>✅ Pin exact setat</div>
                   <div className="text-sm mb-2" style={{ color:'var(--text)', fontFamily:"'JetBrains Mono', monospace" }}>{Number(santier.lat).toFixed(6)}, {Number(santier.lng).toFixed(6)}</div>
                   <div className="flex gap-1.5">
@@ -6399,7 +6399,7 @@ function App() {
           </div>
         ) : (
           <>
-            {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'#2A1518' }}>{error}</div>}
+            {error && <div className="text-xs mb-4 px-3 py-2 rounded-lg" style={{ color:'#E05252', background:'rgba(224,82,82,.14)' }}>{error}</div>}
 
             {tab === 'devize' && (
               <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} prefill={devizPrefill} onConsumePrefill={()=>setDevizPrefill(null)} />
