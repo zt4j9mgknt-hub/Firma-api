@@ -1731,6 +1731,280 @@ function SiteToolsTab({ santierId, sculeSantier, setSculeSantier, persist }) {
   );
 }
 
+// Șablon standard de checklist (editabil de Manager). Scule/acces = liste de text; verificări = {text, obligatoriu}.
+const CHECKLIST_SABLON_DEFAULT = {
+  scule: ['Rotopercutor + burghie', 'Multimetru / tester tensiune', 'Trusă șurubelnițe + clești', 'Scară', 'Prelungitor', 'Bandă izolatoare / conectori', 'Aparat măsură priză de pământ'],
+  acces: ['Chei / acces la locație', 'Echipament de protecție (cască, mănuși, ochelari)', 'Planșe / schițe la zi'],
+  verificari: [
+    { text: 'Tablou etichetat corect', obligatoriu: true },
+    { text: 'Siguranțe și diferențiale (RCD) testate', obligatoriu: true },
+    { text: 'Priză de pământ măsurată', obligatoriu: true },
+    { text: 'Continuitate / izolație verificată', obligatoriu: true },
+    { text: 'Toate prizele și întrerupătoarele funcționale', obligatoriu: true },
+    { text: 'Strângeri conexiuni verificate', obligatoriu: true },
+    { text: 'S-a executat tot ce e în deviz', obligatoriu: true },
+    { text: 'Capace / rame / doze montate', obligatoriu: false },
+    { text: 'Curățenie la finalul lucrării', obligatoriu: false },
+    { text: 'Poze finale făcute', obligatoriu: false },
+  ],
+};
+
+function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, materialeLista, pozitii, cereri, allUsers, currentUser, isManager, persist, onFinalizeSantier }) {
+  const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
+  const santierId = santier?.id;
+  const azi = () => new Date().toISOString().slice(0,10);
+  const sablon = checklistSablon || CHECKLIST_SABLON_DEFAULT;
+
+  const [sablonOpen, setSablonOpen] = useState(false);
+  const [manualStart, setManualStart] = useState('');
+  const [manualFinal, setManualFinal] = useState('');
+  const [nouScula, setNouScula] = useState('');
+  const [nouAcces, setNouAcces] = useState('');
+  const [nouVerif, setNouVerif] = useState('');
+
+  const items = (checklistSantier || []).filter((i)=>i.santierId===santierId);
+  const startItems = items.filter((i)=>i.faza==='start');
+  const finalItems = items.filter((i)=>i.faza==='final');
+  const confirmari = (checklistConfirmari || []).filter((c)=>c.santierId===santierId);
+
+  const echipaActivi = echipaNormalizata(santier?.echipa).filter((e)=>e.status==='activ');
+  const numeUser = (uid) => allUsers.find((u)=>u.id===uid)?.nume || (uid===currentUser?.id ? currentUser?.nume : '') || 'coleg';
+
+  const saveItems = (next) => { setChecklistSantier(next); persist('checklistSantier', next); };
+  const saveConfirmari = (next) => { setChecklistConfirmari(next); persist('checklistConfirmari', next); };
+  const saveSablon = (next) => { setChecklistSablon(next); persist('checklistSablon', next); };
+
+  const existaText = (faza, text) => items.some((i)=>i.faza===faza && i.text.trim().toLowerCase()===text.trim().toLowerCase());
+  const addItem = (faza, tip, text, obligatoriu) => {
+    if (!text || !text.trim() || existaText(faza, text)) return;
+    saveItems([...(checklistSantier||[]), { id: uid(), santierId, faza, tip, text: text.trim(), obligatoriu: !!obligatoriu, bifat:false, bifatDe:'', bifatData:'' }]);
+  };
+  const addMulte = (faza, tip, lista) => {
+    let next = [...(checklistSantier||[])];
+    lista.forEach((el)=>{
+      const text = (typeof el === 'string') ? el : el.text;
+      const obl = (typeof el === 'string') ? false : !!el.obligatoriu;
+      if (text && text.trim() && !next.some((i)=>i.santierId===santierId && i.faza===faza && i.text.trim().toLowerCase()===text.trim().toLowerCase())) {
+        next.push({ id: uid(), santierId, faza, tip, text: text.trim(), obligatoriu: obl, bifat:false, bifatDe:'', bifatData:'' });
+      }
+    });
+    saveItems(next);
+  };
+  const toggleBifat = (id) => {
+    saveItems((checklistSantier||[]).map((i)=> i.id===id ? { ...i, bifat: !i.bifat, bifatDe: !i.bifat ? (currentUser?.id||'') : '', bifatNume: !i.bifat ? (currentUser?.nume||'') : '', bifatData: !i.bifat ? azi() : '' } : i));
+  };
+  const setObligatoriu = (id, val) => saveItems((checklistSantier||[]).map((i)=> i.id===id ? { ...i, obligatoriu: val } : i));
+  const delItem = (id) => saveItems((checklistSantier||[]).filter((i)=>i.id!==id));
+
+  const genDinDeviz = () => {
+    const surse = [];
+    (materialeLista||[]).forEach((m)=>{ if (m.denumire) surse.push(`${m.denumire}${(Number(m.cantitate)||0)>0?` — ${m.cantitate} ${m.um||''}`.trimEnd():''}`); });
+    (cereri||[]).forEach((c)=>{ if (c.denumire) surse.push(`${c.denumire}${(Number(c.cantitate)||0)>0?` — ${c.cantitate} ${c.um||''}`.trimEnd():''}`); });
+    (pozitii||[]).forEach((p)=>{ if (p.denumire) surse.push(p.denumire); });
+    if (surse.length===0) { alert('Nu am găsit materiale în deviz/poziții/cereri pentru acest șantier. Le poți adăuga manual mai jos.'); return; }
+    addMulte('start', 'material', surse);
+  };
+
+  // Progres
+  const pct = (arr) => arr.length ? Math.round(arr.filter((i)=>i.bifat).length / arr.length * 100) : 0;
+  const startPct = pct(startItems);
+  const finalPct = pct(finalItems);
+
+  const obligFinal = finalItems.filter((i)=>i.obligatoriu);
+  const obligBifate = obligFinal.length===0 || obligFinal.every((i)=>i.bifat);
+  const totiConfirmat = echipaActivi.length===0 || echipaActivi.every((e)=>confirmari.some((c)=>c.userId===e.userId));
+  const potFinaliza = obligBifate && totiConfirmat;
+  const esteFinalizat = santier?.status==='Finalizat';
+
+  const confirmMembru = (userId) => {
+    if (confirmari.some((c)=>c.userId===userId)) return;
+    saveConfirmari([...(checklistConfirmari||[]), { id: uid(), santierId, userId, nume: numeUser(userId), data: azi() }]);
+  };
+  const scoateConfirmare = (userId) => saveConfirmari((checklistConfirmari||[]).filter((c)=>!(c.santierId===santierId && c.userId===userId)));
+
+  const barStyle = (p, col) => ({ height:'6px', borderRadius:'4px', background:'#171C21', overflow:'hidden', marginTop:'4px' });
+  const Bar = ({ p, col }) => (
+    <div style={barStyle(p)}><div style={{ height:'100%', width:`${p}%`, background: col, transition:'width .2s' }} /></div>
+  );
+
+  const ItemRow = ({ it }) => (
+    <div className="flex items-start gap-2 px-2.5 py-2 rounded-lg" style={{ background:'#171C21' }}>
+      <button onClick={()=>toggleBifat(it.id)} className="shrink-0 mt-0.5" style={{ width:20, height:20, borderRadius:6, border:'1px solid '+(it.bifat?'#4CAF7D':'#3A424C'), background: it.bifat?'#4CAF7D':'transparent', color:'#14181C', fontSize:13, fontWeight:800, lineHeight:'18px', textAlign:'center' }}>{it.bifat?'✓':''}</button>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs" style={{ color: it.bifat?'#8B93A0':'#E9E7E2', textDecoration: it.bifat?'line-through':'none' }}>
+          {it.text}{it.obligatoriu && <span className="ml-1" style={{ color:'#E9A23B' }} title="Obligatoriu">*</span>}
+        </div>
+        {it.bifat && it.bifatNume && <div className="text-[10px]" style={{ color:'#5C6570' }}>✓ {it.bifatNume} · {fmtData ? fmtData(it.bifatData) : it.bifatData}</div>}
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        {isManager && it.faza==='final' && (
+          <button onClick={()=>setObligatoriu(it.id, !it.obligatoriu)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: it.obligatoriu?'#14181C':'#8B93A0', background: it.obligatoriu?'#E9A23B':'#1B2127' }}>{it.obligatoriu?'oblig.':'opțional'}</button>
+        )}
+        <button onClick={()=>delItem(it.id)} style={{ color:'#E05252', opacity:0.75, fontSize:12 }}>🗑</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      {/* Șablon standard (Manager) */}
+      {isManager && (
+        <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+          <button onClick={()=>setSablonOpen(!sablonOpen)} className="w-full flex items-center justify-between">
+            <span className="text-sm font-semibold" style={{ color:'#E9E7E2' }}>⚙️ Șabloane standard (scule / acces / verificări)</span>
+            <span style={{ color:'#8B93A0', fontSize:11 }}>{sablonOpen?'▲':'▼'}</span>
+          </button>
+          {sablonOpen && (
+            <div className="mt-3 space-y-3">
+              <div className="text-[11px]" style={{ color:'#8B93A0' }}>Definește o dată listele standard; le adaugi apoi la orice șantier cu un buton.</div>
+              {/* Scule */}
+              <div>
+                <div className="text-xs font-semibold mb-1" style={{ color:'#2E8BD1' }}>🔧 Scule</div>
+                <div className="space-y-1">
+                  {sablon.scule.map((s,idx)=>(
+                    <div key={idx} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background:'#171C21', color:'#E9E7E2' }}>
+                      <span>{s}</span>
+                      <button onClick={()=>saveSablon({...sablon, scule: sablon.scule.filter((_,i)=>i!==idx)})} style={{ color:'#E05252' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-1 mt-1">
+                  <input value={nouScula} onChange={(e)=>setNouScula(e.target.value)} placeholder="Adaugă sculă în șablon" className="flex-1 rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
+                  <button onClick={()=>{ if(nouScula.trim()){ saveSablon({...sablon, scule:[...sablon.scule, nouScula.trim()]}); setNouScula(''); } }} className="text-xs px-2 py-1 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+</button>
+                </div>
+              </div>
+              {/* Acces */}
+              <div>
+                <div className="text-xs font-semibold mb-1" style={{ color:'#2E8BD1' }}>🔑 Acces / protecție</div>
+                <div className="space-y-1">
+                  {sablon.acces.map((s,idx)=>(
+                    <div key={idx} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background:'#171C21', color:'#E9E7E2' }}>
+                      <span>{s}</span>
+                      <button onClick={()=>saveSablon({...sablon, acces: sablon.acces.filter((_,i)=>i!==idx)})} style={{ color:'#E05252' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-1 mt-1">
+                  <input value={nouAcces} onChange={(e)=>setNouAcces(e.target.value)} placeholder="Adaugă la acces/protecție" className="flex-1 rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
+                  <button onClick={()=>{ if(nouAcces.trim()){ saveSablon({...sablon, acces:[...sablon.acces, nouAcces.trim()]}); setNouAcces(''); } }} className="text-xs px-2 py-1 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+</button>
+                </div>
+              </div>
+              {/* Verificări */}
+              <div>
+                <div className="text-xs font-semibold mb-1" style={{ color:'#4CAF7D' }}>✅ Verificări finale <span style={{ color:'#8B93A0', fontWeight:400 }}>(apasă „oblig." ca să fie obligatorii)</span></div>
+                <div className="space-y-1">
+                  {sablon.verificari.map((v,idx)=>(
+                    <div key={idx} className="flex items-center justify-between text-xs px-2 py-1 rounded" style={{ background:'#171C21', color:'#E9E7E2' }}>
+                      <span>{v.text}</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={()=>saveSablon({...sablon, verificari: sablon.verificari.map((x,i)=>i===idx?{...x, obligatoriu:!x.obligatoriu}:x)})} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: v.obligatoriu?'#14181C':'#8B93A0', background: v.obligatoriu?'#E9A23B':'#1B2127' }}>{v.obligatoriu?'oblig.':'opțional'}</button>
+                        <button onClick={()=>saveSablon({...sablon, verificari: sablon.verificari.filter((_,i)=>i!==idx)})} style={{ color:'#E05252' }}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-1 mt-1">
+                  <input value={nouVerif} onChange={(e)=>setNouVerif(e.target.value)} placeholder="Adaugă verificare în șablon" className="flex-1 rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
+                  <button onClick={()=>{ if(nouVerif.trim()){ saveSablon({...sablon, verificari:[...sablon.verificari, { text:nouVerif.trim(), obligatoriu:false }]}); setNouVerif(''); } }} className="text-xs px-2 py-1 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ÎNCEPUT */}
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold" style={{ color:'#E9E7E2' }}>🚀 La început — ai tot ce trebuie?</div>
+          <span className="text-xs" style={{ color:'#8B93A0' }}>{startItems.filter((i)=>i.bifat).length}/{startItems.length}</span>
+        </div>
+        <Bar p={startPct} col="#2E8BD1" />
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          <button onClick={genDinDeviz} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>📋 Materiale din deviz</button>
+          <button onClick={()=>addMulte('start','scula', sablon.scule)} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🔧 Adaugă scule</button>
+          <button onClick={()=>addMulte('start','acces', sablon.acces)} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🔑 Adaugă acces</button>
+        </div>
+        <div className="space-y-1 mt-2">
+          {startItems.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Niciun element încă. Folosește butoanele de mai sus sau adaugă manual.</div>
+            : startItems.map((it)=><ItemRow key={it.id} it={it} />)}
+        </div>
+        <div className="flex gap-1 mt-2">
+          <input value={manualStart} onChange={(e)=>setManualStart(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter'){ addItem('start','manual',manualStart); setManualStart(''); } }} placeholder="Adaugă element manual (material/sculă)" className="flex-1 rounded-lg px-3 py-1.5 text-xs outline-none" style={inputStyle} />
+          <button onClick={()=>{ addItem('start','manual',manualStart); setManualStart(''); }} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă</button>
+        </div>
+      </div>
+
+      {/* FINAL */}
+      <div className="rounded-xl p-3" style={{ background:'#1B2127', border:'1px solid #2A323B' }}>
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold" style={{ color:'#E9E7E2' }}>🏁 La final — e totul ok?</div>
+          <span className="text-xs" style={{ color:'#8B93A0' }}>{finalItems.filter((i)=>i.bifat).length}/{finalItems.length}</span>
+        </div>
+        <Bar p={finalPct} col="#4CAF7D" />
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          <button onClick={()=>addMulte('final','verificare', sablon.verificari)} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✅ Adaugă verificările standard</button>
+        </div>
+        <div className="space-y-1 mt-2">
+          {finalItems.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Niciun element încă. Apasă „Adaugă verificările standard" sau adaugă manual.</div>
+            : finalItems.map((it)=><ItemRow key={it.id} it={it} />)}
+        </div>
+        <div className="flex gap-1 mt-2">
+          <input value={manualFinal} onChange={(e)=>setManualFinal(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter'){ addItem('final','verificare',manualFinal); setManualFinal(''); } }} placeholder="Adaugă verificare manuală" className="flex-1 rounded-lg px-3 py-1.5 text-xs outline-none" style={inputStyle} />
+          <button onClick={()=>{ addItem('final','verificare',manualFinal); setManualFinal(''); }} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>+ Adaugă</button>
+        </div>
+
+        {/* Confirmări echipă */}
+        <div className="mt-3 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          <div className="text-xs font-semibold mb-1" style={{ color:'#E9E7E2' }}>✍️ Confirmare echipă (membrii activi)</div>
+          {echipaActivi.length===0 ? <div className="text-xs" style={{ color:'#5C6570' }}>Niciun membru activ pe șantier. Asignează echipa la tab-ul „Echipă".</div> : (
+            <div className="space-y-1">
+              {echipaActivi.map((e)=>{
+                const conf = confirmari.find((c)=>c.userId===e.userId);
+                const potConfirma = isManager || e.userId===currentUser?.id;
+                return (
+                  <div key={e.userId} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'#171C21' }}>
+                    <span style={{ color:'#E9E7E2' }}>👷 {numeUser(e.userId)}{e.userId===currentUser?.id && <span style={{ color:'#5C6570' }}> (tu)</span>}</span>
+                    {conf ? (
+                      <div className="flex items-center gap-2">
+                        <span style={{ color:'#4CAF7D' }}>✓ confirmat {fmtData ? fmtData(conf.data) : conf.data}</span>
+                        {potConfirma && <button onClick={()=>scoateConfirmare(e.userId)} style={{ color:'#8B93A0' }}>anulează</button>}
+                      </div>
+                    ) : (
+                      potConfirma
+                        ? <button onClick={()=>confirmMembru(e.userId)} className="px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#E9A23B' }}>Confirm</button>
+                        : <span style={{ color:'#8B93A0' }}>așteaptă confirmarea lui</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Stare finalizare */}
+        <div className="mt-3 pt-3" style={{ borderTop:'1px solid #2A323B' }}>
+          {esteFinalizat ? (
+            <div className="text-sm font-semibold text-center py-2 rounded-lg" style={{ color:'#4CAF7D', background:'#14251B' }}>✅ Șantier finalizat</div>
+          ) : (
+            <>
+              <div className="text-xs mb-2" style={{ color: potFinaliza?'#4CAF7D':'#E9A23B' }}>
+                {potFinaliza ? '✓ Toate condițiile îndeplinite — poți finaliza.' : `⏳ Mai lipsește: ${[!obligBifate?'verificări obligatorii (*) nebifate':null, !totiConfirmat?'confirmarea tuturor membrilor activi':null].filter(Boolean).join(' + ')}.`}
+              </div>
+              {isManager && (
+                <button onClick={()=>{ if(potFinaliza && window.confirm('Marchezi șantierul ca finalizat?')) onFinalizeSantier(santierId); }} disabled={!potFinaliza}
+                  className="w-full text-sm px-4 py-2 rounded-lg font-semibold" style={{ color: potFinaliza?'#14181C':'#5C6570', background: potFinaliza?'#4CAF7D':'#232a33', cursor: potFinaliza?'pointer':'not-allowed' }}>
+                  🏁 Finalizează șantierul
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, persist, onExportToDeviz, onCerereMaterial, currentUser }) {
   const inputStyle = { background:'#171C21', color:'#E9E7E2', border:'1px solid #2A323B' };
 
@@ -3088,7 +3362,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -3141,6 +3415,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
 
   const updateEchipa = (santierId, echipa) => {
     const next = santiere.map((s)=>s.id===santierId ? {...s, echipa} : s);
+    setSantiere(next); persist('santiere', next);
+  };
+  const finalizeSantier = (santierId) => {
+    const next = santiere.map((s)=>s.id===santierId ? {...s, status:'Finalizat'} : s);
     setSantiere(next); persist('santiere', next);
   };
   const addToEchipa = (santierId, userId) => {
@@ -3481,6 +3759,17 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         {accHeader('media','📸','Foto / Video')}
         {siteView === 'media' && (
           <SiteMediaTab santierId={selected} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} persist={persist} currentUser={currentUser} />
+        )}
+        {accHeader('checklist','✅','Checklist')}
+        {siteView === 'checklist' && (
+          <ChecklistTab santier={santier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier}
+            checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari}
+            checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon}
+            materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)}
+            pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)}
+            cereri={cereriSantier.filter((c)=>c.santierId===selected)}
+            allUsers={allUsers} currentUser={currentUser} isManager={currentUser?.rol === 'Manager'} persist={persist}
+            onFinalizeSantier={finalizeSantier} />
         )}
         {accHeader('echipa','👥','Echipă', echipaNormalizata(santier?.echipa).length)}
         {siteView === 'echipa' && (
@@ -5608,6 +5897,9 @@ function App() {
   const [structuraSantier, setStructuraSantier] = useState([]);
   const [pozitiiSantier, setPozitiiSantier] = useState([]);
   const [materialeListaSantier, setMaterialeListaSantier] = useState([]);
+  const [checklistSantier, setChecklistSantier] = useState([]);
+  const [checklistConfirmari, setChecklistConfirmari] = useState([]);
+  const [checklistSablon, setChecklistSablon] = useState(CHECKLIST_SABLON_DEFAULT);
   const [offerForm, setOfferForm] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState(null);
   const [devizPrefill, setDevizPrefill] = useState(null);
@@ -5635,6 +5927,9 @@ function App() {
       setStructuraSantier(await loadKey('structuraSantier', []));
       setPozitiiSantier(await loadKey('pozitiiSantier', []));
       setMaterialeListaSantier(await loadKey('materialeListaSantier', []));
+      setChecklistSantier(await loadKey('checklistSantier', []));
+      setChecklistConfirmari(await loadKey('checklistConfirmari', []));
+      setChecklistSablon(await loadKey('checklistSablon', CHECKLIST_SABLON_DEFAULT));
       setConcedii(await loadKey('concedii', []));
       setAchizitii(await loadKey('achizitii', []));
       setPontajCorectii(await loadKey('pontajCorectii', []));
@@ -6016,7 +6311,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} clients={clients} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} setTab={setTab} setPendingSiteNav={setPendingSiteNav} currentUser={effectiveUser} />}
