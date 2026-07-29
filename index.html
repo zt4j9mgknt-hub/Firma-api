@@ -1622,18 +1622,20 @@ function toggleFullscreen(el) {
 }
 
 // Butoane flotante (colț dreapta-sus): ecran complet + închide. Țin cont de „notch"/safe-area (și pe landscape).
-function CloseX({ onClose, onFull }) {
+function CloseX({ onClose, onFull, nativeUrl }) {
   const [tip, setTip] = useState('');
   const btn = { width:44, height:44, borderRadius:'50%', background:'rgba(10,14,20,.66)', color:'#fff', fontSize:20, fontWeight:700, lineHeight:1, border:'1px solid rgba(255,255,255,.22)', backdropFilter:'blur(6px)', display:'flex', alignItems:'center', justifyContent:'center' };
   const canFs = typeof document !== 'undefined' && (document.fullscreenEnabled || document.webkitFullscreenEnabled);
   const handleFull = () => {
-    if (canFs && onFull) { onFull(); }
-    else { setTip('Pe iPhone: apasă „Distribuie" (⬆) în Safari → „Adaugă pe ecranul de start", apoi deschide aplicația de acolo — va merge pe tot ecranul.'); setTimeout(()=>setTip(''), 6000); }
+    if (canFs && onFull) { onFull(); }                         // Android / laptop: ecran complet real
+    else if (nativeUrl) { try { window.open(nativeUrl, '_blank'); } catch (e) {} }  // iPhone: viewer nativ (pinch + „Done")
+    else { setTip('Pe acest dispozitiv ecranul complet nu e disponibil aici.'); setTimeout(()=>setTip(''), 4000); }
   };
+  const showFull = onFull || nativeUrl;
   return (
     <>
       <div style={{ position:'absolute', top:'calc(env(safe-area-inset-top, 0px) + 10px)', right:'calc(env(safe-area-inset-right, 0px) + 10px)', zIndex:30, display:'flex', gap:8 }}>
-        {onFull && <button onClick={handleFull} aria-label="Ecran complet" style={btn}>⛶</button>}
+        {showFull && <button onClick={handleFull} aria-label="Ecran complet" style={btn}>⛶</button>}
         <button onClick={onClose} aria-label="Închide" style={btn}>✕</button>
       </div>
       {tip && <div style={{ position:'absolute', top:'calc(env(safe-area-inset-top, 0px) + 62px)', left:12, right:12, zIndex:30, background:'rgba(10,14,20,.9)', color:'#fff', padding:'10px 12px', borderRadius:10, fontSize:12, lineHeight:1.4, textAlign:'center', border:'1px solid rgba(255,255,255,.15)' }}>{tip}</div>}
@@ -1649,7 +1651,7 @@ function ZoomImage({ src, alt, onClose, onFull }) {
       <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
         <img src={src} alt={alt} draggable="false" style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', transform:`translate(${zp.tx}px, ${zp.ty}px) scale(${zp.scale})`, transformOrigin:'center', transition: zp.moving.current.active ? 'none' : 'transform .12s', cursor: zp.scale>1?'grab':'default', userSelect:'none' }} />
       </div>
-      {onClose && <CloseX onClose={onClose} onFull={onFull} />}
+      {onClose && <CloseX onClose={onClose} onFull={onFull} nativeUrl={src} />}
       <ZoomControls scale={zp.scale} zoomBy={zp.zoomBy} reset={zp.reset} />
     </div>
   );
@@ -1718,7 +1720,7 @@ function PdfViewer({ src, nume, onClose, onFull }) {
         </div>
       </div>
       {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'55%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
-      {onClose && <CloseX onClose={onClose} onFull={onFull} />}
+      {onClose && <CloseX onClose={onClose} onFull={onFull} nativeUrl={src} />}
       <ZoomControls scale={zoom} zoomBy={zoomBy} reset={resetZ} />
     </div>
   );
@@ -3598,7 +3600,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [etapaTab, setEtapaTab] = useState('toate');
   const [etapaNoua, setEtapaNoua] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
-  const [siteView, setSiteView] = useState('rapoarte');
+  const [siteView, setSiteView] = useState('__closed__');
   // Istoric de navigare între sub-taburi (Materiale, Structură, Scule...) pentru back pas cu pas.
   const [viewHistory, setViewHistory] = useState([]);
   const [viewForward, setViewForward] = useState([]);
@@ -3630,7 +3632,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   useEffect(() => {
     if (!pendingSiteNav) return;
     setSelected(pendingSiteNav.santierId);
-    setSiteView(pendingSiteNav.siteView || 'rapoarte');
+    setSiteView(pendingSiteNav.siteView || '__closed__');
     setViewHistory([]); setViewForward([]);
     setPendingSiteNav(null);
   }, [pendingSiteNav]);
@@ -4084,7 +4086,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             const nrRapoarte = rapoarte.filter((r)=>r.santierId===s.id).length;
             const areAcces = currentUser?.rol === 'Manager' || inEchipa(s.echipa, currentUser?.id);
             return (
-              <div key={s.id} className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${areAcces ? 'cursor-pointer' : ''}`} onClick={()=>{ if (areAcces) { setSelected(s.id); setSiteView('rapoarte'); setViewHistory([]); setViewForward([]); } }} style={{ background:'var(--panel)', border:'1px solid var(--border)', opacity: areAcces?1:0.5 }}>
+              <div key={s.id} className={`rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${areAcces ? 'cursor-pointer' : ''}`} onClick={()=>{ if (areAcces) { setSelected(s.id); setSiteView('__closed__'); setViewHistory([]); setViewForward([]); } }} style={{ background:'var(--panel)', border:'1px solid var(--border)', opacity: areAcces?1:0.5 }}>
                 <div className="min-w-0">
                   <div className="text-sm" style={{ color:'var(--text)' }}>{!areAcces && '🔒 '}{s.nume} <span className="text-xs ml-2" style={{ color: s.status==='Activ'?'#4CAF7D':s.status==='Pauză'?'#E9A23B':'var(--muted)' }}>{s.status}</span></div>
                   <div className="text-xs" style={{ color:'var(--muted)' }}>{s.adresa} · {nrRapoarte} rapoarte{!areAcces && ' · Nu ești asignat aici'}</div>
