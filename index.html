@@ -4489,13 +4489,20 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
     if (ab === 'refuzat') { setTestStatus('❌ Notificările sunt blocate din setările telefonului/browserului. Permite-le și reîncearcă.'); return; }
     if (ab === 'nesuportat') { setTestStatus('❌ Dispozitivul nu suportă notificări. Pe iPhone: adaugă aplicația pe ecranul de start și deschide-o de acolo.'); return; }
     if (ab !== 'ok') { setTestStatus('❌ Nu s-a putut abona dispozitivul. Reîncearcă.'); return; }
+    // Câți abonați sunt pe server, pe roluri — ca să vedem dacă managerul e înregistrat.
+    let lista = [];
+    try { const r = await authFetch('/api/data?key=pushSubs'); const d = await r.json(); lista = Array.isArray(d.value) ? d.value : []; } catch {}
+    const nrMgr = lista.filter((x)=>x && x.rol==='Manager').length;
+    const nrAng = lista.filter((x)=>x && x.rol!=='Manager').length;
+    const abonati = `Abonați pe server: ${nrMgr} manager, ${nrAng} angajați. `;
     const res = await notifica(currentUser?.id, { title:'Test ✅', body:'Notificările funcționează!', tag:'test' });
     if (res && res.ok) {
       const trimise = res.data && typeof res.data.sent === 'number' ? res.data.sent : '?';
-      if (trimise === 0) setTestStatus('⚠️ Serverul a răspuns OK, dar 0 trimise. Verifică: acest dispozitiv are notificările activate și e deschis din ecranul de start (iPhone).');
-      else setTestStatus('✅ Trimis către ' + trimise + ' dispozitiv(e). Ar trebui să apară notificarea în câteva secunde.');
+      if (trimise === 0) setTestStatus('⚠️ ' + abonati + 'Server OK dar 0 trimise pe acest dispozitiv. Verifică că e deschis din ecranul de start (iPhone).');
+      else if (nrMgr === 0) setTestStatus('⚠️ ' + abonati + 'Push-ul merge, DAR niciun manager nu e abonat — de aceea nu-ți vin rapoartele. Apasă „🔔 Activează notificările" pe telefonul de manager.');
+      else setTestStatus('✅ ' + abonati + 'Push trimis către ' + trimise + '. Dacă un angajat trimite raport, ar trebui să-ți vină. Dacă tot nu, angajatul are versiune veche — să reîncarce aplicația.');
     } else if (res && res.reason === 'fara-abonati') {
-      setTestStatus('⚠️ Niciun dispozitiv abonat. Apasă întâi „🔔 Activează notificările" pe fiecare telefon.');
+      setTestStatus('⚠️ ' + abonati + 'Niciun dispozitiv abonat pentru test. Apasă întâi „🔔 Activează notificările".');
     } else if (res && res.status === 401) {
       setTestStatus('❌ Server 401: token lipsă/invalid. Reautentifică-te (ieși și intră din nou).');
     } else if (res && res.status === 500) {
