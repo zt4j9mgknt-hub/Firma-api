@@ -270,6 +270,15 @@ async function saveKey(key, value) {
 // ---- Notificări (Web Push) ----
 const VAPID_PUBLIC = 'BL2zeAif4sj-0ix4-_AoDmfXo3QnXC5YAh1aplsoTFX0TiiQC99gzO_vXSJZ9o53XtB218YlvzfkWYfb6ISbSyI';
 function urlB64ToUint8Array(b64){ const pad='='.repeat((4-(b64.length%4))%4); const base=(b64+pad).replace(/-/g,'+').replace(/_/g,'/'); const raw=atob(base); const arr=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i); return arr; }
+// Citește lista de abonați DIRECT de pe server (nu din cache-ul local, care poate fi vechi).
+async function citestePushSubs(){
+  try{
+    const r = await authFetch(`/api/data?key=pushSubs`);
+    const d = await r.json();
+    if (Array.isArray(d.value)) { cacheSet('pushSubs', d.value); return d.value; }
+  }catch{}
+  return cacheGet('pushSubs') || [];
+}
 async function pushInroleaza(user){
   try{
     if(!user || !('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification==='undefined') return 'nesuportat';
@@ -281,7 +290,10 @@ async function pushInroleaza(user){
     let sub=await reg.pushManager.getSubscription();
     if(!sub){ sub=await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:urlB64ToUint8Array(VAPID_PUBLIC) }); }
     const subJson=JSON.parse(JSON.stringify(sub));
-    const list=(cacheGet('pushSubs')||[]).filter((x)=> x && x.sub && x.sub.endpoint!==subJson.endpoint);
+    // IMPORTANT: pornim de la lista de pe SERVER (nu de la cache), ca să NU ștergem abonații
+    // celorlalte telefoane. Doar adăugăm/înlocuim abonamentul acestui dispozitiv.
+    const server = await citestePushSubs();
+    const list = server.filter((x)=> x && x.sub && x.sub.endpoint!==subJson.endpoint);
     list.push({ id:subJson.endpoint, userId:user.id, nume:user.nume, rol:user.rol, sub:subJson, data:new Date().toISOString() });
     cacheSet('pushSubs', list);
     try{ await saveKey('pushSubs', list); }catch{}
@@ -291,7 +303,7 @@ async function pushInroleaza(user){
 // Trimite o notificare către: 'manageri' | 'toti' | un userId | [userId,...]. exceptUserId = nu te notifica pe tine.
 async function notifica(audience, msg, exceptUserId){
   try{
-    let list=cacheGet('pushSubs')||[];
+    let list = await citestePushSubs(); // mereu lista proaspătă de pe server
     if(exceptUserId) list=list.filter((x)=>x.userId!==exceptUserId);
     let sel;
     if(audience==='manageri') sel=list.filter((x)=>x.rol==='Manager');
