@@ -1841,7 +1841,7 @@ function GhidTab({ isManager }) {
 
       <Sec icon="🏖" title="Concedii">{'• Ceri concediu de aici (dată de început → dată de sfârșit).\n• Managerul primește notificare și aprobă/refuză; tu primești notificare cu răspunsul.\n• Zilele aprobate apar la Pontaj.'}</Sec>
 
-      <Sec icon="🔔" title="Notificări">{'• Din Profil → 🔔 Activează notificările (o singură dată pe fiecare telefon).\n• Primești pe telefon, cu sunet, evenimentele care te privesc (asignare pe șantier, răspuns la concediu etc.).\n• Pe iconiță apare și o bulină cu numărul de notificări necitite; se șterge singură când deschizi aplicația.\n• Butonul „📨 Trimite notificare de test" verifică pe loc că totul merge.\n• Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo.'}</Sec>
+      <Sec icon="🔔" title="Notificări">{'• Din Profil → 🔔 Activează notificările (o singură dată pe fiecare telefon).\n• Primești pe telefon, cu sunet, evenimentele care te privesc (asignare pe șantier, răspuns la concediu, material aprobat/respins etc.).\n• Când managerul îți RESPINGE ceva (un material sau concediu), primești push și apare cu ROȘU în aplicație — pe Dashboard („⛔ ... respinse") și în „Activitatea mea". Apeși „Am văzut" ca să dispară.\n• Pe iconiță apare și o bulină cu numărul de lucruri de rezolvat; rămâne până le rezolvi.\n• Butonul „📨 Trimite notificare de test" verifică pe loc că totul merge.\n• Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo.'}</Sec>
 
       <Sec icon="🎨" title="Aspect (Zi / Noapte)">{'• Din Profil → Aspect alegi Zi, Noapte sau Automat.\n• „Automat" urmează setarea telefonului.'}</Sec>
 
@@ -5162,8 +5162,9 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) 
     const c = concedii.find((x)=>x.id===id);
     const next = concedii.map((x)=> x.id===id ? {...x, status} : x);
     setConcedii(next); persist('concedii', next);
-    if (c && (status==='Aprobat' || status==='Refuzat')) {
-      notifica(c.userId, { title: status==='Aprobat' ? 'Concediu aprobat ✅' : 'Concediu refuzat', body:`${c.dataInceput} → ${c.dataSfarsit}.`, tag:'concediu-raspuns' }, currentUser?.id);
+    if (c && (status==='Aprobat' || status==='Respins' || status==='Refuzat')) {
+      const eAprobat = status==='Aprobat';
+      notifica(c.userId, { title: eAprobat ? 'Concediu aprobat ✅' : '⛔ Concediu respins', body:`${c.dataInceput} → ${c.dataSfarsit}${eAprobat ? '' : ' — respins'}.`, tag:'concediu-raspuns' }, currentUser?.id);
     }
   };
   const delCerere = (id) => {
@@ -5479,6 +5480,12 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     totalDeFacut += santiereMele.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)).length;
   }
 
+  // --- Respinse (material/concediu) care mă privesc, neconfirmate încă — banner roșu ---
+  const seenRespins = (()=>{ try{ return JSON.parse(localStorage.getItem('respinsVazut_'+(currentUser?.id||''))||'[]'); }catch{ return []; } })();
+  const respinseCount =
+    cereriSantier.filter((c)=>c.cerutId===currentUser?.id && c.status==='Respinsă' && !seenRespins.includes('mat-'+c.id)).length
+    + (concedii||[]).filter((c)=>c.userId===currentUser?.id && (c.status==='Respins'||c.status==='Refuzat') && !seenRespins.includes('con-'+c.id)).length;
+
   // --- Felicitări: ziua de naștere (din CNP) și sărbători (Crăciun, Paște, Anul Nou) ---
   const [colegiUsers, setColegiUsers] = useState([]);
   useEffect(() => {
@@ -5564,6 +5571,15 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         ))}
       </div>
 
+      {respinseCount > 0 && (
+        <button onClick={()=>setTab('activitate')} className="w-full text-left rounded-xl p-4 mb-3" style={{ background:'#E0525214', border:'1px solid #E0525266', borderLeft:'4px solid #E05252' }}>
+          <div className="flex items-center justify-between">
+            <span style={{ fontSize:15, fontWeight:700, color:'#E05252' }}>⛔ {respinseCount} {respinseCount===1?'lucru respins':'lucruri respinse'}</span>
+            <span style={{ color:'#E05252' }}>→</span>
+          </div>
+        </button>
+      )}
+
       <button onClick={()=>setTab('activitate')} className="w-full text-left rounded-xl p-4 mb-6" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderLeft: totalDeFacut>0 ? '4px solid #E05252' : '4px solid var(--border)' }}>
         <div className="flex items-center justify-between">
           <span style={{ fontSize:15, fontWeight:700, color:'var(--text)' }}>
@@ -5600,6 +5616,15 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
   const santiereActiveFaraRaportAzi = santiere.filter((s)=> s.status==='Activ' && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi));
 
   const isManager = currentUser?.rol === 'Manager';
+  // --- Respinse: ce mi-a respins managerul (material sau concediu) — apar cu ROȘU în aplicație ---
+  const respinseMele = [
+    ...cereriSantier.filter((c)=>c.cerutId===currentUser?.id && c.status==='Respinsă').map((c)=>({ id:'mat-'+c.id, icon:'📦', text:`${c.denumire} — ${c.cantitate} ${c.um}`, data:c.data })),
+    ...((concedii||[]).filter((c)=>c.userId===currentUser?.id && (c.status==='Respins' || c.status==='Refuzat')).map((c)=>({ id:'con-'+c.id, icon:'🏖', text:`Concediu ${c.dataInceput} → ${c.dataSfarsit}`, data:c.dataInceput }))),
+  ];
+  const RESP_KEY = 'respinsVazut_' + (currentUser?.id || '');
+  const [respinsVazut, setRespinsVazut] = useState(()=>{ try{ return JSON.parse(localStorage.getItem(RESP_KEY)||'[]'); }catch{ return []; } });
+  const marcheazaVazut = (rid) => { const next=[...new Set([...respinsVazut, rid])]; setRespinsVazut(next); try{ localStorage.setItem(RESP_KEY, JSON.stringify(next)); }catch{} };
+  const respinseAfisate = respinseMele.filter((r)=>!respinsVazut.includes(r.id));
   const [mementoOpen, setMementoOpen] = useState(false);
   const [santiereOpen, setSantiereOpen] = useState(false);
   const [cereriOpen, setCereriOpen] = useState(false);
@@ -5623,6 +5648,22 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
     <div>
       <h2 className="text-lg mb-1" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>⚡ Activitatea mea</h2>
       <p className="text-xs mb-6" style={{ color:'var(--muted2)' }}>Tot ce ai de rezolvat sau de urmărit, într-un singur loc.</p>
+
+      {respinseAfisate.length > 0 && (
+        <div className="mb-6 rounded-xl p-4" style={{ background:'#E0525214', border:'1px solid #E0525266', borderLeft:'4px solid #E05252' }}>
+          <div className="flex items-center gap-2 mb-2">
+            <span style={{ fontSize:14, fontWeight:700, color:'#E05252' }}>⛔ Respinse ({respinseAfisate.length})</span>
+          </div>
+          <div className="space-y-1.5">
+            {respinseAfisate.map((r)=>(
+              <div key={r.id} className="flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel)', border:'1px solid #E0525233' }}>
+                <span style={{ color:'var(--text)' }}>{r.icon} {r.text} <span style={{ color:'#E05252', fontWeight:600 }}>· respins</span>{r.data ? <span style={{ color:'var(--muted2)' }}> · {r.data}</span> : null}</span>
+                <button onClick={()=>marcheazaVazut(r.id)} className="shrink-0 text-[11px] px-2 py-1 rounded" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>Am văzut</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isManager && (() => {
         const acum = new Date();
