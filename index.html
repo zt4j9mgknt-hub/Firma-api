@@ -1632,9 +1632,17 @@ function ZoomImage({ src, alt, onClose }) {
   );
 }
 
-// Vizualizator PDF: randează paginile cu PDF.js în imagini și le face zoom-abile ca la poze (merge perfect pe telefon).
+// Vizualizator PDF: randează paginile cu PDF.js, apoi le afișează într-un container cu SCROLL NATIV
+// (te plimbi sus-jos-stânga-dreapta ca la orice pagină) + zoom cu două degete sau butoane.
 function PdfViewer({ src, nume, onClose }) {
-  const zp = useZoomPan({ maxScale:8, alwaysPan:true });
+  const [zoom, setZoom] = useState(1);
+  const pz = useRef({ startDist:0, startZoom:1 });
+  const clampZ = (z) => Math.min(5, Math.max(1, z));
+  const zoomBy = (f) => setZoom((z)=>clampZ(z*f));
+  const resetZ = () => setZoom(1);
+  const dist2 = (t) => Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+  const onTS = (e) => { if (e.touches.length===2){ pz.current.startDist=dist2(e.touches); pz.current.startZoom=zoom; } };
+  const onTM = (e) => { if (e.touches.length===2){ const d=dist2(e.touches); setZoom(clampZ(pz.current.startZoom*(d/(pz.current.startDist||d)))); } };
   const [pages, setPages] = useState([]);
   const [status, setStatus] = useState('Se încarcă planșa…');
   useEffect(() => {
@@ -1667,9 +1675,10 @@ function PdfViewer({ src, nume, onClose }) {
     return () => { cancelled = true; };
   }, [src]);
   return (
-    <div style={{ position:'relative', flex:1, minHeight:0, overflow:'hidden', touchAction:'none', background:'#0c0f13' }} {...zp.handlers}>
-      <div style={{ position:'absolute', inset:0 }}>
-        <div style={{ transform:`translate(${zp.tx}px, ${zp.ty}px) scale(${zp.scale})`, transformOrigin:'top center', transition: zp.moving.current.active ? 'none' : 'transform .12s', display:'flex', flexDirection:'column', alignItems:'center', gap:10, padding:'10px 0', minHeight:'100%' }}>
+    <div style={{ position:'relative', flex:1, minHeight:0, background:'#0c0f13' }}>
+      <div onTouchStart={onTS} onTouchMove={onTM}
+        style={{ position:'absolute', inset:0, overflow:'auto', WebkitOverflowScrolling:'touch', touchAction:'pan-x pan-y', textAlign:'center' }}>
+        <div style={{ width:`${zoom*100}%`, minWidth:'100%', margin:'0 auto', display:'flex', flexDirection:'column', alignItems:'center', gap:10, padding:'10px 0 70px' }}>
           {status && (
             <div style={{ color:'#9fb0c0', padding:'24px 16px', textAlign:'center', fontSize:13 }}>
               {status}
@@ -1681,13 +1690,13 @@ function PdfViewer({ src, nume, onClose }) {
             </div>
           )}
           {pages.map((d, i) => (
-            <img key={i} src={d} draggable="false" style={{ maxWidth:'100%', width:'100%', display:'block', boxShadow:'0 2px 10px rgba(0,0,0,.4)', userSelect:'none' }} />
+            <img key={i} src={d} draggable="false" style={{ width:'100%', display:'block', boxShadow:'0 2px 10px rgba(0,0,0,.4)', userSelect:'none' }} />
           ))}
         </div>
       </div>
-      {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'60%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
+      {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'55%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
       {onClose && <CloseX onClose={onClose} />}
-      <ZoomControls scale={zp.scale} zoomBy={zp.zoomBy} reset={zp.reset} />
+      <ZoomControls scale={zoom} zoomBy={zoomBy} reset={resetZ} />
     </div>
   );
 }
