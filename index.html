@@ -1621,7 +1621,7 @@ async function uploadFileToBlob(file, folder) {
   const handleUploadUrl = `/api/blob-upload?token=${encodeURIComponent(AUTH_TOKEN || '')}`;
   try {
     const blob = await window.__vercelBlobUpload(pathname, file, {
-      access: 'public',
+      access: 'private',
       handleUploadUrl,
     });
     return { url: blob.url, pathname: blob.pathname };
@@ -1764,9 +1764,10 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
   useEffect(() => {
     let cancelled = false;
     setPages([]); setStatus('Se încarcă planșa…');
+    const tLent = setTimeout(()=>{ if(!cancelled) setStatus('Durează neobișnuit de mult… Verifică internetul. Dacă la fel se întâmplă la TOATE planșele/pozele, stocarea (Vercel Blob) e probabil deconectată sau la limită.'); }, 18000);
     (async () => {
       const lib = window.pdfjsLib;
-      if (!lib) { setStatus('Vizualizatorul nu s-a încărcat. Verifică internetul și reintră în planșă.'); return; }
+      if (!lib) { clearTimeout(tLent); setStatus('Vizualizatorul nu s-a încărcat. Verifică internetul și reintră în planșă.'); return; }
       try {
         try { lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch {}
         // IMPORTANT: descărcăm fișierul dintr-o singură bucată (disableRange/disableStream).
@@ -1775,6 +1776,7 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
         let pdf;
         try { pdf = await lib.getDocument(optiuni(src)).promise; }
         catch (e1) { if (fallbackSrc && fallbackSrc !== src) { pdf = await lib.getDocument(optiuni(fallbackSrc)).promise; } else { throw e1; } }
+        clearTimeout(tLent);
         // Rapid implicit; „HD" (la cerere) randează mai fin.
         const targetW = hd ? 2600 : 1500;
         const maxS = hd ? 4 : 2;
@@ -1798,10 +1800,11 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
         }
         if (!cancelled) setStatus('');
       } catch (e) {
+        clearTimeout(tLent);
         if (!cancelled) setStatus('Nu am putut afișa planșa aici. ' + (e && e.message ? e.message : ''));
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(tLent); };
   }, [src, hd]);
   return (
     <div style={{ position:'relative', flex:1, minHeight:0, background:'#0c0f13' }}>
