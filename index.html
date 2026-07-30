@@ -1843,7 +1843,7 @@ const HELP = {
   media: 'Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe deodată.\n• Apeși pe o poză ca s-o deschizi cu zoom (pinch).',
   checklist: 'Checklist în două părți: La început și La sfârșit.\n• La ÎNCEPUT ai două rubrici: 🔧 Scule și 📦 Materiale.\n• Scule: apeși „➕ Adaugă scule", scrii manual sau alegi din sugestii (din tab-ul Scule și de pe alte șantiere).\n• Materiale: apeși „➕ Adaugă materiale"; sugestiile vin din lista de materiale a șantierului (dacă e importată), altfel din istoricul general de materiale.\n• La fiecare rând bifezi „✓ Am" (verde) sau „✗ Lipsă" (roșu).\n• La FINAL: bifezi verificările; cele cu * sunt obligatorii, iar fiecare coleg activ confirmă.',
   echipa: 'Colegii asignați la acest șantier.\n• Apeși 📞 ca să suni direct un coleg.\n• Managerul poate adăuga sau scoate colegi din echipă.',
-  probleme: 'Întrebări și probleme de pe șantier, cu răspunsurile lor.\n• Scrii întrebarea și apeși „Trimite".\n• Oricine din echipă poate să răspundă la o întrebare.\n• Primești notificare când cineva răspunde și când apare răspunsul confirmat; apeși pe notificare ca să se deschidă direct întrebarea.\n• Întrebările cu răspuns confirmat rămân salvate, ca să le găsești ușor data viitoare.',
+  probleme: 'Un fel de chat de grup al șantierului, pentru întrebări și probleme.\n• Scrii întrebarea și apeși „Trimite" — colegii de pe șantier și managerul primesc notificare.\n• Oricine din echipă poate să răspundă; toate răspunsurile se adună sub întrebare, ca într-o discuție.\n• Primești notificare (push) la fiecare întrebare și răspuns nou de pe șantierul tău; apeși pe notificare ca să se deschidă direct discuția.\n• Îți poți șterge propria întrebare cu 🗑.',
 };
 
 // Buton mic ℹ️ „Cum se folosește" — se desface și arată instrucțiunile tab-ului curent.
@@ -2198,7 +2198,7 @@ function SiteToolsTab({ santierId, santierNume, sculeSantier, setSculeSantier, p
 
 // Probleme & rezolvări (Q&A) pe șantier. Managerul răspunde; răspunsurile devin o bază de cunoștințe.
 // La întrebări noi similare, aplicația îi PROPUNE managerului răspunsul cunoscut — el îl aprobă.
-function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeSantier, persist, currentUser }) {
+function SiteProblemeTab({ santierId, santierNume, echipaIds, problemeSantier, setProblemeSantier, persist, currentUser }) {
   const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
   const isManager = currentUser?.rol === 'Manager';
   const [intrebareNoua, setIntrebareNoua] = useState('');
@@ -2208,6 +2208,7 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
   const baza = bazaCunostinteQA(problemeSantier); // doar răspunsuri marcate corecte (de pe toate șantierele)
   const rezolvateAici = aici.filter((q)=>raspunsCorectQA(q)).slice().reverse();
   const deschise = aici.filter((q)=>!raspunsCorectQA(q)).slice().reverse();
+  const toateAici = aici.slice().reverse(); // pentru angajați: totul într-o singură listă (ca un chat)
   const setPersist = (next) => { setProblemeSantier(next); persist('problemeSantier', next); };
 
   const adaugaIntrebare = () => {
@@ -2215,6 +2216,9 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
     const q = { id: uid(), santierId, intrebare: intrebareNoua.trim(), raspunsuri:[], status:'deschis', creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: new Date().toISOString().slice(0,10) };
     setPersist([...problemeSantier, q]); setIntrebareNoua('');
     notifica('manageri', { title:'Întrebare / problemă nouă', body:`${currentUser?.nume || 'Un coleg'}: „${q.intrebare}" — ${santierNume || 'șantier'}.`, tag:'qa-'+santierId, url:'/?qa='+q.id }, currentUser?.id);
+    // Anunță și colegii de pe șantier (persoanele implicate)
+    const echipa = (echipaIds||[]).filter((id)=> id && id!==currentUser?.id);
+    if (echipa.length) notifica(echipa, { title:'Întrebare pe șantier', body:`${currentUser?.nume || 'Un coleg'}: „${q.intrebare}" — ${santierNume || 'șantier'}.`, tag:'qa-'+santierId, url:'/?qa='+q.id }, currentUser?.id);
   };
   const adaugaRaspuns = (q, text, corect) => {
     const t = String(text||'').trim(); if (!t) return;
@@ -2224,6 +2228,9 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
     setRaspunsForm((f)=>{ const c={...f}; delete c[q.id]; return c; });
     if (!isManager) notifica('manageri', { title:'Răspuns de verificat', body:`${currentUser?.nume||'Un coleg'} a răspuns la „${q.intrebare}".`, tag:'qa-verif', url:'/?qa='+q.id }, currentUser?.id);
     if (q.creatId && q.creatId !== currentUser?.id) notifica(q.creatId, { title: corect?'Răspuns confirmat ✅':'Un răspuns la întrebarea ta', body:`„${q.intrebare}" → ${t}`, tag:'qa-raspuns', url:'/?qa='+q.id }, currentUser?.id);
+    // Notifică individual restul colegilor implicați pe șantier (chat de grup) — mai puțin autorul și cel deja anunțat.
+    const echipa = (echipaIds||[]).filter((id)=> id && id!==currentUser?.id && id!==q.creatId);
+    if (echipa.length) notifica(echipa, { title:'Răspuns nou pe șantier', body:`${currentUser?.nume||'Un coleg'}: „${t}"`, tag:'qa-'+santierId, url:'/?qa='+q.id }, currentUser?.id);
   };
   const marcheazaCorect = (q, raspunsId) => {
     const next = problemeSantier.map((p)=> p.id!==q.id ? p : {...p, raspunsuri: raspunsuriQA(p).map((x)=>({...x, corect: x.id===raspunsId})), status:'rezolvat'});
@@ -2235,28 +2242,35 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
   const stergeRaspuns = (q, raspunsId) => setPersist(problemeSantier.map((p)=> p.id===q.id ? {...p, raspunsuri: raspunsuriQA(p).filter((x)=>x.id!==raspunsId)} : p));
   const stergeQ = (id) => { if(!window.confirm('Ștergi această întrebare?')) return; setPersist(problemeSantier.filter((p)=>p.id!==id)); };
 
-  const RaspunsRow = ({ q, r }) => (
-    <div className="flex items-start justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: r.corect?'#4CAF7D18':'var(--panel2)', border: r.corect?'1px solid #4CAF7D66':'1px solid transparent' }}>
-      <div className="min-w-0">
-        <div style={{ color:'var(--text)' }}>{r.corect && <span style={{ color:'#4CAF7D', fontWeight:700 }}>✅ Corect · </span>}{r.text}</div>
-        <div className="text-[10px] mt-0.5" style={{ color:'var(--muted2)' }}>{r.autorNume || 'coleg'} · {r.data}</div>
-      </div>
-      {isManager && (
-        <div className="flex items-center gap-1 shrink-0">
-          {r.corect
-            ? <button onClick={()=>anuleazaCorect(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color:'var(--muted)', background:'var(--panel)' }}>anulează</button>
-            : <button onClick={()=>marcheazaCorect(q, r.id)} className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Corect</button>}
-          <button onClick={()=>stergeRaspuns(q, r.id)} style={{ color:'#E05252' }}>🗑</button>
+  // „Corect" se vede DOAR de manager. Angajații văd răspunsurile ca într-un chat, fără marcaj.
+  const RaspunsRow = ({ q, r }) => {
+    const aratCorect = isManager && r.corect;
+    return (
+      <div className="flex items-start justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: aratCorect?'#4CAF7D18':'var(--panel2)', border: aratCorect?'1px solid #4CAF7D66':'1px solid transparent' }}>
+        <div className="min-w-0">
+          <div style={{ color:'var(--text)' }}>{aratCorect && <span style={{ color:'#4CAF7D', fontWeight:700 }}>✅ Corect · </span>}{r.text}</div>
+          <div className="text-[10px] mt-0.5" style={{ color:'var(--muted2)' }}>{r.autorNume || 'coleg'} · {r.data}</div>
         </div>
-      )}
-    </div>
-  );
+        {isManager && (
+          <div className="flex items-center gap-1 shrink-0">
+            {r.corect
+              ? <button onClick={()=>anuleazaCorect(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color:'var(--muted)', background:'var(--panel)' }}>anulează</button>
+              : <button onClick={()=>marcheazaCorect(q, r.id)} className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Corect</button>}
+            <button onClick={()=>stergeRaspuns(q, r.id)} style={{ color:'#E05252' }}>🗑</button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const CardIntrebare = ({ q, rezolvat }) => {
     const raspunsuri = raspunsuriQA(q);
     const sug = isManager && !rezolvat ? gasesteRaspunsCunoscut(q.intrebare, baza.filter((x)=>x.id!==q.id), 0.5) : null;
+    // Angajații văd un card neutru (chat). Managerul vede verde=rezolvat / galben=de răspuns.
+    const brdr = isManager ? (rezolvat ? 'var(--border)' : '#E9A23B66') : 'var(--border)';
+    const brdrL = isManager ? (rezolvat ? '#4CAF7D' : '#E9A23B') : '#2E8BD1';
     return (
-      <div className="rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid '+(rezolvat?'var(--border)':'#E9A23B66'), borderLeft:'4px solid '+(rezolvat?'#4CAF7D':'#E9A23B') }}>
+      <div className="rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid '+brdr, borderLeft:'4px solid '+brdrL }}>
         <div className="flex items-start justify-between gap-2">
           <div className="text-sm" style={{ color:'var(--text)' }}>❓ {q.intrebare}</div>
           {(isManager || q.creatId===currentUser?.id) && <button onClick={()=>stergeQ(q.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>}
@@ -2288,7 +2302,7 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
           if (!sug) return null;
           return (
             <div className="rounded-lg px-3 py-2 mb-2 text-xs" style={{ background:'#4CAF7D18', border:'1px solid #4CAF7D66' }}>
-              <div style={{ color:'#4CAF7D', fontWeight:700 }}>💡 Există deja un răspuns confirmat pentru o întrebare similară:</div>
+              <div style={{ color:'#4CAF7D', fontWeight:700 }}>💡 Există deja un răspuns pentru o întrebare similară:</div>
               <div className="mt-1" style={{ color:'var(--muted)' }}>Întrebare: „{sug.sursa.intrebare}"</div>
               <div style={{ color:'var(--text)' }}>Răspuns: {sug.sursa.raspuns}</div>
             </div>
@@ -2297,18 +2311,28 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
         <button onClick={adaugaIntrebare} className="w-full text-sm px-4 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>Trimite întrebarea</button>
       </div>
 
-      {deschise.length > 0 && (
-        <div>
-          <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'#E9A23B' }}>Fără răspuns confirmat ({deschise.length})</div>
-          <div className="space-y-2">{deschise.map((q)=><CardIntrebare key={q.id} q={q} rezolvat={false} />)}</div>
-        </div>
-      )}
-
-      {rezolvateAici.length > 0 && (
-        <div>
-          <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'var(--muted2)' }}>Rezolvate ({rezolvateAici.length})</div>
-          <div className="space-y-2">{rezolvateAici.map((q)=><CardIntrebare key={q.id} q={q} rezolvat={true} />)}</div>
-        </div>
+      {isManager ? (
+        <>
+          {deschise.length > 0 && (
+            <div>
+              <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'#E9A23B' }}>Fără răspuns confirmat ({deschise.length})</div>
+              <div className="space-y-2">{deschise.map((q)=><CardIntrebare key={q.id} q={q} rezolvat={false} />)}</div>
+            </div>
+          )}
+          {rezolvateAici.length > 0 && (
+            <div>
+              <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'var(--muted2)' }}>Rezolvate ({rezolvateAici.length})</div>
+              <div className="space-y-2">{rezolvateAici.map((q)=><CardIntrebare key={q.id} q={q} rezolvat={true} />)}</div>
+            </div>
+          )}
+        </>
+      ) : (
+        toateAici.length > 0 && (
+          <div>
+            <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'var(--muted2)' }}>💬 Discuție ({toateAici.length})</div>
+            <div className="space-y-2">{toateAici.map((q)=><CardIntrebare key={q.id} q={q} rezolvat={false} />)}</div>
+          </div>
+        )
       )}
 
       {aici.length === 0 && <div className="text-xs text-center py-6" style={{ color:'var(--muted2)' }}>Nicio întrebare încă. Pune prima întrebare mai sus.</div>}
@@ -2335,8 +2359,12 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
   const [raspunsForm, setRaspunsForm] = useState({});
   const numeSantier = (id) => id ? (santiere.find((s)=>s.id===id)?.nume || 'Șantier') : 'General';
 
-  const rezolvate = bazaCunostinteQA(problemeSantier); // doar răspunsuri confirmate corecte
-  const deschiseToate = problemeSantier.filter((p)=>!raspunsCorectQA(p)).slice().reverse();
+  // Confidențialitate: managerul vede tot; angajatul vede DOAR general + șantierele pe care e asignat.
+  const idSantiereMele = new Set((santiere||[]).filter((s)=>inEchipa(s.echipa, currentUser?.id)).map((s)=>s.id));
+  const potVedea = (sid) => isManager || !sid || idSantiereMele.has(sid);
+  const rezolvate = bazaCunostinteQA(problemeSantier).filter((x)=>potVedea(x.santierId)); // răspunsuri confirmate, doar cele permise
+  // În pagina generală apar DOAR întrebările generale (fără șantier). Cele de pe șantiere se gestionează în șantier.
+  const deschiseToate = problemeSantier.filter((p)=>!raspunsCorectQA(p) && !p.santierId).slice().reverse();
   const rezultate = q.trim().length>=3
     ? rezolvate.map((p)=>({ p, scor: similaritateQA(q, p.intrebare) })).filter((x)=>x.scor>=0.3).sort((a,b)=>b.scor-a.scor).slice(0,5)
     : [];
@@ -2441,9 +2469,9 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
                   {raspunsuri.length>0 && (
                     <div className="space-y-1 mb-2">
                       {raspunsuri.map((r)=>(
-                        <div key={r.id} className="flex items-start justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: r.corect?'#4CAF7D18':'var(--panel2)', border: r.corect?'1px solid #4CAF7D66':'1px solid transparent' }}>
+                        <div key={r.id} className="flex items-start justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: (isManager&&r.corect)?'#4CAF7D18':'var(--panel2)', border: (isManager&&r.corect)?'1px solid #4CAF7D66':'1px solid transparent' }}>
                           <div className="min-w-0">
-                            <div style={{ color:'var(--text)' }}>{r.corect && <span style={{ color:'#4CAF7D', fontWeight:700 }}>✅ Corect · </span>}{r.text}</div>
+                            <div style={{ color:'var(--text)' }}>{isManager && r.corect && <span style={{ color:'#4CAF7D', fontWeight:700 }}>✅ Corect · </span>}{r.text}</div>
                             <div className="text-[10px] mt-0.5" style={{ color:'var(--muted2)' }}>{r.autorNume||'coleg'} · {r.data}</div>
                           </div>
                           {isManager && (
@@ -4770,7 +4798,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         {accHeader('probleme','❓','Probleme / Q&A', (problemeSantier.filter((p)=>p.santierId===selected && !raspunsCorectQA(p)).length || null))}
         {siteView === 'probleme' && <HelpNote text={HELP.probleme} />}
         {siteView === 'probleme' && (
-          <SiteProblemeTab santierId={selected} santierNume={santier?.nume || ''} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} persist={persist} currentUser={currentUser} />
+          <SiteProblemeTab santierId={selected} santierNume={santier?.nume || ''} echipaIds={echipaUserIds(santier?.echipa)} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} persist={persist} currentUser={currentUser} />
         )}
         {accHeader('echipa','👥','Echipă', echipaNormalizata(santier?.echipa).length)}
         {siteView === 'echipa' && <HelpNote text={HELP.echipa} />}
@@ -6144,11 +6172,12 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
     ? materialeSubStoc.length === 0 && cereriInAsteptarePeSantier.length === 0 && santiereActiveFaraRaportAzi.length === 0 && concediiInAsteptare.length === 0
     : santiereFaraRaportAzi.length === 0 && santiereMele.length === 0 && cereriLaSantiereleMele.length === 0;
 
-  // Q&A deschise relevante: managerul le vede pe toate (de răspuns/verificat); angajatul pe ale lui + de pe șantierele lui + cele generale.
-  const qaDeschise = (problemeSantier||[]).filter((p)=>!raspunsCorectQA(p));
+  // În „Activitatea mea" apar DOAR întrebările puse pe un ȘANTIER, și doar celor implicați + managerului.
+  // (Întrebările generale se văd în pagina „Asistent Q&A", nu aici.)
+  const qaSiteDeschise = (problemeSantier||[]).filter((p)=>!raspunsCorectQA(p) && p.santierId);
   const qaRelevante = isManager
-    ? qaDeschise.slice().reverse()
-    : qaDeschise.filter((p)=> p.creatId===currentUser?.id || !p.santierId || santiereMele.some((s)=>s.id===p.santierId)).slice().reverse();
+    ? qaSiteDeschise.slice().reverse()
+    : qaSiteDeschise.filter((p)=> p.creatId===currentUser?.id || santiereMele.some((s)=>s.id===p.santierId)).slice().reverse();
 
   return (
     <div>
@@ -6945,16 +6974,21 @@ function openDevizMateriale({ santier, company, rapoarte, materialeLista, materi
 
 function App() {
   const [tab, setTab] = useState(null);
-  const [qaTarget, setQaTarget] = useState(null); // întrebarea Q&A de deschis (din notificare sau din Activitatea mea)
-  const goQA = (qid) => { setQaTarget(qid || null); setTab('asistent'); };
-  // Deep-link din notificare: /?qa=<id> deschide direct Asistent Q&A la întrebarea respectivă.
+  const [qaTarget, setQaTarget] = useState(null); // întrebarea Q&A generală de evidențiat în Asistent
+  const [pendingQaId, setPendingQaId] = useState(() => { try { return new URLSearchParams(window.location.search || '').get('qa'); } catch { return null; } });
+  // Deschide o întrebare: dacă e de pe un ȘANTIER → deschide tab-ul Q&A al șantierului; dacă e GENERALĂ → Asistent Q&A.
+  const goQA = (qid) => {
+    const q = qid ? (problemeSantier || []).find((x) => x.id === qid) : null;
+    if (q && q.santierId) { setPendingSiteNav({ santierId: q.santierId, siteView: 'probleme' }); setTab('santiere'); }
+    else { setQaTarget(qid || null); setTab('asistent'); }
+  };
+  // Curăță URL-ul de deep-link; rezolvarea propriu-zisă se face după ce se încarcă datele (mai jos).
+  useEffect(() => { if (pendingQaId) { try { window.history.replaceState({}, '', window.location.pathname); } catch {} } }, []);
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search || '');
-      const qid = params.get('qa');
-      if (qid) { setQaTarget(qid); setTab('asistent'); try { window.history.replaceState({}, '', window.location.pathname); } catch {} }
-    } catch {}
-  }, []);
+    if (!pendingQaId) return;
+    const q = (problemeSantier || []).find((x) => x.id === pendingQaId);
+    if (q) { goQA(pendingQaId); setPendingQaId(null); }
+  }, [pendingQaId, problemeSantier]);
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       // Dacă amprenta/FaceID e activată pe acest dispozitiv, cerem deblocare la deschidere
