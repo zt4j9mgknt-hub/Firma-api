@@ -1621,7 +1621,7 @@ async function uploadFileToBlob(file, folder) {
   const handleUploadUrl = `/api/blob-upload?token=${encodeURIComponent(AUTH_TOKEN || '')}`;
   try {
     const blob = await window.__vercelBlobUpload(pathname, file, {
-      access: 'private',
+      access: 'public',
       handleUploadUrl,
     });
     return { url: blob.url, pathname: blob.pathname };
@@ -1822,7 +1822,7 @@ const HELP = {
   rapoarte: 'La final de zi apeși „Raport zilnic nou".\n• Alege data și bifează cine a lucrat, cu orele fiecăruia.\n• Trece lucrările făcute și materialele folosite.\n• Apeși Salvează. Un raport din listă se poate edita cu ✏️ sau șterge cu 🗑.\n• Când trimiți raportul, managerul primește notificare. Seara, dacă un raport n-a fost trimis, pleacă un memento (angajatului „nu uita raportul", managerului „nu s-a trimis raport la...").',
   materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Poți cere mai multe materiale într-o SINGURĂ cerere: scrii materialul + cantitatea și apeși „➕ Adaugă în listă", apoi repeți pentru fiecare material.\n• Dacă ceri același material de două ori în aceeași zi (pe același șantier), te întreabă: linie nouă separată SAU aduni cantitatea la linia existentă.\n• Lista „De trimis" arată tot ce ai adăugat; poți scoate un rând cu ✕.\n• La final apeși „📤 Trimite cererea" — pleacă o singură notificare la manager, nu câte una pentru fiecare material.\n• Managerul poate aproba sau respinge fiecare material în parte, ori tot grupul deodată. Ești anunțat când răspunde.\n• Tot aici vezi ce s-a cerut, ce s-a aprobat/respins și ce s-a livrat.',
   scule: 'Ține evidența sculelor aduse la șantier.\n• Adaugi scula și cine a adus-o.\n• Când o duci în altă parte (depozit, alt șantier, service), apeși „Trimite".',
-  planse: 'Planurile PDF ale șantierului.\n• „👁 Vezi în aplicație" — deschizi planșa pe tot ecranul; zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși.\n• „⬇ Descarcă / deschide nativ (calitate maximă)" — deschide PDF-ul original în telefon, la calitate maximă (recomandat pentru zoom pe detalii). E și în vizualizator, butonul „⬇ Calitate maximă".\n• Caută planșa după nume (ex: „prize parter") — bara de căutare apare când ai mai multe planșe, pe telefon și pe desktop.',
+  planse: 'Planurile PDF ale șantierului.\n• „👁 Vezi în aplicație" — deschizi planșa pe tot ecranul; zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși.\n• „⬇ Descarcă pe telefon" — salvează PDF-ul original în telefon (în „Descărcări"), la calitate maximă. Îl deschizi apoi cu vizualizatorul de PDF al telefonului.\n• „↗ Deschide nativ" — deschide direct PDF-ul original într-o filă nouă.\n• Caută planșa după nume (ex: „prize parter") — bara de căutare apare când ai mai multe planșe, pe telefon și pe desktop.',
   media: 'Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe deodată.\n• Apeși pe o poză ca s-o deschizi cu zoom (pinch).',
   checklist: 'Checklist în două părți: La început și La sfârșit.\n• La ÎNCEPUT ai două rubrici: 🔧 Scule și 📦 Materiale.\n• Scule: apeși „➕ Adaugă scule", scrii manual sau alegi din sugestii (din tab-ul Scule și de pe alte șantiere).\n• Materiale: apeși „➕ Adaugă materiale"; sugestiile vin din lista de materiale a șantierului (dacă e importată), altfel din istoricul general de materiale.\n• La fiecare rând bifezi „✓ Am" (verde) sau „✗ Lipsă" (roșu).\n• La FINAL: bifezi verificările; cele cu * sunt obligatorii, iar fiecare coleg activ confirmă.',
   echipa: 'Colegii asignați la acest șantier.\n• Apeși 📞 ca să suni direct un coleg.\n• Managerul poate adăuga sau scoate colegi din echipă.',
@@ -1930,8 +1930,28 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
   const [error, setError] = useState('');
   const [viewing, setViewing] = useState(null);
   const [cauta, setCauta] = useState('');
+  const [dlBusy, setDlBusy] = useState(null); // id-ul planșei care se descarcă
   const planFsRef = useRef(null);
   const openPlan = (p) => setViewing(p);
+  // Download real, direct pe telefon: aducem fișierul (public = rapid din CDN; privat = prin proxy autorizat)
+  // și forțăm salvarea cu <a download>. Așa apare în „Descărcări", nu se deschide inline și nu scoate din aplicație.
+  const descarca = async (p) => {
+    if (dlBusy) return;
+    setDlBusy(p.id);
+    const incearca = async (u) => { const r = await fetch(u); if (!r.ok) throw new Error('HTTP '+r.status); return await r.blob(); };
+    try {
+      let b;
+      try { b = await incearca(p.url); } catch { b = await incearca(blobViewUrl(p.pathname)); }
+      const obj = URL.createObjectURL(b);
+      const a = document.createElement('a');
+      a.href = obj; a.download = p.nume || 'plansa.pdf';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>{ try { URL.revokeObjectURL(obj); } catch {} }, 10000);
+    } catch (e) {
+      try { window.open(p.url || blobViewUrl(p.pathname), '_blank'); } catch {}
+    }
+    setDlBusy(null);
+  };
   const normPl = (s) => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[\s._\-]/g,'');
   const planseAici = planseSantier.filter((p)=>p.santierId===santierId);
   const planseFiltrate = cauta.trim() ? planseAici.filter((p)=>normPl(p.nume).includes(normPl(cauta))) : planseAici;
@@ -1999,9 +2019,10 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
                     <button onClick={()=>remove(p)} style={{ color:'#E05252' }}><Icon size={14}>🗑</Icon></button>
                   </div>
                 </div>
-                <div className="flex gap-1.5 mt-2">
+                <div className="flex gap-1.5 mt-2 flex-wrap">
                   <button onClick={()=>openPlan(p)} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>👁 Vezi în aplicație</button>
-                  <a href={p.url || blobViewUrl(p.pathname)} target="_blank" rel="noopener noreferrer" className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D', textDecoration:'none' }}>⬇ Descarcă / deschide nativ (calitate maximă)</a>
+                  <button onClick={()=>descarca(p)} disabled={dlBusy===p.id} className="text-xs px-2.5 py-1 rounded-lg font-semibold disabled:opacity-60" style={{ color:'#14181C', background:'#4CAF7D' }}>{dlBusy===p.id ? '⏳ Se descarcă…' : '⬇ Descarcă pe telefon'}</button>
+                  <a href={p.url || blobViewUrl(p.pathname)} target="_blank" rel="noopener noreferrer" className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'var(--text)', background:'var(--panel)', border:'1px solid var(--border)', textDecoration:'none' }}>↗ Deschide nativ</a>
                 </div>
               </div>
             ))}
