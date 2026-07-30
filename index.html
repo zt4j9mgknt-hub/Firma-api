@@ -1760,39 +1760,44 @@ function PdfViewer({ src, downloadUrl, nume, onClose, onFull }) {
   const onTM = (e) => { if (e.touches.length===2){ const d=dist2(e.touches); setZoom(clampZ(pz.current.startZoom*(d/(pz.current.startDist||d)))); } };
   const [pages, setPages] = useState([]);
   const [status, setStatus] = useState('Se încarcă planșa…');
+  const [hd, setHd] = useState(false); // randare la calitate mare, la cerere (mai lentă)
   useEffect(() => {
     let cancelled = false;
+    setPages([]); setStatus('Se încarcă planșa…');
     (async () => {
       const lib = window.pdfjsLib;
       if (!lib) { setStatus('Vizualizatorul nu s-a încărcat. Verifică internetul și reintră în planșă.'); return; }
       try {
         try { lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch {}
         const pdf = await lib.getDocument({ url: src }).promise;
+        // Rapid implicit; „HD" (la cerere) randează mai fin.
+        const targetW = hd ? 2600 : 1500;
+        const maxS = hd ? 4 : 2;
+        const jpegQ = hd ? 0.92 : 0.8;
+        const MAX_PX = hd ? 9e6 : 4e6;
         const imgs = [];
         for (let i = 1; i <= pdf.numPages; i++) {
           if (cancelled) return;
-          setStatus(`Se randează pagina ${i}/${pdf.numPages}…`);
+          if (pdf.numPages > 1) setStatus(`Se randează pagina ${i}/${pdf.numPages}…`);
           const page = await pdf.getPage(i);
           const base = page.getViewport({ scale: 1 });
-          // Randăm la rezoluție mare ca să rămână clar la zoom (țintă ~2600px lățime),
-          // dar limităm suprafața ca să nu rămână telefonul fără memorie.
-          let s = Math.min(4, Math.max(1.5, 2600 / base.width));
-          const MAX_PX = 9e6; // ~9 megapixeli per pagină
+          let s = Math.min(maxS, Math.max(1, targetW / base.width));
           if (base.width * s * base.height * s > MAX_PX) { s = Math.sqrt(MAX_PX / (base.width * base.height)); }
           const viewport = page.getViewport({ scale: s });
           const canvas = document.createElement('canvas');
           canvas.width = Math.floor(viewport.width); canvas.height = Math.floor(viewport.height);
           const ctx = canvas.getContext('2d');
           await page.render({ canvasContext: ctx, viewport }).promise;
-          imgs.push(canvas.toDataURL('image/jpeg', 0.92));
+          imgs.push(canvas.toDataURL('image/jpeg', jpegQ));
+          if (!cancelled) { setPages(imgs.slice()); if (i === 1) setStatus(''); } // arată prima pagină imediat
         }
-        if (!cancelled) { setPages(imgs); setStatus(''); }
+        if (!cancelled) setStatus('');
       } catch (e) {
         if (!cancelled) setStatus('Nu am putut afișa planșa aici. ' + (e && e.message ? e.message : ''));
       }
     })();
     return () => { cancelled = true; };
-  }, [src]);
+  }, [src, hd]);
   return (
     <div style={{ position:'relative', flex:1, minHeight:0, background:'#0c0f13' }}>
       <div onTouchStart={onTS} onTouchMove={onTM}
@@ -1813,7 +1818,8 @@ function PdfViewer({ src, downloadUrl, nume, onClose, onFull }) {
           ))}
         </div>
       </div>
-      {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'55%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
+      {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'42%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
+      <button onClick={()=>setHd(!hd)} style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:'50%', transform:'translateX(-50%)', zIndex:16, color: hd?'#14181C':'#cdd7e2', background: hd?'#E9A23B':'rgba(10,14,20,.55)', fontSize:12, fontWeight:700, padding:'6px 12px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', border:'none' }}>{hd?'🔍 HD pornit':'🔍 HD (mai clar)'}</button>
       {onClose && <CloseX onClose={onClose} onFull={onFull} />}
       <ZoomControls scale={zoom} zoomBy={zoomBy} reset={resetZ} />
     </div>
@@ -1825,7 +1831,7 @@ const HELP = {
   rapoarte: 'La final de zi apeși „Raport zilnic nou".\n• Alege data și bifează cine a lucrat, cu orele fiecăruia.\n• Trece lucrările făcute și materialele folosite.\n• Apeși Salvează. Un raport din listă se poate edita cu ✏️ sau șterge cu 🗑.\n• Când trimiți raportul, managerul primește notificare. Seara, dacă un raport n-a fost trimis, pleacă un memento (angajatului „nu uita raportul", managerului „nu s-a trimis raport la...").',
   materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Poți cere mai multe materiale într-o SINGURĂ cerere: scrii materialul + cantitatea și apeși „➕ Adaugă în listă", apoi repeți pentru fiecare material.\n• Dacă ceri același material de două ori în aceeași zi (pe același șantier), te întreabă: linie nouă separată SAU aduni cantitatea la linia existentă.\n• Lista „De trimis" arată tot ce ai adăugat; poți scoate un rând cu ✕.\n• La final apeși „📤 Trimite cererea" — pleacă o singură notificare la manager, nu câte una pentru fiecare material.\n• Managerul poate aproba sau respinge fiecare material în parte, ori tot grupul deodată. Ești anunțat când răspunde.\n• Tot aici vezi ce s-a cerut, ce s-a aprobat/respins și ce s-a livrat.',
   scule: 'Ține evidența sculelor aduse la șantier.\n• Adaugi scula și cine a adus-o.\n• Când o duci în altă parte (depozit, alt șantier, service), apeși „Trimite".',
-  planse: 'Planurile PDF ale șantierului.\n• „👁 Deschide planul" — se deschide ÎN aplicație, pe tot ecranul, la calitate mare; zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși. Când închizi, rămâi în aplicație.\n• „⬇ Salvează în telefon" — pune PDF-ul în „Descărcări" (rămâi în aplicație). Îl deschizi separat, când vrei, din Fișiere. Atenție: dacă apeși pe fișierul descărcat, se deschide în aplicația de PDF a telefonului — asta e altă aplicație.\n• Caută planșa după nume (ex: „prize parter") — bara de căutare apare când ai mai multe planșe, pe telefon și pe desktop.',
+  planse: 'Planurile PDF ale șantierului.\n• „👁 Deschide planul" — se deschide ÎN aplicație, pe tot ecranul; se încarcă rapid. Zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși. Când închizi, rămâi în aplicație.\n• Butonul „🔍 HD (mai clar)" din vizualizator randează planul mai fin, pentru detalii (durează câteva secunde în plus). Apeși din nou ca să revii la modul rapid.\n• „⬇ Salvează în telefon" — pune PDF-ul în „Descărcări" (rămâi în aplicație).\n• Caută planșa după nume — bara de căutare apare când ai mai multe planșe, pe telefon și pe desktop.',
   media: 'Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe deodată.\n• Apeși pe o poză ca s-o deschizi cu zoom (pinch).',
   checklist: 'Checklist în două părți: La început și La sfârșit.\n• La ÎNCEPUT ai două rubrici: 🔧 Scule și 📦 Materiale.\n• Scule: apeși „➕ Adaugă scule", scrii manual sau alegi din sugestii (din tab-ul Scule și de pe alte șantiere).\n• Materiale: apeși „➕ Adaugă materiale"; sugestiile vin din lista de materiale a șantierului (dacă e importată), altfel din istoricul general de materiale.\n• La fiecare rând bifezi „✓ Am" (verde) sau „✗ Lipsă" (roșu).\n• La FINAL: bifezi verificările; cele cu * sunt obligatorii, iar fiecare coleg activ confirmă.',
   echipa: 'Colegii asignați la acest șantier.\n• Apeși 📞 ca să suni direct un coleg.\n• Managerul poate adăuga sau scoate colegi din echipă.',
