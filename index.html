@@ -1752,7 +1752,7 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
   const dl = downloadUrl || src;
   const [zoom, setZoom] = useState(1);
   const pz = useRef({ startDist:0, startZoom:1 });
-  const clampZ = (z) => Math.min(5, Math.max(1, z));
+  const clampZ = (z) => Math.min(10, Math.max(1, z));
   const zoomBy = (f) => setZoom((z)=>clampZ(z*f));
   const resetZ = () => setZoom(1);
   const dist2 = (t) => Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
@@ -4975,6 +4975,71 @@ function LoginScreen({ onLogin, onBioUnlock }) {
   );
 }
 
+// Test provizoriu: „Raport din vorbe" — băiatul dictează/scrie, AI-ul scrie raportul și cere confirmări.
+function RaportAITest() {
+  const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
+  const [text, setText] = useState('');
+  const [out, setOut] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [asc, setAsc] = useState(false);
+  const recRef = useRef(null);
+  const speechOK = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  const dicteaza = () => {
+    if (asc && recRef.current) { try { recRef.current.stop(); } catch {} return; }
+    if (!speechOK) { setErr('Dictarea vocală nu e suportată aici. Folosește microfonul de pe tastatura telefonului (lângă bara de spațiu).'); return; }
+    try {
+      const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec = new R();
+      rec.lang = 'ro-RO'; rec.interimResults = true; rec.continuous = true;
+      let baza = text ? text.trim() + ' ' : '';
+      let final = baza;
+      rec.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const tr = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += tr + ' '; else interim += tr;
+        }
+        setText((final + interim).trim());
+      };
+      rec.onerror = () => { setAsc(false); };
+      rec.onend = () => { setAsc(false); recRef.current = null; };
+      recRef.current = rec; setErr(''); setAsc(true); rec.start();
+    } catch (e) { setErr('Nu am putut porni dictarea.'); setAsc(false); }
+  };
+
+  const genereaza = async () => {
+    if (!text.trim()) return;
+    setBusy(true); setOut(''); setErr('');
+    const instr = 'Ești asistentul unei firme de instalații electrice. Transformă descrierea de mai jos (spusă de un electrician) într-un RAPORT ZILNIC DE ȘANTIER structurat și scurt, în limba română, cu secțiunile:\n• Lucrări efectuate\n• Materiale folosite (cu cantități, dacă sunt menționate)\n• Persoane și ore (dacă sunt menționate)\nDacă lipsesc informații esențiale (orele lucrate sau cine a lucrat), adaugă la final o secțiune „❓ De confirmat:" cu întrebări scurte. Nu inventa date.\n\nDescriere: ' + text.trim();
+    try {
+      const r = await authFetch('/api/ai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ intrebare: instr, context: [] }) });
+      let d = {}; try { d = await r.json(); } catch {}
+      if (r.ok && d && d.raspuns) setOut(d.raspuns);
+      else if (r.status === 404) setErr('AI-ul nu e activat (ruta /api/ai lipsește pe server).');
+      else if (r.status === 500) setErr('AI-ul nu e configurat (lipsește cheia ANTHROPIC_API_KEY pe Vercel).');
+      else setErr((d && d.error) ? d.error : 'AI indisponibil momentan.');
+    } catch (e) { setErr('Fără conexiune la AI.'); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid #C08CE066' }}>
+      <div className="text-sm font-semibold mb-1" style={{ color:'#C08CE0' }}>🎤 Raport din vorbe — AI (test)</div>
+      <p className="text-xs mb-2" style={{ color:'var(--muted)' }}>Spune sau scrie ce ai făcut azi, iar AI-ul îți scrie raportul. Versiune de test.</p>
+      <textarea value={text} onChange={(e)=>setText(e.target.value)} rows={3} placeholder="Ex: am tras cabluri la prize în bucătărie, cu Nicu, vreo 3 ore, am folosit 40m cablu 3x2.5" className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
+      <div className="flex flex-wrap gap-2">
+        <button onClick={dicteaza} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color: asc?'#14181C':'var(--text)', background: asc?'#E05252':'var(--panel2)', border:'1px solid var(--border)' }}>{asc ? '⏹ Oprește dictarea' : '🎤 Dictează'}</button>
+        <button onClick={genereaza} disabled={busy || !text.trim()} className="text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50" style={{ color:'#14181C', background:'#C08CE0' }}>{busy ? 'Se scrie…' : '✨ Generează raportul'}</button>
+      </div>
+      {err && <p className="text-xs mt-2" style={{ color:'#E9A23B' }}>{err}</p>}
+      {out && <div className="mt-2 rounded-lg px-3 py-2 text-sm whitespace-pre-wrap" style={{ background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' }}>{out}</div>}
+      <p className="text-[11px] mt-2" style={{ color:'var(--muted2)' }}>Dictarea merge pe Android; pe iPhone folosește microfonul de pe tastatură. Necesită AI configurat (aceeași cheie ca la Q&A).</p>
+    </div>
+  );
+}
+
 function ProfileTab({ currentUser, onLogout, tema, setTema }) {
   const [expandedForm, setExpandedForm] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
@@ -5130,6 +5195,7 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
         {notifStatus && <p className="text-xs mt-2" style={{ color: notifStatus.startsWith('✅') ? '#4CAF7D' : '#E9A23B' }}>{notifStatus}</p>}
         {testStatus && <p className="text-xs mt-2" style={{ color: testStatus.startsWith('✅') ? '#4CAF7D' : testStatus.startsWith('⚠️') ? '#E9A23B' : '#E05252' }}>{testStatus}</p>}
       </div>
+      <RaportAITest />
       {bioSuportat() && (
         <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
           <div className="text-sm font-semibold mb-1" style={{ color:'var(--text)' }}>🔐 Amprentă / FaceID pe acest dispozitiv</div>
