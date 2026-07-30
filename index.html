@@ -188,6 +188,17 @@ function gasesteRaspunsCunoscut(intrebare, baza, pragul){
   if (best && bestScor >= (pragul!=null?pragul:0.5)) return { sursa: best, scor: bestScor };
   return null;
 }
+// O întrebare poate avea mai multe răspunsuri (oricine poate răspunde). Doar cele marcate „corect" de manager se memorează.
+function raspunsuriQA(q){
+  if (q && Array.isArray(q.raspunsuri)) return q.raspunsuri;
+  if (q && q.raspuns) return [{ id:'legacy', text:q.raspuns, autorNume:q.raspunsDe||'manager', autorId:'', data:q.raspunsData||q.data, corect:true }];
+  return [];
+}
+function raspunsCorectQA(q){ const r = raspunsuriQA(q).find((x)=>x && x.corect); return r ? r.text : null; }
+// Baza de cunoștințe = DOAR întrebările cu un răspuns marcat corect. (Folosită la sugestii și la AI.)
+function bazaCunostinteQA(probleme){
+  return (probleme||[]).map((q)=>{ const rc = raspunsCorectQA(q); return rc ? { id:q.id, intrebare:q.intrebare, raspuns:rc, santierId:q.santierId, raspunsDe:(raspunsuriQA(q).find((x)=>x.corect)||{}).autorNume||'manager' } : null; }).filter(Boolean);
+}
 
 // --- Token de sesiune (bilet de acces) — trimis la fiecare cerere către server,
 // ca sa nu mai poata fi cerute datele direct, fara sa fii logat. ---
@@ -1811,9 +1822,9 @@ const HELP = {
   scule: 'Ține evidența sculelor aduse la șantier.\n• Adaugi scula și cine a adus-o.\n• Când o duci în altă parte (depozit, alt șantier, service), apeși „Trimite".',
   planse: 'Planurile PDF ale șantierului.\n• Apeși pe o planșă ca s-o deschizi pe tot ecranul.\n• Zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși.\n• Dacă ai multe planșe, caută după nume (ex: „prize parter").',
   media: 'Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe deodată.\n• Apeși pe o poză ca s-o deschizi cu zoom (pinch).',
-  checklist: 'Verificări pentru șantier, în două părți.\n• La ÎNCEPUT: bifează ce materiale/scule/acces ai (materialele se pot aduce automat din deviz).\n• La FINAL: bifează verificările; cele cu * sunt obligatorii.\n• Fiecare coleg activ pe șantier confirmă la final.',
+  checklist: 'Verificări pentru șantier, în două părți.\n• La ÎNCEPUT: apeși „➕ Alege ce pui pe checklist" și bifezi din listă sculele/materialele de care ai nevoie (sau scrii manual). Apoi la fiecare rând apeși „✓ Am" sau „✗ Lipsă".\n• La FINAL: bifează verificările; cele cu * sunt obligatorii.\n• Fiecare coleg activ pe șantier confirmă la final.',
   echipa: 'Colegii asignați la acest șantier.\n• Apeși 📞 ca să suni direct un coleg.\n• Managerul poate adăuga sau scoate colegi din echipă.',
-  probleme: 'Întrebări și probleme de pe șantier, cu răspunsurile lor.\n• Scrii întrebarea și apeși „Trimite" — managerul primește notificare.\n• Managerul răspunde; tu primești notificare cu răspunsul.\n• Aplicația reține răspunsurile: la o întrebare similară îi propune managerului răspunsul dat înainte, iar el îl aprobă.\n• Întrebările rezolvate rămân salvate, ca un „ce-am mai întrebat".',
+  probleme: 'Întrebări și probleme de pe șantier, cu răspunsurile lor.\n• Scrii întrebarea și apeși „Trimite" — managerul primește notificare.\n• ORICINE poate răspunde la o întrebare (nu doar managerul).\n• Managerul marchează care răspuns e corect (buton „✓ Corect") — doar el vede și decide asta.\n• DOAR răspunsurile marcate corecte sunt reținute de aplicație și folosite la întrebări similare / de AI.\n• Primești notificare când cineva răspunde și când răspunsul e confirmat corect.',
 };
 
 // Buton mic ℹ️ „Cum se folosește" — se desface și arată instrucțiunile tab-ului curent.
@@ -1861,13 +1872,13 @@ function GhidTab({ isManager }) {
 
       <Sec icon="🔧" title="Scule">{'• Ține evidența sculelor aduse la șantier: adaugi scula și cine a adus-o.\n• Când o duci în altă parte (Depozit / Alt șantier / Service), apeși „Trimite" și dispare din listă.'}</Sec>
 
-      <Sec icon="❓" title="Probleme / Q&A">{'• Pui o întrebare sau semnalezi o problemă de pe șantier; managerul primește notificare și răspunde.\n• Primești notificare cu răspunsul, iar întrebarea rămâne salvată la „Rezolvate".\n• Aplicația învață din răspunsuri: la o întrebare similară îi propune managerului răspunsul dat anterior, pe care el îl aprobă cu un buton — așa nu se răspunde de două ori la același lucru.'}</Sec>
+      <Sec icon="❓" title="Probleme / Q&A">{'• Pui o întrebare sau semnalezi o problemă de pe șantier; managerul primește notificare.\n• Oricine din echipă poate răspunde la întrebări — nu doar managerul.\n• Managerul marchează care răspuns e corect (doar el vede acest buton). Doar răspunsurile confirmate corecte sunt reținute de aplicație și de AI.\n• La o întrebare similară, aplicația propune răspunsul confirmat anterior — nu se răspunde de două ori la același lucru.\n• Ai și pagina „🤖 Asistent Q&A" din meniu, unde cauți în toate răspunsurile confirmate de pe toate șantierele.'}</Sec>
 
       <Sec icon="📐" title="Planșe (PDF)">{'• Aici sunt planurile PDF ale șantierului.\n• Apeși pe o planșă → se deschide pe tot ecranul.\n• Zoom cu două degete (pinch), te plimbi cu degetul în orice direcție, X în colț ca să ieși.\n• Dacă ai multe, caută după nume (ex. „prize parter").\n• Poți adăuga mai multe PDF-uri deodată.'}</Sec>
 
       <Sec icon="📸" title="Foto / Video">{'• Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe fișiere deodată (până la 200MB fiecare).\n• Apeși pe o poză → o vezi pe tot ecranul cu zoom (pinch).'}</Sec>
 
-      <Sec icon="✅" title="Checklist (început & final)">{'• La ÎNCEPUT: bifezi ce materiale/scule/acces ai (materialele se pot aduce automat din deviz).\n• La FINAL: bifezi verificările; cele cu * sunt obligatorii.\n• Fiecare coleg activ pe șantier confirmă la final.\n• Șantierul nu poate fi marcat „finalizat" până nu sunt bifate obligatoriile și au confirmat toți.'}</Sec>
+      <Sec icon="✅" title="Checklist (început & final)">{'• La ÎNCEPUT: apeși „➕ Alege ce pui pe checklist" și bifezi din listă (scule, acces, materiale din deviz) exact ce vrei — poți alege câte vrei, sau scrii manual. Apoi la fiecare rând apeși „✓ Am" (verde) sau „✗ Lipsă" (roșu).\n• La FINAL: bifezi verificările; cele cu * sunt obligatorii.\n• Fiecare coleg activ pe șantier confirmă la final.\n• Șantierul nu poate fi marcat „finalizat" până nu sunt bifate obligatoriile și au confirmat toți.'}</Sec>
 
       <Sec icon="👥" title="Echipă">{'• Colegii asignați la acest șantier.\n• Apeși 📞 ca să suni direct un coleg.\n• Când ești asignat pe un șantier nou, primești notificare.'}</Sec>
 
@@ -2147,31 +2158,78 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
   const [raspunsForm, setRaspunsForm] = useState({}); // id -> text în curs de scriere
 
   const aici = problemeSantier.filter((p)=>p.santierId===santierId);
-  // Baza de cunoștințe = toate întrebările rezolvate, de pe TOATE șantierele (răspunsurile se rețin global).
-  const bazaRezolvate = problemeSantier.filter((p)=>p.status==='rezolvat' && p.raspuns && String(p.raspuns).trim());
-  const deschise = aici.filter((p)=>p.status!=='rezolvat').slice().reverse();
-  const rezolvateAici = aici.filter((p)=>p.status==='rezolvat').slice().reverse();
+  const baza = bazaCunostinteQA(problemeSantier); // doar răspunsuri marcate corecte (de pe toate șantierele)
+  const rezolvateAici = aici.filter((q)=>raspunsCorectQA(q)).slice().reverse();
+  const deschise = aici.filter((q)=>!raspunsCorectQA(q)).slice().reverse();
+  const setPersist = (next) => { setProblemeSantier(next); persist('problemeSantier', next); };
 
   const adaugaIntrebare = () => {
     if (!intrebareNoua.trim()) return;
-    const q = { id: uid(), santierId, intrebare: intrebareNoua.trim(), raspuns:'', status:'deschis', creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: new Date().toISOString().slice(0,10) };
-    const next = [...problemeSantier, q];
-    setProblemeSantier(next); persist('problemeSantier', next); setIntrebareNoua('');
+    const q = { id: uid(), santierId, intrebare: intrebareNoua.trim(), raspunsuri:[], status:'deschis', creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: new Date().toISOString().slice(0,10) };
+    setPersist([...problemeSantier, q]); setIntrebareNoua('');
     notifica('manageri', { title:'Întrebare / problemă nouă', body:`${currentUser?.nume || 'Un coleg'}: „${q.intrebare}" — ${santierNume || 'șantier'}.`, tag:'qa-'+santierId }, currentUser?.id);
   };
-
-  const raspunde = (q, text, dinCunostinte) => {
-    const t = String(text||'').trim();
-    if (!t) return;
-    const next = problemeSantier.map((p)=> p.id===q.id ? {...p, raspuns:t, status:'rezolvat', raspunsDe: currentUser?.nume || '', raspunsData: new Date().toISOString().slice(0,10), dinCunostinte: !!dinCunostinte } : p);
-    setProblemeSantier(next); persist('problemeSantier', next);
+  const adaugaRaspuns = (q, text, corect) => {
+    const t = String(text||'').trim(); if (!t) return;
+    const r = { id: uid(), text:t, autorNume: currentUser?.nume||'', autorId: currentUser?.id||'', data: new Date().toISOString().slice(0,10), corect: !!corect };
+    const next = problemeSantier.map((p)=> p.id===q.id ? {...p, raspunsuri: corect ? [...raspunsuriQA(p).map((x)=>({...x,corect:false})), r] : [...raspunsuriQA(p), r], status: (corect || raspunsCorectQA(p)) ? 'rezolvat' : 'raspuns'} : p);
+    setPersist(next);
     setRaspunsForm((f)=>{ const c={...f}; delete c[q.id]; return c; });
-    if (q.creatId && q.creatId !== currentUser?.id) {
-      notifica(q.creatId, { title:'Răspuns la întrebarea ta ✅', body:`„${q.intrebare}" → ${t}`, tag:'qa-raspuns' }, currentUser?.id);
-    }
+    if (!isManager) notifica('manageri', { title:'Răspuns de verificat', body:`${currentUser?.nume||'Un coleg'} a răspuns la „${q.intrebare}".`, tag:'qa-verif' }, currentUser?.id);
+    if (q.creatId && q.creatId !== currentUser?.id) notifica(q.creatId, { title: corect?'Răspuns confirmat ✅':'Un răspuns la întrebarea ta', body:`„${q.intrebare}" → ${t}`, tag:'qa-raspuns' }, currentUser?.id);
   };
-  const redeschide = (q) => { const next = problemeSantier.map((p)=> p.id===q.id ? {...p, status:'deschis'} : p); setProblemeSantier(next); persist('problemeSantier', next); };
-  const stergeQ = (id) => { if(!window.confirm('Ștergi această întrebare?')) return; const next = problemeSantier.filter((p)=>p.id!==id); setProblemeSantier(next); persist('problemeSantier', next); };
+  const marcheazaCorect = (q, raspunsId) => {
+    const next = problemeSantier.map((p)=> p.id!==q.id ? p : {...p, raspunsuri: raspunsuriQA(p).map((x)=>({...x, corect: x.id===raspunsId})), status:'rezolvat'});
+    setPersist(next);
+    const r = raspunsuriQA(q).find((x)=>x.id===raspunsId);
+    if (q.creatId && q.creatId!==currentUser?.id && r) notifica(q.creatId, { title:'Răspuns confirmat ✅', body:`„${q.intrebare}" → ${r.text}`, tag:'qa-raspuns' }, currentUser?.id);
+  };
+  const anuleazaCorect = (q) => setPersist(problemeSantier.map((p)=> p.id===q.id ? {...p, raspunsuri: raspunsuriQA(p).map((x)=>({...x, corect:false})), status:'raspuns'} : p));
+  const stergeRaspuns = (q, raspunsId) => setPersist(problemeSantier.map((p)=> p.id===q.id ? {...p, raspunsuri: raspunsuriQA(p).filter((x)=>x.id!==raspunsId)} : p));
+  const stergeQ = (id) => { if(!window.confirm('Ștergi această întrebare?')) return; setPersist(problemeSantier.filter((p)=>p.id!==id)); };
+
+  const RaspunsRow = ({ q, r }) => (
+    <div className="flex items-start justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: r.corect?'#4CAF7D18':'var(--panel2)', border: r.corect?'1px solid #4CAF7D66':'1px solid transparent' }}>
+      <div className="min-w-0">
+        <div style={{ color:'var(--text)' }}>{r.corect && <span style={{ color:'#4CAF7D', fontWeight:700 }}>✅ Corect · </span>}{r.text}</div>
+        <div className="text-[10px] mt-0.5" style={{ color:'var(--muted2)' }}>{r.autorNume || 'coleg'} · {r.data}</div>
+      </div>
+      {isManager && (
+        <div className="flex items-center gap-1 shrink-0">
+          {r.corect
+            ? <button onClick={()=>anuleazaCorect(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color:'var(--muted)', background:'var(--panel)' }}>anulează</button>
+            : <button onClick={()=>marcheazaCorect(q, r.id)} className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Corect</button>}
+          <button onClick={()=>stergeRaspuns(q, r.id)} style={{ color:'#E05252' }}>🗑</button>
+        </div>
+      )}
+    </div>
+  );
+
+  const CardIntrebare = ({ q, rezolvat }) => {
+    const raspunsuri = raspunsuriQA(q);
+    const sug = isManager && !rezolvat ? gasesteRaspunsCunoscut(q.intrebare, baza.filter((x)=>x.id!==q.id), 0.5) : null;
+    return (
+      <div className="rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid '+(rezolvat?'var(--border)':'#E9A23B66'), borderLeft:'4px solid '+(rezolvat?'#4CAF7D':'#E9A23B') }}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="text-sm" style={{ color:'var(--text)' }}>❓ {q.intrebare}</div>
+          {(isManager || q.creatId===currentUser?.id) && <button onClick={()=>stergeQ(q.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>}
+        </div>
+        <div className="text-[11px] mt-0.5 mb-1.5" style={{ color:'var(--muted2)' }}>{q.creatDe || 'coleg'} · {q.data}</div>
+        {raspunsuri.length > 0 && <div className="space-y-1 mb-2">{raspunsuri.map((r)=><RaspunsRow key={r.id} q={q} r={r} />)}</div>}
+        {sug && (
+          <div className="rounded-lg px-3 py-2 mb-2" style={{ background:'#C08CE018', border:'1px solid #C08CE066' }}>
+            <div className="text-[11px]" style={{ color:'#C08CE0', fontWeight:700 }}>💡 Răspuns cunoscut (potrivire {Math.round(sug.scor*100)}%): {sug.sursa.raspuns}</div>
+            <button onClick={()=>adaugaRaspuns(q, sug.sursa.raspuns, true)} className="mt-1.5 text-xs px-3 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Folosește-l ca răspuns corect</button>
+          </div>
+        )}
+        <div className="flex gap-1">
+          <input value={raspunsForm[q.id]||''} onChange={(e)=>setRaspunsForm((f)=>({...f, [q.id]: e.target.value}))} onKeyDown={(e)=>{ if(e.key==='Enter'){ adaugaRaspuns(q, raspunsForm[q.id], isManager); } }} placeholder={isManager ? 'Scrie răspunsul corect...' : 'Scrie un răspuns...'} className="flex-1 rounded-lg px-3 py-1.5 text-xs outline-none" style={inputStyle} />
+          <button onClick={()=>adaugaRaspuns(q, raspunsForm[q.id], isManager)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>{isManager ? '✓ Răspuns corect' : 'Răspunde'}</button>
+        </div>
+        {isManager && <div className="text-[10px] mt-1" style={{ color:'var(--muted2)' }}>Ce scrii tu se salvează direct ca răspuns corect. Răspunsurile colegilor le confirmi cu „✓ Corect".</div>}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -2179,11 +2237,11 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
         <div className="text-sm font-medium mb-2" style={{ color:'var(--text)' }}>❓ Pune o întrebare / semnalează o problemă</div>
         <textarea value={intrebareNoua} onChange={(e)=>setIntrebareNoua(e.target.value)} rows={2} placeholder="Ex: Ce secțiune de cablu folosim la circuitul de prize din bucătărie?" className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
         {(() => {
-          const sug = intrebareNoua.trim().length >= 5 ? gasesteRaspunsCunoscut(intrebareNoua, bazaRezolvate, 0.5) : null;
+          const sug = intrebareNoua.trim().length >= 5 ? gasesteRaspunsCunoscut(intrebareNoua, baza, 0.5) : null;
           if (!sug) return null;
           return (
             <div className="rounded-lg px-3 py-2 mb-2 text-xs" style={{ background:'#4CAF7D18', border:'1px solid #4CAF7D66' }}>
-              <div style={{ color:'#4CAF7D', fontWeight:700 }}>💡 Există deja un răspuns pentru o întrebare similară:</div>
+              <div style={{ color:'#4CAF7D', fontWeight:700 }}>💡 Există deja un răspuns confirmat pentru o întrebare similară:</div>
               <div className="mt-1" style={{ color:'var(--muted)' }}>Întrebare: „{sug.sursa.intrebare}"</div>
               <div style={{ color:'var(--text)' }}>Răspuns: {sug.sursa.raspuns}</div>
             </div>
@@ -2194,58 +2252,15 @@ function SiteProblemeTab({ santierId, santierNume, problemeSantier, setProblemeS
 
       {deschise.length > 0 && (
         <div>
-          <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'var(--muted2)' }}>Fără răspuns ({deschise.length})</div>
-          <div className="space-y-2">
-            {deschise.map((q)=>{
-              const sug = gasesteRaspunsCunoscut(q.intrebare, bazaRezolvate.filter((x)=>x.id!==q.id), 0.5);
-              return (
-                <div key={q.id} className="rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid #E9A23B66', borderLeft:'4px solid #E9A23B' }}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="text-sm" style={{ color:'var(--text)' }}>❓ {q.intrebare}</div>
-                    <button onClick={()=>stergeQ(q.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>
-                  </div>
-                  <div className="text-[11px] mt-0.5" style={{ color:'var(--muted2)' }}>{q.creatDe || 'coleg'} · {q.data}</div>
-                  {isManager ? (
-                    <div className="mt-2">
-                      {sug && (
-                        <div className="rounded-lg px-3 py-2 mb-2" style={{ background:'#4CAF7D18', border:'1px solid #4CAF7D66' }}>
-                          <div className="text-[11px]" style={{ color:'#4CAF7D', fontWeight:700 }}>💡 Răspuns cunoscut (potrivire {Math.round(sug.scor*100)}%) — la „{sug.sursa.intrebare}":</div>
-                          <div className="text-sm mt-0.5" style={{ color:'var(--text)' }}>{sug.sursa.raspuns}</div>
-                          <div className="flex gap-1.5 mt-2">
-                            <button onClick={()=>raspunde(q, sug.sursa.raspuns, true)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Aprobă acest răspuns</button>
-                            <button onClick={()=>setRaspunsForm((f)=>({...f, [q.id]: sug.sursa.raspuns}))} className="text-xs px-3 py-1.5 rounded-lg" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>✍️ Modifică</button>
-                          </div>
-                        </div>
-                      )}
-                      <textarea value={raspunsForm[q.id]||''} onChange={(e)=>setRaspunsForm((f)=>({...f, [q.id]: e.target.value}))} rows={2} placeholder="Scrie răspunsul..." className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-                      <button onClick={()=>raspunde(q, raspunsForm[q.id], false)} className="mt-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează răspunsul</button>
-                    </div>
-                  ) : (
-                    <div className="text-xs mt-2" style={{ color:'var(--muted2)' }}>Așteaptă răspuns de la manager.</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'#E9A23B' }}>Fără răspuns confirmat ({deschise.length})</div>
+          <div className="space-y-2">{deschise.map((q)=><CardIntrebare key={q.id} q={q} rezolvat={false} />)}</div>
         </div>
       )}
 
       {rezolvateAici.length > 0 && (
         <div>
           <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'var(--muted2)' }}>Rezolvate ({rezolvateAici.length})</div>
-          <div className="space-y-2">
-            {rezolvateAici.map((q)=>(
-              <div key={q.id} className="rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderLeft:'4px solid #4CAF7D' }}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="text-sm" style={{ color:'var(--text)' }}>❓ {q.intrebare}</div>
-                  {isManager && <button onClick={()=>stergeQ(q.id)} style={{ color:'#E05252' }}><Icon size={12}>🗑</Icon></button>}
-                </div>
-                <div className="text-sm mt-1" style={{ color:'#4CAF7D' }}>✅ {q.raspuns}</div>
-                <div className="text-[11px] mt-1" style={{ color:'var(--muted2)' }}>Răspuns de {q.raspunsDe || 'manager'} · {q.raspunsData || q.data}{q.dinCunostinte ? ' · din răspunsuri anterioare' : ''}</div>
-                {isManager && <button onClick={()=>redeschide(q)} className="mt-1.5 text-[11px] px-2 py-1 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>↩ Redeschide</button>}
-              </div>
-            ))}
-          </div>
+          <div className="space-y-2">{rezolvateAici.map((q)=><CardIntrebare key={q.id} q={q} rezolvat={true} />)}</div>
         </div>
       )}
 
@@ -2266,15 +2281,15 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
   const [raspunsForm, setRaspunsForm] = useState({});
   const numeSantier = (id) => id ? (santiere.find((s)=>s.id===id)?.nume || 'Șantier') : 'General';
 
-  const rezolvate = problemeSantier.filter((p)=>p.status==='rezolvat' && p.raspuns && String(p.raspuns).trim());
-  const deschiseToate = problemeSantier.filter((p)=>p.status!=='rezolvat').slice().reverse();
+  const rezolvate = bazaCunostinteQA(problemeSantier); // doar răspunsuri confirmate corecte
+  const deschiseToate = problemeSantier.filter((p)=>!raspunsCorectQA(p)).slice().reverse();
   const rezultate = q.trim().length>=3
     ? rezolvate.map((p)=>({ p, scor: similaritateQA(q, p.intrebare) })).filter((x)=>x.scor>=0.3).sort((a,b)=>b.scor-a.scor).slice(0,5)
     : [];
 
   const intreaba = () => {
     if (!q.trim()) return;
-    const item = { id: uid(), santierId:'', intrebare:q.trim(), raspuns:'', status:'deschis', creatDe:currentUser?.nume||'', creatId:currentUser?.id||'', data: new Date().toISOString().slice(0,10) };
+    const item = { id: uid(), santierId:'', intrebare:q.trim(), raspunsuri:[], status:'deschis', creatDe:currentUser?.nume||'', creatId:currentUser?.id||'', data: new Date().toISOString().slice(0,10) };
     const next = [...problemeSantier, item];
     setProblemeSantier(next); persist('problemeSantier', next);
     notifica('manageri', { title:'Întrebare nouă (Asistent)', body:`${currentUser?.nume||'Un coleg'}: „${item.intrebare}".`, tag:'qa-general' }, currentUser?.id);
@@ -2300,13 +2315,22 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
     setAiLoading(false);
   };
 
-  const raspunde = (item, text, dinCun) => {
+  const setPersist = (next) => { setProblemeSantier(next); persist('problemeSantier', next); };
+  const adaugaRaspuns = (item, text, corect) => {
     const t = String(text||'').trim(); if (!t) return;
-    const next = problemeSantier.map((p)=> p.id===item.id ? {...p, raspuns:t, status:'rezolvat', raspunsDe:currentUser?.nume||'', raspunsData:new Date().toISOString().slice(0,10), dinCunostinte:!!dinCun } : p);
-    setProblemeSantier(next); persist('problemeSantier', next);
+    const r = { id: uid(), text:t, autorNume: currentUser?.nume||'', autorId: currentUser?.id||'', data: new Date().toISOString().slice(0,10), corect: !!corect };
+    const next = problemeSantier.map((p)=> p.id===item.id ? {...p, raspunsuri: corect ? [...raspunsuriQA(p).map((x)=>({...x,corect:false})), r] : [...raspunsuriQA(p), r], status: (corect||raspunsCorectQA(p))?'rezolvat':'raspuns'} : p);
+    setPersist(next);
     setRaspunsForm((f)=>{ const c={...f}; delete c[item.id]; return c; });
-    if (item.creatId && item.creatId!==currentUser?.id) notifica(item.creatId, { title:'Răspuns la întrebarea ta ✅', body:`„${item.intrebare}" → ${t}`, tag:'qa-raspuns' }, currentUser?.id);
+    if (!isManager) notifica('manageri', { title:'Răspuns de verificat', body:`${currentUser?.nume||'Un coleg'} a răspuns la „${item.intrebare}".`, tag:'qa-verif' }, currentUser?.id);
+    if (item.creatId && item.creatId!==currentUser?.id) notifica(item.creatId, { title: corect?'Răspuns confirmat ✅':'Un răspuns la întrebarea ta', body:`„${item.intrebare}" → ${t}`, tag:'qa-raspuns' }, currentUser?.id);
   };
+  const marcheazaCorect = (item, raspunsId) => {
+    setPersist(problemeSantier.map((p)=> p.id!==item.id ? p : {...p, raspunsuri: raspunsuriQA(p).map((x)=>({...x, corect: x.id===raspunsId})), status:'rezolvat'}));
+    const r = raspunsuriQA(item).find((x)=>x.id===raspunsId);
+    if (item.creatId && item.creatId!==currentUser?.id && r) notifica(item.creatId, { title:'Răspuns confirmat ✅', body:`„${item.intrebare}" → ${r.text}`, tag:'qa-raspuns' }, currentUser?.id);
+  };
+  const stergeRaspuns = (item, raspunsId) => setPersist(problemeSantier.map((p)=> p.id===item.id ? {...p, raspunsuri: raspunsuriQA(p).filter((x)=>x.id!==raspunsId)} : p));
 
   return (
     <div>
@@ -2348,28 +2372,45 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
         </div>
       )}
 
-      {isManager && deschiseToate.length > 0 && (
+      {deschiseToate.length > 0 && (
         <div>
-          <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'#E9A23B' }}>De răspuns — toate șantierele ({deschiseToate.length})</div>
+          <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color:'#E9A23B' }}>{isManager ? 'De verificat / de răspuns' : 'Întrebări deschise'} — toate șantierele ({deschiseToate.length})</div>
           <div className="space-y-2">
             {deschiseToate.map((item)=>{
-              const sug = gasesteRaspunsCunoscut(item.intrebare, rezolvate.filter((x)=>x.id!==item.id), 0.5);
+              const raspunsuri = raspunsuriQA(item);
+              const sug = isManager ? gasesteRaspunsCunoscut(item.intrebare, rezolvate.filter((x)=>x.id!==item.id), 0.5) : null;
               return (
                 <div key={item.id} className="rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid #E9A23B66', borderLeft:'4px solid #E9A23B' }}>
                   <div className="text-sm" style={{ color:'var(--text)' }}>❓ {item.intrebare}</div>
-                  <div className="text-[11px] mt-0.5" style={{ color:'var(--muted2)' }}>{numeSantier(item.santierId)} · {item.creatDe||'coleg'} · {item.data}</div>
-                  {sug && (
-                    <div className="rounded-lg px-3 py-2 mt-2" style={{ background:'#4CAF7D18', border:'1px solid #4CAF7D66' }}>
-                      <div className="text-[11px]" style={{ color:'#4CAF7D', fontWeight:700 }}>💡 Răspuns cunoscut (potrivire {Math.round(sug.scor*100)}%):</div>
-                      <div className="text-sm mt-0.5" style={{ color:'var(--text)' }}>{sug.sursa.raspuns}</div>
-                      <div className="flex gap-1.5 mt-2">
-                        <button onClick={()=>raspunde(item, sug.sursa.raspuns, true)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Aprobă acest răspuns</button>
-                        <button onClick={()=>setRaspunsForm((f)=>({...f, [item.id]: sug.sursa.raspuns}))} className="text-xs px-3 py-1.5 rounded-lg" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>✍️ Modifică</button>
-                      </div>
+                  <div className="text-[11px] mt-0.5 mb-1.5" style={{ color:'var(--muted2)' }}>{numeSantier(item.santierId)} · {item.creatDe||'coleg'} · {item.data}</div>
+                  {raspunsuri.length>0 && (
+                    <div className="space-y-1 mb-2">
+                      {raspunsuri.map((r)=>(
+                        <div key={r.id} className="flex items-start justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: r.corect?'#4CAF7D18':'var(--panel2)', border: r.corect?'1px solid #4CAF7D66':'1px solid transparent' }}>
+                          <div className="min-w-0">
+                            <div style={{ color:'var(--text)' }}>{r.corect && <span style={{ color:'#4CAF7D', fontWeight:700 }}>✅ Corect · </span>}{r.text}</div>
+                            <div className="text-[10px] mt-0.5" style={{ color:'var(--muted2)' }}>{r.autorNume||'coleg'} · {r.data}</div>
+                          </div>
+                          {isManager && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              {!r.corect && <button onClick={()=>marcheazaCorect(item, r.id)} className="text-[10px] px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Corect</button>}
+                              <button onClick={()=>stergeRaspuns(item, r.id)} style={{ color:'#E05252' }}>🗑</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
-                  <textarea value={raspunsForm[item.id]||''} onChange={(e)=>setRaspunsForm((f)=>({...f, [item.id]: e.target.value}))} rows={2} placeholder="Scrie răspunsul..." className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-2" style={inputStyle} />
-                  <button onClick={()=>raspunde(item, raspunsForm[item.id], false)} className="mt-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează răspunsul</button>
+                  {sug && (
+                    <div className="rounded-lg px-3 py-2 mb-2" style={{ background:'#C08CE018', border:'1px solid #C08CE066' }}>
+                      <div className="text-[11px]" style={{ color:'#C08CE0', fontWeight:700 }}>💡 Răspuns cunoscut (potrivire {Math.round(sug.scor*100)}%): {sug.sursa.raspuns}</div>
+                      <button onClick={()=>adaugaRaspuns(item, sug.sursa.raspuns, true)} className="mt-1.5 text-xs px-3 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Folosește-l ca răspuns corect</button>
+                    </div>
+                  )}
+                  <div className="flex gap-1">
+                    <input value={raspunsForm[item.id]||''} onChange={(e)=>setRaspunsForm((f)=>({...f, [item.id]: e.target.value}))} onKeyDown={(e)=>{ if(e.key==='Enter'){ adaugaRaspuns(item, raspunsForm[item.id], isManager); } }} placeholder={isManager?'Scrie răspunsul corect...':'Scrie un răspuns...'} className="flex-1 rounded-lg px-3 py-1.5 text-xs outline-none" style={inputStyle} />
+                    <button onClick={()=>adaugaRaspuns(item, raspunsForm[item.id], isManager)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>{isManager?'✓ Răspuns corect':'Răspunde'}</button>
+                  </div>
                 </div>
               );
             })}
@@ -2409,6 +2450,8 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
   const [openFinal, setOpenFinal] = useState(false);
   const [manualStart, setManualStart] = useState('');
   const [manualFinal, setManualFinal] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerFiltru, setPickerFiltru] = useState('');
   const [nouScula, setNouScula] = useState('');
   const [nouAcces, setNouAcces] = useState('');
   const [nouVerif, setNouVerif] = useState('');
@@ -2442,7 +2485,23 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
     saveItems(next);
   };
   const toggleBifat = (id) => {
-    saveItems((checklistSantier||[]).map((i)=> i.id===id ? { ...i, bifat: !i.bifat, bifatDe: !i.bifat ? (currentUser?.id||'') : '', bifatNume: !i.bifat ? (currentUser?.nume||'') : '', bifatData: !i.bifat ? azi() : '' } : i));
+    saveItems((checklistSantier||[]).map((i)=> i.id===id ? { ...i, bifat: !i.bifat, lipsa:false, bifatDe: !i.bifat ? (currentUser?.id||'') : '', bifatNume: !i.bifat ? (currentUser?.nume||'') : '', bifatData: !i.bifat ? azi() : '' } : i));
+  };
+  // Pentru elementele de la ÎNCEPUT: stare clară „am" / „lipsă" / neatins.
+  const setStareItem = (id, stare) => {
+    saveItems((checklistSantier||[]).map((i)=> i.id===id ? {
+      ...i,
+      bifat: stare==='am',
+      lipsa: stare==='lipsa',
+      bifatDe: stare==='am' ? (currentUser?.id||'') : '',
+      bifatNume: stare==='am' ? (currentUser?.nume||'') : '',
+      bifatData: stare==='am' ? azi() : '',
+    } : i));
+  };
+  const peChecklist = (text) => startItems.some((i)=> i.text.trim().toLowerCase()===String(text||'').trim().toLowerCase());
+  const toggleCandidat = (cand) => {
+    const ex = startItems.find((i)=> i.text.trim().toLowerCase()===cand.text.trim().toLowerCase());
+    if (ex) delItem(ex.id); else addItem('start', cand.tip, cand.text);
   };
   const setObligatoriu = (id, val) => saveItems((checklistSantier||[]).map((i)=> i.id===id ? { ...i, obligatoriu: val } : i));
   const delItem = (id) => saveItems((checklistSantier||[]).filter((i)=>i.id!==id));
@@ -2496,6 +2555,38 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
       </div>
     </div>
   );
+
+  // Rând pentru elementele de la ÎNCEPUT — bifă clară „Am" (verde) / „Lipsă" (roșu).
+  const StartRow = ({ it }) => {
+    const stare = it.bifat ? 'am' : it.lipsa ? 'lipsa' : 'gol';
+    return (
+      <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg" style={{ background:'var(--panel2)', border: stare==='lipsa' ? '1px solid #E0525255' : '1px solid transparent' }}>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm" style={{ color: stare==='am'?'var(--muted)':'var(--text)', textDecoration: stare==='am'?'line-through':'none' }}>{it.text}</div>
+          {stare==='am' && it.bifatNume && <div className="text-[10px]" style={{ color:'var(--muted2)' }}>✓ {it.bifatNume}</div>}
+          {stare==='lipsa' && <div className="text-[10px]" style={{ color:'#E05252' }}>lipsește</div>}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={()=>setStareItem(it.id, stare==='am'?'gol':'am')} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color: stare==='am'?'#14181C':'#4CAF7D', background: stare==='am'?'#4CAF7D':'var(--panel)', border:'1px solid #4CAF7D66' }}>✓ Am</button>
+          <button onClick={()=>setStareItem(it.id, stare==='lipsa'?'gol':'lipsa')} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color: stare==='lipsa'?'#14181C':'#E05252', background: stare==='lipsa'?'#E05252':'var(--panel)', border:'1px solid #E0525266' }}>✗ Lipsă</button>
+          <button onClick={()=>delItem(it.id)} style={{ color:'var(--muted2)', opacity:0.75, fontSize:12 }}>🗑</button>
+        </div>
+      </div>
+    );
+  };
+
+  // Candidați pentru picker: scule + acces (din șablon) + materiale (din deviz/cereri). Fără duplicate.
+  const candidatiRaw = [];
+  (sablon.scule||[]).forEach((t)=>candidatiRaw.push({ text:t, tip:'scula', grup:'🔧 Scule standard' }));
+  (sablon.acces||[]).forEach((t)=>candidatiRaw.push({ text:t, tip:'acces', grup:'🔑 Acces / protecție' }));
+  (materialeLista||[]).forEach((m)=>{ if (m.denumire) candidatiRaw.push({ text: (m.denumire + ((Number(m.cantitate)||0)>0?(' — '+m.cantitate+' '+(m.um||'')).trimEnd():'')), tip:'material', grup:'📦 Materiale (din deviz)' }); });
+  (cereri||[]).forEach((c)=>{ if (c.denumire) candidatiRaw.push({ text: (c.denumire + ((Number(c.cantitate)||0)>0?(' — '+c.cantitate+' '+(c.um||'')).trimEnd():'')), tip:'material', grup:'📦 Materiale (cerute)' }); });
+  const _seenCand = new Set();
+  const candidati = [];
+  candidatiRaw.forEach((c)=>{ const k = c.text.trim().toLowerCase(); if (!k || _seenCand.has(k)) return; _seenCand.add(k); candidati.push(c); });
+  const candidatiFiltrati = candidati.filter((c)=> !pickerFiltru.trim() || c.text.toLowerCase().includes(pickerFiltru.toLowerCase()));
+  const grupuriPicker = [];
+  candidatiFiltrati.forEach((c)=>{ let g = grupuriPicker.find((x)=>x.grup===c.grup); if (!g) { g={ grup:c.grup, items:[] }; grupuriPicker.push(g); } g.items.push(c); });
 
   return (
     <div className="space-y-3">
@@ -2575,19 +2666,42 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
         {openStart && (
         <div className="px-3 pb-3">
         <Bar p={startPct} col="#2E8BD1" />
-        <div className="flex flex-wrap gap-1.5 mt-2">
-          <button onClick={genDinDeviz} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>📋 Materiale din deviz</button>
-          <button onClick={()=>addMulte('start','scula', sablon.scule)} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🔧 Adaugă scule</button>
-          <button onClick={()=>addMulte('start','acces', sablon.acces)} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🔑 Adaugă acces</button>
+        <div className="text-[11px] mt-2 mb-1" style={{ color:'var(--muted2)' }}>Bifează la fiecare rând: <span style={{ color:'#4CAF7D', fontWeight:700 }}>✓ Am</span> sau <span style={{ color:'#E05252', fontWeight:700 }}>✗ Lipsă</span>.</div>
+        <div className="space-y-1">
+          {startItems.length===0 ? <div className="text-xs py-2" style={{ color:'var(--muted2)' }}>Niciun element pe checklist. Apasă „➕ Alege ce pui pe checklist".</div>
+            : startItems.map((it)=><StartRow key={it.id} it={it} />)}
         </div>
-        <div className="space-y-1 mt-2">
-          {startItems.length===0 ? <div className="text-xs" style={{ color:'var(--muted2)' }}>Niciun element încă. Folosește butoanele de mai sus sau adaugă manual.</div>
-            : startItems.map((it)=><ItemRow key={it.id} it={it} />)}
-        </div>
-        <div className="flex gap-1 mt-2">
-          <input value={manualStart} onChange={(e)=>setManualStart(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter'){ addItem('start','manual',manualStart); setManualStart(''); } }} placeholder="Adaugă element manual (material/sculă)" className="flex-1 rounded-lg px-3 py-1.5 text-xs outline-none" style={inputStyle} />
-          <button onClick={()=>{ addItem('start','manual',manualStart); setManualStart(''); }} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă</button>
-        </div>
+
+        <button onClick={()=>setPickerOpen(!pickerOpen)} className="w-full mt-2 text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>➕ Alege ce pui pe checklist</button>
+        {pickerOpen && (
+          <div className="rounded-lg p-2 mt-2" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
+            <div className="text-[11px] mb-1.5" style={{ color:'var(--muted)' }}>Bifează din listă ce vrei pe checklist (poți alege câte vrei). Sau scrie manual mai jos.</div>
+            <input value={pickerFiltru} onChange={(e)=>setPickerFiltru(e.target.value)} placeholder="🔍 Caută sculă / material..." className="w-full rounded-lg px-3 py-1.5 text-xs outline-none mb-2" style={inputStyle} />
+            <div className="space-y-2" style={{ maxHeight:260, overflowY:'auto' }}>
+              {grupuriPicker.length===0 ? <div className="text-xs" style={{ color:'var(--muted2)' }}>Nimic de ales. Definește scule/acces la „Șabloane standard" sau adaugă manual.</div> :
+                grupuriPicker.map((g)=>(
+                  <div key={g.grup}>
+                    <div className="text-[11px] font-semibold mb-1" style={{ color:'var(--muted)' }}>{g.grup}</div>
+                    <div className="space-y-1">
+                      {g.items.map((c,idx)=>{
+                        const on = peChecklist(c.text);
+                        return (
+                          <button key={idx} onClick={()=>toggleCandidat(c)} className="w-full flex items-center gap-2 text-left text-xs px-2 py-1.5 rounded-lg" style={{ background: on?'#2E8BD122':'var(--panel)', border:'1px solid '+(on?'#2E8BD1':'var(--border)') }}>
+                            <span className="shrink-0" style={{ width:18, height:18, borderRadius:5, border:'1px solid '+(on?'#2E8BD1':'#3A424C'), background: on?'#2E8BD1':'transparent', color:'#14181C', fontSize:12, fontWeight:800, lineHeight:'16px', textAlign:'center' }}>{on?'✓':''}</span>
+                            <span style={{ color:'var(--text)' }}>{c.text}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <div className="flex gap-1 mt-2 pt-2" style={{ borderTop:'1px solid var(--border)' }}>
+              <input value={manualStart} onChange={(e)=>setManualStart(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter'){ addItem('start','manual',manualStart); setManualStart(''); } }} placeholder="Scrie manual (ex: Trusă șurubelnițe)" className="flex-1 rounded-lg px-3 py-1.5 text-xs outline-none" style={inputStyle} />
+              <button onClick={()=>{ addItem('start','manual',manualStart); setManualStart(''); }} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă</button>
+            </div>
+          </div>
+        )}
         </div>
         )}
       </div>
@@ -4593,7 +4707,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             allUsers={allUsers} currentUser={currentUser} isManager={currentUser?.rol === 'Manager'} persist={persist}
             onFinalizeSantier={finalizeSantier} />
         )}
-        {accHeader('probleme','❓','Probleme / Q&A', (problemeSantier.filter((p)=>p.santierId===selected && p.status!=='rezolvat').length || null))}
+        {accHeader('probleme','❓','Probleme / Q&A', (problemeSantier.filter((p)=>p.santierId===selected && !raspunsCorectQA(p)).length || null))}
         {siteView === 'probleme' && <HelpNote text={HELP.probleme} />}
         {siteView === 'probleme' && (
           <SiteProblemeTab santierId={selected} santierNume={santier?.nume || ''} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} persist={persist} currentUser={currentUser} />
