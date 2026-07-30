@@ -164,7 +164,14 @@ function raportStartPentru(s){
   return null;
 }
 // Se cere raport în ziua `azi`? Nu, dacă șantierul e prea nou (înainte de data de start).
-function seCereRaport(s, azi){ const st = raportStartPentru(s); return !(st && azi < st); }
+function seCereRaport(s, azi){
+  const st = raportStartPentru(s);
+  if (st && azi < st) return false;
+  // Șantier trecut pe „Activ" CHIAR AZI (venea din Pauză) → l-ai pregătit pentru mâine,
+  // nu s-a lucrat azi acolo, deci NU se cere raport azi și NU se trimite memento.
+  if (s && s.status === 'Activ' && s.statusSchimbatLa === azi) return false;
+  return true;
+}
 
 // --- Potrivire întrebări (Q&A): găsește un răspuns dat în trecut la o întrebare similară ca formă/conținut. ---
 const STOPWORDS_QA = new Set(['si','sa','la','de','pe','un','o','in','cu','ce','sau','este','sunt','are','am','ai','nu','da','se','ca','al','ale','a','pt','pentru','din','pana','pot','poate','cum','care','pai','mai','ma','mi','te','ti','ne','va','lor','lui','ei','el','ea','asta','asa','fi','fie','daca','dar','ar','trebuie','face','facem','fac']);
@@ -1904,6 +1911,8 @@ function GhidTab({ isManager }) {
       <Sec icon="⚡" title="Activitatea mea">{'• Vezi ce ai de făcut azi: șantierele unde lucrezi și dacă ai trimis raportul.\n• După ora 16:00 apare „unde lucrezi mâine".\n• La 17:00, dacă n-ai trimis raportul, apare o alertă până îl completezi.'}</Sec>
 
       <Sec icon="🤖" title="Asistent Q&A (din meniu)">{'• Pagină unde întrebi orice, iar aplicația caută în TOATE răspunsurile date până acum, de pe toate șantierele.\n• Scrii întrebarea → vezi imediat răspunsurile potrivite (cu procent de potrivire și de pe ce șantier).\n• „✨ Întreabă AI" — dacă e activat, îți formulează un răspuns pe baza răspunsurilor voastre (orientativ, verifică-l).\n• Dacă nu găsești, „📨 Trimite ca întrebare nouă" → managerul primește notificare și îți răspunde.'}</Sec>
+
+      <Sec icon="🧮" title="Calculator (instalații electrice)">{'• Din meniu → „🧮 Calculator": faci rapid calculele uzuale de pe teren.\n• Sus ai „⭐ Cele mai folosite": curent din putere, secțiune cablu, disjunctor, cădere de tensiune, consum/cost.\n• Cauți în bara de sus (ex. „cablu", „disjunctor", „motor") sau deschizi din listă (acordeon).\n• Alegi calculul → vezi formula → completezi datele → apare rezultatul pe loc.\n• Toate valorile sunt orientative — verifică-le mereu cu normativul I7.'}</Sec>
 
       <Sec icon="🕐" title="Pontaj">{'• Orele tale se adună automat din rapoartele zilnice.\n• Vezi totalul pe zile și pe lună.'}</Sec>
 
@@ -4975,6 +4984,308 @@ function LoginScreen({ onLogin, onBioUnlock }) {
   );
 }
 
+// ---- Calculator electric: căutare + acordeon. Cele mai uzuale sus, la îndemână. ----
+const CALC_RHO = { cupru: 0.0175, aluminiu: 0.0286 }; // Ω·mm²/m
+const CALC_SECT = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240];
+const CALC_DISJ = [6, 10, 13, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250];
+const calcFmt = (x, d = 2) => { if (!isFinite(x)) return '—'; const r = Math.round(x * Math.pow(10, d)) / Math.pow(10, d); return String(r); };
+const calcNextSect = (s) => CALC_SECT.find((x) => x >= s);
+const calcNextDisj = (i) => CALC_DISJ.find((x) => x >= i);
+
+const CALCULATOARE = [
+  {
+    id: 'curent_putere', top: true, cat: 'Curent & putere', titlu: '⚡ Curent din putere (A)',
+    cuvinte: 'amperaj a curent putere w kw consum disjunctor',
+    formula: 'Monofazat: I = P / (U · cosφ)   ·   Trifazat: I = P / (√3 · U · cosφ)',
+    campuri: [
+      { f: 'P', label: 'Putere', unit: 'val', tip: 'num', def: '' },
+      { f: 'uP', label: 'Unitate', tip: 'select', optiuni: ['kW', 'W'], def: 'kW' },
+      { f: 'faze', label: 'Rețea', tip: 'select', optiuni: ['mono', 'tri'], def: 'mono' },
+      { f: 'U', label: 'Tensiune (V)', tip: 'num', def: '230' },
+      { f: 'cos', label: 'cosφ', tip: 'num', def: '0.9' },
+    ],
+    calc: (c) => {
+      let P = c.n('P'); const uP = c.s('uP', 'kW'); if (uP === 'kW') P = P * 1000;
+      const tri = c.s('faze', 'mono') === 'tri'; const U = c.n('U', tri ? 400 : 230); const cos = c.n('cos', 0.9);
+      if (!isFinite(P) || !isFinite(U) || U <= 0) return 'Completează puterea și tensiunea.';
+      const I = tri ? P / (1.732 * U * cos) : P / (U * cos);
+      return `I = ${calcFmt(I, 1)} A   (${tri ? 'trifazat' : 'monofazat'})\nDisjunctor orientativ: ${calcNextDisj(I) || '>250'} A`;
+    },
+  },
+  {
+    id: 'sectiune_cablu', top: true, cat: 'Cablu', titlu: '🔌 Secțiune cablu (mm²)',
+    cuvinte: 'sectiune cablu mm cadere tensiune cupru aluminiu',
+    formula: 'S = (k · ρ · L · I) / ΔU   (k=2 mono, √3 tri; ρ Cu=0.0175, Al=0.0286)',
+    campuri: [
+      { f: 'I', label: 'Curent (A)', tip: 'num', def: '' },
+      { f: 'L', label: 'Lungime dus (m)', tip: 'num', def: '' },
+      { f: 'faze', label: 'Rețea', tip: 'select', optiuni: ['mono', 'tri'], def: 'mono' },
+      { f: 'U', label: 'Tensiune (V)', tip: 'num', def: '230' },
+      { f: 'du', label: 'Cădere admisă (%)', tip: 'num', def: '3' },
+      { f: 'mat', label: 'Material', tip: 'select', optiuni: ['cupru', 'aluminiu'], def: 'cupru' },
+    ],
+    calc: (c) => {
+      const I = c.n('I'), L = c.n('L'); const tri = c.s('faze', 'mono') === 'tri';
+      const U = c.n('U', tri ? 400 : 230); const du = c.n('du', 3); const rho = CALC_RHO[c.s('mat', 'cupru')];
+      if (!isFinite(I) || !isFinite(L)) return 'Completează curentul și lungimea.';
+      const dUv = U * du / 100; const k = tri ? 1.732 : 2;
+      const S = (k * rho * L * I) / dUv;
+      const rec = calcNextSect(S);
+      return `Secțiune minimă calculată: ${calcFmt(S, 2)} mm²\n➜ Alege cablu standard: ${rec ? rec + ' mm²' : '> 240 mm²'}\n(verifică și curentul maxim admis / normativ I7)`;
+    },
+  },
+  {
+    id: 'disjunctor', top: true, cat: 'Protecții', titlu: '🛡 Alegere disjunctor',
+    cuvinte: 'disjunctor siguranta automat protectie a amperaj treapta',
+    formula: 'Se alege prima treaptă standard ≥ curentul consumatorului.',
+    campuri: [
+      { f: 'I', label: 'Curent consumator (A)', tip: 'num', def: '' },
+      { f: 'S', label: 'Secțiune cablu (mm², opțional)', tip: 'num', def: '' },
+    ],
+    calc: (c) => {
+      const I = c.n('I'); if (!isFinite(I)) return 'Completează curentul consumatorului.';
+      const d = calcNextDisj(I);
+      let txt = `Disjunctor recomandat: ${d || '>250'} A`;
+      const S = c.n('S');
+      if (isFinite(S)) {
+        const amax = { 1.5: 16, 2.5: 20, 4: 25, 6: 32, 10: 44, 16: 59, 25: 77, 35: 96, 50: 117 }[S];
+        if (amax) txt += `\nCablu ${S} mm² suportă ~${amax} A (orientativ). ${d && d <= amax ? '✅ Se potrivește.' : '⚠ Verifică — disjunctorul pare prea mare pentru cablu.'}`;
+      }
+      return txt;
+    },
+  },
+  {
+    id: 'cadere_tensiune', top: true, cat: 'Cablu', titlu: '📉 Cădere de tensiune (%)',
+    cuvinte: 'cadere tensiune procent pierdere cablu lungime',
+    formula: 'ΔU = k · ρ · L · I / S ;  %ΔU = ΔU / U · 100',
+    campuri: [
+      { f: 'I', label: 'Curent (A)', tip: 'num', def: '' },
+      { f: 'L', label: 'Lungime dus (m)', tip: 'num', def: '' },
+      { f: 'S', label: 'Secțiune (mm²)', tip: 'num', def: '' },
+      { f: 'faze', label: 'Rețea', tip: 'select', optiuni: ['mono', 'tri'], def: 'mono' },
+      { f: 'U', label: 'Tensiune (V)', tip: 'num', def: '230' },
+      { f: 'mat', label: 'Material', tip: 'select', optiuni: ['cupru', 'aluminiu'], def: 'cupru' },
+    ],
+    calc: (c) => {
+      const I = c.n('I'), L = c.n('L'), S = c.n('S'); const tri = c.s('faze', 'mono') === 'tri';
+      const U = c.n('U', tri ? 400 : 230); const rho = CALC_RHO[c.s('mat', 'cupru')];
+      if (!isFinite(I) || !isFinite(L) || !isFinite(S) || S <= 0) return 'Completează curentul, lungimea și secțiunea.';
+      const k = tri ? 1.732 : 2; const dUv = k * rho * L * I / S; const proc = dUv / U * 100;
+      return `Cădere: ${calcFmt(dUv, 2)} V  =  ${calcFmt(proc, 2)} %\n${proc > 3 ? '⚠ Peste 3% — ia cablu mai gros sau scurtează traseul.' : '✅ În limite (sub ~3%).'}`;
+    },
+  },
+  {
+    id: 'consum_cost', top: true, cat: 'Energie', titlu: '💡 Consum & cost (lei)',
+    cuvinte: 'consum cost energie kwh lei pret factura',
+    formula: 'Energie = P(kW) · ore ;  Cost = Energie · preț',
+    campuri: [
+      { f: 'P', label: 'Putere (kW)', tip: 'num', def: '' },
+      { f: 'ore', label: 'Ore', tip: 'num', def: '' },
+      { f: 'pret', label: 'Preț (lei/kWh)', tip: 'num', def: '1.3' },
+    ],
+    calc: (c) => {
+      const P = c.n('P'), ore = c.n('ore'), pret = c.n('pret', 1.3);
+      if (!isFinite(P) || !isFinite(ore)) return 'Completează puterea și orele.';
+      const E = P * ore; return `Energie: ${calcFmt(E, 2)} kWh\nCost: ${calcFmt(E * pret, 2)} lei`;
+    },
+  },
+  {
+    id: 'putere_curent', cat: 'Curent & putere', titlu: '🔋 Putere din curent (W)',
+    cuvinte: 'putere w kw din curent amperaj',
+    formula: 'Mono: P = U · I · cosφ   ·   Tri: P = √3 · U · I · cosφ',
+    campuri: [
+      { f: 'U', label: 'Tensiune (V)', tip: 'num', def: '230' },
+      { f: 'I', label: 'Curent (A)', tip: 'num', def: '' },
+      { f: 'faze', label: 'Rețea', tip: 'select', optiuni: ['mono', 'tri'], def: 'mono' },
+      { f: 'cos', label: 'cosφ', tip: 'num', def: '0.9' },
+    ],
+    calc: (c) => {
+      const tri = c.s('faze', 'mono') === 'tri'; const U = c.n('U', tri ? 400 : 230); const I = c.n('I'); const cos = c.n('cos', 0.9);
+      if (!isFinite(U) || !isFinite(I)) return 'Completează tensiunea și curentul.';
+      const P = (tri ? 1.732 : 1) * U * I * cos;
+      return `P = ${calcFmt(P, 0)} W  =  ${calcFmt(P / 1000, 2)} kW`;
+    },
+  },
+  {
+    id: 'ohm', cat: 'Bază', titlu: '➗ Legea lui Ohm (U, I, R)',
+    cuvinte: 'ohm rezistenta tensiune curent u i r',
+    formula: 'U = I · R   ·   I = U / R   ·   R = U / I   ·   P = U · I',
+    campuri: [
+      { f: 'U', label: 'Tensiune U (V)', tip: 'num', def: '' },
+      { f: 'I', label: 'Curent I (A)', tip: 'num', def: '' },
+      { f: 'R', label: 'Rezistență R (Ω)', tip: 'num', def: '' },
+    ],
+    calc: (c) => {
+      const U = c.n('U'), I = c.n('I'), R = c.n('R');
+      if (isFinite(U) && isFinite(I)) return `R = ${calcFmt(U / I, 2)} Ω\nP = ${calcFmt(U * I, 2)} W`;
+      if (isFinite(U) && isFinite(R)) return `I = ${calcFmt(U / R, 2)} A\nP = ${calcFmt(U * U / R, 2)} W`;
+      if (isFinite(I) && isFinite(R)) return `U = ${calcFmt(I * R, 2)} V\nP = ${calcFmt(I * I * R, 2)} W`;
+      return 'Completează două valori, o aflu pe a treia.';
+    },
+  },
+  {
+    id: 'motor_tri', cat: 'Motoare', titlu: '⚙ Curent motor trifazat',
+    cuvinte: 'motor trifazat curent randament eta putere',
+    formula: 'I = P / (√3 · U · cosφ · η)',
+    campuri: [
+      { f: 'P', label: 'Putere mecanică (kW)', tip: 'num', def: '' },
+      { f: 'U', label: 'Tensiune (V)', tip: 'num', def: '400' },
+      { f: 'cos', label: 'cosφ', tip: 'num', def: '0.85' },
+      { f: 'eta', label: 'Randament η (%)', tip: 'num', def: '88' },
+    ],
+    calc: (c) => {
+      const P = c.n('P') * 1000, U = c.n('U', 400), cos = c.n('cos', 0.85), eta = c.n('eta', 88) / 100;
+      if (!isFinite(P) || !isFinite(U)) return 'Completează puterea și tensiunea.';
+      const I = P / (1.732 * U * cos * eta);
+      return `I = ${calcFmt(I, 1)} A\nDisjunctor orientativ: ${calcNextDisj(I * 1.25) || '>250'} A (cu rezervă de pornire)`;
+    },
+  },
+  {
+    id: 'cosfi', cat: 'Motoare', titlu: '🔧 Corecție cosφ (condensator kVAR)',
+    cuvinte: 'cosfi factor de putere condensator kvar compensare',
+    formula: 'Qc = P · (tanφ1 − tanφ2)',
+    campuri: [
+      { f: 'P', label: 'Putere activă (kW)', tip: 'num', def: '' },
+      { f: 'c1', label: 'cosφ actual', tip: 'num', def: '0.75' },
+      { f: 'c2', label: 'cosφ dorit', tip: 'num', def: '0.95' },
+    ],
+    calc: (c) => {
+      const P = c.n('P'), c1 = c.n('c1', 0.75), c2 = c.n('c2', 0.95);
+      if (!isFinite(P) || !(c1 > 0 && c1 <= 1) || !(c2 > 0 && c2 <= 1)) return 'Completează puterea și factorii cosφ (0–1).';
+      if (c2 <= c1) return 'cosφ dorit trebuie să fie mai mare decât cel actual.';
+      const Qc = P * (Math.tan(Math.acos(c1)) - Math.tan(Math.acos(c2)));
+      return `Baterie condensatoare: ${calcFmt(Qc, 2)} kVAR`;
+    },
+  },
+  {
+    id: 'kw_cp', cat: 'Conversii', titlu: '🐎 kW ↔ CP (cai putere)',
+    cuvinte: 'kw cp cai putere hp conversie',
+    formula: '1 CP ≈ 0.7355 kW',
+    campuri: [
+      { f: 'v', label: 'Valoare', tip: 'num', def: '' },
+      { f: 'u', label: 'Unitate', tip: 'select', optiuni: ['kW', 'CP'], def: 'kW' },
+    ],
+    calc: (c) => {
+      const v = c.n('v'); if (!isFinite(v)) return 'Introdu o valoare.';
+      return c.s('u', 'kW') === 'kW' ? `${calcFmt(v, 2)} kW = ${calcFmt(v / 0.7355, 2)} CP` : `${calcFmt(v, 2)} CP = ${calcFmt(v * 0.7355, 2)} kW`;
+    },
+  },
+  {
+    id: 'rezistenta_cablu', cat: 'Cablu', titlu: '📏 Rezistența unui cablu (Ω)',
+    cuvinte: 'rezistenta cablu ohm lungime sectiune',
+    formula: 'R = ρ · L / S',
+    campuri: [
+      { f: 'L', label: 'Lungime (m)', tip: 'num', def: '' },
+      { f: 'S', label: 'Secțiune (mm²)', tip: 'num', def: '' },
+      { f: 'mat', label: 'Material', tip: 'select', optiuni: ['cupru', 'aluminiu'], def: 'cupru' },
+    ],
+    calc: (c) => {
+      const L = c.n('L'), S = c.n('S'), rho = CALC_RHO[c.s('mat', 'cupru')];
+      if (!isFinite(L) || !isFinite(S) || S <= 0) return 'Completează lungimea și secțiunea.';
+      return `R = ${calcFmt(rho * L / S, 4)} Ω`;
+    },
+  },
+  {
+    id: 'pe', cat: 'Protecții', titlu: '🌍 Secțiune conductor de protecție (PE)',
+    cuvinte: 'pe pamant protectie sectiune impamantare',
+    formula: 'S≤16 → PE=S ; 16<S≤35 → PE=16 ; S>35 → PE=S/2',
+    campuri: [{ f: 'S', label: 'Secțiune fază (mm²)', tip: 'num', def: '' }],
+    calc: (c) => {
+      const S = c.n('S'); if (!isFinite(S)) return 'Introdu secțiunea fazei.';
+      let pe; if (S <= 16) pe = S; else if (S <= 35) pe = 16; else pe = S / 2;
+      return `Conductor PE minim: ${calcFmt(pe, 1)} mm²`;
+    },
+  },
+  {
+    id: 'iluminat', cat: 'Iluminat', titlu: '💡 Număr corpuri de iluminat',
+    cuvinte: 'iluminat lux corpuri lampi lumeni suprafata',
+    formula: 'N = (lux · suprafață) / (flux_corp · factor)',
+    campuri: [
+      { f: 'A', label: 'Suprafață (m²)', tip: 'num', def: '' },
+      { f: 'lux', label: 'Nivel dorit (lux)', tip: 'num', def: '300' },
+      { f: 'flux', label: 'Flux per corp (lm)', tip: 'num', def: '3000' },
+      { f: 'fu', label: 'Factor (0.4–0.8)', tip: 'num', def: '0.6' },
+    ],
+    calc: (c) => {
+      const A = c.n('A'), lux = c.n('lux', 300), flux = c.n('flux', 3000), fu = c.n('fu', 0.6);
+      if (!isFinite(A) || !isFinite(flux) || flux <= 0) return 'Completează suprafața și fluxul.';
+      const N = (lux * A) / (flux * fu);
+      return `Necesar: ${Math.ceil(N)} corpuri (calcul: ${calcFmt(N, 1)})`;
+    },
+  },
+];
+
+function CalculatorTab() {
+  const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
+  const [cauta, setCauta] = useState('');
+  const [deschis, setDeschis] = useState({});
+  const [vals, setVals] = useState({});
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const q = norm(cauta).trim();
+  const lista = q ? CALCULATOARE.filter((c) => norm(c.titlu + ' ' + c.cuvinte + ' ' + c.cat).includes(q)) : CALCULATOARE;
+  const uzuale = q ? [] : lista.filter((c) => c.top);
+  const restul = q ? lista : lista.filter((c) => !c.top);
+
+  const randCalc = (c) => {
+    const open = !!deschis[c.id];
+    const ctx = {
+      n: (f, def) => { const raw = vals[c.id + '.' + f]; const x = parseFloat(String(raw == null ? '' : raw).replace(',', '.')); return isFinite(x) ? x : (def === undefined ? NaN : def); },
+      s: (f, def) => { const raw = vals[c.id + '.' + f]; return (raw == null || raw === '') ? (def === undefined ? '' : def) : String(raw); },
+    };
+    const rez = open ? c.calc(ctx) : '';
+    return (
+      <div key={c.id} className="rounded-xl" style={{ background: 'var(--panel)', border: '1px solid var(--border)' }}>
+        <button onClick={() => setDeschis((d) => ({ ...d, [c.id]: !d[c.id] }))} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+          <span style={{ fontSize: 10, color: 'var(--muted)', display: 'inline-block', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▶</span>
+          <span className="text-sm font-semibold flex-1" style={{ color: 'var(--text)' }}>{c.titlu}</span>
+          <span className="text-[10px]" style={{ color: 'var(--muted2)' }}>{c.cat}</span>
+        </button>
+        {open && (
+          <div className="px-3 pb-3">
+            <div className="text-[11px] rounded-lg px-2.5 py-1.5 mb-2" style={{ background: 'var(--panel2)', color: 'var(--muted)', fontFamily: "'JetBrains Mono', monospace" }}>{c.formula}</div>
+            <div className="grid grid-cols-2 gap-2">
+              {c.campuri.map((cp) => (
+                <div key={cp.f}>
+                  <div className="text-[11px] mb-0.5" style={{ color: 'var(--muted)' }}>{cp.label}</div>
+                  {cp.tip === 'select' ? (
+                    <select value={vals[c.id + '.' + cp.f] || cp.def} onChange={(e) => setVals((s) => ({ ...s, [c.id + '.' + cp.f]: e.target.value }))} className="w-full rounded-lg px-2 py-1.5 text-sm outline-none" style={inputStyle}>
+                      {cp.optiuni.map((o) => <option key={o} value={o} style={{ background: 'var(--panel)' }}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input type="text" inputMode="decimal" value={vals[c.id + '.' + cp.f] || ''} placeholder={cp.def} onChange={(e) => setVals((s) => ({ ...s, [c.id + '.' + cp.f]: e.target.value }))} className="w-full rounded-lg px-2 py-1.5 text-sm outline-none" style={inputStyle} />
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 rounded-lg px-3 py-2 text-sm whitespace-pre-line" style={{ background: '#2E8BD115', border: '1px solid #2E8BD140', color: 'var(--text)', fontWeight: 600 }}>{rez}</div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg mb-1" style={{ color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" }}>🧮 Calculator electric</h2>
+      <p className="text-xs mb-3" style={{ color: 'var(--muted2)' }}>Alege calculul, bagi datele, îți dă rezultatul. Valorile sunt orientative — cablul și protecțiile se verifică cu normativul I7.</p>
+      <input value={cauta} onChange={(e) => setCauta(e.target.value)} placeholder="🔍 Caută (ex: secțiune, disjunctor, cădere, cosfi...)" className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-4" style={inputStyle} />
+
+      {uzuale.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#E9A23B' }}>⭐ Cele mai folosite</div>
+          <div className="space-y-2">{uzuale.map(randCalc)}</div>
+        </div>
+      )}
+      {restul.length > 0 ? (
+        <div>
+          {!q && <div className="text-[11px] uppercase tracking-wider mb-1.5" style={{ color: 'var(--muted2)' }}>Toate calculele</div>}
+          <div className="space-y-2">{restul.map(randCalc)}</div>
+        </div>
+      ) : (uzuale.length === 0 && <div className="text-xs text-center py-6" style={{ color: 'var(--muted2)' }}>Niciun calcul găsit pentru „{cauta}".</div>)}
+    </div>
+  );
+}
+
 // Test provizoriu: „Raport din vorbe" — băiatul dictează/scrie, AI-ul scrie raportul și cere confirmări.
 function RaportAITest() {
   const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
@@ -5018,7 +5329,7 @@ function RaportAITest() {
       let d = {}; try { d = await r.json(); } catch {}
       if (r.ok && d && d.raspuns) setOut(d.raspuns);
       else if (r.status === 404) setErr('AI-ul nu e activat (ruta /api/ai lipsește pe server).');
-      else if (r.status === 500) setErr('AI-ul nu e configurat (lipsește cheia ANTHROPIC_API_KEY pe Vercel).');
+      else if (r.status === 500) setErr('AI-ul nu e configurat (lipsește cheia GEMINI_API_KEY pe Vercel).');
       else setErr((d && d.error) ? d.error : 'AI indisponibil momentan.');
     } catch (e) { setErr('Fără conexiune la AI.'); }
     setBusy(false);
@@ -7126,7 +7437,7 @@ function App() {
   // Perioadă de test: colegii (non-Manager) pot FOLOSI doar Dashboard, Activitatea mea, Șantiere și Profil.
   // Restul taburilor de electrician le VĂD în meniu, dar deschid un mesaj „disponibil după test".
   const accesLimitat = PERIOADA_TEST && effectiveUser?.rol !== 'Manager';
-  const TABURI_TEST = [null, 'activitate', 'santiere', 'asistent', 'profil', 'ghid'];
+  const TABURI_TEST = [null, 'activitate', 'santiere', 'asistent', 'calculator', 'profil', 'ghid'];
   const tabBlocatTest = accesLimitat && !!tab && !TABURI_TEST.includes(tab);
 
   const CONTAB_TABS = ['devize', 'oferte', 'facturi', 'clienti'];
@@ -7585,6 +7896,7 @@ function App() {
         )}
         <NavItem id="santiere" label="🏗 Șantiere" />
         <NavItem id="asistent" label="🤖 Asistent Q&A" />
+        <NavItem id="calculator" label="🧮 Calculator" />
         <NavItem id="pontaj" label="🕐 Pontaj" />
         <NavItem id="concedii" label="🏖 Concedii" />
         {effectiveUser.rol === 'Manager' && <NavItem id="achizitii" label="🛒 Achiziții" />}
@@ -7683,6 +7995,7 @@ function App() {
 
             {tab === 'profil' && <ProfileTab currentUser={effectiveUser} onLogout={logout} tema={tema} setTema={setTema} />}
             {tab === 'asistent' && <AsistentTab problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} santiere={santiere} persist={persist} currentUser={effectiveUser} qaTarget={qaTarget} clearQaTarget={()=>setQaTarget(null)} />}
+            {tab === 'calculator' && <CalculatorTab />}
             {tab === 'ghid' && <GhidTab isManager={effectiveUser.rol === 'Manager'} />}
 
             {tab === 'utilizatori' && effectiveUser.rol === 'Manager' && <UsersTab currentUser={effectiveUser} />}
