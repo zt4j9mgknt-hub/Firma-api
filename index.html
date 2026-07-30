@@ -1748,7 +1748,7 @@ function ZoomImage({ src, alt, onClose, onFull }) {
 
 // Vizualizator PDF: randează paginile cu PDF.js, apoi le afișează într-un container cu SCROLL NATIV
 // (te plimbi sus-jos-stânga-dreapta ca la orice pagină) + zoom cu două degete sau butoane.
-function PdfViewer({ src, downloadUrl, nume, onClose, onFull }) {
+function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
   const dl = downloadUrl || src;
   const [zoom, setZoom] = useState(1);
   const pz = useRef({ startDist:0, startZoom:1 });
@@ -1769,7 +1769,10 @@ function PdfViewer({ src, downloadUrl, nume, onClose, onFull }) {
       if (!lib) { setStatus('Vizualizatorul nu s-a încărcat. Verifică internetul și reintră în planșă.'); return; }
       try {
         try { lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch {}
-        const pdf = await lib.getDocument({ url: src }).promise;
+        // Încercăm întâi sursa rapidă (CDN direct); dacă nu merge, revenim la proxy.
+        let pdf;
+        try { pdf = await lib.getDocument({ url: src }).promise; }
+        catch (e1) { if (fallbackSrc && fallbackSrc !== src) { pdf = await lib.getDocument({ url: fallbackSrc }).promise; } else { throw e1; } }
         // Rapid implicit; „HD" (la cerere) randează mai fin.
         const targetW = hd ? 2600 : 1500;
         const maxS = hd ? 4 : 2;
@@ -1996,7 +1999,7 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
   if (viewing) {
     return (
       <div ref={planFsRef} style={{ position:'fixed', inset:0, zIndex:200, background:'#0c0f13', display:'flex', flexDirection:'column' }}>
-        <PdfViewer src={blobViewUrl(viewing.pathname)} downloadUrl={viewing.url || blobViewUrl(viewing.pathname)} nume={viewing.nume} onClose={()=>setViewing(null)} onFull={()=>toggleFullscreen(planFsRef.current)} />
+        <PdfViewer src={viewing.url || blobViewUrl(viewing.pathname)} fallbackSrc={blobViewUrl(viewing.pathname)} downloadUrl={viewing.url || blobViewUrl(viewing.pathname)} nume={viewing.nume} onClose={()=>setViewing(null)} onFull={()=>toggleFullscreen(planFsRef.current)} />
       </div>
     );
   }
