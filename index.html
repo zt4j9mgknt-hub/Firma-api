@@ -1774,13 +1774,17 @@ function PdfViewer({ src, downloadUrl, nume, onClose, onFull }) {
           setStatus(`Se randează pagina ${i}/${pdf.numPages}…`);
           const page = await pdf.getPage(i);
           const base = page.getViewport({ scale: 1 });
-          const s = Math.min(3, Math.max(1, 1600 / base.width));
+          // Randăm la rezoluție mare ca să rămână clar la zoom (țintă ~2600px lățime),
+          // dar limităm suprafața ca să nu rămână telefonul fără memorie.
+          let s = Math.min(4, Math.max(1.5, 2600 / base.width));
+          const MAX_PX = 9e6; // ~9 megapixeli per pagină
+          if (base.width * s * base.height * s > MAX_PX) { s = Math.sqrt(MAX_PX / (base.width * base.height)); }
           const viewport = page.getViewport({ scale: s });
           const canvas = document.createElement('canvas');
           canvas.width = Math.floor(viewport.width); canvas.height = Math.floor(viewport.height);
           const ctx = canvas.getContext('2d');
           await page.render({ canvasContext: ctx, viewport }).promise;
-          imgs.push(canvas.toDataURL('image/jpeg', 0.85));
+          imgs.push(canvas.toDataURL('image/jpeg', 0.92));
         }
         if (!cancelled) { setPages(imgs); setStatus(''); }
       } catch (e) {
@@ -1809,8 +1813,7 @@ function PdfViewer({ src, downloadUrl, nume, onClose, onFull }) {
           ))}
         </div>
       </div>
-      {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'45%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
-      <a href={dl} target="_blank" rel="noopener noreferrer" style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:'50%', transform:'translateX(-50%)', zIndex:16, color:'#14181C', background:'#4CAF7D', fontSize:12, fontWeight:700, padding:'6px 12px', borderRadius:8, textDecoration:'none', whiteSpace:'nowrap' }}>⬇ Calitate maximă</a>
+      {nume && <div style={{ position:'absolute', top:'max(14px, env(safe-area-inset-top))', left:12, zIndex:15, maxWidth:'55%', color:'#cdd7e2', fontSize:12, background:'rgba(10,14,20,.55)', padding:'5px 10px', borderRadius:8, backdropFilter:'blur(6px)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nume}</div>}
       {onClose && <CloseX onClose={onClose} onFull={onFull} />}
       <ZoomControls scale={zoom} zoomBy={zoomBy} reset={resetZ} />
     </div>
@@ -1822,7 +1825,7 @@ const HELP = {
   rapoarte: 'La final de zi apeși „Raport zilnic nou".\n• Alege data și bifează cine a lucrat, cu orele fiecăruia.\n• Trece lucrările făcute și materialele folosite.\n• Apeși Salvează. Un raport din listă se poate edita cu ✏️ sau șterge cu 🗑.\n• Când trimiți raportul, managerul primește notificare. Seara, dacă un raport n-a fost trimis, pleacă un memento (angajatului „nu uita raportul", managerului „nu s-a trimis raport la...").',
   materiale: 'Aici ceri materiale de care ai nevoie pe șantier.\n• Poți cere mai multe materiale într-o SINGURĂ cerere: scrii materialul + cantitatea și apeși „➕ Adaugă în listă", apoi repeți pentru fiecare material.\n• Dacă ceri același material de două ori în aceeași zi (pe același șantier), te întreabă: linie nouă separată SAU aduni cantitatea la linia existentă.\n• Lista „De trimis" arată tot ce ai adăugat; poți scoate un rând cu ✕.\n• La final apeși „📤 Trimite cererea" — pleacă o singură notificare la manager, nu câte una pentru fiecare material.\n• Managerul poate aproba sau respinge fiecare material în parte, ori tot grupul deodată. Ești anunțat când răspunde.\n• Tot aici vezi ce s-a cerut, ce s-a aprobat/respins și ce s-a livrat.',
   scule: 'Ține evidența sculelor aduse la șantier.\n• Adaugi scula și cine a adus-o.\n• Când o duci în altă parte (depozit, alt șantier, service), apeși „Trimite".',
-  planse: 'Planurile PDF ale șantierului.\n• „👁 Vezi în aplicație" — deschizi planșa pe tot ecranul; zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși.\n• „⬇ Descarcă pe telefon" — salvează PDF-ul original în telefon (în „Descărcări"), la calitate maximă. Îl deschizi apoi cu vizualizatorul de PDF al telefonului.\n• „↗ Deschide nativ" — deschide direct PDF-ul original într-o filă nouă.\n• Caută planșa după nume (ex: „prize parter") — bara de căutare apare când ai mai multe planșe, pe telefon și pe desktop.',
+  planse: 'Planurile PDF ale șantierului.\n• „👁 Deschide planul" — se deschide ÎN aplicație, pe tot ecranul, la calitate mare; zoom cu două degete (pinch), te plimbi cu degetul, X în colț ca să ieși. Când închizi, rămâi în aplicație.\n• „⬇ Salvează în telefon" — pune PDF-ul în „Descărcări" (rămâi în aplicație). Îl deschizi separat, când vrei, din Fișiere. Atenție: dacă apeși pe fișierul descărcat, se deschide în aplicația de PDF a telefonului — asta e altă aplicație.\n• Caută planșa după nume (ex: „prize parter") — bara de căutare apare când ai mai multe planșe, pe telefon și pe desktop.',
   media: 'Poze și filme de pe șantier.\n• Apeși „Adaugă" — poți selecta mai multe deodată.\n• Apeși pe o poză ca s-o deschizi cu zoom (pinch).',
   checklist: 'Checklist în două părți: La început și La sfârșit.\n• La ÎNCEPUT ai două rubrici: 🔧 Scule și 📦 Materiale.\n• Scule: apeși „➕ Adaugă scule", scrii manual sau alegi din sugestii (din tab-ul Scule și de pe alte șantiere).\n• Materiale: apeși „➕ Adaugă materiale"; sugestiile vin din lista de materiale a șantierului (dacă e importată), altfel din istoricul general de materiale.\n• La fiecare rând bifezi „✓ Am" (verde) sau „✗ Lipsă" (roșu).\n• La FINAL: bifezi verificările; cele cu * sunt obligatorii, iar fiecare coleg activ confirmă.',
   echipa: 'Colegii asignați la acest șantier.\n• Apeși 📞 ca să suni direct un coleg.\n• Managerul poate adăuga sau scoate colegi din echipă.',
@@ -2020,9 +2023,8 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
                   </div>
                 </div>
                 <div className="flex gap-1.5 mt-2 flex-wrap">
-                  <button onClick={()=>openPlan(p)} className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>👁 Vezi în aplicație</button>
-                  <button onClick={()=>descarca(p)} disabled={dlBusy===p.id} className="text-xs px-2.5 py-1 rounded-lg font-semibold disabled:opacity-60" style={{ color:'#14181C', background:'#4CAF7D' }}>{dlBusy===p.id ? '⏳ Se descarcă…' : '⬇ Descarcă pe telefon'}</button>
-                  <a href={p.url || blobViewUrl(p.pathname)} target="_blank" rel="noopener noreferrer" className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ color:'var(--text)', background:'var(--panel)', border:'1px solid var(--border)', textDecoration:'none' }}>↗ Deschide nativ</a>
+                  <button onClick={()=>openPlan(p)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>👁 Deschide planul (rămâi în aplicație)</button>
+                  <button onClick={()=>descarca(p)} disabled={dlBusy===p.id} className="text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-60" style={{ color:'var(--text)', background:'var(--panel)', border:'1px solid var(--border)' }}>{dlBusy===p.id ? '⏳ Se salvează…' : '⬇ Salvează în telefon'}</button>
                 </div>
               </div>
             ))}
