@@ -1917,6 +1917,9 @@ const HELP = {
   achizitii: {
     text: 'Aici ții evidența a ceea ce ai de cumpărat și a ceea ce ai cumpărat deja pentru firmă.\n\n• Apeși „+ Adaugă" ca să treci o achiziție și îi urmărești starea (de făcut, cumpărată).',
   },
+  adeverinte: {
+    text: 'Aici generezi adeverințe ștampilate și semnate pentru angajați (de salariat, pentru medicul de familie sau de venit).\n\n1) Alegi angajatul din listă; numele și CNP-ul (dacă e trecut) se completează singure. Le poți edita oricând.\n2) Completezi funcția, tipul de contract și data angajării.\n3) Alegi tipul de adeverință. Dacă alegi „de venit", apar și rubricile de salariu brut și net.\n4) La „Scop" scrii pentru ce este (de exemplu, pentru bancă); dacă lași gol, se pune un text standard.\n5) Apeși „📄 Generează PDF". Se deschide adeverința A4, ștampilată și semnată cu ștampila firmei (aceeași ca pe devize), de unde o poți tipări sau salva ca PDF.\n\nȘtampila și numele administratorului vin din „⚙ Firma mea".',
+  },
   utilizatori: {
     text: 'Aici sunt angajații firmei, adică cine are voie să intre în aplicație.\n\n• Apeși „+ Adaugă" ca să faci un utilizator nou și îi pui: numele, numele de utilizator (cu care se loghează), parola și rolul (Manager sau Electrician).\n• Rolul hotărăște ce vede fiecare în aplicație. Poți trece și CNP-ul (nu e obligatoriu), ca aplicația să știe ziua lui de naștere și să-l felicite.\n• Un utilizator îl poți modifica sau șterge oricând.',
   },
@@ -2010,6 +2013,7 @@ function GhidTab({ isManager }) {
         {fromHelp('🗂','Gestiune (materialele firmei)','gestiune')}
         {fromHelp('📈','Stocuri (istoricul stocului)','stocuri')}
         {fromHelp('🛒','Achiziții','achizitii')}
+        {fromHelp('📄','Adeverințe (ștampilate)','adeverinte')}
         {fromHelp('🔑','Utilizatori (angajații)','utilizatori')}
         {fromHelp('⚙','Firma mea','firma')}
 
@@ -6370,10 +6374,17 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
   );
 }
 
-function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) {
+function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, company }) {
   const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
   const [form, setForm] = useState(null);
   const isManager = currentUser?.rol === 'Manager';
+  const trimiteContabila = (c) => {
+    const to = company?.emailContabil || '';
+    if (!to) { window.alert('Adaugă întâi e-mailul contabilei în „⚙ Firma mea", apoi revino aici.'); return; }
+    const subj = `Cerere concediu — ${c.nume} (${fmtData(c.dataInceput)} – ${fmtData(c.dataSfarsit)})`;
+    const body = `Bună ziua,\n\nVă transmit cererea de concediu:\n• Angajat: ${c.nume}\n• Perioada: ${fmtData(c.dataInceput)} – ${fmtData(c.dataSfarsit)}\n• Tip: ${c.tip}\n• Status: ${c.status}\n${c.motiv ? '• Motiv: ' + c.motiv + '\n' : ''}\nDocumentul PDF ștampilat îl atașez separat (l-am salvat cu butonul „📄 PDF").\n\nMulțumesc,\n${company?.nume || ''}`;
+    window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+  };
   const formRef = useRef(null);
   const formKey = form ? (form.id || 'nou') : 'none';
   useEffect(() => { if (form && formRef.current) { try { formRef.current.scrollIntoView({ behavior:'smooth', block:'center' }); } catch {} } }, [formKey]);
@@ -6488,6 +6499,8 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) 
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-xs" style={{ color: c.status==='Aprobat'?'#4CAF7D':c.status==='Respins'?'#E05252':'#E9A23B' }}>{c.status}</span>
+                {(isManager || c.userId===currentUser?.id) && <button onClick={()=>printCerereConcediu(c, company)} className="px-2 py-1 rounded-lg text-xs" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }} title="Exportă cererea în PDF (ștampilată dacă e aprobată)">📄 PDF</button>}
+                {isManager && <button onClick={()=>trimiteContabila(c)} className="px-2 py-1 rounded-lg text-xs" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }} title="Trimite pe email la contabilă">📧</button>}
                 {isManager && (
                   <>
                     {c.status!=='Aprobat' && <button onClick={()=>setStatus(c.id,'Aprobat')} className="px-2 py-1 rounded-lg text-xs" style={{ color:'#14181C', background:'#4CAF7D' }} title="Aprobă">✓</button>}
@@ -6504,6 +6517,65 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte }) 
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AdeverinteTab({ company }) {
+  const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
+  const [users, setUsers] = useState([]);
+  const [f, setF] = useState({ userId:'', nume:'', cnp:'', functia:'Electrician', contract:'pe perioadă nedeterminată', dataAngajarii:'', tip:'salariat', scop:'', salariuBrut:'', salariuNet:'' });
+  useEffect(()=>{
+    authFetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'list' }) })
+      .then((r)=>r.json()).then((d)=>setUsers(d.users||[])).catch(()=>{});
+  }, []);
+  const alegeUser = (id) => { const u = users.find((x)=>x.id===id); setF((s)=>({ ...s, userId:id, nume: u?.nume || s.nume, cnp: u?.cnp || s.cnp })); };
+  const genereaza = () => { if (!String(f.nume).trim()) { window.alert('Alege angajatul sau scrie numele.'); return; } printAdeverinta(f, company); };
+  const Camp = ({ label, children }) => (<div><div className="text-[11px] mb-0.5" style={{ color:'var(--muted)' }}>{label}</div>{children}</div>);
+  return (
+    <div className="max-w-lg">
+      <h2 className="text-lg mb-1" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>📄 Adeverințe</h2>
+      <p className="text-xs mb-3" style={{ color:'var(--muted2)' }}>Completezi datele și apeși „Generează". Iese o adeverință A4 ștampilată și semnată (aceeași ștampilă ca pe devize), gata de printat sau salvat ca PDF.</p>
+      <div className="rounded-xl p-4 space-y-3" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
+        <Camp label="Angajat">
+          <select value={f.userId} onChange={(e)=>alegeUser(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+            <option value="" style={{ background:'var(--panel)' }}>— alege din listă —</option>
+            {users.map((u)=><option key={u.id} value={u.id} style={{ background:'var(--panel)' }}>{u.nume}</option>)}
+          </select>
+        </Camp>
+        <div className="grid grid-cols-2 gap-3">
+          <Camp label="Nume (poți edita)"><input value={f.nume} onChange={(e)=>setF({...f, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
+          <Camp label="CNP (opțional)"><input value={f.cnp} onChange={(e)=>setF({...f, cnp:e.target.value.replace(/\D/g,'').slice(0,13)})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, fontFamily:"'JetBrains Mono', monospace" }} /></Camp>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Camp label="Funcția"><input value={f.functia} onChange={(e)=>setF({...f, functia:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
+          <Camp label="Contract">
+            <select value={f.contract} onChange={(e)=>setF({...f, contract:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+              <option style={{ background:'var(--panel)' }}>pe perioadă nedeterminată</option>
+              <option style={{ background:'var(--panel)' }}>pe perioadă determinată</option>
+            </select>
+          </Camp>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Camp label="Data angajării"><RoCalendarPicker value={f.dataAngajarii} onChange={(v)=>setF({...f, dataAngajarii:v})} /></Camp>
+          <Camp label="Tip adeverință">
+            <select value={f.tip} onChange={(e)=>setF({...f, tip:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+              <option value="salariat" style={{ background:'var(--panel)' }}>De salariat</option>
+              <option value="medic" style={{ background:'var(--panel)' }}>Pentru medicul de familie</option>
+              <option value="venit" style={{ background:'var(--panel)' }}>De venit (cu salariu)</option>
+            </select>
+          </Camp>
+        </div>
+        {f.tip==='venit' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Camp label="Salariu brut (lei)"><input value={f.salariuBrut} onChange={(e)=>setF({...f, salariuBrut:e.target.value})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
+            <Camp label="Salariu net (lei)"><input value={f.salariuNet} onChange={(e)=>setF({...f, salariuNet:e.target.value})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
+          </div>
+        )}
+        <Camp label="Scop / destinație (ex. pentru bancă, pentru medicul de familie)"><input value={f.scop} onChange={(e)=>setF({...f, scop:e.target.value})} placeholder="Lasă gol pentru textul standard" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
+        <button onClick={genereaza} className="w-full px-4 py-2.5 rounded-lg text-sm font-semibold" style={{ color:'#fff', background:'#2E8BD1' }}>📄 Generează PDF</button>
+      </div>
+      {!(company?.stampila) && <div className="text-[11px] mt-2" style={{ color:'var(--muted2)' }}>Ștampila și semnătura vin din „⚙ Firma mea" (aceeași folosită pe devize/oferte).</div>}
     </div>
   );
 }
@@ -6840,6 +6912,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 // aud = cine o vede: 'toti' (angajați + manager), 'angajat' (doar angajați), 'manager' (doar manager).
 // NU pune aici felicitările / mesajele de sărbători — alea sunt surpriză și apar singure când e cazul.
 const NOUTATI = [
+  { id: 'concedii-adeverinte-pdf', aud: 'manager', data: '30.07.2026', titlu: '📄 Concedii și adeverințe în PDF (ștampilate)',
+    text: 'La „🏖 Concedii", fiecare cerere are acum butonul „📄 PDF" care scoate cererea ștampilată și semnată (când e aprobată), gata de trimis la contabilă; ai și butonul „📧" pentru e-mail. Iar în meniu ai „📄 Adeverințe", de unde generezi adeverințe (de salariat, pentru medicul de familie, de venit) ștampilate cu ștampila firmei. E-mailul contabilei îl pui în „⚙ Firma mea".' },
   { id: 'normativ-i7-2026-07', aud: 'toti', data: '30.07.2026', titlu: '📘 Normativul I7 în aplicație',
     text: 'Ai în meniu un buton nou: „📘 Normativ I7". Scrii un cuvânt (ex. „spital", „cablu", „legare la pământ") sau apeși pe o etichetă gata pusă, iar aplicația îți arată paginile din normativ unde apare. Apeși pe un rezultat → se deschide fix la pagina aia. Are și modificările din 2023.' },
   { id: 'normativ-upload-manager', aud: 'manager', data: '30.07.2026', titlu: '📘 Încarcă normativul o dată (important)',
@@ -6906,7 +6980,8 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
   const marcheazaVazut = (rid) => { const next=[...new Set([...respinsVazut, rid])]; setRespinsVazut(next); try{ localStorage.setItem(RESP_KEY, JSON.stringify(next)); }catch{} };
   const respinseAfisate = respinseMele.filter((r)=>!respinsVazut.includes(r.id));
   // --- „Ce e nou": anunțuri despre funcții noi, fiecare văzut o singură dată (per utilizator, pe telefon) ---
-  const NOUT_KEY = 'noutatiVazute_' + (currentUser?.id || '');
+  // Versiune: dacă o cresc (v2, v3...), lista „văzut" a TUTUROR se resetează și toți revăd toate noutățile o dată.
+  const NOUT_KEY = 'noutatiVazute_v2_' + (currentUser?.id || '');
   const [noutVazute, setNoutVazute] = useState(()=>{ try{ return JSON.parse(localStorage.getItem(NOUT_KEY)||'[]'); }catch{ return []; } });
   // Fiecare vede doar noutățile care îl privesc: angajatul pe ale lui + cele comune, managerul pe ale lui + cele comune.
   const vizibilNoutate = (n) => n.aud === 'toti' || (isManager ? n.aud === 'manager' : n.aud === 'angajat');
@@ -7256,7 +7331,7 @@ function CompanyTab({ company, setCompany, persist }) {
   const [form, setForm] = useState(company);
   useEffect(()=>setForm(company), [company]);
   const save = () => { setCompany(form); persist('company', form); };
-  const fields = [['nume','Denumire firmă'],['cui','CUI'],['regCom','Nr. Registrul Comerțului'],['adresa','Adresă sediu'],['iban','IBAN'],['email','E-mail'],['telefon','Telefon'],['administrator','Administrator (nume)']];
+  const fields = [['nume','Denumire firmă'],['cui','CUI'],['regCom','Nr. Registrul Comerțului'],['adresa','Adresă sediu'],['iban','IBAN'],['email','E-mail'],['telefon','Telefon'],['administrator','Administrator (nume)'],['emailContabil','E-mail contabilă (pt. concedii/adeverințe)']];
   return (
     <div>
       <h2 className="text-lg mb-1" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>Firma mea</h2>
@@ -7442,6 +7517,134 @@ function openPrintWindow(items) {
   if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
   w.document.open(); w.document.write(html); w.document.close();
   w.focus();
+}
+
+// --- Cerere de concediu: document A4 pentru contabilitate, cu ștampila și semnătura firmei (aceeași ca pe devize/oferte) ---
+function printCerereConcediu(c, company) {
+  const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const azi = fmtData(new Date().toISOString().slice(0,10));
+  // Numărăm zilele lucrătoare (Luni–Vineri) din interval, inclusiv, și aflăm ziua reluării activității.
+  let zile = 0, reluare = '';
+  try {
+    let d = new Date(c.dataInceput + 'T00:00:00'); const end = new Date(c.dataSfarsit + 'T00:00:00');
+    while (d <= end) { const wd = d.getDay(); if (wd !== 0 && wd !== 6) zile++; d.setDate(d.getDate() + 1); }
+    let r = new Date(c.dataSfarsit + 'T00:00:00'); do { r.setDate(r.getDate() + 1); } while (r.getDay() === 0 || r.getDay() === 6);
+    reluare = fmtData(r.toISOString().slice(0, 10));
+  } catch (_) {}
+  const eAprobat = c.status === 'Aprobat';
+  const firma = company?.nume || '(numele firmei — completează în „Firma mea")';
+  const admin = company?.administrator || '';
+  const tip = c.tip || 'Concediu de odihnă';
+  const stamp = company?.stampila || STAMPILA_EXECUTANT;
+  const antet = [
+    company?.cui ? 'CUI: ' + esc(company.cui) : '',
+    company?.regCom ? 'Reg. com.: ' + esc(company.regCom) : '',
+    company?.adresa ? esc(company.adresa) : '',
+    company?.telefon ? 'Tel: ' + esc(company.telefon) : '',
+  ].filter(Boolean).join(' · ');
+
+  const aprobatBloc = eAprobat ? `
+    <div style="margin-top:16mm; padding-top:6mm; border-top:1px solid #ccc;">
+      <div style="font-weight:700; font-size:13px; margin-bottom:3mm;">APROBAT — Angajator</div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-end; font-size:11px; line-height:1.7;">
+        <div>
+          <div style="font-weight:700;">${esc(firma)}</div>
+          ${admin ? `<div>Administrator: <b>${esc(admin)}</b></div>` : ''}
+          <div style="margin-top:2mm; color:#555;">Semnătura și ștampila</div>
+        </div>
+        <div style="text-align:center;"><img src="${stamp}" alt="" style="height:30mm; width:auto; display:block;" /></div>
+      </div>
+    </div>` : `
+    <div style="margin-top:16mm; padding-top:6mm; border-top:1px solid #ccc; font-size:11px; color:#8a6d1a; background:#fff8e6; padding:4mm; border-radius:3px;">
+      Această cerere NU este încă aprobată, de aceea nu poartă ștampila. Aprob-o în aplicație, apoi export-o din nou ca să apară ștampila și semnătura.
+    </div>`;
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cerere concediu — ${esc(c.nume || '')}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}
+    <div class="print-page">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8mm;">
+        <div style="font-size:11px; line-height:1.7;">
+          <div style="font-weight:700; font-size:13px;">${esc(firma)}</div>
+          ${antet ? `<div style="color:#555;">${antet}</div>` : ''}
+        </div>
+        <div style="text-align:right; font-size:11px; color:#555;">Nr. _______ / ${azi}</div>
+      </div>
+      <h1 style="text-align:center; font-size:18px; letter-spacing:.5px; margin:4mm 0 8mm;">CERERE DE CONCEDIU</h1>
+      <div style="font-size:12px; line-height:2; text-align:justify;">
+        <p>Subsemnatul(a) <b>${esc(c.nume || '')}</b>, angajat(ă) în cadrul societății <b>${esc(firma)}</b>, vă rog să binevoiți a-mi aproba efectuarea <b>${esc(tip)}</b> pe perioada <b>${esc(fmtData(c.dataInceput))} – ${esc(fmtData(c.dataSfarsit))}</b>, reprezentând un număr de <b>${zile} ${zile === 1 ? 'zi lucrătoare' : 'zile lucrătoare'}</b>.</p>
+        ${c.motiv ? `<p>Motivul solicitării: ${esc(c.motiv)}.</p>` : ''}
+        ${reluare ? `<p>Îmi voi relua activitatea începând cu data de <b>${esc(reluare)}</b>.</p>` : ''}
+      </div>
+      <div style="display:flex; justify-content:space-between; margin-top:12mm; font-size:11px;">
+        <div>Data,<br/><span style="color:#555;">${azi}</span></div>
+        <div style="text-align:center;">Semnătură salariat,<br/><br/><span style="display:inline-block; border-top:1px solid #999; width:55mm;"></span></div>
+      </div>
+      ${aprobatBloc}
+      <div class="pp-status">Status în aplicație: ${esc(c.status || '—')}</div>
+      <div class="pp-pagefoot">${esc(firma)}${company?.cui ? ` · CUI ${esc(company.cui)}` : ''} · document generat din aplicație</div>
+    </div>
+  </body></html>`;
+
+  const w = window.open('', '_blank');
+  if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+  w.document.open(); w.document.write(html); w.document.close(); w.focus();
+}
+
+// --- Adeverință (de salariat / pt. medic / de venit): document A4 cu ștampila și semnătura firmei ---
+function printAdeverinta(a, company) {
+  const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const azi = fmtData(new Date().toISOString().slice(0, 10));
+  const firma = company?.nume || '(numele firmei — completează în „Firma mea")';
+  const admin = company?.administrator || '';
+  const stamp = company?.stampila || STAMPILA_EXECUTANT;
+  const titlu = a.tip === 'venit' ? 'ADEVERINȚĂ DE VENIT' : a.tip === 'medic' ? 'ADEVERINȚĂ' : 'ADEVERINȚĂ DE SALARIAT';
+  const scop = (a.scop && a.scop.trim()) || (a.tip === 'medic' ? 'a-i servi la medicul de familie' : 'a-i servi acolo unde este necesar');
+  const contract = a.contract || 'pe perioadă nedeterminată';
+  const antet = [
+    company?.cui ? 'CUI: ' + esc(company.cui) : '',
+    company?.regCom ? 'Reg. com.: ' + esc(company.regCom) : '',
+    company?.adresa ? esc(company.adresa) : '',
+    company?.telefon ? 'Tel: ' + esc(company.telefon) : '',
+  ].filter(Boolean).join(' · ');
+
+  const paragrafe = [];
+  paragrafe.push(`Prin prezenta se adeverește că doamna/domnul <b>${esc(a.nume)}</b>${a.cnp ? `, CNP <b>${esc(a.cnp)}</b>` : ''}, este angajat(ă) al societății <b>${esc(firma)}</b>, cu contract individual de muncă ${esc(contract)}, în funcția de <b>${esc(a.functia || '—')}</b>${a.dataAngajarii ? `, începând cu data de <b>${esc(fmtData(a.dataAngajarii))}</b>` : ''}.`);
+  if (a.tip === 'venit' && (a.salariuBrut || a.salariuNet)) {
+    const parti = [];
+    if (a.salariuBrut) parti.push(`<b>${esc(a.salariuBrut)} lei brut</b>`);
+    if (a.salariuNet) parti.push(`<b>${esc(a.salariuNet)} lei net</b>`);
+    paragrafe.push(`Salariul de bază lunar este de ${parti.join(' / ')}.`);
+  }
+  paragrafe.push(`Prezenta adeverință a fost eliberată pentru ${esc(scop)} și nu este transmisibilă.`);
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Adeverință — ${esc(a.nume || '')}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}
+    <div class="print-page">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8mm;">
+        <div style="font-size:11px; line-height:1.7;">
+          <div style="font-weight:700; font-size:13px;">${esc(firma)}</div>
+          ${antet ? `<div style="color:#555;">${antet}</div>` : ''}
+        </div>
+        <div style="text-align:right; font-size:11px; color:#555;">Nr. _______ / ${azi}</div>
+      </div>
+      <h1 style="text-align:center; font-size:18px; letter-spacing:.5px; margin:6mm 0 9mm;">${esc(titlu)}</h1>
+      <div style="font-size:12px; line-height:2.1; text-align:justify;">
+        ${paragrafe.map((p) => `<p>${p}</p>`).join('')}
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:16mm; font-size:11px;">
+        <div>Data,<br/><span style="color:#555;">${azi}</span></div>
+        <div style="text-align:center; line-height:1.7;">
+          <div style="font-weight:700;">Angajator,</div>
+          <div>${esc(firma)}</div>
+          ${admin ? `<div>Administrator: <b>${esc(admin)}</b></div>` : ''}
+          <img src="${stamp}" alt="" style="height:30mm; width:auto; display:block; margin:2mm auto 0;" />
+        </div>
+      </div>
+      <div class="pp-pagefoot">${esc(firma)}${company?.cui ? ` · CUI ${esc(company.cui)}` : ''} · document generat din aplicație</div>
+    </div>
+  </body></html>`;
+
+  const w = window.open('', '_blank');
+  if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
+  w.document.open(); w.document.write(html); w.document.close(); w.focus();
 }
 
 // --- Deviz pe TARIF ORAR generat din rapoartele zilnice ale unui șantier ---
@@ -8335,6 +8538,7 @@ function App() {
         <NavItem id="pontaj" label="🕐 Pontaj" />
         <NavItem id="concedii" label="🏖 Concedii" />
         {effectiveUser.rol === 'Manager' && <NavItem id="achizitii" label="🛒 Achiziții" />}
+        {effectiveUser.rol === 'Manager' && <NavItem id="adeverinte" label="📄 Adeverințe" />}
         <div style={{ height:1, background:'var(--border)', margin:'8px 4px' }} />
         {effectiveUser.rol === 'Manager' && <NavItem id="firma" label="⚙ Firma mea" />}
         <NavItem id="profil" label="👤 Profilul meu" />
@@ -8426,9 +8630,10 @@ function App() {
 
             {tab === 'pontaj' && <PontajTab rapoarte={rapoarte} santiere={santiere} currentUser={effectiveUser} pontajCorectii={pontajCorectii} setPontajCorectii={setPontajCorectii} persist={persist} company={company} concedii={concedii} />}
 
-            {tab === 'concedii' && <ConcediiTab concedii={concedii} setConcedii={setConcedii} persist={persist} currentUser={effectiveUser} rapoarte={rapoarte} />}
+            {tab === 'concedii' && <ConcediiTab concedii={concedii} setConcedii={setConcedii} persist={persist} currentUser={effectiveUser} rapoarte={rapoarte} company={company} />}
 
             {tab === 'achizitii' && effectiveUser.rol === 'Manager' && <AchizitiiTab achizitii={achizitii} setAchizitii={setAchizitii} persist={persist} />}
+            {tab === 'adeverinte' && effectiveUser.rol === 'Manager' && <AdeverinteTab company={company} />}
 
             {tab === 'profil' && <ProfileTab currentUser={effectiveUser} onLogout={logout} tema={tema} setTema={setTema} />}
             {tab === 'asistent' && <AsistentTab problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} santiere={santiere} persist={persist} currentUser={effectiveUser} qaTarget={qaTarget} clearQaTarget={()=>setQaTarget(null)} />}
