@@ -201,6 +201,50 @@ function lucrariDinRand(l) {
   if (l && (String(l.tipLucrare||'').trim() || (Number(l.cantitate)||0))) return [{ denumire: l.tipLucrare||'', cantitate: l.cantitate||'', um: l.um||'buc' }];
   return [];
 }
+// Contopește două rapoarte din ACEEAȘI ZI, de pe același șantier, într-unul singur.
+// Persoanele NU se dublează: dacă apare de două ori, se ia intervalul cel mai larg (nu se adună orele).
+function contopesteRapoarte(a, b) {
+  const cheiaP = (p)=> String(p && p.nume || '').toLowerCase().trim();
+  const pers = new Map();
+  [...(a.persoane||[]), ...(b.persoane||[])].forEach((p)=>{
+    const k = cheiaP(p); if (!k) return;
+    const ex = pers.get(k);
+    if (!ex) { pers.set(k, { ...p }); return; }
+    const min = (x,y)=> (String(x||'99:99') < String(y||'99:99') ? x : y);
+    const max = (x,y)=> (String(x||'00:00') > String(y||'00:00') ? x : y);
+    pers.set(k, { ...ex, oraInceput: min(ex.oraInceput, p.oraInceput), oraSfarsit: max(ex.oraSfarsit, p.oraSfarsit) });
+  });
+  const uneste = (arr1, arr2, cheie) => {
+    const out = [], vaz = new Set();
+    [...(arr1||[]), ...(arr2||[])].forEach((x)=>{
+      const k = cheie(x); if (!k || vaz.has(k)) return;
+      vaz.add(k); out.push(x);
+    });
+    return out;
+  };
+  // Materialele cu aceeași denumire și unitate se adună la cantitate.
+  const mat = [];
+  [...(a.materialeFolosite||[]), ...(b.materialeFolosite||[])].forEach((m)=>{
+    const k = String(m.denumire||'').toLowerCase().trim() + '|' + String(m.um||'').toLowerCase().trim();
+    const ex = mat.find((x)=> String(x.denumire||'').toLowerCase().trim() + '|' + String(x.um||'').toLowerCase().trim() === k);
+    if (ex) { ex.cantitate = (Number(ex.cantitate)||0) + (Number(m.cantitate)||0); }
+    else mat.push({ ...m, id: m.id || uid() });
+  });
+  const expl = [a.explicatii, b.explicatii].map((x)=>String(x||'').trim()).filter(Boolean);
+  return {
+    ...a,
+    oraInceput: (String(a.oraInceput||'99:99') < String(b.oraInceput||'99:99')) ? a.oraInceput : b.oraInceput,
+    oraSfarsit: (String(a.oraSfarsit||'00:00') > String(b.oraSfarsit||'00:00')) ? a.oraSfarsit : b.oraSfarsit,
+    etapaId: a.etapaId || b.etapaId,
+    persoane: Array.from(pers.values()),
+    tipuriLucrari: uneste(a.tipuriLucrari, b.tipuriLucrari, (t)=>String(t.denumire||'').toLowerCase().trim()),
+    materialeFolosite: mat,
+    pozitiiExecutate: [...(a.pozitiiExecutate||[]), ...(b.pozitiiExecutate||[])],
+    lucrariApartamente: [...(a.lucrariApartamente||[]), ...(b.lucrariApartamente||[])],
+    explicatii: [...new Set(expl)].join('\n'),
+  };
+}
+
 // Normalizează rapoartele vechi (o lucrare per rând) la modelul nou (listă de lucrări per rând).
 function normalizeLucrariApart(arr) {
   return (arr || []).map((g) => {
@@ -389,6 +433,18 @@ async function saveKey(key, value) {
   if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
 }
 
+// Ce anunțăm managerului când apar înregistrări noi de la angajați (al doilea strat, pe lângă push).
+const ANUNTA_LA_SCHIMBARE = {
+  rapoarte:       { titlu:'📋 Raport nou',            unul:'Un coleg a trimis un raport zilnic.',   multe:'rapoarte noi trimise.' },
+  cereriSantier:  { titlu:'📦 Cerere de materiale',   unul:'Un coleg a cerut materiale.',           multe:'cereri de materiale noi.' },
+  concedii:       { titlu:'🏖 Cerere de concediu',    unul:'Un coleg a cerut concediu.',            multe:'cereri de concediu noi.' },
+  problemeSantier:{ titlu:'❓ Întrebare nouă',        unul:'Un coleg a pus o întrebare.',           multe:'întrebări noi.' },
+  sculeSantier:   { titlu:'🔧 Mișcare de scule',      unul:'Un coleg a adus/mutat o sculă.',        multe:'mișcări de scule.' },
+  planseSantier:  { titlu:'📐 Planșă nouă',           unul:'S-a adăugat o planșă.',                 multe:'planșe noi.' },
+  mediaSantier:   { titlu:'📸 Poze/video noi',        unul:'S-au adăugat poze sau filme.',          multe:'fișiere noi.' },
+  miscariSantier: { titlu:'📊 Mișcare de stoc',       unul:'S-a consumat/mutat material.',          multe:'mișcări de stoc.' },
+};
+
 // ---- Notificări (Web Push) ----
 const VAPID_PUBLIC = 'BL2zeAif4sj-0ix4-_AoDmfXo3QnXC5YAh1aplsoTFX0TiiQC99gzO_vXSJZ9o53XtB218YlvzfkWYfb6ISbSyI';
 function urlB64ToUint8Array(b64){ const pad='='.repeat((4-(b64.length%4))%4); const base=(b64+pad).replace(/-/g,'+').replace(/_/g,'/'); const raw=atob(base); const arr=new Uint8Array(raw.length); for(let i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i); return arr; }
@@ -447,7 +503,8 @@ async function notifica(audience, msg, exceptUserId, faraCoada){
     else sel=list.filter((x)=>x.userId===audience);
     const subs=sel.map((x)=>x.sub).filter(Boolean);
     if(!subs.length) return { ok:false, reason:'fara-abonati' };
-    const r = await authFetch(`/api/push-send?token=${encodeURIComponent(AUTH_TOKEN||'')}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subscriptions:subs, title:msg.title, body:msg.body, url:msg.url||'/', tag:msg.tag }) });
+    // keepalive: cererea pleacă până la capăt chiar dacă angajatul închide aplicația imediat după ce salvează.
+    const r = await authFetch(`/api/push-send?token=${encodeURIComponent(AUTH_TOKEN||'')}`, { method:'POST', keepalive:true, headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subscriptions:subs, title:msg.title, body:msg.body, url:msg.url||'/', tag:msg.tag }) });
     let data={}; try{ data=await r.json(); }catch{}
     if(!r.ok && !faraCoada){ const q=pushQueueGet(); q.push({ audience, msg, exceptUserId }); pushQueueSet(q); }
     return { ok:r.ok, status:r.status, data };
@@ -4915,14 +4972,33 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const saveReport = (r) => {
     const esteNou = !rapoarte.some((x)=>x.id===r.id);
     const withSite = { ...r, santierId: selected };
-    const next = esteNou ? [...rapoarte, withSite] : rapoarte.map((x)=>x.id===r.id?withSite:x);
+    let next;
+    // Dacă rândul editat era contopit din mai multe rapoarte vechi ale aceleiași zile,
+    // le înlocuim pe toate cu unul singur, curat.
+    if (!esteNou && Array.isArray(r._idUnite) && r._idUnite.length > 1) {
+      const curat = { ...withSite }; delete curat._idUnite;
+      const fara = rapoarte.filter((x)=> !r._idUnite.includes(x.id));
+      next = [...fara, curat];
+      setRapoarte(next); persist('rapoarte', next); setReportForm(null);
+      notifica('manageri', { title:'Raport modificat', body:`${currentUser?.nume || 'Un coleg'} a modificat raportul la ${santier?.nume || 'un șantier'}${r.data ? ` (${r.data})` : ''}.`, tag:'raport' }, currentUser?.id);
+      return;
+    }
+    // UN SINGUR RAPORT PE ZI, PE ȘANTIER: dacă mai există deja un raport în aceeași zi,
+    // ce s-a scris acum se adaugă în el, nu se face un raport nou. Așa rămâne totul compact.
+    const existent = esteNou ? rapoarte.find((x)=> x.santierId === selected && x.data === withSite.data) : null;
+    if (existent) {
+      next = rapoarte.map((x)=> x.id === existent.id ? contopesteRapoarte(existent, withSite) : x);
+    } else {
+      next = esteNou ? [...rapoarte, withSite] : rapoarte.map((x)=>x.id===r.id?withSite:x);
+    }
     setRapoarte(next); persist('rapoarte', next); setReportForm(null);
     notifica('manageri', { title: esteNou ? 'Raport zilnic nou' : 'Raport modificat', body:`${currentUser?.nume || 'Un coleg'} ${esteNou ? 'a trimis raport' : 'a modificat raportul'} la ${santier?.nume || 'un șantier'}${r.data ? ` (${r.data})` : ''}.`, tag:'raport' }, currentUser?.id);
   };
   const delReport = (id) => {
-    if (!window.confirm('Ștergi definitiv acest raport zilnic? Orele din el vor dispărea din Pontaj.')) return;
-    const rap = rapoarte.find((r)=>r.id===id);
-    const next = rapoarte.filter((r)=>r.id!==id); setRapoarte(next); persist('rapoarte', next);
+    const ids = Array.isArray(id) ? id : [id];
+    if (!window.confirm('Ștergi definitiv raportul acestei zile? Orele din el vor dispărea din Pontaj.')) return;
+    const rap = rapoarte.find((r)=>r.id===ids[0]);
+    const next = rapoarte.filter((r)=>!ids.includes(r.id)); setRapoarte(next); persist('rapoarte', next);
     notifica('manageri', { title:'Raport șters', body:`${currentUser?.nume || 'Un coleg'} a șters un raport de la ${santier?.nume || 'un șantier'}${rap?.data ? ` (${rap.data})` : ''}.`, tag:'raport' }, currentUser?.id);
   };
 
@@ -4986,9 +5062,19 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   if (selected) {
     const santier = santiere.find((s)=>s.id===selected);
     const etapeSantier = etape.filter((e)=>e.santierId===selected);
-    const rapoarteSantier = rapoarte.filter((r)=>r.santierId===selected)
-      .filter((r)=> etapaTab === 'toate' || r.etapaId === etapaTab)
-      .slice().sort((a,b)=> a.data<b.data?1:-1);
+    // Un singur rând pe zi: rapoartele vechi, salvate separat în aceeași zi, se afișează contopite.
+    const rapoarteSantier = (()=>{
+      const brute = rapoarte.filter((r)=>r.santierId===selected)
+        .filter((r)=> etapaTab === 'toate' || r.etapaId === etapaTab);
+      const peZi = new Map();
+      brute.forEach((r)=>{
+        const k = r.data || '';
+        const ex = peZi.get(k);
+        if (!ex) peZi.set(k, { ...r, _idUnite: [r.id] });
+        else { const c = contopesteRapoarte(ex, r); c._idUnite = [...(ex._idUnite||[ex.id]), r.id]; peZi.set(k, c); }
+      });
+      return Array.from(peZi.values()).sort((a,b)=> a.data<b.data?1:-1);
+    })();
     const totalOreSantierMin = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+personMinutes(p),0),0);
         const accHeader = (k, icon, label, count) => (
           <button key={'acc'+k} onClick={()=>navTo(siteView===k ? '__closed__' : k)} className="w-full flex items-center gap-2 rounded-lg px-3 py-2.5" style={{ background: siteView===k ? 'var(--panelA)' : 'var(--panel)', border: '1px solid ' + (siteView===k ? '#2E8BD166' : 'var(--border)') }}>
@@ -5179,7 +5265,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                       <span className="text-xs" style={{ color:'var(--muted)' }}>{nrPersoane} pers.</span>
                       <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMinRow)}</span>
                       <button onClick={()=>setReportForm(r)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>✏️ Editează</button>
-                      <button onClick={()=>delReport(r.id)} className="px-2 py-1.5 rounded-lg" style={{ color:'#E05252', background:'var(--panel2)' }}><Icon>🗑</Icon></button>
+                      <button onClick={()=>delReport(r._idUnite && r._idUnite.length>1 ? r._idUnite : r.id)} className="px-2 py-1.5 rounded-lg" style={{ color:'#E05252', background:'var(--panel2)' }}><Icon>🗑</Icon></button>
                     </div>
                   </div>
                   {(r.tipuriLucrari||[]).filter((t)=>t.denumire && t.denumire.trim()).length > 0 && (
@@ -10010,7 +10096,29 @@ function App() {
     channel.bind('data-changed', async (payload) => {
       const setter = setters[payload?.key];
       if (!setter) return;
-      setter(await loadKey(payload.key, payload.key === 'company' ? {} : []));
+      const nou = await loadKey(payload.key, payload.key === 'company' ? {} : []);
+      // AL DOILEA STRAT DE SIGURANȚĂ (mai ales pentru manager): dacă apar înregistrări noi făcute de
+      // altcineva, telefonul sună singur — chiar dacă notificarea trimisă de telefonul lor s-a pierdut.
+      try {
+        if (Array.isArray(nou) && ANUNTA_LA_SCHIMBARE[payload.key]) {
+          const vechi = cacheGet('sem_' + payload.key);
+          const idVechi = new Set(Array.isArray(vechi) ? vechi : []);
+          const idNoi = nou.map((x)=>x && x.id).filter(Boolean);
+          const adaugate = idNoi.filter((id)=>!idVechi.has(id));
+          cacheSet('sem_' + payload.key, idNoi);
+          const eManager = currentUser && currentUser.rol === 'Manager';
+          if (adaugate.length && idVechi.size && eManager) {
+            const info = ANUNTA_LA_SCHIMBARE[payload.key];
+            const reg = await navigator.serviceWorker.ready;
+            reg.showNotification(info.titlu, {
+              body: adaugate.length === 1 ? info.unul : `${adaugate.length} ${info.multe}`,
+              icon: '/logo.png', badge: '/logo.png', tag: 'sem-' + payload.key, renotify: true,
+              vibrate: [80, 40, 80], data: { url: '/' },
+            });
+          }
+        }
+      } catch (_) {}
+      setter(nou);
     });
     return () => { pusherClient.unsubscribe('firma-updates'); pusherClient.disconnect(); };
   }, [currentUser]);
