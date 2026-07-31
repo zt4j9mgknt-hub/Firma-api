@@ -418,12 +418,18 @@ const PERIOADA_TEST = false;
 const APP_VERSION = 'v29.07-aurora';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
-const INVOICE_STATUSES = ['Neplătită', 'Plătită', 'Restantă'];
-const STATUS_COLOR = { 'Ciornă':'var(--muted)','Trimisă':'#2E8BD1','Acceptată':'#4CAF7D','Respinsă':'#E05252','Neplătită':'#2E8BD1','Plătită':'#4CAF7D','Restantă':'#E05252','Emis':'#2E8BD1','Semnat':'#4CAF7D' };
+// De când ținem evidența financiară în aplicație (graficele nu arată luni dinainte de asta).
+const EVIDENTA_DE_LA = '2026-07';
+// Din punctul NOSTRU de vedere (noi emitem factura): banii sunt de ÎNCASAT, nu „de plătit".
+const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
+// Facturile vechi aveau „Neplătită"/„Plătită" — le traducem automat, ca să nu se piardă nimic.
+const normStatusFactura = (st) => st === 'Plătită' ? 'Încasată' : (st === 'Neplătită' ? 'De încasat' : st);
+const eIncasata = (i) => normStatusFactura(i && i.status) === 'Încasată';
+const STATUS_COLOR = { 'Ciornă':'var(--muted)','Trimisă':'#2E8BD1','Acceptată':'#4CAF7D','Respinsă':'#E05252','De încasat':'#2E8BD1','Neplătită':'#2E8BD1','Încasată':'#4CAF7D','Plătită':'#4CAF7D','Restantă':'#E05252','Emis':'#2E8BD1','Semnat':'#4CAF7D' };
 const Icon = ({ children, size = 14 }) => <span style={{ fontSize:size, lineHeight:1, display:'inline-block' }}>{children}</span>;
 
 function StatusSwitch({ status, onChange, options }) {
-  const on = status === 'Acceptată' || status === 'Plătită' || status === 'Semnat';
+  const on = status === 'Acceptată' || status === 'Plătită' || status === 'Încasată' || status === 'Semnat';
   const color = STATUS_COLOR[status] || 'var(--muted)';
   return (
     <div className="inline-flex items-center gap-2">
@@ -523,7 +529,7 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
           </div>
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'var(--muted)', background:'var(--panel2)' }}>Renunță</button>
-            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), scadenta: kind==='Factură' ? scadenta : undefined, clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'Neplătită'), offerId: initial?.offerId })}
+            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), scadenta: kind==='Factură' ? scadenta : undefined, clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'De încasat'), offerId: initial?.offerId })}
               className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
           </div>
         </>
@@ -1920,13 +1926,13 @@ const HELP = {
     text: 'Oferta este prețul pe care i-l propui unui client înainte de lucrare.\n\n1) Apeși „+ Adaugă ofertă", alegi clientul și treci pozițiile (manoperă și materiale) cu prețurile lor.\n2) O salvezi, apoi o poți tipări sau o poți scoate ca PDF.\n\nCu butonul „📚 Exportă toate în PDF" scoți toate ofertele deodată. Fiecărei oferte îi poți schimba starea (de exemplu: trimisă, acceptată). Dacă clientul acceptă, poți transforma oferta direct în factură.',
   },
   facturi: {
-    text: 'Factura este documentul de plată pe care i-l dai clientului după lucrare.\n\n1) Apeși „+ Adaugă factură", alegi clientul și treci pozițiile.\n2) Pui „Scadența", adică până când trebuie să te plătească (implicit 30 de zile de la data facturii).\n3) O salvezi, apoi o poți tipări sau o poți scoate ca PDF.\n\nCând trece data scadenței și factura tot nu e plătită, aplicația o trece SINGURĂ pe „Restantă" și te anunță pe telefon. Suma și zilele de întârziere le vezi pe Dashboard, la „💰 Cashflow".\n\nCu butonul „📚 Exportă toate în PDF" scoți toate facturile deodată. Fiecărei facturi îi pui starea (neplătită, plătită, restantă). Dacă ai legat aplicația cu SmartBill, poți trimite factura direct acolo.',
+    text: 'Factura este documentul de plată pe care i-l dai clientului după lucrare.\n\n1) Apeși „+ Adaugă factură", alegi clientul și treci pozițiile.\n2) Pui „Scadența", adică până când trebuie să te plătească (implicit 30 de zile de la data facturii).\n3) O salvezi, apoi o poți tipări sau o poți scoate ca PDF.\n\nCând trece data scadenței și banii tot nu au intrat, aplicația trece factura SINGURĂ pe „Restantă" și te anunță pe telefon. Suma și zilele de întârziere le vezi pe Dashboard, la „💰 Cashflow".\n\nCu butonul „📚 Exportă toate în PDF" scoți toate facturile deodată. Fiecărei facturi îi pui starea: De încasat, Încasată sau Restantă. Dacă ai legat aplicația cu SmartBill, poți trimite factura direct acolo.',
   },
   clienti: {
     text: 'Aici este lista clienților tăi. Ea se folosește când faci devize, oferte și facturi, ca să nu scrii datele de fiecare dată.\n\n• Apeși „+ Adaugă client" și treci numele, CUI-ul, adresa și datele de contact.\n• Un client existent îl poți modifica apăsând pe creion ✏️ sau îl poți șterge apăsând pe coșul de gunoi 🗑.',
   },
   proiecte: {
-    text: 'Proiecte este arhiva firmei, organizată ca folderele de pe calculator.\n\n1) Deschizi folderul unui client (apeși pe numele lui).\n2) Înăuntru vezi facturile lui, fiecare ca un dosar: „Factura nr. … din data …", cu suma și starea (plătită / neplătită / restantă).\n3) Deschizi dosarul unei facturi și înăuntru găsești factura și devizele care au stat la baza ei (manoperă, materiale). Orice document se deschide cu „🖨 PDF" și se poate tipări sau salva.\n4) Cu „➕ Pune un deviz în acest dosar" legi un deviz de factura lui, exact cum îți salvezi pe calculator devizele în folderul facturii. Cu ✕ îl scoți.\n\nDevizele și ofertele care nu sunt încă legate de o factură apar jos, la „📂 Nepuse într-un dosar de factură". Poți căuta clientul după nume în bara de sus.',
+    text: 'Proiecte este arhiva firmei, organizată ca folderele de pe calculator.\n\n1) Deschizi folderul unui client (apeși pe numele lui).\n2) Înăuntru vezi facturile lui, fiecare ca un dosar: „Factura nr. … din data …", cu suma și starea (încasată / de încasat / restantă).\n3) Deschizi dosarul unei facturi și înăuntru găsești factura și devizele care au stat la baza ei (manoperă, materiale). Orice document se deschide cu „🖨 PDF" și se poate tipări sau salva.\n4) Cu „➕ Pune un deviz în acest dosar" legi un deviz de factura lui, exact cum îți salvezi pe calculator devizele în folderul facturii. Cu ✕ îl scoți.\n\nDevizele și ofertele care nu sunt încă legate de o factură apar jos, la „📂 Nepuse într-un dosar de factură". Poți căuta clientul după nume în bara de sus.',
   },
   gestiune: {
     text: 'Gestiunea este lista cu materialele firmei tale.\n\n• Fiecare material are un preț, un stoc (câte bucăți ai) și un stoc minim (sub cât nu ar trebui să scazi).\n• Apeși „+ Adaugă material" ca să pui unul nou, sau apeși pe unul existent ca să-l modifici.\n• Când stocul scade sub minimul stabilit, aplicația te avertizează.\n• Când un angajat consumă un material pe un șantier, stocul scade automat de aici.',
@@ -6998,12 +7004,12 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, persist, 
                         <button onClick={()=>setOpenF((s)=>({ ...s, [f.id]: !s[f.id] }))} className="w-full flex items-center gap-2 px-2.5 py-2 text-left">
                           <span>{of2?'📂':'📁'}</span>
                           <span className="text-xs font-semibold flex-1 min-w-0 truncate" style={{ color:'var(--text)' }}>Factura {f.numar} · {fmtData(f.data)}</span>
-                          <span className="text-[11px] shrink-0 font-semibold" style={{ color: f.status==='Plătită'?'#4CAF7D':f.status==='Restantă'?'#E05252':'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalDoc(f))}</span>
+                          <span className="text-[11px] shrink-0 font-semibold" style={{ color: eIncasata(f)?'#4CAF7D':f.status==='Restantă'?'#E05252':'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalDoc(f))}</span>
                         </button>
                         {of2 && (
                           <div className="px-2.5 pb-2.5 space-y-1">
                             <div className="flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded" style={{ background:'var(--panel)' }}>
-                              <span style={{ color:'var(--text)' }}>🧾 Factura {f.numar} <span style={{ color: f.status==='Plătită'?'#4CAF7D':f.status==='Restantă'?'#E05252':'#E9A23B' }}>· {f.status}</span></span>
+                              <span style={{ color:'var(--text)' }}>🧾 Factura {f.numar} <span style={{ color: eIncasata(f)?'#4CAF7D':f.status==='Restantă'?'#E05252':'#E9A23B' }}>· {normStatusFactura(f.status)}</span></span>
                               <button onClick={()=>printFactura(f)} className="shrink-0 px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF</button>
                             </div>
                             {devAt.map((d)=>(
@@ -7068,11 +7074,12 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
   const [cashOpen, setCashOpen] = useState(false);
   const [factOpen, setFactOpen] = useState(false);
+  const [muncaOpen, setMuncaOpen] = useState(false);
 
   const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
   const oferteTrimise = offers.filter((o)=>o.status==='Trimisă').length;
-  const facturiNeplatite = invoices.filter((i)=>i.status==='Neplătită');
-  const sumaNeplatita = facturiNeplatite.reduce((s,i)=>s+calcSubtotal(i.items)*(1+(Number(i.tva)||0)/100),0);
+  const facturiDeIncasat = invoices.filter((i)=>!eIncasata(i));
+  const sumaDeIncasat = facturiDeIncasat.reduce((s,i)=>s+calcSubtotal(i.items)*(1+(Number(i.tva)||0)/100),0);
   const santiereActive = santiere.filter((s)=>s.status==='Activ').length;
   const azi = new Date().toISOString().slice(0,10);
 
@@ -7123,7 +7130,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const cards = isManager ? [
     { label:'Devize active', value: devizeActive, tab:'devize' },
     { label:'Oferte trimise', value: oferteTrimise, tab:'oferte' },
-    { label:'Facturi neplătite', value: `${facturiNeplatite.length} · ${money(sumaNeplatita)}`, tab:'facturi' },
+    { label:'Facturi de încasat', value: `${facturiDeIncasat.length} · ${money(sumaDeIncasat)}`, tab:'facturi' },
     { label:'Șantiere active', value: santiereActive, tab:'santiere' },
   ] : [
     { label:'Șantierele tale', value: santiere.filter((s)=>inEchipa(s.echipa, currentUser?.id)).length, tab:'santiere' },
@@ -7192,12 +7199,12 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         const numeLuna = LUNI_L[new Date().getMonth()] + ' ' + new Date().getFullYear();
         const totalDoc = (d)=>calcSubtotal(d.items||[])*(1+(Number(d.tva)||0)/100);
         const numeClient = (id)=> (clients||[]).find((c)=>c.id===id)?.nume || '(client șters)';
-        const neplatite = invoices.filter((i)=>i.status!=='Plătită').slice().sort((a,b)=> (a.data<b.data?-1:1));
+        const neplatite = invoices.filter((i)=>!eIncasata(i)).slice().sort((a,b)=> (a.data<b.data?-1:1));
         const deIncasat = neplatite.reduce((s,i)=>s+totalDoc(i),0);
         const restante = neplatite.filter((i)=>i.status==='Restantă');
         const facturatLuna = invoices.filter((i)=>String(i.data||'').startsWith(lunaCur));
         const sumFacturatLuna = facturatLuna.reduce((s,i)=>s+totalDoc(i),0);
-        const incasatLuna = invoices.filter((i)=>i.status==='Plătită' && String(i.data||'').startsWith(lunaCur));
+        const incasatLuna = invoices.filter((i)=>eIncasata(i) && String(i.data||'').startsWith(lunaCur));
         const sumIncasatLuna = incasatLuna.reduce((s,i)=>s+totalDoc(i),0);
         const devizeLunaEm = devize.filter((d)=>d.status!=='Ciornă' && String(d.data||'').startsWith(lunaCur));
         const sumDevizeLuna = devizeLunaEm.reduce((s,d)=>s+totalDoc(d),0);
@@ -7222,15 +7229,16 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
           </div>
         );
 
-        // --- Ultimele 6 luni: cât ai facturat vs cât ai încasat ---
+        // --- Evidența lunară: cât ai facturat vs cât ai încasat. Începe din iulie 2026 (de când ținem evidența în aplicație). ---
         const LUNI_S = ['ian','feb','mar','apr','mai','iun','iul','aug','sep','oct','nov','dec'];
         const acum6 = new Date();
         const luni6 = [];
-        for (let k = 5; k >= 0; k--) {
+        for (let k = 11; k >= 0; k--) {
           const d = new Date(acum6.getFullYear(), acum6.getMonth() - k, 1);
           const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          if (key < EVIDENTA_DE_LA) continue; // nu arătăm luni dinainte de a exista evidența
           const fact = invoices.filter((i)=>String(i.data||'').startsWith(key)).reduce((s,i)=>s+totalDoc(i),0);
-          const inc = invoices.filter((i)=>i.status==='Plătită' && String(i.data||'').startsWith(key)).reduce((s,i)=>s+totalDoc(i),0);
+          const inc = invoices.filter((i)=>eIncasata(i) && String(i.data||'').startsWith(key)).reduce((s,i)=>s+totalDoc(i),0);
           luni6.push({ eticheta: LUNI_S[d.getMonth()], fact, inc });
         }
         const maxLuna = Math.max(1, ...luni6.map((x)=>Math.max(x.fact, x.inc)));
@@ -7245,6 +7253,26 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
           if (!datorii[k].ceaMaiVeche || String(i.data||'') < datorii[k].ceaMaiVeche) datorii[k].ceaMaiVeche = String(i.data||'');
         });
         const topDatornici = Object.values(datorii).sort((a,b)=>b.suma-a.suma).slice(0,5);
+
+        // --- Valoarea muncii din rapoartele angajaților, luna curentă (manoperă + materiale consumate) ---
+        const pretMaterial = (den) => {
+          const m = (materials||[]).find((x)=> String(x.denumire||'').toLowerCase().trim() === String(den||'').toLowerCase().trim());
+          return m ? (Number(m.pret) || 0) : 0;
+        };
+        const dinRapoarte = santiere.map((s)=>{
+          const rapS = rapoarte.filter((r)=> r.santierId===s.id && String(r.data||'').startsWith(lunaCur));
+          const minute = rapS.reduce((acc,r)=> acc + (r.persoane||[]).filter((p)=>p.nume && String(p.nume).trim()).reduce((a,p)=> a + personMinutes(p), 0), 0);
+          const ore = minute / 60;
+          const tarif = Number(s.tarifOrar) || 0;
+          const manopera = ore * tarif;
+          const materialeVal = rapS.reduce((acc,r)=> acc + (r.materialeFolosite||[]).reduce((a,m)=> a + (Number(m.cantitate)||0) * pretMaterial(m.denumire), 0), 0);
+          return { s, ore, tarif, manopera, materialeVal, nrRap: rapS.length };
+        }).filter((x)=> x.ore > 0 || x.materialeVal > 0).sort((a,b)=> (b.manopera+b.materialeVal) - (a.manopera+a.materialeVal));
+        const totalOreLuna = dinRapoarte.reduce((a,x)=>a+x.ore, 0);
+        const totalManopera = dinRapoarte.reduce((a,x)=>a+x.manopera, 0);
+        const totalMaterialeR = dinRapoarte.reduce((a,x)=>a+x.materialeVal, 0);
+        const totalDinMunca = totalManopera + totalMaterialeR;
+        const faraTarif = dinRapoarte.filter((x)=> x.ore > 0 && !x.tarif);
 
         // --- Export Excel: situația de încasat, pentru contabilă ---
         const exportaIncasat = () => {
@@ -7296,7 +7324,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             {/* Grafic simplu pe ultimele 6 luni: facturat vs încasat */}
             <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
               <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                <span className="text-[11px] uppercase tracking-wide" style={{ color:'var(--muted2)' }}>Ultimele 6 luni</span>
+                <span className="text-[11px] uppercase tracking-wide" style={{ color:'var(--muted2)' }}>Evidența lunară (din iulie 2026)</span>
                 <span className="flex items-center gap-3 text-[10px]" style={{ color:'var(--muted)' }}>
                   <span className="flex items-center gap-1"><span style={{ width:9, height:9, borderRadius:2, background:'#2E8BD1', display:'inline-block' }} /> facturat</span>
                   <span className="flex items-center gap-1"><span style={{ width:9, height:9, borderRadius:2, background:'#4CAF7D', display:'inline-block' }} /> încasat</span>
@@ -7352,6 +7380,38 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             </>)}
           </div>
 
+          {/* Banii produși de echipă luna asta, calculați automat din rapoartele zilnice */}
+          <div className="rounded-xl p-4 mb-3" style={{ background:'var(--panel)', border:'1px solid #2E8BD166', borderLeft:'4px solid #2E8BD1' }}>
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <span className="text-sm font-bold" style={{ color:'#2E8BD1' }}>🔨 Din munca echipei — {numeLuna}</span>
+              <button onClick={()=>setMuncaOpen(!muncaOpen)} className="text-[11px] px-2.5 py-1 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>{muncaOpen?'Ascunde pe șantiere ▲':'Vezi pe șantiere ▼'}</button>
+            </div>
+            {dinRapoarte.length === 0 ? (
+              <div className="text-xs" style={{ color:'var(--muted2)' }}>Încă nu s-au trimis rapoarte luna asta.</div>
+            ) : (<>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {stat('Ore lucrate', `${Math.round(totalOreLuna*10)/10} h`)}
+                {stat('Manoperă', money(totalManopera), '#2E8BD1')}
+                {stat('Materiale puse în operă', money(totalMaterialeR))}
+                {stat('Total produs', money(totalDinMunca), '#4CAF7D')}
+              </div>
+              <div className="text-[11px] mt-2" style={{ color:'var(--muted2)' }}>Calculat automat din rapoartele zilnice: orele scrise de băieți × tariful șantierului, plus materialele trecute de ei, la prețul din Gestiune. Din astea ies devizele și facturile — compară cu „facturat luna asta" de mai sus ca să vezi ce n-ai facturat încă.</div>
+              {faraTarif.length > 0 && (
+                <div className="text-[11px] mt-1.5 px-2.5 py-1.5 rounded-lg" style={{ background:'#E9A23B15', color:'#E9A23B' }}>⚠ Fără tarif orar completat (manopera iese 0): {faraTarif.map((x)=>x.s.nume).join(', ')} — pune tariful în editarea șantierului.</div>
+              )}
+              {muncaOpen && (
+                <div className="space-y-1 mt-2">
+                  {dinRapoarte.map((x)=>(
+                    <button key={x.s.id} onClick={()=>setTab('santiere')} className="w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel2)' }}>
+                      <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>🏗 {x.s.nume} <span style={{ color:'var(--muted2)' }}>· {Math.round(x.ore*10)/10} h{x.tarif?` × ${money(x.tarif)}`:''}{x.materialeVal?` + materiale ${money(x.materialeVal)}`:''}</span></span>
+                      <span className="shrink-0 font-semibold" style={{ color:'#4CAF7D', fontFamily:"'JetBrains Mono', monospace" }}>{money(x.manopera + x.materialeVal)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>)}
+          </div>
+
           {deFacturat.length > 0 && (
             <div className="rounded-xl p-4 mb-3" style={{ background:'var(--panel)', border:'1px solid #E9A23B66', borderLeft:'4px solid #E9A23B' }}>
               <div className="flex items-center justify-between mb-2 gap-2">
@@ -7404,7 +7464,9 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 // aud = cine o vede: 'toti' (angajați + manager), 'angajat' (doar angajați), 'manager' (doar manager).
 // NU pune aici felicitările / mesajele de sărbători — alea sunt surpriză și apar singure când e cazul.
 const NOUTATI = [
-  { id: 'scadenta-grafic-datornici', aud: 'manager', data: '31.07.2026', titlu: '⏰ Scadență la facturi, grafic pe 6 luni, top datornici, Excel',
+  { id: 'cashflow-din-rapoarte', aud: 'manager', data: '31.07.2026', titlu: '🔨 Cashflow calculat din rapoartele băieților',
+    text: 'Pe Dashboard ai cardul nou „🔨 Din munca echipei": aplicația ia automat din rapoartele zilnice orele scrise de fiecare, le înmulțește cu tariful șantierului și adaugă materialele trecute de ei (la prețul din Gestiune). Vezi câte ore s-au lucrat luna asta, cât înseamnă manoperă, cât materiale și cât ai produs în total. Cu „Vezi pe șantiere" ai defalcarea pe fiecare șantier. Compari cu „facturat luna asta" și știi exact ce n-ai facturat încă. Dacă un șantier n-are tarif orar completat, îți spune.' },
+  { id: 'scadenta-grafic-datornici', aud: 'manager', data: '31.07.2026', titlu: '⏰ Scadență la facturi, grafic lunar, top datornici, Excel',
     text: 'La facturi pui acum „Scadența" (termenul de plată, implicit 30 de zile). Când trece termenul și factura nu e plătită, aplicația o trece singură pe „Restantă" și îți dă notificare. Pe Dashboard, în cardul „💰 Cashflow", ai un grafic cu ultimele 6 luni (facturat vs încasat), iar la „Vezi detaliat" ai „Top datornici" (cine îți datorează cel mai mult), lista facturilor neîncasate cu zilele de întârziere, și butonul „📊 Excel pentru contabilă" care scoate toată situația de încasat într-un fișier.' },
   { id: 'cashflow-proiecte', aud: 'manager', data: '31.07.2026', titlu: '💰 Cashflow pe Dashboard + 📁 Proiecte (arhiva pe clienți)',
     text: 'Pe Dashboard ai acum cardul „💰 Cashflow": cât ai de încasat (cu restanțele separate), cât ai facturat și încasat luna asta, plus devizele emise luna asta („bani pe drum"). Apeși „Vezi detaliat" și vezi fiecare factură neîncasată. Sub el, cardul „🧾 De facturat" îți arată clienții cu deviz emis dar fără factură după el, sau cu lucrări luna asta și fără factură. Iar în meniu ai „📁 Proiecte" — arhiva ca pe calculator: folder pe client → dosar pe factură → înăuntru devizele și factura, toate cu export PDF.' },
@@ -8636,7 +8698,8 @@ function App() {
     try {
       setClients(await loadKey('clients', []));
       setOffers(await loadKey('offers', []));
-      setInvoices(await loadKey('invoices', []));
+      // Traducem statusurile vechi („Neplătită"/„Plătită") în cele noi, corecte („De încasat"/„Încasată").
+      setInvoices((await loadKey('invoices', [])).map((i)=> ({ ...i, status: normStatusFactura(i.status) })));
       setDevize(await loadKey('devize', []));
       setCompany(await loadKey('company', {}));
       setMaterials(await loadKey('materials', []));
@@ -8720,9 +8783,9 @@ function App() {
   useEffect(() => {
     if (!currentUser || currentUser.rol !== 'Manager' || !dateIncarcate) return;
     const aziF = new Date().toISOString().slice(0,10);
-    const trecute = invoices.filter((i)=> i.status === 'Neplătită' && i.scadenta && i.scadenta < aziF);
+    const trecute = invoices.filter((i)=> i.status === 'De încasat' && i.scadenta && i.scadenta < aziF);
     if (!trecute.length) return;
-    const next = invoices.map((i)=> (i.status === 'Neplătită' && i.scadenta && i.scadenta < aziF) ? { ...i, status:'Restantă' } : i);
+    const next = invoices.map((i)=> (i.status === 'De încasat' && i.scadenta && i.scadenta < aziF) ? { ...i, status:'Restantă' } : i);
     setInvoices(next); persist('invoices', next);
     const flag = 'restanteAnunt_' + aziF;
     try { if (localStorage.getItem(flag)) return; localStorage.setItem(flag, '1'); } catch {}
