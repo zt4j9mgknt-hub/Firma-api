@@ -21,6 +21,20 @@
   import { upload } from 'https://esm.sh/@vercel/blob@2.6.1/client';
   window.__vercelBlobUpload = upload;
 </script>
+<!--
+  ============================================================
+  REGULI DE LUCRU (stabilite cu Sebastian) — se respectă la ORICE modificare:
+  1. LOGICA ÎNAINTE DE TOATE. Dacă o informație se repetă, se grupează sub un singur titlu.
+     Ex.: lucrările apar sub numele omului, o singură dată — nu numele la fiecare rând.
+  2. COMPACT. Tot ce ține de o zi și un șantier stă într-un singur loc (un raport pe zi),
+     chiar dacă a fost scris în mai multe reprize sau de mai mulți oameni.
+  3. SIMPLU ȘI INTUITIV. Fără termeni tehnici. Textele se scriu ca pentru cineva care
+     n-a mai folosit o aplicație: cu subiect și predicat, pas cu pas.
+  4. FIECARE VEDE CE ÎL PRIVEȘTE. Managerul vede TOT; angajatul doar ce ține de el.
+  5. NIMIC NU SE PIERDE. Orice greșeală se poate edita sau șterge; nimic nu se blochează.
+  6. DACĂ NU E CLAR — SE ÎNTREABĂ ÎNAINTE, nu se ghicește și nu se reface de zece ori.
+  ============================================================
+-->
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   html, body, #root { height: 100%; }
@@ -4855,7 +4869,9 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const [pinStatus, setPinStatus] = useState('');
   const [pinCoords, setPinCoords] = useState(null);
   const [pinLoading, setPinLoading] = useState(false);
-  const [raporteShowAll, setRaporteShowAll] = useState(false);
+  const [rapSearch, setRapSearch] = useState('');
+  const [rapDeschise, setRapDeschise] = useState({});
+  const [luniDeschise, setLuniDeschise] = useState({});
   const [devizNr, setDevizNr] = useState('');
   const [devizData, setDevizData] = useState(new Date().toISOString().slice(0,10));
   const _aziD = new Date();
@@ -5236,93 +5252,167 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           );
         })()}
 
-        {rapoarteSantier.length === 0 && !reportForm ? (
-          <div className="text-center py-12 text-sm" style={{ color:'var(--muted)' }}>Niciun raport zilnic încă.</div>
-        ) : !raporteShowAll ? (
-          <button onClick={()=>setRaporteShowAll(true)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>🗂 Arată toate rapoartele ({rapoarteSantier.length})</button>
-        ) : (
-          <>
-          <button onClick={()=>setRaporteShowAll(false)} className="text-xs mb-2" style={{ color:'var(--muted2)' }}>Ascunde rapoartele</button>
-          <div className="space-y-2">
-            {rapoarteSantier.map((r)=>{
-              const totalOreMinRow = r.persoane.reduce((s,p)=>s+personMinutes(p),0);
-              const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
-              const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
-              if (reportForm && reportForm.id === r.id) {
-                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} concedii={concedii} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
-              }
-              return (
-                <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium" style={{ color:'var(--text)', fontFamily:"'JetBrains Mono', monospace" }}>
-                        {fmtData(r.data)}{(r.oraInceput||r.oraSfarsit) && <span className="text-xs ml-2" style={{ color:'var(--muted)' }}>{r.oraInceput||'?'}–{r.oraSfarsit||'?'}</span>}
-                        {etapaN && <span className="text-xs ml-2" style={{ color:'#2E8BD1' }}>{etapaN}</span>}
-                      </div>
-                      <div className="text-xs" style={{ color:'var(--muted)' }}>{r.persoane.filter((p)=>p.nume.trim()).map((p)=>`${p.nume} (${minutesToHM(personMinutes(p))})`).join(', ') || 'Fără persoane'}</div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-xs" style={{ color:'var(--muted)' }}>{nrPersoane} pers.</span>
-                      <span className="text-sm" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMinRow)}</span>
+        {(()=>{
+          // ---- CĂUTARE INTELIGENTĂ + GRUPARE (azi deschis, restul pe luni, în acordeon) ----
+          // Textul se normalizează: fără diacritice, virgula devine punct, iar o variantă „compactă"
+          // (fără spații) face ca „3x1,5" să găsească și „3 x 1.5".
+          const normT = (x)=> String(x==null?'':x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+            .replace(/,/g,'.').replace(/\s+/g,' ').trim();
+          const textRaport = (r)=>{
+            const buc = [];
+            if (r.data) { buc.push(r.data); buc.push(fmtData(r.data)); }
+            (r.persoane||[]).forEach((p)=>{ if(p.nume) buc.push(p.nume); });
+            (r.tipuriLucrari||[]).forEach((t)=>{ if(t.denumire) buc.push(t.denumire); });
+            if (r.explicatii) buc.push(r.explicatii);
+            (r.materialeFolosite||[]).forEach((m)=>{ buc.push(`${m.denumire||''} ${m.cantitate||''} ${m.um||''}`); });
+            (r.pozitiiExecutate||[]).forEach((p)=>{ buc.push(`${p.denumire||''} ${p.cantitate||''} ${p.um||''}`); });
+            (r.lucrariApartamente||[]).forEach((l)=>{
+              if (l.persoanaNume) buc.push(l.persoanaNume);
+              const etaj = structuraSantier.find((e)=>e.id===l.etajId);
+              if (etaj?.nume) buc.push(etaj.nume);
+              (l.apartamenteIds||[]).forEach((id)=>{ const a = etaj?.apartamente?.find((x)=>x.id===id); if (a?.nume) buc.push(a.nume); });
+              lucrariDinRand(l).forEach((w)=> buc.push(`${w.denumire||''} ${w.cantitate||''} ${w.um||''}`));
+            });
+            const t = normT(buc.join(' | '));
+            return { t, c: t.replace(/\s/g,'') };
+          };
+          const termeni = normT(rapSearch).split(' ').filter((w)=>w.length >= 1 && w !== '|');
+          const cauta = termeni.length > 0;
+          const potrivit = (r)=>{
+            const { t, c } = textRaport(r);
+            return termeni.every((w)=> t.includes(w) || c.includes(w.replace(/\s/g,'')));
+          };
+          const gasite = cauta ? rapoarteSantier.filter(potrivit) : rapoarteSantier;
+
+          const aziStr = new Date().toISOString().slice(0,10);
+          const LUNI_N = ['ianuarie','februarie','martie','aprilie','mai','iunie','iulie','august','septembrie','octombrie','noiembrie','decembrie'];
+          const numeLuna = (cheie)=>{ const [an,l] = cheie.split('-'); return `${LUNI_N[Number(l)-1]} ${an}`; };
+
+          const randRaport = (r, deschis, onToggle) => {
+            const totalOreMinRow = r.persoane.reduce((s,p)=>s+personMinutes(p),0);
+            const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
+            const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
+            const numePers = r.persoane.filter((p)=>p.nume.trim()).map((p)=>p.nume).join(', ');
+            if (reportForm && reportForm.id === r.id) {
+              return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} concedii={concedii} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
+            }
+            return (
+              <div key={r.id} className="rounded-xl" style={{ background:'var(--panel)', border:'1px solid ' + (r.data===aziStr ? '#4CAF7D66' : 'var(--border)') }}>
+                <button onClick={onToggle} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+                  <span style={{ fontSize:10, color:'var(--muted)', display:'inline-block', transform: deschis ? 'rotate(90deg)' : 'none', transition:'transform .15s' }}>▶</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="text-sm font-medium block" style={{ color:'var(--text)', fontFamily:"'JetBrains Mono', monospace" }}>
+                      {fmtData(r.data)}{r.data===aziStr && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded" style={{ background:'#4CAF7D', color:'#14181C', fontFamily:"'Inter', sans-serif", fontWeight:700 }}>AZI</span>}
+                    </span>
+                    <span className="text-[11px] block truncate" style={{ color:'var(--muted)' }}>{nrPersoane} {nrPersoane===1?'persoană':'persoane'}{numePers?` · ${numePers}`:''}{etapaN?` · ${etapaN}`:''}</span>
+                  </span>
+                  <span className="text-sm shrink-0" style={{ color:'#2E8BD1', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(totalOreMinRow)}</span>
+                </button>
+                {deschis && (
+                  <div className="px-4 pb-3">
+                    <div className="flex items-center justify-end gap-2 mb-2">
                       <button onClick={()=>setReportForm(r)} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>✏️ Editează</button>
                       <button onClick={()=>delReport(r._idUnite && r._idUnite.length>1 ? r._idUnite : r.id)} className="px-2 py-1.5 rounded-lg" style={{ color:'#E05252', background:'var(--panel2)' }}><Icon>🗑</Icon></button>
                     </div>
-                  </div>
-                  {(r.tipuriLucrari||[]).filter((t)=>t.denumire && t.denumire.trim()).length > 0 && (
-                    <div className="text-xs mt-2" style={{ color:'#E9A23B' }}>
-                      🔨 {r.tipuriLucrari.filter((t)=>t.denumire && t.denumire.trim()).map((t)=>t.denumire).join(' · ')}
-                    </div>
-                  )}
-                  {r.explicatii && <div className="text-xs mt-1" style={{ color:'var(--muted)' }}>{r.explicatii}</div>}
-                  {(r.materialeFolosite||[]).length > 0 && (
-                    <div className="text-xs mt-1" style={{ color:'#4CAF7D' }}>
-                      🧰 {r.materialeFolosite.map((m)=>`${m.denumire} (${m.cantitate} ${m.um}, ${m.sursa==='client'?'client':'proprii'})`).join(', ')}
-                    </div>
-                  )}
-                  {(r.pozitiiExecutate||[]).filter((pe)=>pe.pozitieId && (Number(pe.cantitate)||0)>0).length > 0 && (
-                    <div className="text-xs mt-1" style={{ color:'#2E8BD1' }}>
-                      📋 {(r.pozitiiExecutate||[]).filter((pe)=>pe.pozitieId && (Number(pe.cantitate)||0)>0).length} poziții executate
-                    </div>
-                  )}
-                  {/* Lucrările se grupează PE OM: numele apare o singură dată, iar dedesubt tot ce a făcut el. */}
-                  {(()=>{
-                    const randuri = (r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||lucrariDinRand(l).length);
-                    if (randuri.length === 0) return null;
-                    const peOm = new Map();
-                    randuri.forEach((l)=>{
-                      const nume = String(l.persoanaNume || '?').trim() || '?';
-                      const etaj = structuraSantier.find((e)=>e.id===l.etajId);
-                      const apNames = (l.apartamenteIds||[]).map((id)=>etaj?.apartamente?.find((a)=>a.id===id)?.nume).filter(Boolean).join(', ');
-                      const unde = apNames ? `${etaj?.nume||''} ${apNames}`.trim() : '';
-                      if (!peOm.has(nume)) peOm.set(nume, { ore: 0, linii: [] });
-                      const g = peOm.get(nume);
-                      g.ore += Number(l.ore) || 0;
-                      const works = lucrariDinRand(l);
-                      if (!works.length) { if (unde) g.linii.push({ text: unde }); return; }
-                      works.forEach((w)=>{
-                        const cant = (Number(w.cantitate)||0) > 0 ? ` (${w.cantitate} ${w.um||''})`.replace(' )',')') : '';
-                        g.linii.push({ text: `${w.denumire||''}${cant}${unde ? ` — ${unde}` : ''}` });
+                    <div className="text-xs" style={{ color:'var(--muted)' }}>🕐 {r.oraInceput}–{r.oraSfarsit} · {r.persoane.filter((p)=>p.nume.trim()).map((p)=>`${p.nume} (${minutesToHM(personMinutes(p))})`).join(', ') || 'fără persoane'}</div>
+                    {(r.tipuriLucrari||[]).filter((t)=>t.denumire).length > 0 && (
+                      <div className="text-xs mt-1" style={{ color:'var(--text)' }}>🔧 {(r.tipuriLucrari||[]).filter((t)=>t.denumire).map((t)=>t.denumire).join(' · ')}</div>
+                    )}
+                    {r.explicatii && <div className="text-xs mt-1" style={{ color:'var(--muted)', whiteSpace:'pre-line' }}>{r.explicatii}</div>}
+                    {(r.materialeFolosite||[]).filter((m)=>m.denumire).length > 0 && (
+                      <div className="text-xs mt-1" style={{ color:'#E9A23B' }}>📦 {(r.materialeFolosite||[]).filter((m)=>m.denumire).map((m)=>`${m.denumire}${(Number(m.cantitate)||0)>0?` ${m.cantitate} ${m.um||''}`:''}`).join(' · ')}</div>
+                    )}
+                    {(r.pozitiiExecutate||[]).filter((p)=>p.denumire).length > 0 && (
+                      <div className="text-xs mt-1" style={{ color:'#4CAF7D' }}>📋 {(r.pozitiiExecutate||[]).filter((p)=>p.denumire).map((p)=>`${p.denumire}${(Number(p.cantitate)||0)>0?` ${p.cantitate} ${p.um||''}`:''}`).join(' · ')}</div>
+                    )}
+                    {(()=>{
+                      const randuri = (r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||lucrariDinRand(l).length);
+                      if (randuri.length === 0) return null;
+                      const peOm = new Map();
+                      randuri.forEach((l)=>{
+                        const nume = String(l.persoanaNume || '?').trim() || '?';
+                        const etaj = structuraSantier.find((e)=>e.id===l.etajId);
+                        const apNames = (l.apartamenteIds||[]).map((id)=>etaj?.apartamente?.find((a)=>a.id===id)?.nume).filter(Boolean).join(', ');
+                        const unde = apNames ? `${etaj?.nume||''} ${apNames}`.trim() : '';
+                        if (!peOm.has(nume)) peOm.set(nume, { ore: 0, linii: [] });
+                        const g = peOm.get(nume);
+                        g.ore += Number(l.ore) || 0;
+                        const works = lucrariDinRand(l);
+                        if (!works.length) { if (unde) g.linii.push(unde); return; }
+                        works.forEach((w)=>{
+                          const cant = (Number(w.cantitate)||0) > 0 ? ` (${w.cantitate} ${w.um||''})`.replace(' )',')') : '';
+                          g.linii.push(`${w.denumire||''}${cant}${unde ? ` — ${unde}` : ''}`);
+                        });
                       });
-                    });
-                    return (
-                      <div className="text-xs mt-2 space-y-2">
-                        {Array.from(peOm.entries()).map(([nume, g])=>(
-                          <div key={nume}>
-                            <div className="font-semibold" style={{ color:'var(--text)' }}>👷 {nume}{g.ore ? <span style={{ color:'var(--muted2)', fontWeight:400 }}> · {g.ore}h</span> : null}</div>
-                            <div className="mt-0.5 space-y-0.5" style={{ paddingLeft:14 }}>
-                              {g.linii.map((x,i)=><div key={i} style={{ color:'#C08CE0' }}>• {x.text}</div>)}
+                      return (
+                        <div className="text-xs mt-2 space-y-2">
+                          {Array.from(peOm.entries()).map(([nume, g])=>(
+                            <div key={nume}>
+                              <div className="font-semibold" style={{ color:'var(--text)' }}>👷 {nume}{g.ore ? <span style={{ color:'var(--muted2)', fontWeight:400 }}> · {g.ore}h</span> : null}</div>
+                              <div className="mt-0.5 space-y-0.5" style={{ paddingLeft:14 }}>
+                                {g.linii.map((x,i)=><div key={i} style={{ color:'#C08CE0' }}>• {x}</div>)}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            );
+          };
+
+          const esteDeschis = (r)=> cauta ? true : (rapDeschise[r.id] !== undefined ? rapDeschise[r.id] : r.data === aziStr);
+          const comuta = (r)=> setRapDeschise((x)=>({ ...x, [r.id]: !esteDeschis(r) }));
+
+          if (rapoarteSantier.length === 0 && !reportForm) {
+            return <div className="text-center py-12 text-sm" style={{ color:'var(--muted)' }}>Niciun raport zilnic încă.</div>;
+          }
+
+          // Grupare pe luni (fără ziua de azi, care stă mereu sus)
+          const azi = gasite.filter((r)=>r.data === aziStr);
+          const restul = gasite.filter((r)=>r.data !== aziStr);
+          const peLuni = new Map();
+          restul.forEach((r)=>{ const k = String(r.data||'').slice(0,7); if(!peLuni.has(k)) peLuni.set(k, []); peLuni.get(k).push(r); });
+          const luniSortate = Array.from(peLuni.keys()).sort().reverse();
+
+          return (
+            <>
+              <input value={rapSearch} onChange={(e)=>setRapSearch(e.target.value)} placeholder="🔍 Caută în rapoarte (ex: doze 410, cablu 3x1,5, Bogdan)" className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-3" style={{ background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' }} />
+              {cauta && (
+                <div className="text-[11px] mb-2" style={{ color:'var(--muted2)' }}>
+                  {gasite.length === 0 ? 'Niciun raport găsit.' : `${gasite.length} ${gasite.length===1?'zi găsită':'zile găsite'} din ${rapoarteSantier.length}`}
+                  {rapSearch && <button onClick={()=>setRapSearch('')} className="ml-2" style={{ color:'#2E8BD1' }}>șterge căutarea</button>}
                 </div>
-              );
-            })}
-          </div>
-          </>
-        )}
+              )}
+
+              {azi.length > 0 && <div className="space-y-2 mb-3">{azi.map((r)=>randRaport(r, esteDeschis(r), ()=>comuta(r)))}</div>}
+
+              {!cauta && azi.length === 0 && rapoarteSantier.length > 0 && (
+                <div className="text-xs mb-3 px-3 py-2 rounded-lg" style={{ background:'var(--panel2)', color:'var(--muted2)' }}>Astăzi nu s-a trimis încă raport pe acest șantier.</div>
+              )}
+
+              <div className="space-y-2">
+                {luniSortate.map((k)=>{
+                  const lista = peLuni.get(k);
+                  const oreLuna = lista.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+personMinutes(p),0),0);
+                  const deschisaLuna = cauta ? true : !!luniDeschise[k];
+                  return (
+                    <div key={k} className="rounded-xl" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
+                      <button onClick={()=>setLuniDeschise((x)=>({ ...x, [k]: !x[k] }))} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+                        <span style={{ fontSize:10, color:'var(--muted)', display:'inline-block', transform: deschisaLuna ? 'rotate(90deg)' : 'none', transition:'transform .15s' }}>▶</span>
+                        <span className="text-sm font-semibold flex-1" style={{ color:'var(--text)' }}>{numeLuna(k)}</span>
+                        <span className="text-[11px] shrink-0" style={{ color:'var(--muted2)' }}>{lista.length} {lista.length===1?'zi':'zile'} · {minutesToHM(oreLuna)}</span>
+                      </button>
+                      {deschisaLuna && <div className="px-2 pb-2 space-y-2">{lista.map((r)=>randRaport(r, esteDeschis(r), ()=>comuta(r)))}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          );
+        })()}
         </>
         )}
         {accHeader('materiale','📦','Materiale')}
