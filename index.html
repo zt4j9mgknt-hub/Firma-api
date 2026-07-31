@@ -5206,6 +5206,10 @@ function NormativViewer({ pdfUrl, downloadUrl, startPage, titlu, onClose, onFull
     const pdf = pdfRef.current;
     if (!pdf) return;
     (async () => {
+      if (numPages && pageNum > numPages) {
+        setImg(''); setStatus(`Pagina ${pageNum} nu există în PDF-ul încărcat (are doar ${numPages} de pagini). Probabil e încărcat normativul VECHI, fără modificările 2023. Managerul trebuie să încarce fișierul „normativ-i7.pdf" (491 pagini) primit de la asistent — din pagina Normativ I7, jos, „↻ Înlocuiește PDF-ul normativului".`);
+        return;
+      }
       setStatus('Se afișează pagina ' + pageNum + '…');
       try {
         const page = await pdf.getPage(pageNum);
@@ -5293,6 +5297,22 @@ function NormativTab({ normativPdf, setNormativPdf, persist, isManager }) {
     if (f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)) { setUpErr('Alege fișierul PDF al normativului (normativ-i7.pdf).'); return; }
     setUploading(true); setUpErr('');
     try {
+      // VERIFICARE: fișierul trebuie să fie varianta COMBINATĂ (I7-2011 + modificările 2023),
+      // adică exact atâtea pagini câte știe căutarea. Altfel, rezultatele din zona 2023 ar da eroare.
+      const paginiAsteptate = (idx && idx.length) || 491;
+      try {
+        const lib = window.pdfjsLib;
+        if (lib) {
+          const buf = await f.arrayBuffer();
+          const pdfTest = await lib.getDocument({ data: buf }).promise;
+          const nPag = pdfTest.numPages;
+          try { pdfTest.destroy(); } catch {}
+          if (nPag !== paginiAsteptate) {
+            setUpErr(`Acest PDF are ${nPag} pagini, dar căutarea e făcută pentru varianta combinată cu ${paginiAsteptate} de pagini (I7-2011 + modificările 2023 la final). Se pare că ai ales normativul vechi. Încarcă fișierul „normativ-i7.pdf" pe care ți l-am trimis.`);
+            setUploading(false); return;
+          }
+        }
+      } catch (_) { /* dacă verificarea nu merge, lăsăm încărcarea să continue */ }
       const res = await uploadFileToBlob(f, 'normativ');
       const rec = { pathname: res.pathname, url: res.url, nume: f.name };
       setNormativPdf(rec); await persist('normativPdf', rec);
