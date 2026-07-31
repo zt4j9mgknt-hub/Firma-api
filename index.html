@@ -5284,17 +5284,39 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                       📋 {(r.pozitiiExecutate||[]).filter((pe)=>pe.pozitieId && (Number(pe.cantitate)||0)>0).length} poziții executate
                     </div>
                   )}
-                  {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||lucrariDinRand(l).length).length > 0 && (
-                    <div className="text-xs mt-1 space-y-0.5" style={{ color:'#C08CE0' }}>
-                      {(r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||lucrariDinRand(l).length).flatMap((l)=>{
-                        const etaj = structuraSantier.find((e)=>e.id===l.etajId);
-                        const apNames = (l.apartamenteIds||[]).map((id)=>etaj?.apartamente?.find((a)=>a.id===id)?.nume).filter(Boolean).join(', ');
-                        const works = lucrariDinRand(l);
-                        if (!works.length) return [<div key={l.id}>🏢 <b style={{ color:'var(--text)' }}>{l.persoanaNume||'?'}</b>{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{l.ore?` · ${l.ore}h`:''}</div>];
-                        return works.map((w,i)=><div key={l.id+'_'+i}>🏢 <b style={{ color:'var(--text)' }}>{l.persoanaNume||'?'}</b>: {w.denumire||''}{(Number(w.cantitate)||0)>0?` (${w.cantitate} ${w.um||''})`.replace(' )',')'):''}{apNames?` — ${etaj?.nume||''} ${apNames}`:''}{i===0&&l.ore?` · ${l.ore}h`:''}</div>);
-                      })}
-                    </div>
-                  )}
+                  {/* Lucrările se grupează PE OM: numele apare o singură dată, iar dedesubt tot ce a făcut el. */}
+                  {(()=>{
+                    const randuri = (r.lucrariApartamente||[]).filter((l)=>l.persoanaNume||lucrariDinRand(l).length);
+                    if (randuri.length === 0) return null;
+                    const peOm = new Map();
+                    randuri.forEach((l)=>{
+                      const nume = String(l.persoanaNume || '?').trim() || '?';
+                      const etaj = structuraSantier.find((e)=>e.id===l.etajId);
+                      const apNames = (l.apartamenteIds||[]).map((id)=>etaj?.apartamente?.find((a)=>a.id===id)?.nume).filter(Boolean).join(', ');
+                      const unde = apNames ? `${etaj?.nume||''} ${apNames}`.trim() : '';
+                      if (!peOm.has(nume)) peOm.set(nume, { ore: 0, linii: [] });
+                      const g = peOm.get(nume);
+                      g.ore += Number(l.ore) || 0;
+                      const works = lucrariDinRand(l);
+                      if (!works.length) { if (unde) g.linii.push({ text: unde }); return; }
+                      works.forEach((w)=>{
+                        const cant = (Number(w.cantitate)||0) > 0 ? ` (${w.cantitate} ${w.um||''})`.replace(' )',')') : '';
+                        g.linii.push({ text: `${w.denumire||''}${cant}${unde ? ` — ${unde}` : ''}` });
+                      });
+                    });
+                    return (
+                      <div className="text-xs mt-2 space-y-2">
+                        {Array.from(peOm.entries()).map(([nume, g])=>(
+                          <div key={nume}>
+                            <div className="font-semibold" style={{ color:'var(--text)' }}>👷 {nume}{g.ore ? <span style={{ color:'var(--muted2)', fontWeight:400 }}> · {g.ore}h</span> : null}</div>
+                            <div className="mt-0.5 space-y-0.5" style={{ paddingLeft:14 }}>
+                              {g.linii.map((x,i)=><div key={i} style={{ color:'#C08CE0' }}>• {x.text}</div>)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
