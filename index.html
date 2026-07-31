@@ -5071,7 +5071,7 @@ function LoginScreen({ onLogin, onBioUnlock }) {
 }
 
 // ---- Normativ I7: vizualizator o pagină pe rând (încărcare pe bucăți = rapid pe telefon) ----
-function NormativViewer({ pdfUrl, startPage, titlu, onClose, onFull }) {
+function NormativViewer({ pdfUrl, downloadUrl, startPage, titlu, onClose, onFull }) {
   const [pageNum, setPageNum] = useState(startPage || 1);
   const [numPages, setNumPages] = useState(0);
   const [img, setImg] = useState('');
@@ -5143,7 +5143,12 @@ function NormativViewer({ pdfUrl, startPage, titlu, onClose, onFull }) {
       <div onTouchStart={onTS} onTouchMove={onTM}
         style={{ position: 'absolute', inset: 0, overflow: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y', textAlign: 'center' }}>
         <div style={{ width: `${zoom * 100}%`, minWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 0 90px' }}>
-          {status && <div style={{ color: '#9fb0c0', padding: '24px 16px', textAlign: 'center', fontSize: 13 }}>{status}</div>}
+          {status && <div style={{ color: '#9fb0c0', padding: '24px 16px', textAlign: 'center', fontSize: 13 }}>
+            <div>{status}</div>
+            {!/^Se /.test(status) && (downloadUrl || pdfUrl) && (
+              <a href={(downloadUrl || pdfUrl) + '#page=' + (startPage || pageNum)} target="_blank" rel="noopener noreferrer" style={{ display:'inline-block', marginTop:12, color:'#14181C', background:'#4CAF7D', padding:'10px 16px', borderRadius:8, fontWeight:700, textDecoration:'none' }}>⬇ Deschide PDF-ul direct (pag. {startPage || pageNum})</a>
+            )}
+          </div>}
           {img && <img src={img} draggable="false" style={{ width: '100%', display: 'block', boxShadow: '0 2px 10px rgba(0,0,0,.4)', userSelect: 'none' }} />}
         </div>
       </div>
@@ -5250,7 +5255,7 @@ function NormativTab({ normativPdf, setNormativPdf, persist, isManager }) {
   if (viewPage != null && arePdf) {
     return (
       <div ref={fsRef} style={{ position: 'fixed', inset: 0, zIndex: 200, background: '#0c0f13', display: 'flex', flexDirection: 'column' }}>
-        <NormativViewer pdfUrl={blobViewUrl(normativPdf.pathname)} startPage={viewPage} titlu={'Normativ I7 — pag. ' + viewPage} onClose={() => setViewPage(null)} onFull={() => toggleFullscreen(fsRef.current)} />
+        <NormativViewer pdfUrl={blobViewUrl(normativPdf.pathname)} downloadUrl={normativPdf.url || blobViewUrl(normativPdf.pathname)} startPage={viewPage} titlu={'Normativ I7 — pag. ' + viewPage} onClose={() => setViewPage(null)} onFull={() => toggleFullscreen(fsRef.current)} />
       </div>
     );
   }
@@ -6567,6 +6572,11 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, co
   );
 }
 
+// Rând de formular (etichetă + câmp). Definit la nivel de MODUL — dacă e definit în interiorul componentei,
+// React îl remontează la fiecare literă și inputul pierde focusul (bug-ul „scrii o literă și te scoate").
+function CampForm({ label, children }) {
+  return (<div><div className="text-[11px] mb-0.5" style={{ color:'var(--muted)' }}>{label}</div>{children}</div>);
+}
 function AdeverinteTab({ company }) {
   const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
   const [users, setUsers] = useState([]);
@@ -6577,48 +6587,47 @@ function AdeverinteTab({ company }) {
   }, []);
   const alegeUser = (id) => { const u = users.find((x)=>x.id===id); setF((s)=>({ ...s, userId:id, nume: u?.nume || s.nume, cnp: u?.cnp || s.cnp })); };
   const genereaza = () => { if (!String(f.nume).trim()) { window.alert('Alege angajatul sau scrie numele.'); return; } printAdeverinta(f, company); };
-  const Camp = ({ label, children }) => (<div><div className="text-[11px] mb-0.5" style={{ color:'var(--muted)' }}>{label}</div>{children}</div>);
   return (
     <div className="max-w-lg">
       <h2 className="text-lg mb-1" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>📄 Adeverințe</h2>
       <p className="text-xs mb-3" style={{ color:'var(--muted2)' }}>Completezi datele și apeși „Generează". Iese o adeverință A4 ștampilată și semnată (aceeași ștampilă ca pe devize), gata de printat sau salvat ca PDF.</p>
       <div className="rounded-xl p-4 space-y-3" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
-        <Camp label="Angajat">
+        <CampForm label="Angajat">
           <select value={f.userId} onChange={(e)=>alegeUser(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
             <option value="" style={{ background:'var(--panel)' }}>— alege din listă —</option>
             {users.map((u)=><option key={u.id} value={u.id} style={{ background:'var(--panel)' }}>{u.nume}</option>)}
           </select>
-        </Camp>
+        </CampForm>
         <div className="grid grid-cols-2 gap-3">
-          <Camp label="Nume (poți edita)"><input value={f.nume} onChange={(e)=>setF({...f, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
-          <Camp label="CNP (opțional)"><input value={f.cnp} onChange={(e)=>setF({...f, cnp:e.target.value.replace(/\D/g,'').slice(0,13)})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, fontFamily:"'JetBrains Mono', monospace" }} /></Camp>
+          <CampForm label="Nume (poți edita)"><input value={f.nume} onChange={(e)=>setF({...f, nume:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></CampForm>
+          <CampForm label="CNP (opțional)"><input value={f.cnp} onChange={(e)=>setF({...f, cnp:e.target.value.replace(/\D/g,'').slice(0,13)})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={{ ...inputStyle, fontFamily:"'JetBrains Mono', monospace" }} /></CampForm>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Camp label="Funcția"><input value={f.functia} onChange={(e)=>setF({...f, functia:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
-          <Camp label="Contract">
+          <CampForm label="Funcția"><input value={f.functia} onChange={(e)=>setF({...f, functia:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></CampForm>
+          <CampForm label="Contract">
             <select value={f.contract} onChange={(e)=>setF({...f, contract:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
               <option style={{ background:'var(--panel)' }}>pe perioadă nedeterminată</option>
               <option style={{ background:'var(--panel)' }}>pe perioadă determinată</option>
             </select>
-          </Camp>
+          </CampForm>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Camp label="Data angajării"><RoCalendarPicker value={f.dataAngajarii} onChange={(v)=>setF({...f, dataAngajarii:v})} /></Camp>
-          <Camp label="Tip adeverință">
+          <CampForm label="Data angajării"><RoCalendarPicker value={f.dataAngajarii} onChange={(v)=>setF({...f, dataAngajarii:v})} /></CampForm>
+          <CampForm label="Tip adeverință">
             <select value={f.tip} onChange={(e)=>setF({...f, tip:e.target.value})} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
               <option value="salariat" style={{ background:'var(--panel)' }}>De salariat</option>
               <option value="medic" style={{ background:'var(--panel)' }}>Pentru medicul de familie</option>
               <option value="venit" style={{ background:'var(--panel)' }}>De venit (cu salariu)</option>
             </select>
-          </Camp>
+          </CampForm>
         </div>
         {f.tip==='venit' && (
           <div className="grid grid-cols-2 gap-3">
-            <Camp label="Salariu brut (lei)"><input value={f.salariuBrut} onChange={(e)=>setF({...f, salariuBrut:e.target.value})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
-            <Camp label="Salariu net (lei)"><input value={f.salariuNet} onChange={(e)=>setF({...f, salariuNet:e.target.value})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
+            <CampForm label="Salariu brut (lei)"><input value={f.salariuBrut} onChange={(e)=>setF({...f, salariuBrut:e.target.value})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></CampForm>
+            <CampForm label="Salariu net (lei)"><input value={f.salariuNet} onChange={(e)=>setF({...f, salariuNet:e.target.value})} inputMode="numeric" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></CampForm>
           </div>
         )}
-        <Camp label="Scop / destinație (ex. pentru bancă, pentru medicul de familie)"><input value={f.scop} onChange={(e)=>setF({...f, scop:e.target.value})} placeholder="Lasă gol pentru textul standard" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></Camp>
+        <CampForm label="Scop / destinație (ex. pentru bancă, pentru medicul de familie)"><input value={f.scop} onChange={(e)=>setF({...f, scop:e.target.value})} placeholder="Lasă gol pentru textul standard" className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} /></CampForm>
         <button onClick={genereaza} className="w-full px-4 py-2.5 rounded-lg text-sm font-semibold" style={{ color:'#fff', background:'#2E8BD1' }}>📄 Generează PDF</button>
       </div>
       {!(company?.stampila) && <div className="text-[11px] mt-2" style={{ color:'var(--muted2)' }}>Ștampila și semnătura vin din „⚙ Firma mea" (aceeași folosită pe devize/oferte).</div>}
