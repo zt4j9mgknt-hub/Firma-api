@@ -483,6 +483,10 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
   const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
   const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
   const [tva, setTva] = useState(initial?.tva ?? 19);
+  // Scadența (termenul de plată) — doar la facturi. Implicit 30 de zile de la data facturii.
+  const _dataDoc = initial?.data || new Date().toISOString().slice(0,10);
+  const _scadentaImplicita = (()=>{ try { const d=new Date(_dataDoc+'T00:00:00'); d.setDate(d.getDate()+30); return d.toISOString().slice(0,10); } catch(_) { return ''; } })();
+  const [scadenta, setScadenta] = useState(initial?.scadenta || _scadentaImplicita);
   const subtotal = calcSubtotal(items);
   const total = subtotal * (1 + tva/100);
   return (
@@ -505,6 +509,13 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
               <span className="text-xs" style={{ color:'var(--muted)' }}>%</span>
             </div>
           </div>
+          {kind === 'Factură' && (
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <span className="text-xs" style={{ color:'var(--muted)' }}>Scadență (termen de plată):</span>
+              <RoCalendarPicker value={scadenta} onChange={setScadenta} />
+              <span className="text-[11px]" style={{ color:'var(--muted2)' }}>După data asta, factura devine automat „Restantă" și te anunță aplicația.</span>
+            </div>
+          )}
           <LineItemsEditor items={items} setItems={setItems} materials={materials} />
           <div className="flex justify-end gap-6 mt-3 px-2 text-sm">
             <span style={{ color:'var(--muted)' }}>Subtotal: <span style={{ color:'var(--text)', fontFamily:"'JetBrains Mono', monospace" }}>{money(subtotal)}</span></span>
@@ -512,7 +523,7 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
           </div>
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'var(--muted)', background:'var(--panel2)' }}>Renunță</button>
-            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'Neplătită'), offerId: initial?.offerId })}
+            <button onClick={()=>onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10), scadenta: kind==='Factură' ? scadenta : undefined, clientId, items, tva:Number(tva), status: initial?.status || (kind==='Ofertă'?'Ciornă':'Neplătită'), offerId: initial?.offerId })}
               className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
           </div>
         </>
@@ -1909,7 +1920,7 @@ const HELP = {
     text: 'Oferta este prețul pe care i-l propui unui client înainte de lucrare.\n\n1) Apeși „+ Adaugă ofertă", alegi clientul și treci pozițiile (manoperă și materiale) cu prețurile lor.\n2) O salvezi, apoi o poți tipări sau o poți scoate ca PDF.\n\nCu butonul „📚 Exportă toate în PDF" scoți toate ofertele deodată. Fiecărei oferte îi poți schimba starea (de exemplu: trimisă, acceptată). Dacă clientul acceptă, poți transforma oferta direct în factură.',
   },
   facturi: {
-    text: 'Factura este documentul de plată pe care i-l dai clientului după lucrare.\n\n1) Apeși „+ Adaugă factură", alegi clientul și treci pozițiile.\n2) O salvezi, apoi o poți tipări sau o poți scoate ca PDF.\n\nCu butonul „📚 Exportă toate în PDF" scoți toate facturile deodată. Fiecărei facturi îi pui starea (de exemplu: trimisă, plătită). Dacă ai legat aplicația cu SmartBill, poți trimite factura direct acolo.',
+    text: 'Factura este documentul de plată pe care i-l dai clientului după lucrare.\n\n1) Apeși „+ Adaugă factură", alegi clientul și treci pozițiile.\n2) Pui „Scadența", adică până când trebuie să te plătească (implicit 30 de zile de la data facturii).\n3) O salvezi, apoi o poți tipări sau o poți scoate ca PDF.\n\nCând trece data scadenței și factura tot nu e plătită, aplicația o trece SINGURĂ pe „Restantă" și te anunță pe telefon. Suma și zilele de întârziere le vezi pe Dashboard, la „💰 Cashflow".\n\nCu butonul „📚 Exportă toate în PDF" scoți toate facturile deodată. Fiecărei facturi îi pui starea (neplătită, plătită, restantă). Dacă ai legat aplicația cu SmartBill, poți trimite factura direct acolo.',
   },
   clienti: {
     text: 'Aici este lista clienților tăi. Ea se folosește când faci devize, oferte și facturi, ca să nu scrii datele de fiecare dată.\n\n• Apeși „+ Adaugă client" și treci numele, CUI-ul, adresa și datele de contact.\n• Un client existent îl poți modifica apăsând pe creion ✏️ sau îl poți șterge apăsând pe coșul de gunoi 🗑.',
@@ -7211,6 +7222,63 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
           </div>
         );
 
+        // --- Ultimele 6 luni: cât ai facturat vs cât ai încasat ---
+        const LUNI_S = ['ian','feb','mar','apr','mai','iun','iul','aug','sep','oct','nov','dec'];
+        const acum6 = new Date();
+        const luni6 = [];
+        for (let k = 5; k >= 0; k--) {
+          const d = new Date(acum6.getFullYear(), acum6.getMonth() - k, 1);
+          const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          const fact = invoices.filter((i)=>String(i.data||'').startsWith(key)).reduce((s,i)=>s+totalDoc(i),0);
+          const inc = invoices.filter((i)=>i.status==='Plătită' && String(i.data||'').startsWith(key)).reduce((s,i)=>s+totalDoc(i),0);
+          luni6.push({ eticheta: LUNI_S[d.getMonth()], fact, inc });
+        }
+        const maxLuna = Math.max(1, ...luni6.map((x)=>Math.max(x.fact, x.inc)));
+
+        // --- Top datornici: clienți cu cele mai mari sume neîncasate ---
+        const datorii = {};
+        neplatite.forEach((i)=>{
+          const k = i.clientId || '—';
+          if (!datorii[k]) datorii[k] = { clientId:k, suma:0, nr:0, restante:0, ceaMaiVeche:null };
+          datorii[k].suma += totalDoc(i); datorii[k].nr += 1;
+          if (i.status==='Restantă') datorii[k].restante += 1;
+          if (!datorii[k].ceaMaiVeche || String(i.data||'') < datorii[k].ceaMaiVeche) datorii[k].ceaMaiVeche = String(i.data||'');
+        });
+        const topDatornici = Object.values(datorii).sort((a,b)=>b.suma-a.suma).slice(0,5);
+
+        // --- Export Excel: situația de încasat, pentru contabilă ---
+        const exportaIncasat = () => {
+          try {
+            const azF = new Date();
+            const stamp = `${String(azF.getDate()).padStart(2,'0')}/${String(azF.getMonth()+1).padStart(2,'0')}/${azF.getFullYear()}`;
+            const rows = neplatite.map((i, n)=>({
+              'Nr crt': n+1,
+              'Client': numeClient(i.clientId),
+              'Factura': i.numar || '',
+              'Data emiterii': fmtData(i.data),
+              'Scadenta': i.scadenta ? fmtData(i.scadenta) : '',
+              'Zile intarziere': i.scadenta && i.scadenta < azi ? Math.round((new Date(azi) - new Date(i.scadenta))/86400000) : 0,
+              'Status': i.status,
+              'Total (lei)': Math.round(totalDoc(i)*100)/100,
+            }));
+            const header = [
+              [company?.nume || 'Firma mea'],
+              [[company?.cui ? `CIF: ${company.cui}` : '', company?.adresa || ''].filter(Boolean).join(' | ')],
+              [],
+              ['Situatia facturilor de incasat'],
+              [`Extras la: ${stamp}`],
+              [`Total de incasat: ${Math.round(deIncasat*100)/100} lei`],
+              [],
+            ];
+            const ws = XLSX.utils.aoa_to_sheet(header);
+            XLSX.utils.sheet_add_json(ws, rows.length ? rows : [{ 'Nr crt':'', 'Client':'Nicio factura neincasata' }], { origin: -1 });
+            ws['!cols'] = [{wch:7},{wch:32},{wch:14},{wch:14},{wch:12},{wch:15},{wch:12},{wch:14}];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'De incasat');
+            XLSX.writeFile(wb, `de_incasat_${azi}.xlsx`);
+          } catch (err) { window.alert('Nu am putut face fișierul Excel. ' + (err && err.message ? err.message : '')); }
+        };
+
         return (<>
           <div className="rounded-xl p-4 mb-3" style={{ background:'var(--panel)', border:'1px solid #4CAF7D66', borderLeft:'4px solid #4CAF7D' }}>
             <div className="flex items-center justify-between mb-2 gap-2">
@@ -7224,18 +7292,64 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
               {stat('Încasat luna asta', money(sumIncasatLuna), '#4CAF7D')}
             </div>
             <div className="text-[11px] mt-2" style={{ color:'var(--muted2)' }}>🧮 Devize emise în {numeLuna}: {devizeLunaEm.length} · {money(sumDevizeLuna)} — bani „pe drum", de transformat în facturi.</div>
-            {cashOpen && (
-              neplatite.length === 0 ? <div className="text-xs mt-2" style={{ color:'#4CAF7D' }}>✅ Nicio factură neîncasată.</div> : (
-                <div className="space-y-1 mt-2">
-                  {neplatite.map((i)=>(
-                    <button key={i.id} onClick={()=>setTab('facturi')} className="w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel2)' }}>
-                      <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>🧾 {numeClient(i.clientId)} · {i.numar} · {fmtData(i.data)}</span>
-                      <span className="shrink-0 font-semibold" style={{ color: i.status==='Restantă'?'#E05252':'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalDoc(i))}{i.status==='Restantă'?' ⚠':''}</span>
-                    </button>
-                  ))}
+
+            {/* Grafic simplu pe ultimele 6 luni: facturat vs încasat */}
+            <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <span className="text-[11px] uppercase tracking-wide" style={{ color:'var(--muted2)' }}>Ultimele 6 luni</span>
+                <span className="flex items-center gap-3 text-[10px]" style={{ color:'var(--muted)' }}>
+                  <span className="flex items-center gap-1"><span style={{ width:9, height:9, borderRadius:2, background:'#2E8BD1', display:'inline-block' }} /> facturat</span>
+                  <span className="flex items-center gap-1"><span style={{ width:9, height:9, borderRadius:2, background:'#4CAF7D', display:'inline-block' }} /> încasat</span>
+                </span>
+              </div>
+              <div className="flex items-end justify-between gap-2" style={{ height: 84 }}>
+                {luni6.map((L, i2)=>(
+                  <div key={i2} className="flex-1 flex flex-col items-center gap-1" title={`${L.eticheta}: facturat ${money(L.fact)}, încasat ${money(L.inc)}`}>
+                    <div className="w-full flex items-end justify-center gap-1" style={{ height: 62 }}>
+                      <div style={{ width:'42%', height: `${Math.max(2, (L.fact/maxLuna)*100)}%`, background:'#2E8BD1', borderRadius:'3px 3px 0 0' }} />
+                      <div style={{ width:'42%', height: `${Math.max(2, (L.inc/maxLuna)*100)}%`, background:'#4CAF7D', borderRadius:'3px 3px 0 0' }} />
+                    </div>
+                    <span className="text-[10px]" style={{ color:'var(--muted2)' }}>{L.eticheta}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {cashOpen && (<>
+              {topDatornici.length > 0 && (
+                <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
+                  <div className="text-[11px] uppercase tracking-wide mb-1.5" style={{ color:'var(--muted2)' }}>Top datornici</div>
+                  <div className="space-y-1">
+                    {topDatornici.map((d)=>(
+                      <div key={d.clientId} className="flex items-center justify-between gap-2 text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'var(--panel2)' }}>
+                        <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>👥 {numeClient(d.clientId)} <span style={{ color:'var(--muted2)' }}>· {d.nr} {d.nr===1?'factură':'facturi'}{d.restante?` · ${d.restante} restante`:''}</span></span>
+                        <span className="shrink-0 font-semibold" style={{ color: d.restante?'#E05252':'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }}>{money(d.suma)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              )
-            )}
+              )}
+
+              <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
+                <div className="flex items-center justify-between mb-1.5 gap-2">
+                  <span className="text-[11px] uppercase tracking-wide" style={{ color:'var(--muted2)' }}>Facturi neîncasate</span>
+                  <button onClick={exportaIncasat} className="text-[11px] px-2.5 py-1 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>📊 Excel pentru contabilă</button>
+                </div>
+                {neplatite.length === 0 ? <div className="text-xs" style={{ color:'#4CAF7D' }}>✅ Nicio factură neîncasată.</div> : (
+                  <div className="space-y-1">
+                    {neplatite.map((i)=>{
+                      const zileInt = i.scadenta && i.scadenta < azi ? Math.round((new Date(azi) - new Date(i.scadenta))/86400000) : 0;
+                      return (
+                        <button key={i.id} onClick={()=>setTab('facturi')} className="w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel2)' }}>
+                          <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>🧾 {numeClient(i.clientId)} · {i.numar} · {fmtData(i.data)}{zileInt>0 && <span style={{ color:'#E05252' }}> · {zileInt} {zileInt===1?'zi':'zile'} întârziere</span>}</span>
+                          <span className="shrink-0 font-semibold" style={{ color: i.status==='Restantă'?'#E05252':'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalDoc(i))}{i.status==='Restantă'?' ⚠':''}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>)}
           </div>
 
           {deFacturat.length > 0 && (
@@ -7290,6 +7404,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 // aud = cine o vede: 'toti' (angajați + manager), 'angajat' (doar angajați), 'manager' (doar manager).
 // NU pune aici felicitările / mesajele de sărbători — alea sunt surpriză și apar singure când e cazul.
 const NOUTATI = [
+  { id: 'scadenta-grafic-datornici', aud: 'manager', data: '31.07.2026', titlu: '⏰ Scadență la facturi, grafic pe 6 luni, top datornici, Excel',
+    text: 'La facturi pui acum „Scadența" (termenul de plată, implicit 30 de zile). Când trece termenul și factura nu e plătită, aplicația o trece singură pe „Restantă" și îți dă notificare. Pe Dashboard, în cardul „💰 Cashflow", ai un grafic cu ultimele 6 luni (facturat vs încasat), iar la „Vezi detaliat" ai „Top datornici" (cine îți datorează cel mai mult), lista facturilor neîncasate cu zilele de întârziere, și butonul „📊 Excel pentru contabilă" care scoate toată situația de încasat într-un fișier.' },
   { id: 'cashflow-proiecte', aud: 'manager', data: '31.07.2026', titlu: '💰 Cashflow pe Dashboard + 📁 Proiecte (arhiva pe clienți)',
     text: 'Pe Dashboard ai acum cardul „💰 Cashflow": cât ai de încasat (cu restanțele separate), cât ai facturat și încasat luna asta, plus devizele emise luna asta („bani pe drum"). Apeși „Vezi detaliat" și vezi fiecare factură neîncasată. Sub el, cardul „🧾 De facturat" îți arată clienții cu deviz emis dar fără factură după el, sau cu lucrări luna asta și fără factură. Iar în meniu ai „📁 Proiecte" — arhiva ca pe calculator: folder pe client → dosar pe factură → înăuntru devizele și factura, toate cu export PDF.' },
   { id: 'santier-rapid-autoaloc', aud: 'toti', data: '31.07.2026', titlu: '🏗 Poți crea rapid un șantier / te aloci singur (urgențe)',
@@ -8599,6 +8715,20 @@ function App() {
     const iv = setInterval(upPending, 4000);
     return () => { window.removeEventListener('online', upOnline); window.removeEventListener('offline', upOnline); window.removeEventListener('offline-queue-change', upPending); document.removeEventListener('visibilitychange', onVis); clearInterval(iv); };
   }, []);
+
+  // --- Facturi ajunse la scadență → trec automat pe „Restantă" și managerul e anunțat (o dată pe zi). ---
+  useEffect(() => {
+    if (!currentUser || currentUser.rol !== 'Manager' || !dateIncarcate) return;
+    const aziF = new Date().toISOString().slice(0,10);
+    const trecute = invoices.filter((i)=> i.status === 'Neplătită' && i.scadenta && i.scadenta < aziF);
+    if (!trecute.length) return;
+    const next = invoices.map((i)=> (i.status === 'Neplătită' && i.scadenta && i.scadenta < aziF) ? { ...i, status:'Restantă' } : i);
+    setInvoices(next); persist('invoices', next);
+    const flag = 'restanteAnunt_' + aziF;
+    try { if (localStorage.getItem(flag)) return; localStorage.setItem(flag, '1'); } catch {}
+    const totalR = trecute.reduce((s,i)=>s+calcSubtotal(i.items||[])*(1+(Number(i.tva)||0)/100),0);
+    notifica(currentUser.id, { title:'⚠ Facturi ajunse la scadență', body:`${trecute.length} ${trecute.length===1?'factură a trecut':'facturi au trecut'} de termenul de plată — total ${money(totalR)}.`, tag:'facturi-restante' });
+  }, [dateIncarcate, currentUser, invoices]);
 
   // --- Bulină cu cifre pe iconiță (ca la WhatsApp): numărul de lucruri de rezolvat.
   // Rămâne pe iconiță până rezolvi efectiv (aprobi cererea, trimiți raportul etc.). ---
