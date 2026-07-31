@@ -423,7 +423,20 @@ async function pushInroleaza(user){
   }catch(e){ return 'eroare'; }
 }
 // Trimite o notificare către: 'manageri' | 'toti' | un userId | [userId,...]. exceptUserId = nu te notifica pe tine.
-async function notifica(audience, msg, exceptUserId){
+// Dacă o notificare nu poate pleca (fără semnal), o punem la coadă și o retrimitem singură când revine netul.
+const PUSH_QUEUE_KEY = 'pushQueue';
+function pushQueueGet(){ try{ return JSON.parse(localStorage.getItem(PUSH_QUEUE_KEY) || '[]'); }catch{ return []; } }
+function pushQueueSet(q){ try{ localStorage.setItem(PUSH_QUEUE_KEY, JSON.stringify(q.slice(-20))); }catch{} }
+async function pushQueueFlush(){
+  const q = pushQueueGet();
+  if (!q.length || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+  pushQueueSet([]);
+  for (const item of q) {
+    const r = await notifica(item.audience, item.msg, item.exceptUserId, true);
+    if (!r || !r.ok) { const cur = pushQueueGet(); cur.push(item); pushQueueSet(cur); }
+  }
+}
+async function notifica(audience, msg, exceptUserId, faraCoada){
   try{
     let list = await citestePushSubs(); // mereu lista proaspătă de pe server
     if(exceptUserId) list=list.filter((x)=>x.userId!==exceptUserId);
@@ -436,8 +449,13 @@ async function notifica(audience, msg, exceptUserId){
     if(!subs.length) return { ok:false, reason:'fara-abonati' };
     const r = await authFetch(`/api/push-send?token=${encodeURIComponent(AUTH_TOKEN||'')}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ subscriptions:subs, title:msg.title, body:msg.body, url:msg.url||'/', tag:msg.tag }) });
     let data={}; try{ data=await r.json(); }catch{}
+    if(!r.ok && !faraCoada){ const q=pushQueueGet(); q.push({ audience, msg, exceptUserId }); pushQueueSet(q); }
     return { ok:r.ok, status:r.status, data };
-  }catch(e){ return { ok:false, error: (e&&e.message)||'eroare' }; }
+  }catch(e){
+    // Fără net → o punem la coadă; pleacă singură când revine semnalul.
+    if(!faraCoada){ const q=pushQueueGet(); q.push({ audience, msg, exceptUserId }); pushQueueSet(q); }
+    return { ok:false, error: (e&&e.message)||'eroare' };
+  }
 }
 
 let syncingQueue = false;
@@ -6255,6 +6273,22 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
     setNotifStatus(r==='ok' ? '✅ Notificări activate pe acest dispozitiv.' : r==='refuzat' ? 'Notificările sunt blocate. Le poți permite din setările telefonului/browserului.' : r==='nesuportat' ? 'Acest dispozitiv nu suportă notificări (pe iPhone: adaugă aplicația pe ecranul de start și deschide-o de acolo).' : 'Nu s-a putut activa. Încearcă din nou.');
   };
   const [testStatus, setTestStatus] = useState('');
+  // Arată exact cine (ce dispozitive) primește notificări și dacă telefonul ăsta e printre ele.
+  const [abonati, setAbonati] = useState(null);
+  const verificaAbonati = async () => {
+    setAbonati(null);
+    let lista = [];
+    try { const r = await authFetch('/api/data?key=pushSubs'); const d = await r.json(); lista = Array.isArray(d.value) ? d.value : []; } catch {}
+    let endpointMeu = '';
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const s = await reg.pushManager.getSubscription();
+      endpointMeu = s ? s.endpoint : '';
+    } catch (_) {}
+    const cu = lista.map((x)=>({ nume: x && x.nume, rol: (x && x.rol) || '—', eu: !!(endpointMeu && x && x.sub && x.sub.endpoint === endpointMeu) }));
+    setAbonati({ lista: cu, euSunt: cu.some((x)=>x.eu), areManager: cu.some((x)=>x.rol === 'Manager') });
+  };
+
   const trimiteTest = async () => {
     setTestStatus('Se trimite…');
     // Asigură-te că acest dispozitiv e abonat înainte de test
@@ -6386,9 +6420,23 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
         <div className="flex flex-wrap gap-2">
           <button onClick={activeazaNotif} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>🔔 Activează notificările</button>
           <button onClick={trimiteTest} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>📨 Trimite notificare de test</button>
+          <button onClick={verificaAbonati} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>🔎 Cine primește notificări</button>
         </div>
         {notifStatus && <p className="text-xs mt-2" style={{ color: notifStatus.startsWith('✅') ? '#4CAF7D' : '#E9A23B' }}>{notifStatus}</p>}
         {testStatus && <p className="text-xs mt-2" style={{ color: testStatus.startsWith('✅') ? '#4CAF7D' : testStatus.startsWith('⚠️') ? '#E9A23B' : '#E05252' }}>{testStatus}</p>}
+        {abonati && (
+          <div className="mt-3 rounded-lg p-2.5 text-xs" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
+            <div className="font-semibold mb-1" style={{ color: abonati.euSunt ? '#4CAF7D' : '#E05252' }}>
+              {abonati.euSunt ? '✅ Telefonul ăsta primește notificări.' : '⛔ Telefonul ăsta NU primește notificări — apasă „🔔 Activează notificările".'}
+            </div>
+            <div style={{ color:'var(--muted)' }}>Dispozitive înscrise ({abonati.lista.length}):</div>
+            {abonati.lista.length === 0 && <div style={{ color:'#E05252' }}>Niciunul — nimeni nu primește nimic.</div>}
+            {abonati.lista.map((x,i)=>(
+              <div key={i} style={{ color:'var(--text)' }}>• {x.nume || '(fără nume)'} <span style={{ color:'var(--muted2)' }}>· {x.rol}{x.eu ? ' · acest telefon' : ''}</span></div>
+            ))}
+            {!abonati.areManager && <div className="mt-1" style={{ color:'#E9A23B' }}>⚠ Niciun Manager înscris — de aceea nu-ți vin rapoartele băieților. Activează notificările pe telefonul tău.</div>}
+          </div>
+        )}
       </div>
       {bioSuportat() && (
         <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
@@ -8601,6 +8649,39 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
         </div>
       )}
 
+      {isManager && (()=>{
+        // Rapoartele primite azi — le vezi aici chiar dacă notificarea nu a ajuns pe telefon.
+        const aziR = new Date().toISOString().slice(0,10);
+        const rapAzi = (rapoarte||[]).filter((r)=>r.data === aziR);
+        if (rapAzi.length === 0) return null;
+        const VAZ_KEY = 'rapVazute_' + (currentUser?.id || '') + '_' + aziR;
+        let vazute = [];
+        try { vazute = JSON.parse(localStorage.getItem(VAZ_KEY) || '[]'); } catch (_) {}
+        const noi = rapAzi.filter((r)=>!vazute.includes(r.id));
+        return (
+          <div className="mb-6 rounded-xl p-4" style={{ background:'#4CAF7D14', border:'1px solid #4CAF7D66', borderLeft:'4px solid #4CAF7D' }}>
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <span style={{ fontSize:14, fontWeight:700, color:'#4CAF7D' }}>📋 Rapoarte primite azi ({rapAzi.length}){noi.length ? ` · ${noi.length} noi` : ''}</span>
+              {noi.length > 0 && <button onClick={()=>{ try { localStorage.setItem(VAZ_KEY, JSON.stringify(rapAzi.map((r)=>r.id))); } catch(_){} setTab('activitate'); }} className="shrink-0 text-[11px] px-2 py-1 rounded" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>Am văzut</button>}
+            </div>
+            <div className="space-y-1.5">
+              {rapAzi.slice(0,6).map((r)=>{
+                const s = santiere.find((x)=>x.id===r.santierId);
+                const cine = (r.persoane||[]).filter((p)=>p.nume && String(p.nume).trim()).map((p)=>p.nume).join(', ');
+                const ore = (r.persoane||[]).reduce((a,p)=>a+personMinutes(p),0);
+                const eNou = !vazute.includes(r.id);
+                return (
+                  <button key={r.id} onClick={()=>goToSite(r.santierId, 'rapoarte')} className="w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel)', border:'1px solid #4CAF7D33' }}>
+                    <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>{eNou && '🟢 '}🏗 {s?.nume || 'Șantier'} <span style={{ color:'var(--muted2)' }}>· {cine || 'fără persoane'}</span></span>
+                    <span className="shrink-0" style={{ color:'#4CAF7D', fontFamily:"'JetBrains Mono', monospace" }}>{minutesToHM(ore)} h</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {(()=>{
         const acumA = new Date();
         const aziA = acumA.toISOString().slice(0,10);
@@ -9774,9 +9855,9 @@ function App() {
     if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(()=>{}); }
     // Când aplicația e adusă în față, reîmprospătăm datele: bulina de pe iconiță reflectă
     // exact ce mai ai de rezolvat (scade doar când rezolvi, nu doar pentru că ai deschis-o).
-    const onVis = () => { if (document.visibilityState === 'visible' && navigator.onLine) { loadAllData(false); } };
+    const onVis = () => { if (document.visibilityState === 'visible' && navigator.onLine) { loadAllData(false); pushQueueFlush(); } };
     document.addEventListener('visibilitychange', onVis);
-    const upOnline = () => { setOnline(navigator.onLine); if (navigator.onLine) { syncQueue(); loadAllData(false); } };
+    const upOnline = () => { setOnline(navigator.onLine); if (navigator.onLine) { syncQueue(); pushQueueFlush(); loadAllData(false); } };
     const upPending = () => setPendingCount(getPending().length);
     window.addEventListener('online', upOnline);
     window.addEventListener('offline', upOnline);
