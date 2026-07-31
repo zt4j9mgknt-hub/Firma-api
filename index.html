@@ -5599,45 +5599,58 @@ function NormativTab({ normativPdf, setNormativPdf, normativIndexFile, setNormat
   // static pus lângă index.html. Așa nu ești obligat să pui nimic pe GitHub: îl încarci direct din aplicație.
   const [idx, setIdx] = useState(NORMATIV_INDEX_CACHE);
   const [idxStare, setIdxStare] = useState(NORMATIV_INDEX_CACHE ? 'ok' : 'load');
+  const [progres, setProgres] = useState(0);
   useEffect(() => {
     if (NORMATIV_INDEX_CACHE) return;
     let anulat = false;
     (async () => {
-      const surse = [];
-      if (normativIndexFile && normativIndexFile.pathname) surse.push(blobViewUrl(normativIndexFile.pathname));
-      surse.push('/normativ-i7-index.json');
-      for (const u of surse) {
-        try {
-          const r = await fetch(u);
-          if (!r.ok) continue;
+      // 1) fișier static, dacă cineva l-a pus lângă index.html
+      try {
+        const r = await fetch('/normativ-i7-index.json');
+        if (r.ok) {
           const d = await r.json();
-          if (anulat) return;
-          if (Array.isArray(d) && d.length) { NORMATIV_INDEX_CACHE = d; setIdx(d); setIdxStare('ok'); return; }
-        } catch (_) {}
-      }
-      if (!anulat) setIdxStare('err');
+          if (!anulat && Array.isArray(d) && d.length) { NORMATIV_INDEX_CACHE = d; setIdx(d); setIdxStare('ok'); return; }
+        }
+      } catch (_) {}
+      // 2) ce a pregătit deja acest telefon (rămâne salvat local)
+      try {
+        const local = localStorage.getItem('normativIdx_v1');
+        if (local) {
+          const d = JSON.parse(local);
+          if (!anulat && Array.isArray(d) && d.length) { NORMATIV_INDEX_CACHE = d; setIdx(d); setIdxStare('ok'); return; }
+        }
+      } catch (_) {}
+      if (!anulat) setIdxStare('lipsa');
     })();
     return () => { anulat = true; };
-  }, [normativIndexFile]);
+  }, []);
 
-  // Managerul urcă fișierul de căutare direct din aplicație (nu mai e nevoie de GitHub).
-  const idxFileRef = useRef(null);
-  const [idxUp, setIdxUp] = useState(false);
-  const alegeIndex = async (e) => {
-    const f = e.target.files && e.target.files[0];
-    if (e.target) e.target.value = '';
-    if (!f) return;
-    setIdxUp(true); setUpErr('');
+  // Pregătește căutarea CITIND CHIAR PDF-UL încărcat în aplicație — nu e nevoie de niciun fișier în plus.
+  const pregatesteCautarea = async () => {
+    if (!normativPdf || !normativPdf.pathname) { setUpErr('Întâi trebuie încărcat PDF-ul normativului.'); return; }
+    const lib = window.pdfjsLib;
+    if (!lib) { setUpErr('Cititorul de PDF nu s-a încărcat. Verifică internetul și reintră în pagină.'); return; }
+    setIdxStare('build'); setProgres(0); setUpErr('');
     try {
-      const txt = await f.text();
-      const d = JSON.parse(txt);
-      if (!Array.isArray(d) || !d.length || !d[0] || d[0].p === undefined) throw new Error('Fișierul nu pare a fi indexul de căutare al normativului.');
-      const res = await uploadFileToBlob(f, 'normativ');
-      const rec = { pathname: res.pathname, url: res.url, nume: f.name, pagini: d.length };
-      setNormativIndexFile(rec); await persist('normativIndexFile', rec);
-      NORMATIV_INDEX_CACHE = d; setIdx(d); setIdxStare('ok');
-    } catch (err) { setUpErr((err && err.message) || 'Nu am putut încărca fișierul de căutare.'); }
-    setIdxUp(false);
+      try { lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch {}
+      const pdf = await lib.getDocument({ url: blobViewUrl(normativPdf.pathname), disableRange: true, disableStream: true }).promise;
+      const n = pdf.numPages;
+      const out = [];
+      for (let p = 1; p <= n; p++) {
+        const page = await pdf.getPage(p);
+        const tc = await page.getTextContent();
+        const txt = (tc.items || []).map((it)=>it.str).join(' ').replace(/\s+/g, ' ').trim();
+        out.push({ p, s: p > 474 ? 2023 : 2011, t: txt });
+        if (p % 5 === 0 || p === n) setProgres(Math.round((p / n) * 100));
+        try { page.cleanup(); } catch {}
+      }
+      try { pdf.destroy(); } catch {}
+      NORMATIV_INDEX_CACHE = out; setIdx(out); setIdxStare('ok');
+      try { localStorage.setItem('normativIdx_v1', JSON.stringify(out)); } catch (_) { /* dacă nu încape, rămâne doar în memorie */ }
+    } catch (e) {
+      setIdxStare('lipsa');
+      setUpErr('Nu am putut pregăti căutarea. ' + ((e && e.message) || ''));
+    }
   };
 
   const [q, setQ] = useState('');
@@ -5760,19 +5773,25 @@ function NormativTab({ normativPdf, setNormativPdf, normativIndexFile, setNormat
         ))}
       </div>
 
-      {idxStare === 'load' && <div className="text-xs text-center py-6" style={{ color: 'var(--muted2)' }}>Se pregătește căutarea în normativ…</div>}
-      {idxStare === 'err' && (
-        <div className="rounded-lg px-3 py-3" style={{ background: isManager ? '#2E8BD115' : '#E9A23B15', border: '1px solid ' + (isManager ? '#2E8BD140' : '#E9A23B40'), color: 'var(--text)', lineHeight: 1.6 }}>
-          {isManager ? (
-            <div>
-              <div className="text-sm font-semibold mb-1">🔍 Activează căutarea (o singură dată)</div>
-              <div className="text-[11px] mb-2" style={{ color: 'var(--muted)' }}>Alege fișierul <b>normativ-i7-index.json</b> pe care ți l-am trimis. Se salvează în aplicație și merge apoi pentru toată echipa — nu trebuie pus nimic pe GitHub.</div>
-              <input ref={idxFileRef} type="file" accept="application/json,.json" onChange={alegeIndex} style={{ display: 'none' }} />
-              <button onClick={() => idxFileRef.current && idxFileRef.current.click()} disabled={idxUp} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: idxUp ? '#2a3038' : '#2E8BD1', color: '#fff' }}>{idxUp ? 'Se încarcă…' : '🔍 Alege fișierul de căutare'}</button>
-            </div>
-          ) : (
-            <div className="text-xs">Căutarea în normativ nu e încă activată. Managerul trebuie să încarce o dată fișierul de căutare, din pagina asta.</div>
-          )}
+      {idxStare === 'load' && <div className="text-xs text-center py-6" style={{ color: 'var(--muted2)' }}>Se verifică căutarea…</div>}
+      {idxStare === 'build' && (
+        <div className="rounded-lg px-3 py-3" style={{ background: '#2E8BD115', border: '1px solid #2E8BD140', color: 'var(--text)' }}>
+          <div className="text-sm font-semibold mb-1">🔍 Se pregătește căutarea… {progres}%</div>
+          <div className="text-[11px] mb-2" style={{ color: 'var(--muted)' }}>Citesc normativul pagină cu pagină. Durează un minut, o singură dată pe telefonul ăsta. Nu închide pagina.</div>
+          <div style={{ height: 6, borderRadius: 6, background: 'var(--panel2)', overflow: 'hidden' }}>
+            <div style={{ width: progres + '%', height: '100%', background: 'linear-gradient(90deg,#2E8BD1,#4CAF7D)', transition: 'width .3s' }} />
+          </div>
+        </div>
+      )}
+      {idxStare === 'lipsa' && (
+        <div className="rounded-lg px-3 py-3" style={{ background: '#2E8BD115', border: '1px solid #2E8BD140', color: 'var(--text)', lineHeight: 1.6 }}>
+          <div className="text-sm font-semibold mb-1">🔍 Pornește căutarea (o singură dată)</div>
+          <div className="text-[11px] mb-2" style={{ color: 'var(--muted)' }}>
+            {arePdf
+              ? 'Aplicația citește singură normativul încărcat și își face căutarea. Durează cam un minut, o singură dată pe telefonul ăsta. După aceea cauți instant orice cuvânt.'
+              : 'Întâi trebuie încărcat PDF-ul normativului (butonul de mai sus), apoi pornești căutarea de aici.'}
+          </div>
+          <button onClick={pregatesteCautarea} disabled={!arePdf} className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40" style={{ background: '#2E8BD1', color: '#fff' }}>🔍 Pregătește căutarea</button>
         </div>
       )}
 
