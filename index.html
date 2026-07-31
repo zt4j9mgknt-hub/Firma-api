@@ -215,6 +215,18 @@ function lucrariDinRand(l) {
   if (l && (String(l.tipLucrare||'').trim() || (Number(l.cantitate)||0))) return [{ denumire: l.tipLucrare||'', cantitate: l.cantitate||'', um: l.um||'buc' }];
   return [];
 }
+// ---- CĂUTARE INTELIGENTĂ, folosită peste tot în aplicație ----
+// Fără diacritice, virgula = punct, spațiile nu contează, iar mai multe cuvinte înseamnă
+// „toate trebuie să apară" (în orice ordine). Așa „cablu 3x1,5" găsește și „3 x 1.5 cablu".
+const cautNorm = (x) => String(x==null?'':x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/,/g,'.').replace(/\s+/g,' ').trim();
+function seCauta(text, q) {
+  const termeni = cautNorm(q).split(' ').filter(Boolean);
+  if (!termeni.length) return true;
+  const t = cautNorm(text);
+  const c = t.replace(/\s/g,'');
+  return termeni.every((w)=> t.includes(w) || c.includes(w.replace(/\s/g,'')));
+}
+
 // Contopește două rapoarte din ACEEAȘI ZI, de pe același șantier, într-unul singur.
 // Persoanele NU se dublează: dacă apare de două ori, se ia intervalul cel mai larg (nu se adună orele).
 function contopesteRapoarte(a, b) {
@@ -893,7 +905,7 @@ function ClientsTab({ clients, setClients, persist }) {
         <div className="text-center py-12 text-sm" style={{ color:'var(--muted)' }}>Caută un client, sau apasă „Arată toți clienții".</div>
       ) : (
         <div className="space-y-2">
-          {clients.filter((c)=> !filter || c.nume.toLowerCase().includes(filter.toLowerCase()) || (c.cui||'').toLowerCase().includes(filter.toLowerCase())).map((c)=>(
+          {clients.filter((c)=> seCauta(`${c.nume||''} ${c.cui||''} ${c.adresa||''} ${c.contact||''}`, filter)).map((c)=>(
             <div key={c.id} className="rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
               <div>
                 <div className="text-sm" style={{ color:'var(--text)' }}>{c.nume}</div>
@@ -1240,7 +1252,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
   };
   const normalizeSearch = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
   const baseList = arataVechi ? materialeVechi : materialeActive;
-  const filtered = baseList.filter((m)=> !filter || normalizeSearch(m.denumire).includes(normalizeSearch(filter)) || normalizeSearch(m.categorie).includes(normalizeSearch(filter)));
+  const filtered = baseList.filter((m)=> seCauta(`${m.denumire||''} ${m.categorie||''} ${m.um||''}`, filter));
   const filteredStocuri = materialeActive.filter((m)=> !filter || normalizeSearch(m.denumire).includes(normalizeSearch(filter)) || normalizeSearch(m.categorie).includes(normalizeSearch(filter)));
 
   const importCatalog = () => {
@@ -1507,7 +1519,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
       {subTab === 'stocuri' && (
         <div>
           <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <input placeholder="Caută material..." value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' }} />
+            <input placeholder="🔍 Caută (ex: cablu 3x2,5)" value={filter} onChange={(e)=>setFilter(e.target.value)} className="rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs" style={{ background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' }} />
             {!stocShowAll && !searchingGestiune && (
               <button onClick={()=>setStocShowAll(true)} className="text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>📦 Afișează stoc integral</button>
             )}
@@ -2247,7 +2259,7 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
   };
   const normPl = (s) => String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[\s._\-]/g,'');
   const planseAici = planseSantier.filter((p)=>p.santierId===santierId);
-  const planseFiltrate = cauta.trim() ? planseAici.filter((p)=>normPl(p.nume).includes(normPl(cauta))) : planseAici;
+  const planseFiltrate = cauta.trim() ? planseAici.filter((p)=>seCauta(p.nume, cauta)) : planseAici;
 
   const handleFiles = async (fileList) => {
     setError('');
@@ -2295,7 +2307,7 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
         </label>
         {error && <p className="text-xs mt-2" style={{ color:'#E05252' }}>{error}</p>}
         {planseAici.length > 1 && (
-          <input value={cauta} onChange={(e)=>setCauta(e.target.value)} placeholder="🔍 Caută planșă (ex: prize parter)" className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={{ background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' }} />
+          <input value={cauta} onChange={(e)=>setCauta(e.target.value)} placeholder="🔍 Caută planșă (ex: prize parter, et 4)" className="w-full rounded-lg px-3 py-2 text-sm outline-none mt-3" style={{ background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' }} />
         )}
         {planseAici.length === 0 ? (
           <div className="text-xs mt-3" style={{ color:'var(--muted2)' }}>Nicio planșă încărcată încă.</div>
@@ -2415,7 +2427,9 @@ function SiteToolsTab({ santierId, santierNume, sculeSantier, setSculeSantier, p
   const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
   const [sculaNoua, setSculaNoua] = useState('');
   const [sculaAdusaDe, setSculaAdusaDe] = useState('');
-  const sculeAici = sculeSantier.filter((s)=>s.santierId===santierId);
+  const [cautaScula, setCautaScula] = useState('');
+  const sculeToate = sculeSantier.filter((s)=>s.santierId===santierId);
+  const sculeAici = cautaScula.trim() ? sculeToate.filter((s)=> seCauta(`${s.denumire||''} ${s.adusaDe||''}`, cautaScula)) : sculeToate;
   const addScula = () => {
     if (!sculaNoua.trim()) return;
     const den = sculaNoua.trim();
@@ -2440,7 +2454,10 @@ function SiteToolsTab({ santierId, santierNume, sculeSantier, setSculeSantier, p
         <input placeholder="Adusă de" value={sculaAdusaDe} onChange={(e)=>setSculaAdusaDe(e.target.value)} className="sm:w-40 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         <button onClick={addScula} className="text-sm px-4 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă</button>
       </div>
-      {sculeAici.length===0 ? <div className="text-xs" style={{ color:'var(--muted2)' }}>Nicio sculă adăugată.</div> : (
+      {sculeToate.length > 4 && (
+        <input value={cautaScula} onChange={(e)=>setCautaScula(e.target.value)} placeholder="🔍 Caută sculă (ex: bormasina bosch)" className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
+      )}
+      {sculeToate.length===0 ? <div className="text-xs" style={{ color:'var(--muted2)' }}>Nicio sculă adăugată.</div> : sculeAici.length===0 ? <div className="text-xs" style={{ color:'var(--muted2)' }}>Nicio sculă găsită pentru „{cautaScula}".</div> : (
         <div className="space-y-1">
           {sculeAici.map((s)=>(
             <div key={s.id} className="text-xs px-2 py-1.5 rounded-lg" style={{ background:'var(--panel2)' }}>
@@ -2886,7 +2903,7 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
     ...((cereri||[]).map((c)=>c.denumire)),
   ].filter(Boolean));
   const sugMateriale = matSite.length ? uniqStr([...matSite, ...matGeneral]) : matGeneral;
-  const filtreaza = (arr, f) => !f.trim() ? arr : arr.filter((x)=> x.toLowerCase().includes(f.toLowerCase()));
+  const filtreaza = (arr, f) => !f.trim() ? arr : arr.filter((x)=> seCauta(x, f));
   const setObligatoriu = (id, val) => saveItems((checklistSantier||[]).map((i)=> i.id===id ? { ...i, obligatoriu: val } : i));
   const delItem = (id) => saveItems((checklistSantier||[]).filter((i)=>i.id!==id));
 
@@ -3362,7 +3379,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
   const cerereSearching = cerereFilter.trim() !== '' || cerereDataFiltru !== '';
   const cereriFiltrate = cereriAici.filter((c) => {
     if (cerereDataFiltru && c.data !== cerereDataFiltru) return false;
-    if (cerereFilter.trim() && !normalizeSearchLocal(c.denumire).includes(normalizeSearchLocal(cerereFilter))) return false;
+    if (cerereFilter.trim() && !seCauta(`${c.denumire||''} ${c.cantitate||''} ${c.um||''} ${c.status||''} ${c.cerutNume||''} ${c.data||''}`, cerereFilter)) return false;
     return true;
   });
   const cereriPeZi = {};
@@ -3417,7 +3434,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         </div>
 
         <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-          <input placeholder="🔍 Caută material..." value={cerereFilter} onChange={(e)=>setCerereFilter(e.target.value)} className="rounded-lg px-2.5 py-1.5 text-xs outline-none flex-1 min-w-[100px]" style={inputStyle} />
+          <input placeholder="🔍 Caută (ex: cablu 3x1,5)" value={cerereFilter} onChange={(e)=>setCerereFilter(e.target.value)} className="rounded-lg px-2.5 py-1.5 text-xs outline-none flex-1 min-w-[100px]" style={inputStyle} />
           <RoCalendarPicker value={cerereDataFiltru} onChange={setCerereDataFiltru} />
           {!cerereSearching && (
             <button onClick={()=>setCerereShowAll(!cerereShowAll)} className="text-xs px-2.5 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>{cerereShowAll ? 'Ascunde' : 'Vezi toate materialele'}</button>
