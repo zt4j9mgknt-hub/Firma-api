@@ -4456,7 +4456,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, concedii, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, concedii, cereriAlocare, setCereriAlocare, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [quickForm, setQuickForm] = useState(null); // angajat: creare rapidă șantier (doar nume + adresă)
@@ -4560,15 +4560,34 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     notifica('manageri', { title:'🏗 Șantier nou (de la un coleg)', body:`${currentUser.nume} a creat șantierul „${nume}". Completează detaliile când poți.`, tag:'santier-nou' }, currentUser?.id);
     setQuickForm(null); setSelected(s.id); setSiteView('__closed__');
   };
-  // Auto-alocare: angajatul se pune singur pe un șantier existent (urgență), cu notificare la manager.
-  const autoAlocMe = (santierId) => {
+  // Auto-alocare: angajatul CERE să lucreze pe un șantier existent; managerul aprobă și DOAR apoi intră pe șantier.
+  const ceriAlocare = (santierId) => {
     const s = santiere.find((x)=>x.id===santierId); if (!s) return;
-    const echipa = echipaNormalizata(s.echipa);
-    if (echipa.some((e)=>e.userId===currentUser.id)) return;
-    const azi = new Date().toISOString().slice(0,10);
-    const next = santiere.map((x)=> x.id===santierId ? { ...x, echipa: [...echipa, { userId: currentUser.id, status:'activ', dataModificare: azi }] } : x);
-    setSantiere(next); persist('santiere', next);
-    notifica('manageri', { title:'🏗 Auto-alocare pe șantier', body:`${currentUser.nume} s-a alocat singur pe „${s.nume}" (urgență).`, tag:'auto-aloc' }, currentUser?.id);
+    if ((cereriAlocare||[]).some((c)=>c.santierId===santierId && c.userId===currentUser.id && c.status==='Cerut')) return;
+    const c = { id: uid(), santierId, userId: currentUser.id, nume: currentUser.nume, data: new Date().toISOString().slice(0,10), status:'Cerut' };
+    const next = [c, ...(cereriAlocare||[])];
+    setCereriAlocare(next); persist('cereriAlocare', next);
+    notifica('manageri', { title:'🏗 Cerere de alocare', body:`${currentUser.nume} cere să lucreze pe „${s.nume}". Aprobă sau respinge.`, tag:'aloc-'+santierId }, currentUser?.id);
+  };
+  const aprobaAlocare = (cerere) => {
+    const s = santiere.find((x)=>x.id===cerere.santierId);
+    if (s) {
+      const echipa = echipaNormalizata(s.echipa);
+      if (!echipa.some((e)=>e.userId===cerere.userId)) {
+        const azi = new Date().toISOString().slice(0,10);
+        const nextS = santiere.map((x)=> x.id===cerere.santierId ? { ...x, echipa: [...echipa, { userId: cerere.userId, status:'activ', dataModificare: azi }] } : x);
+        setSantiere(nextS); persist('santiere', nextS);
+      }
+    }
+    const nextC = (cereriAlocare||[]).map((c)=> c.id===cerere.id ? { ...c, status:'Aprobat' } : c);
+    setCereriAlocare(nextC); persist('cereriAlocare', nextC);
+    notifica(cerere.userId, { title:'✅ Alocare aprobată', body:`Poți lucra pe „${s?.nume || 'șantier'}".`, tag:'aloc-raspuns' }, currentUser?.id);
+  };
+  const respingeAlocare = (cerere) => {
+    const s = santiere.find((x)=>x.id===cerere.santierId);
+    const nextC = (cereriAlocare||[]).map((c)=> c.id===cerere.id ? { ...c, status:'Respins' } : c);
+    setCereriAlocare(nextC); persist('cereriAlocare', nextC);
+    notifica(cerere.userId, { title:'⛔ Alocare respinsă', body:`Cererea pentru „${s?.nume || 'șantier'}" a fost respinsă.`, tag:'aloc-raspuns' }, currentUser?.id);
   };
   const setSantierLocatie = (id, lat, lng) => {
     const next = santiere.map((s)=>s.id===id ? {...s, lat, lng} : s);
@@ -5020,6 +5039,25 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           </div>
         </div>
       )}
+      {currentUser?.rol === 'Manager' && (cereriAlocare||[]).some((c)=>c.status==='Cerut') && (
+        <div className="rounded-xl p-3 mb-4" style={{ background:'#E9A23B14', border:'1px solid #E9A23B66', borderLeft:'4px solid #E9A23B' }}>
+          <div className="text-sm font-semibold mb-2" style={{ color:'#E9A23B' }}>⏳ Cereri de alocare pe șantier</div>
+          <div className="space-y-1.5">
+            {(cereriAlocare||[]).filter((c)=>c.status==='Cerut').map((c)=>{
+              const s = santiere.find((x)=>x.id===c.santierId);
+              return (
+                <div key={c.id} className="flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel)', border:'1px solid #E9A23B33' }}>
+                  <span style={{ color:'var(--text)' }}>👷 {c.nume} → „{s?.nume || 'șantier șters'}"</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button onClick={()=>aprobaAlocare(c)} className="px-2 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Aprobă</button>
+                    <button onClick={()=>respingeAlocare(c)} className="px-2 py-1 rounded-lg" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid #E0525266' }}>✕</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {santiere.length===0 && !form ? (
         <div className="text-center py-12 text-sm" style={{ color:'var(--muted)' }}>Niciun șantier încă.</div>
       ) : (
@@ -5040,7 +5078,9 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                   </div>
                 ) : !areAcces ? (
                   <div className="shrink-0" onClick={(e)=>e.stopPropagation()}>
-                    <button onClick={()=>autoAlocMe(s.id)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#E9A23B' }} title="Mă alochez singur pe acest șantier (urgență) — managerul e anunțat">➕ Mă alochez</button>
+                    {(cereriAlocare||[]).some((c)=>c.santierId===s.id && c.userId===currentUser?.id && c.status==='Cerut')
+                      ? <span className="text-xs px-2.5 py-1 rounded-lg" style={{ color:'#E9A23B', background:'var(--panel2)', border:'1px dashed #E9A23B66' }}>⏳ Cerere trimisă</span>
+                      : <button onClick={()=>ceriAlocare(s.id)} className="text-xs px-2.5 py-1 rounded-lg font-medium" style={{ color:'#14181C', background:'#E9A23B' }} title="Ceri să lucrezi pe acest șantier — managerul aprobă">➕ Cere alocare</button>}
                   </div>
                 ) : null}
               </div>
@@ -6868,7 +6908,7 @@ function UsersTab({ currentUser }) {
   );
 }
 
-function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, setTab, currentUser }) {
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, cereriAlocare, setTab, currentUser }) {
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
 
   const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
@@ -6890,6 +6930,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     if (dupa17) totalDeFacut += santiere.filter((s)=> s.status==='Activ' && seCereRaport(s, azi) && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)).length;
     totalDeFacut += (concedii || []).filter((c)=>c.status==='Cerut').length > 0 ? 1 : 0;
     totalDeFacut += santiere.filter((s)=>s.necesitaCompletare).length; // șantiere create de colegi, de completat de tine
+    totalDeFacut += (cereriAlocare||[]).filter((c)=>c.status==='Cerut').length; // cereri de alocare pe șantier, de aprobat
   } else {
     const santiereMele = santiere.filter((s)=>inEchipa(s.echipa, currentUser?.id));
     if (dupa17) totalDeFacut += santiereMele.filter((s)=> s.status==='Activ' && seCereRaport(s, azi) && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)).length;
@@ -7059,7 +7100,7 @@ const NOUTATI = [
     text: 'Primești notificare pentru tot ce fac angajații: raport trimis/modificat, cerere de materiale, sculă adusă/mutată, planșă sau poză adăugată, checklist confirmat, șantier finalizat, cerere de concediu și întrebări Q&A de verificat.' },
 ];
 
-function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, concedii, problemeSantier, setTab, setPendingSiteNav, goQA, currentUser }) {
+function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, concedii, cereriAlocare, problemeSantier, setTab, setPendingSiteNav, goQA, currentUser }) {
   const goToSite = (santierId, siteView) => {
     // Managerul intră cu totul închis (compact) când merge spre rapoarte; celelalte ținte rămân.
     const v = (currentUser?.rol === 'Manager' && (!siteView || siteView === 'rapoarte')) ? '__closed__' : (siteView || 'rapoarte');
@@ -7080,6 +7121,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
   // Alertele de raport pentru ZIUA CURENTĂ apar doar de la 17:01 (nu are sens dimineața).
   const dupa17 = (new Date().getHours()*60 + new Date().getMinutes()) >= (17*60 + 1);
   const concediiInAsteptare = concedii ? concedii.filter((c)=>c.status==='Cerut') : [];
+  const alocariInAsteptare = (cereriAlocare||[]).filter((c)=>c.status==='Cerut');
   const santiereActiveFaraRaportAzi = dupa17 ? santiere.filter((s)=> s.status==='Activ' && seCereRaport(s, azi) && !rapoarte.some((r)=>r.santierId===s.id && r.data===azi)) : [];
 
   const isManager = currentUser?.rol === 'Manager';
@@ -7128,7 +7170,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
   const cereriLaSantiereleMele = cereriSantier.filter((c)=>idSantiereMele.has(c.santierId)).slice().reverse().slice(0,6);
 
   const nimicDeFacut = isManager
-    ? materialeSubStoc.length === 0 && cereriInAsteptarePeSantier.length === 0 && santiereActiveFaraRaportAzi.length === 0 && concediiInAsteptare.length === 0
+    ? materialeSubStoc.length === 0 && cereriInAsteptarePeSantier.length === 0 && santiereActiveFaraRaportAzi.length === 0 && concediiInAsteptare.length === 0 && alocariInAsteptare.length === 0
     : santiereFaraRaportAzi.length === 0 && santiereMele.length === 0 && cereriLaSantiereleMele.length === 0;
 
   // În „Activitatea mea" apar DOAR întrebările de pe ȘANTIER, celor implicați + managerului.
@@ -7389,7 +7431,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
         </div>
       )}
 
-      {isManager && (materialeSubStoc.length > 0 || cereriInAsteptarePeSantier.length > 0 || santiereActiveFaraRaportAzi.length > 0 || concediiInAsteptare.length > 0) && (
+      {isManager && (materialeSubStoc.length > 0 || cereriInAsteptarePeSantier.length > 0 || santiereActiveFaraRaportAzi.length > 0 || concediiInAsteptare.length > 0 || alocariInAsteptare.length > 0) && (
         <div className="mb-6">
           <div className="text-xs uppercase tracking-wider mb-2" style={{ color:'var(--muted)' }}>Atenționări</div>
 
@@ -7432,6 +7474,16 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, conce
               <button onClick={()=>setTab('concedii')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'var(--panel)', border:'1px solid #E0525266' }}>
                 <span className="text-sm" style={{ color:'var(--text)' }}>{concediiInAsteptare.length} {concediiInAsteptare.length===1?'cerere':'cereri'} de concediu în așteptare de aprobare</span>
                 <span style={{ color:'#E05252' }}>→</span>
+              </button>
+            </div>
+          )}
+
+          {alocariInAsteptare.length > 0 && (
+            <div className="mb-3">
+              <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color:'#E9A23B' }}>🏗 Alocări pe șantier</div>
+              <button onClick={()=>setTab('santiere')} className="w-full text-left rounded-xl px-4 py-3 flex items-center justify-between" style={{ background:'var(--panel)', border:'1px solid #E9A23B66' }}>
+                <span className="text-sm" style={{ color:'var(--text)' }}>{alocariInAsteptare.length} {alocariInAsteptare.length===1?'cerere':'cereri'} de alocare pe șantier — de aprobat</span>
+                <span style={{ color:'#E9A23B' }}>→</span>
               </button>
             </div>
           )}
@@ -8179,6 +8231,7 @@ function App() {
   const [etape, setEtape] = useState([]);
   const [sculeSantier, setSculeSantier] = useState([]);
   const [cereriSantier, setCereriSantier] = useState([]);
+  const [cereriAlocare, setCereriAlocare] = useState([]); // cereri de auto-alocare pe șantier, spre aprobarea managerului
   const [miscariSantier, setMiscariSantier] = useState([]);
   const [problemeSantier, setProblemeSantier] = useState([]);
   const [planseSantier, setPlanseSantier] = useState([]);
@@ -8245,6 +8298,7 @@ function App() {
       setEtape(await loadKey('etape', []));
       setSculeSantier(await loadKey('sculeSantier', []));
       setCereriSantier(await loadKey('cereriSantier', []));
+      setCereriAlocare(await loadKey('cereriAlocare', []));
       setMiscariSantier(await loadKey('miscariSantier', []));
       setProblemeSantier(await loadKey('problemeSantier', []));
       setPlanseSantier(await loadKey('planseSantier', []));
@@ -8393,6 +8447,7 @@ function App() {
       etape: (v)=>setEtape(v ?? []),
       sculeSantier: (v)=>setSculeSantier(v ?? []),
       cereriSantier: (v)=>setCereriSantier(v ?? []),
+      cereriAlocare: (v)=>setCereriAlocare(v ?? []),
       problemeSantier: (v)=>setProblemeSantier(v ?? []),
       miscariSantier: (v)=>setMiscariSantier(v ?? []),
       planseSantier: (v)=>setPlanseSantier(v ?? []),
@@ -8688,8 +8743,8 @@ function App() {
           <div className="text-sm mt-10" style={{ color:'var(--muted)' }}>Se încarcă...</div>
         ) : !tab ? (
           effectiveUser.rol === 'Manager'
-            ? <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} setTab={setTab} currentUser={effectiveUser} />
-            : <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />
+            ? <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} cereriAlocare={cereriAlocare} setTab={setTab} currentUser={effectiveUser} />
+            : <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} cereriAlocare={cereriAlocare} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />
         ) : tabBlocatTest ? (
           <div className="max-w-md mx-auto mt-16 text-center rounded-xl p-6" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
             <div style={{ fontSize:34 }}>🔒</div>
@@ -8738,10 +8793,10 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} cereriAlocare={cereriAlocare} setCereriAlocare={setCereriAlocare} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
-            {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />}
+            {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} cereriAlocare={cereriAlocare} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />}
 
             {tab === 'pontaj' && <PontajTab rapoarte={rapoarte} santiere={santiere} currentUser={effectiveUser} pontajCorectii={pontajCorectii} setPontajCorectii={setPontajCorectii} persist={persist} company={company} concedii={concedii} />}
 
