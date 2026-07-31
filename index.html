@@ -156,6 +156,12 @@ function echipaNormalizata(echipa) {
 }
 const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e)=>e.userId);
 const inEchipa = (echipa, userId) => echipaUserIds(echipa).includes(userId);
+// Concediu APROBAT care acoperă o anumită dată (potrivire după userId sau după nume). Întoarce cererea sau null.
+function concediuActiv(concedii, who, dataIso){
+  if(!concedii || !dataIso || !who) return null;
+  const uid = who.userId, nume = who.nume;
+  return concedii.find((c)=> c && c.status==='Aprobat' && c.dataInceput && c.dataSfarsit && dataIso >= c.dataInceput && dataIso <= c.dataSfarsit && ((uid && c.userId===uid) || (nume && c.nume===nume))) || null;
+}
 
 // De la ce dată se cere raport zilnic pe un șantier.
 // Prioritate: raportDeLa (ales de manager) → altfel a doua zi de la înființare (dataCreare + 1) → altfel fără restricție (șantiere vechi).
@@ -3554,7 +3560,7 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
   );
 }
 
-function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfarsit, echipaPermisa }) {
+function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfarsit, echipaPermisa, concedii, data }) {
   const [users, setUsers] = useState([]);
 
   useEffect(() => {
@@ -3568,9 +3574,12 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
   const numeDejaAdaugate = new Set(persoane.map((p)=>p.nume));
   const iconFor = (rol) => ROLES.find((r)=>r.id===rol)?.icon || '👤';
   const usersEchipa = (echipaPermisa && echipaPermisa.length > 0) ? users.filter((u)=>echipaPermisa.includes(u.id)) : [];
-  const disponibili = usersEchipa.filter((u)=>!numeDejaAdaugate.has(u.nume));
+  const peConcediu = (u) => concediuActiv(concedii, { userId: u.id, nume: u.nume }, data);
+  const disponibili = usersEchipa.filter((u)=>!numeDejaAdaugate.has(u.nume) && !peConcediu(u));
+  const inConcediu = usersEchipa.filter((u)=>!numeDejaAdaugate.has(u.nume) && peConcediu(u));
 
   const addPerson = (u) => {
+    if (peConcediu(u)) { window.alert(`${u.nume} este în concediu aprobat în ziua asta și nu poate fi pontat.`); return; }
     setPersoane([...persoane, { id: uid(), nume: u.nume, oraInceput: defaultInceput || '08:00', oraSfarsit: defaultSfarsit || '17:00' }]);
   };
 
@@ -3591,6 +3600,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
               <span className="text-[11px] flex items-center gap-1.5" style={{ color:'var(--muted)' }}>Început <RoTimePicker value={p.oraInceput || defaultInceput || '08:00'} onChange={(v)=>update(p.id,'oraInceput',v)} /></span>
               <span className="text-[11px] flex items-center gap-1.5" style={{ color:'var(--muted)' }}>Sfârșit <RoTimePicker value={p.oraSfarsit || defaultSfarsit || '17:00'} onChange={(v)=>update(p.id,'oraSfarsit',v)} /></span>
             </div>
+            {concediuActiv(concedii, { nume: p.nume }, data) && <div className="text-[11px] mt-1.5" style={{ color:'#E9A23B' }}>🏖 {p.nume} este în concediu aprobat în această zi — nu ar trebui pontat(ă). Scoate-l din raport cu 🗑.</div>}
           </div>
         );
       })}
@@ -3601,7 +3611,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
         <div className="text-xs mb-1.5" style={{ color:'var(--muted)' }}>Apasă pe nume ca să adaugi persoana la raport:</div>
         {usersEchipa.length === 0 ? (
           <div className="text-xs" style={{ color:'var(--muted2)' }}>Niciun electrician asignat la acest șantier — cere unui Manager să asigneze echipa.</div>
-        ) : disponibili.length === 0 ? (
+        ) : (disponibili.length === 0 && inConcediu.length === 0) ? (
           <div className="text-xs" style={{ color:'var(--muted2)' }}>Toți cei asignați sunt deja adăugați.</div>
         ) : (
           <div className="flex flex-wrap gap-1.5">
@@ -3609,6 +3619,9 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
               <button key={u.id} onClick={()=>addPerson(u)} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>
                 <Icon>+</Icon> {iconFor(u.rol)} {u.nume}
               </button>
+            ))}
+            {inConcediu.map((u)=>(
+              <span key={u.id} title="În concediu aprobat — nu poate fi pontat" className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color:'#E9A23B', background:'var(--panel)', border:'1px dashed #E9A23B66' }}>🏖 {u.nume} · concediu</span>
             ))}
           </div>
         )}
@@ -3827,7 +3840,7 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
   );
 }
 
-function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, onCancel, onSave }) {
+function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, concedii, onCancel, onSave }) {
   const modR = mod || 'orar';
   const arePozitii = modR==='pozitie_propriu' || modR==='pozitie_client';
   const areMateriale = modR==='pozitie_propriu' || modR==='real_executat';
@@ -3869,7 +3882,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
         )}
       </div>
       <p className="text-xs mb-2" style={{ color:'var(--muted2)' }}>Orele implicite se aplică persoanelor noi adăugate; fiecare persoană își poate ajusta apoi propriul interval.</p>
-      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} />
+      <PersonHoursEditor persoane={persoane} setPersoane={setPersoane} defaultInceput={oraInceput} defaultSfarsit={oraSfarsit} echipaPermisa={echipaPermisa} concedii={concedii} data={data} />
       {arePozitii && !areStructura && pozitii && pozitii.length > 0 && (
         <div className="mt-4 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
           <PozitiiExecutateEditor pozitiiExecutate={pozitiiExecutate} setPozitiiExecutate={setPozitiiExecutate} pozitii={pozitii} />
@@ -4443,7 +4456,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, concedii, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [reportForm, setReportForm] = useState(null);
@@ -4648,7 +4661,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           </div>
         )}
         {!reportForm && <button onClick={()=>setReportForm({})} className="w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4" style={{ color:'#14181C', background:'#2E8BD1' }}><Icon>+</Icon> Raport zilnic nou</button>}
-        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
+        {reportForm && !reportForm.id && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} concedii={concedii} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         <div className="mb-3">
           {santier?.lat ? (
             <div className="grid grid-cols-2 gap-2">
@@ -4787,7 +4800,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
               const nrPersoane = r.persoane.filter((p)=>p.nume.trim()).length;
               const etapaN = etapeSantier.find((e)=>e.id===r.etapaId)?.nume;
               if (reportForm && reportForm.id === r.id) {
-                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
+                return <RaportForm key={r.id} initial={r} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} concedii={concedii} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />;
               }
               return (
                 <div key={r.id} className="rounded-xl px-4 py-3" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
@@ -4899,6 +4912,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                     <div key={e.userId} className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg" style={{ background:'var(--panel2)' }}>
                       <span style={{ color:'var(--text)' }}>👷 {u?.nume || '(cont șters)'}</span>
                       <div className="flex items-center gap-1">
+                        {concediuActiv(concedii, { userId:e.userId, nume:u?.nume }, new Date().toISOString().slice(0,10)) && <span className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#C08CE0', fontWeight:700 }}>🏖 Concediu</span>}
                         {u?.telefon && <a href={`tel:${String(u.telefon).replace(/\s/g,'')}`} title={u.telefon} className="px-2 py-0.5 rounded" style={{ color:'#14181C', background:'#4CAF7D' }}>📞</a>}
                         <button onClick={()=>setEchipaMemberStatus(santier.id, e.userId, 'activ')} className="px-2 py-0.5 rounded" style={{ color: e.status==='activ'?'#14181C':'var(--muted)', background: e.status==='activ'?'#4CAF7D':'var(--panel)' }}>Activ</button>
                         <button onClick={()=>setEchipaMemberStatus(santier.id, e.userId, 'pauza')} className="px-2 py-0.5 rounded" style={{ color: e.status==='pauza'?'#14181C':'var(--muted)', background: e.status==='pauza'?'#E9A23B':'var(--panel)' }}>Pauză</button>
@@ -4931,7 +4945,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                       <span style={{ color:'var(--text)' }}>👷 {u?.nume || '(cont șters)'}{e.userId===currentUser?.id && <span style={{ color:'var(--muted2)' }}> (tu)</span>}</span>
                       <div className="flex items-center gap-2">
                         {u?.telefon && e.userId!==currentUser?.id && <a href={`tel:${String(u.telefon).replace(/\s/g,'')}`} className="px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>📞 {u.telefon}</a>}
-                        <span className="px-2 py-0.5 rounded" style={{ color:'#14181C', background: e.status==='pauza'?'#E9A23B':'#4CAF7D' }}>{e.status==='pauza'?'Pauză':'Activ'}</span>
+                        {(()=>{ const cc = concediuActiv(concedii, { userId:e.userId, nume:u?.nume }, new Date().toISOString().slice(0,10)); return <span className="px-2 py-0.5 rounded" style={{ color:'#14181C', background: cc?'#C08CE0':(e.status==='pauza'?'#E9A23B':'#4CAF7D') }}>{cc?'🏖 Concediu':(e.status==='pauza'?'Pauză':'Activ')}</span>; })()}
                       </div>
                     </div>
                   );
@@ -6392,6 +6406,16 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, co
 
   const saveCerere = () => {
     if (!form.dataInceput || !form.dataSfarsit) return;
+    // Avertizare: se suprapune cu alt concediu APROBAT (al meu sau al unui coleg)?
+    const overl = (concedii||[]).filter((c)=> c.status==='Aprobat' && c.id!==form.id && c.dataInceput && c.dataSfarsit && form.dataInceput <= c.dataSfarsit && c.dataInceput <= form.dataSfarsit);
+    const eu = overl.filter((c)=> c.userId === currentUser?.id);
+    const altii = overl.filter((c)=> c.userId !== currentUser?.id);
+    if (eu.length) {
+      if (!window.confirm('Ai deja un concediu APROBAT care se suprapune cu această perioadă. Trimiți totuși cererea?')) return;
+    } else if (altii.length) {
+      const nume = [...new Set(altii.map((c)=>c.nume).filter(Boolean))].join(', ');
+      if (!window.confirm(`Atenție: în această perioadă ${altii.length===1?'mai este în concediu':'mai sunt în concediu'}: ${nume}.\nCererea se trimite spre aprobare la birou. Continui?`)) return;
+    }
     if (form.id) {
       const next = concedii.map((c)=> c.id===form.id ? { ...c, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', status:'Cerut' } : c);
       setConcedii(next); persist('concedii', next);
@@ -6912,6 +6936,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 // aud = cine o vede: 'toti' (angajați + manager), 'angajat' (doar angajați), 'manager' (doar manager).
 // NU pune aici felicitările / mesajele de sărbători — alea sunt surpriză și apar singure când e cazul.
 const NOUTATI = [
+  { id: 'concediu-in-pontaj', aud: 'toti', data: '31.07.2026', titlu: '🏖 Concediul apare automat la pontaj și în echipă',
+    text: 'Dacă ai concediu aprobat, în ziua aceea apari automat cu „🏖 Concediu" la echipa șantierului și NU poți fi pontat ca lucrat (nici tu, nici un coleg din greșeală). La raportul zilnic, cine e în concediu apare marcat și nu poate fi adăugat. Iar când ceri concediu într-o perioadă în care mai e cineva plecat, aplicația te anunță, ca să se aprobe de la birou.' },
   { id: 'concedii-adeverinte-pdf', aud: 'manager', data: '30.07.2026', titlu: '📄 Concedii și adeverințe în PDF (ștampilate)',
     text: 'La „🏖 Concedii", fiecare cerere are acum butonul „📄 PDF" care scoate cererea ștampilată și semnată (când e aprobată), gata de trimis la contabilă; ai și butonul „📧" pentru e-mail. Iar în meniu ai „📄 Adeverințe", de unde generezi adeverințe (de salariat, pentru medicul de familie, de venit) ștampilate cu ștampila firmei. E-mailul contabilei îl pui în „⚙ Firma mea".' },
   { id: 'normativ-i7-2026-07', aud: 'toti', data: '30.07.2026', titlu: '📘 Normativul I7 în aplicație',
@@ -8623,7 +8649,7 @@ function App() {
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />}
