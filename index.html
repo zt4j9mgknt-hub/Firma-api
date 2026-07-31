@@ -5397,26 +5397,53 @@ function NormativViewer({ pdfUrl, downloadUrl, startPage, titlu, onClose, onFull
 // Indexul de căutare (paginile + textul) stă în fișierul normativ-i7-index.json, pus lângă index.html.
 // Se încarcă o singură dată, când deschizi pagina Normativ. PDF-ul îl încarcă managerul din aplicație.
 let NORMATIV_INDEX_CACHE = null;
-function NormativTab({ normativPdf, setNormativPdf, persist, isManager }) {
+function NormativTab({ normativPdf, setNormativPdf, normativIndexFile, setNormativIndexFile, persist, isManager }) {
   const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
-  // Indexul de căutare stă într-un fișier separat (normativ-i7-index.json), lângă index.html.
-  // Așa index.html rămâne mic și se poate deschide/edita normal pe GitHub.
+  // Indexul de căutare se ia, în ordine: din memorie → din fișierul urcat în aplicație → dintr-un fișier
+  // static pus lângă index.html. Așa nu ești obligat să pui nimic pe GitHub: îl încarci direct din aplicație.
   const [idx, setIdx] = useState(NORMATIV_INDEX_CACHE);
   const [idxStare, setIdxStare] = useState(NORMATIV_INDEX_CACHE ? 'ok' : 'load');
   useEffect(() => {
     if (NORMATIV_INDEX_CACHE) return;
     let anulat = false;
     (async () => {
-      try {
-        const r = await fetch('/normativ-i7-index.json');
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const d = await r.json();
-        if (anulat) return;
-        NORMATIV_INDEX_CACHE = d; setIdx(d); setIdxStare('ok');
-      } catch (_) { if (!anulat) setIdxStare('err'); }
+      const surse = [];
+      if (normativIndexFile && normativIndexFile.pathname) surse.push(blobViewUrl(normativIndexFile.pathname));
+      surse.push('/normativ-i7-index.json');
+      for (const u of surse) {
+        try {
+          const r = await fetch(u);
+          if (!r.ok) continue;
+          const d = await r.json();
+          if (anulat) return;
+          if (Array.isArray(d) && d.length) { NORMATIV_INDEX_CACHE = d; setIdx(d); setIdxStare('ok'); return; }
+        } catch (_) {}
+      }
+      if (!anulat) setIdxStare('err');
     })();
     return () => { anulat = true; };
-  }, []);
+  }, [normativIndexFile]);
+
+  // Managerul urcă fișierul de căutare direct din aplicație (nu mai e nevoie de GitHub).
+  const idxFileRef = useRef(null);
+  const [idxUp, setIdxUp] = useState(false);
+  const alegeIndex = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (e.target) e.target.value = '';
+    if (!f) return;
+    setIdxUp(true); setUpErr('');
+    try {
+      const txt = await f.text();
+      const d = JSON.parse(txt);
+      if (!Array.isArray(d) || !d.length || !d[0] || d[0].p === undefined) throw new Error('Fișierul nu pare a fi indexul de căutare al normativului.');
+      const res = await uploadFileToBlob(f, 'normativ');
+      const rec = { pathname: res.pathname, url: res.url, nume: f.name, pagini: d.length };
+      setNormativIndexFile(rec); await persist('normativIndexFile', rec);
+      NORMATIV_INDEX_CACHE = d; setIdx(d); setIdxStare('ok');
+    } catch (err) { setUpErr((err && err.message) || 'Nu am putut încărca fișierul de căutare.'); }
+    setIdxUp(false);
+  };
+
   const [q, setQ] = useState('');
   const [viewPage, setViewPage] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -5539,8 +5566,17 @@ function NormativTab({ normativPdf, setNormativPdf, persist, isManager }) {
 
       {idxStare === 'load' && <div className="text-xs text-center py-6" style={{ color: 'var(--muted2)' }}>Se pregătește căutarea în normativ…</div>}
       {idxStare === 'err' && (
-        <div className="text-xs rounded-lg px-3 py-3" style={{ background: '#E0525215', border: '1px solid #E0525240', color: 'var(--text)', lineHeight: 1.6 }}>
-          Căutarea nu s-a putut încărca. Trebuie pus în proiect (lângă index.html) fișierul <b>normativ-i7-index.json</b>, apoi redeploy.
+        <div className="rounded-lg px-3 py-3" style={{ background: isManager ? '#2E8BD115' : '#E9A23B15', border: '1px solid ' + (isManager ? '#2E8BD140' : '#E9A23B40'), color: 'var(--text)', lineHeight: 1.6 }}>
+          {isManager ? (
+            <div>
+              <div className="text-sm font-semibold mb-1">🔍 Activează căutarea (o singură dată)</div>
+              <div className="text-[11px] mb-2" style={{ color: 'var(--muted)' }}>Alege fișierul <b>normativ-i7-index.json</b> pe care ți l-am trimis. Se salvează în aplicație și merge apoi pentru toată echipa — nu trebuie pus nimic pe GitHub.</div>
+              <input ref={idxFileRef} type="file" accept="application/json,.json" onChange={alegeIndex} style={{ display: 'none' }} />
+              <button onClick={() => idxFileRef.current && idxFileRef.current.click()} disabled={idxUp} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: idxUp ? '#2a3038' : '#2E8BD1', color: '#fff' }}>{idxUp ? 'Se încarcă…' : '🔍 Alege fișierul de căutare'}</button>
+            </div>
+          ) : (
+            <div className="text-xs">Căutarea în normativ nu e încă activată. Managerul trebuie să încarce o dată fișierul de căutare, din pagina asta.</div>
+          )}
         </div>
       )}
 
@@ -9386,6 +9422,7 @@ function App() {
   const [problemeSantier, setProblemeSantier] = useState([]);
   const [planseSantier, setPlanseSantier] = useState([]);
   const [normativPdf, setNormativPdf] = useState(null);
+  const [normativIndexFile, setNormativIndexFile] = useState(null); // fișierul de căutare al normativului, urcat din aplicație
   const [noutatiAnuntate, setNoutatiAnuntate] = useState([]);
   const [dateIncarcate, setDateIncarcate] = useState(false);
   const noutBroadcastRef = useRef(false);
@@ -9457,6 +9494,7 @@ function App() {
       setProblemeSantier(await loadKey('problemeSantier', []));
       setPlanseSantier(await loadKey('planseSantier', []));
       setNormativPdf(await loadKey('normativPdf', null));
+      setNormativIndexFile(await loadKey('normativIndexFile', null));
       setNoutatiAnuntate(await loadKey('noutatiAnuntate', []));
       setMediaSantier(await loadKey('mediaSantier', []));
       setStructuraSantier(await loadKey('structuraSantier', []));
@@ -9653,6 +9691,7 @@ function App() {
       miscariSantier: (v)=>setMiscariSantier(v ?? []),
       planseSantier: (v)=>setPlanseSantier(v ?? []),
       normativPdf: (v)=>setNormativPdf(v ?? null),
+      normativIndexFile: (v)=>setNormativIndexFile(v ?? null),
       noutatiAnuntate: (v)=>setNoutatiAnuntate(v ?? []),
       mediaSantier: (v)=>setMediaSantier(v ?? []),
       structuraSantier: (v)=>setStructuraSantier(v ?? []),
@@ -10038,7 +10077,7 @@ function App() {
             {tab === 'asistent' && <AsistentTab problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} santiere={santiere} persist={persist} currentUser={effectiveUser} qaTarget={qaTarget} clearQaTarget={()=>setQaTarget(null)} />}
             {tab === 'memento' && <MementoTab mementouri={mementouri} setMementouri={setMementouri} persist={persist} clients={clients} santiere={santiere} currentUser={effectiveUser} colegi={totiUtilizatorii} />}
             {tab === 'calculator' && <CalculatorTab />}
-            {tab === 'normativ' && <NormativTab normativPdf={normativPdf} setNormativPdf={setNormativPdf} persist={persist} isManager={effectiveUser.rol === 'Manager'} />}
+            {tab === 'normativ' && <NormativTab normativPdf={normativPdf} setNormativPdf={setNormativPdf} normativIndexFile={normativIndexFile} setNormativIndexFile={setNormativIndexFile} persist={persist} isManager={effectiveUser.rol === 'Manager'} />}
             {tab === 'ghid' && <GhidTab isManager={effectiveUser.rol === 'Manager'} />}
 
             {tab === 'utilizatori' && effectiveUser.rol === 'Manager' && <UsersTab currentUser={effectiveUser} />}
