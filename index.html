@@ -1914,6 +1914,9 @@ const HELP = {
   clienti: {
     text: 'Aici este lista clienților tăi. Ea se folosește când faci devize, oferte și facturi, ca să nu scrii datele de fiecare dată.\n\n• Apeși „+ Adaugă client" și treci numele, CUI-ul, adresa și datele de contact.\n• Un client existent îl poți modifica apăsând pe creion ✏️ sau îl poți șterge apăsând pe coșul de gunoi 🗑.',
   },
+  proiecte: {
+    text: 'Proiecte este arhiva firmei, organizată ca folderele de pe calculator.\n\n1) Deschizi folderul unui client (apeși pe numele lui).\n2) Înăuntru vezi facturile lui, fiecare ca un dosar: „Factura nr. … din data …", cu suma și starea (plătită / neplătită / restantă).\n3) Deschizi dosarul unei facturi și înăuntru găsești factura și devizele care au stat la baza ei (manoperă, materiale). Orice document se deschide cu „🖨 PDF" și se poate tipări sau salva.\n4) Cu „➕ Pune un deviz în acest dosar" legi un deviz de factura lui, exact cum îți salvezi pe calculator devizele în folderul facturii. Cu ✕ îl scoți.\n\nDevizele și ofertele care nu sunt încă legate de o factură apar jos, la „📂 Nepuse într-un dosar de factură". Poți căuta clientul după nume în bara de sus.',
+  },
   gestiune: {
     text: 'Gestiunea este lista cu materialele firmei tale.\n\n• Fiecare material are un preț, un stoc (câte bucăți ai) și un stoc minim (sub cât nu ar trebui să scazi).\n• Apeși „+ Adaugă material" ca să pui unul nou, sau apeși pe unul existent ca să-l modifici.\n• Când stocul scade sub minimul stabilit, aplicația te avertizează.\n• Când un angajat consumă un material pe un șantier, stocul scade automat de aici.',
   },
@@ -2016,6 +2019,7 @@ function GhidTab({ isManager }) {
         {fromHelp('📄','Oferte','oferte')}
         {fromHelp('🧾','Facturi','facturi')}
         {fromHelp('👥','Clienți','clienti')}
+        {fromHelp('📁','Proiecte (arhiva pe clienți)','proiecte')}
         {fromHelp('🗂','Gestiune (materialele firmei)','gestiune')}
         {fromHelp('📈','Stocuri (istoricul stocului)','stocuri')}
         {fromHelp('🛒','Achiziții','achizitii')}
@@ -6928,8 +6932,131 @@ function UsersTab({ currentUser }) {
   );
 }
 
-function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, cereriAlocare, setTab, currentUser }) {
+// 📁 Proiecte — „dosarele" firmei, ca pe calculator: folder pe client → folder pe factură → înăuntru devizele + factura.
+function ProiecteTab({ clients, invoices, setInvoices, devize, offers, persist, printFactura, printDeviz, printOferta }) {
+  const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
+  const [cauta, setCauta] = useState('');
+  const [openC, setOpenC] = useState({});
+  const [openF, setOpenF] = useState({});
+  const [attachFor, setAttachFor] = useState(null);
+  const totalDoc = (d)=>calcSubtotal(d.items||[])*(1+(Number(d.tva)||0)/100);
+  const norm = (s)=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+
+  const ataseaza = (factId, devId) => {
+    const next = invoices.map((i)=> i.id===factId ? { ...i, devizeIds: [...new Set([...(i.devizeIds||[]), devId])] } : i);
+    setInvoices(next); persist('invoices', next);
+  };
+  const detaseaza = (factId, devId) => {
+    const next = invoices.map((i)=> i.id===factId ? { ...i, devizeIds: (i.devizeIds||[]).filter((x)=>x!==devId) } : i);
+    setInvoices(next); persist('invoices', next);
+  };
+
+  const clientiFiltrati = (clients||[]).filter((c)=> !cauta || norm(c.nume).includes(norm(cauta)))
+    .slice().sort((a,b)=> String(a.nume).localeCompare(String(b.nume)));
+
+  return (
+    <div className="max-w-2xl">
+      <h2 className="text-lg mb-1" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>📁 Proiecte</h2>
+      <p className="text-xs mb-3" style={{ color:'var(--muted2)' }}>Dosarele firmei, ca pe calculator: deschizi clientul → facturile lui → în fiecare factură sunt devizele care au stat la baza ei. Orice document se deschide și se salvează în PDF de aici.</p>
+      <input value={cauta} onChange={(e)=>setCauta(e.target.value)} placeholder="🔍 Caută client..." className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-3" style={inputStyle} />
+      {clientiFiltrati.length === 0 && <div className="text-center py-10 text-sm" style={{ color:'var(--muted)' }}>Niciun client{cauta?' găsit':' încă'}.</div>}
+      <div className="space-y-2">
+        {clientiFiltrati.map((c)=>{
+          const factC = invoices.filter((i)=>i.clientId===c.id).slice().sort((a,b)=> (a.data>b.data?-1:1));
+          const devC = devize.filter((d)=>d.clientId===c.id).slice().sort((a,b)=> (a.data>b.data?-1:1));
+          const ofC = (offers||[]).filter((o)=>o.clientId===c.id).slice().sort((a,b)=> (a.data>b.data?-1:1));
+          const nrDoc = factC.length + devC.length + ofC.length;
+          const atasatePeste = new Set(factC.flatMap((i)=>i.devizeIds||[]));
+          const devLibere = devC.filter((d)=>!atasatePeste.has(d.id));
+          const oc = !!openC[c.id];
+          return (
+            <div key={c.id} className="rounded-xl" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
+              <button onClick={()=>setOpenC((s)=>({ ...s, [c.id]: !s[c.id] }))} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+                <span style={{ fontSize:15 }}>{oc?'📂':'📁'}</span>
+                <span className="text-sm font-semibold flex-1 min-w-0 truncate" style={{ color:'var(--text)' }}>{c.nume}</span>
+                <span className="text-[10px] shrink-0" style={{ color:'var(--muted2)' }}>{nrDoc} {nrDoc===1?'document':'documente'}</span>
+              </button>
+              {oc && (
+                <div className="px-3 pb-3 space-y-1.5">
+                  {factC.length === 0 && <div className="text-[11px]" style={{ color:'var(--muted2)' }}>Nicio factură încă pentru acest client.</div>}
+                  {factC.map((f)=>{
+                    const of2 = !!openF[f.id];
+                    const devAt = (f.devizeIds||[]).map((id)=>devize.find((d)=>d.id===id)).filter(Boolean);
+                    return (
+                      <div key={f.id} className="rounded-lg" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
+                        <button onClick={()=>setOpenF((s)=>({ ...s, [f.id]: !s[f.id] }))} className="w-full flex items-center gap-2 px-2.5 py-2 text-left">
+                          <span>{of2?'📂':'📁'}</span>
+                          <span className="text-xs font-semibold flex-1 min-w-0 truncate" style={{ color:'var(--text)' }}>Factura {f.numar} · {fmtData(f.data)}</span>
+                          <span className="text-[11px] shrink-0 font-semibold" style={{ color: f.status==='Plătită'?'#4CAF7D':f.status==='Restantă'?'#E05252':'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalDoc(f))}</span>
+                        </button>
+                        {of2 && (
+                          <div className="px-2.5 pb-2.5 space-y-1">
+                            <div className="flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded" style={{ background:'var(--panel)' }}>
+                              <span style={{ color:'var(--text)' }}>🧾 Factura {f.numar} <span style={{ color: f.status==='Plătită'?'#4CAF7D':f.status==='Restantă'?'#E05252':'#E9A23B' }}>· {f.status}</span></span>
+                              <button onClick={()=>printFactura(f)} className="shrink-0 px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF</button>
+                            </div>
+                            {devAt.map((d)=>(
+                              <div key={d.id} className="flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded" style={{ background:'var(--panel)' }}>
+                                <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>🧮 Deviz {d.numar} · {fmtData(d.data)} · {money(totalDoc(d))}</span>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button onClick={()=>printDeviz(d)} className="px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF</button>
+                                  <button onClick={()=>detaseaza(f.id, d.id)} title="Scoate devizul din acest dosar" style={{ color:'#E05252' }}>✕</button>
+                                </div>
+                              </div>
+                            ))}
+                            {attachFor === f.id ? (
+                              devLibere.length === 0 ? <div className="text-[11px] px-2" style={{ color:'var(--muted2)' }}>Nu mai sunt devize nepuse în vreun dosar la acest client. <button onClick={()=>setAttachFor(null)} style={{ color:'#2E8BD1' }}>Închide</button></div> : (
+                                <div className="px-2 py-1.5 rounded" style={{ background:'var(--panel)', border:'1px dashed var(--border)' }}>
+                                  <div className="text-[11px] mb-1" style={{ color:'var(--muted)' }}>Alege devizul de pus în dosarul acestei facturi:</div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {devLibere.map((d)=>(
+                                      <button key={d.id} onClick={()=>{ ataseaza(f.id, d.id); setAttachFor(null); }} className="text-[11px] px-2 py-1 rounded" style={{ color:'var(--text)', background:'var(--panel2)', border:'1px solid var(--border)' }}>🧮 {d.numar} · {fmtData(d.data)}</button>
+                                    ))}
+                                    <button onClick={()=>setAttachFor(null)} className="text-[11px] px-2 py-1 rounded" style={{ color:'var(--muted2)' }}>Renunță</button>
+                                  </div>
+                                </div>
+                              )
+                            ) : (
+                              <button onClick={()=>setAttachFor(f.id)} className="text-[11px] px-2 py-1 rounded" style={{ color:'#2E8BD1' }}>➕ Pune un deviz în acest dosar</button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {(devLibere.length > 0 || ofC.length > 0) && (
+                    <div className="pt-1">
+                      <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color:'var(--muted2)' }}>📂 Nepuse într-un dosar de factură</div>
+                      <div className="space-y-1">
+                        {devLibere.map((d)=>(
+                          <div key={d.id} className="flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded" style={{ background:'var(--panel2)' }}>
+                            <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>🧮 Deviz {d.numar} · {fmtData(d.data)} · {money(totalDoc(d))} · {d.status}</span>
+                            <button onClick={()=>printDeviz(d)} className="shrink-0 px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF</button>
+                          </div>
+                        ))}
+                        {ofC.map((o)=>(
+                          <div key={o.id} className="flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded" style={{ background:'var(--panel2)' }}>
+                            <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>📄 Ofertă {o.numar || ''} · {fmtData(o.data)} · {money(totalDoc(o))} · {o.status}</span>
+                            <button onClick={()=>printOferta(o)} className="shrink-0 px-2 py-0.5 rounded font-semibold" style={{ color:'#14181C', background:'#2E8BD1' }}>🖨 PDF</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, cereriAlocare, clients, setTab, currentUser }) {
   const roleIcon = ROLES.find((r)=>r.id===currentUser?.rol)?.icon || '👤';
+  const [cashOpen, setCashOpen] = useState(false);
+  const [factOpen, setFactOpen] = useState(false);
 
   const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
   const oferteTrimise = offers.filter((o)=>o.status==='Trimisă').length;
@@ -7047,6 +7174,89 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         ))}
       </div>
 
+      {/* ---- 💰 Cashflow + 🧾 De facturat (doar manager) ---- */}
+      {isManager && (() => {
+        const lunaCur = azi.slice(0,7);
+        const LUNI_L = ['ianuarie','februarie','martie','aprilie','mai','iunie','iulie','august','septembrie','octombrie','noiembrie','decembrie'];
+        const numeLuna = LUNI_L[new Date().getMonth()] + ' ' + new Date().getFullYear();
+        const totalDoc = (d)=>calcSubtotal(d.items||[])*(1+(Number(d.tva)||0)/100);
+        const numeClient = (id)=> (clients||[]).find((c)=>c.id===id)?.nume || '(client șters)';
+        const neplatite = invoices.filter((i)=>i.status!=='Plătită').slice().sort((a,b)=> (a.data<b.data?-1:1));
+        const deIncasat = neplatite.reduce((s,i)=>s+totalDoc(i),0);
+        const restante = neplatite.filter((i)=>i.status==='Restantă');
+        const facturatLuna = invoices.filter((i)=>String(i.data||'').startsWith(lunaCur));
+        const sumFacturatLuna = facturatLuna.reduce((s,i)=>s+totalDoc(i),0);
+        const incasatLuna = invoices.filter((i)=>i.status==='Plătită' && String(i.data||'').startsWith(lunaCur));
+        const sumIncasatLuna = incasatLuna.reduce((s,i)=>s+totalDoc(i),0);
+        const devizeLunaEm = devize.filter((d)=>d.status!=='Ciornă' && String(d.data||'').startsWith(lunaCur));
+        const sumDevizeLuna = devizeLunaEm.reduce((s,d)=>s+totalDoc(d),0);
+
+        // „De facturat": clienți cu deviz emis și nicio factură DUPĂ el, sau cu lucrări luna asta și fără factură luna asta.
+        const deFacturat = [];
+        (clients||[]).forEach((c)=>{
+          const factC = invoices.filter((i)=>i.clientId===c.id);
+          const ultimaF = factC.map((i)=>i.data).sort().slice(-1)[0] || null;
+          const devNefact = devize.filter((d)=>d.clientId===c.id && d.status!=='Ciornă' && !factC.some((i)=> String(i.data||'') >= String(d.data||'')));
+          const areFacturaLuna = factC.some((i)=>String(i.data||'').startsWith(lunaCur));
+          const santC = santiere.filter((s)=>s.benefClientId===c.id);
+          const lucruLuna = santC.some((s)=> rapoarte.some((r)=>r.santierId===s.id && String(r.data||'').startsWith(lunaCur)));
+          if (devNefact.length) deFacturat.push({ c, motiv:`deviz emis pe ${fmtData(devNefact[0].data)}, fără factură după el`, suma: devNefact.reduce((s,d)=>s+totalDoc(d),0), ultimaF });
+          else if (lucruLuna && !areFacturaLuna) deFacturat.push({ c, motiv:'lucrări luna asta, fără factură emisă', suma: null, ultimaF });
+        });
+
+        const stat = (label, val, culoare) => (
+          <div className="rounded-lg px-3 py-2" style={{ background:'var(--panel2)' }}>
+            <div className="text-[10px] uppercase tracking-wide" style={{ color:'var(--muted2)' }}>{label}</div>
+            <div className="text-sm font-semibold" style={{ color: culoare || 'var(--text)', fontFamily:"'JetBrains Mono', monospace" }}>{val}</div>
+          </div>
+        );
+
+        return (<>
+          <div className="rounded-xl p-4 mb-3" style={{ background:'var(--panel)', border:'1px solid #4CAF7D66', borderLeft:'4px solid #4CAF7D' }}>
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <span className="text-sm font-bold" style={{ color:'#4CAF7D' }}>💰 Cashflow — {numeLuna}</span>
+              <button onClick={()=>setCashOpen(!cashOpen)} className="text-[11px] px-2.5 py-1 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>{cashOpen?'Ascunde detaliile ▲':'Vezi detaliat ▼'}</button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {stat('De încasat (total)', money(deIncasat), '#E9A23B')}
+              {stat('Din care restante', `${restante.length} · ${money(restante.reduce((s,i)=>s+totalDoc(i),0))}`, restante.length? '#E05252':'var(--muted2)')}
+              {stat('Facturat luna asta', `${facturatLuna.length} · ${money(sumFacturatLuna)}`)}
+              {stat('Încasat luna asta', money(sumIncasatLuna), '#4CAF7D')}
+            </div>
+            <div className="text-[11px] mt-2" style={{ color:'var(--muted2)' }}>🧮 Devize emise în {numeLuna}: {devizeLunaEm.length} · {money(sumDevizeLuna)} — bani „pe drum", de transformat în facturi.</div>
+            {cashOpen && (
+              neplatite.length === 0 ? <div className="text-xs mt-2" style={{ color:'#4CAF7D' }}>✅ Nicio factură neîncasată.</div> : (
+                <div className="space-y-1 mt-2">
+                  {neplatite.map((i)=>(
+                    <button key={i.id} onClick={()=>setTab('facturi')} className="w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel2)' }}>
+                      <span className="min-w-0 truncate" style={{ color:'var(--text)' }}>🧾 {numeClient(i.clientId)} · {i.numar} · {fmtData(i.data)}</span>
+                      <span className="shrink-0 font-semibold" style={{ color: i.status==='Restantă'?'#E05252':'#E9A23B', fontFamily:"'JetBrains Mono', monospace" }}>{money(totalDoc(i))}{i.status==='Restantă'?' ⚠':''}</span>
+                    </button>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+
+          {deFacturat.length > 0 && (
+            <div className="rounded-xl p-4 mb-3" style={{ background:'var(--panel)', border:'1px solid #E9A23B66', borderLeft:'4px solid #E9A23B' }}>
+              <div className="flex items-center justify-between mb-2 gap-2">
+                <span className="text-sm font-bold" style={{ color:'#E9A23B' }}>🧾 De facturat ({deFacturat.length})</span>
+                {deFacturat.length > 4 && <button onClick={()=>setFactOpen(!factOpen)} className="text-[11px] px-2.5 py-1 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>{factOpen?'Arată mai puțin ▲':'Arată tot ▼'}</button>}
+              </div>
+              <div className="space-y-1">
+                {(factOpen ? deFacturat : deFacturat.slice(0,4)).map((x)=>(
+                  <button key={x.c.id} onClick={()=>setTab('facturi')} className="w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg" style={{ background:'var(--panel2)' }}>
+                    <span className="min-w-0" style={{ color:'var(--text)' }}>👥 <b>{x.c.nume}</b> — {x.motiv}{x.suma ? ` (${money(x.suma)})` : ''}</span>
+                    <span className="shrink-0 text-[10px]" style={{ color:'var(--muted2)' }}>{x.ultimaF ? `ultima factură: ${fmtData(x.ultimaF)}` : 'nicio factură încă'}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>);
+      })()}
+
       {respinseCount > 0 && (
         <button onClick={()=>setTab('activitate')} className="w-full text-left rounded-xl p-4 mb-3" style={{ background:'#E0525214', border:'1px solid #E0525266', borderLeft:'4px solid #E05252' }}>
           <div className="flex items-center justify-between">
@@ -7080,6 +7290,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 // aud = cine o vede: 'toti' (angajați + manager), 'angajat' (doar angajați), 'manager' (doar manager).
 // NU pune aici felicitările / mesajele de sărbători — alea sunt surpriză și apar singure când e cazul.
 const NOUTATI = [
+  { id: 'cashflow-proiecte', aud: 'manager', data: '31.07.2026', titlu: '💰 Cashflow pe Dashboard + 📁 Proiecte (arhiva pe clienți)',
+    text: 'Pe Dashboard ai acum cardul „💰 Cashflow": cât ai de încasat (cu restanțele separate), cât ai facturat și încasat luna asta, plus devizele emise luna asta („bani pe drum"). Apeși „Vezi detaliat" și vezi fiecare factură neîncasată. Sub el, cardul „🧾 De facturat" îți arată clienții cu deviz emis dar fără factură după el, sau cu lucrări luna asta și fără factură. Iar în meniu ai „📁 Proiecte" — arhiva ca pe calculator: folder pe client → dosar pe factură → înăuntru devizele și factura, toate cu export PDF.' },
   { id: 'santier-rapid-autoaloc', aud: 'toti', data: '31.07.2026', titlu: '🏗 Poți crea rapid un șantier / te aloci singur (urgențe)',
     text: 'Dacă apare o urgență și trebuie să mergi pe un șantier neplanificat: la „🏗 Șantiere" ai butonul „➕ Șantier nou" — pui DOAR numele și adresa, ești pus automat pe el și poți lucra/raporta imediat, iar restul detaliilor le completează managerul. Dacă șantierul există deja dar nu ești în echipă, apeși „➕ Mă alochez" din dreptul lui. De fiecare dată, managerul e anunțat.' },
   { id: 'concediu-in-pontaj', aud: 'toti', data: '31.07.2026', titlu: '🏖 Concediul apare automat la pontaj și în echipă',
@@ -8707,6 +8919,7 @@ function App() {
             <NavItem id="oferte" label="📄 Oferte" />
             <NavItem id="facturi" label="🧾 Facturi" />
             <NavItem id="clienti" label="👥 Clienți" />
+            <NavItem id="proiecte" label="📁 Proiecte" />
           </div>
         )}
         </>
@@ -8763,7 +8976,7 @@ function App() {
           <div className="text-sm mt-10" style={{ color:'var(--muted)' }}>Se încarcă...</div>
         ) : !tab ? (
           effectiveUser.rol === 'Manager'
-            ? <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} cereriAlocare={cereriAlocare} setTab={setTab} currentUser={effectiveUser} />
+            ? <Dashboard company={company} devize={devize} offers={offers} invoices={invoices} santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} cereriAlocare={cereriAlocare} clients={clients} setTab={setTab} currentUser={effectiveUser} />
             : <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} concedii={concedii} cereriAlocare={cereriAlocare} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />
         ) : tabBlocatTest ? (
           <div className="max-w-md mx-auto mt-16 text-center rounded-xl p-6" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
@@ -8811,6 +9024,7 @@ function App() {
             )}
 
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
+            {tab === 'proiecte' && effectiveUser.rol === 'Manager' && <ProiecteTab clients={clients} invoices={invoices} setInvoices={setInvoices} devize={devize} offers={offers} persist={persist} printFactura={printOne('Factură')} printDeviz={printDevizOne} printOferta={printOne('Ofertă')} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
             {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} cereriAlocare={cereriAlocare} setCereriAlocare={setCereriAlocare} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} />}
