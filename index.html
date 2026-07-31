@@ -1935,7 +1935,7 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
 const HELP = {
   // ---- Tab-uri din interiorul șantierului ----
   rapoarte: {
-    text: 'Raportul zilnic este felul în care îi spui șefului ce ai făcut în ziua respectivă. Se completează o singură dată pe zi, de obicei seara, când ai terminat treaba.\n\n1) Mai întâi apeși (adică atingi cu degetul) butonul pe care scrie „Raport zilnic nou".\n2) Aplicația îți arată data de azi, deja completată. Dacă scrii raportul pentru altă zi, apeși pe dată și o schimbi.\n3) Apoi bifezi (pui o bulină) în dreptul fiecărui coleg care a lucrat cu tine în ziua aceea și scrii câte ore a lucrat fiecare. Nu trebuie să aduni tu orele, pentru că aplicația le trece singură și la Pontaj.\n4) După aceea scrii, cu cuvintele tale, ce lucrări ați făcut. Dacă a fost o clădire cu apartamente, poți folosi „Lucrări pe apartamente", unde treci: cine a lucrat, la ce apartament, ce a făcut și ce cantități.\n5) Dacă ați folosit materiale, le treci la rubrica „Materiale folosite". Pe măsură ce scrii, aplicația îți propune denumiri, iar tu alegi denumirea potrivită și scrii cantitatea.\n6) La final apeși butonul „Salvează". Din acel moment, șeful primește automat o înștiințare că ai trimis raportul.\n\nDacă ai greșit ceva, poți intra pe raportul din listă și îl modifici apăsând pe creionul ✏️, sau îl ștergi apăsând pe coșul de gunoi 🗑. Ține minte: dacă seara nu ai trimis raportul, aplicația îți trimite o atenționare pe telefon, ca să nu uiți.',
+    text: 'Raportul zilnic este felul în care îi spui șefului ce ai făcut în ziua respectivă. Se completează o singură dată pe zi, de obicei seara, când ai terminat treaba.\n\nSCURTĂTURĂ: poți lăsa AI-ul să-l completeze. Apeși „🎤 Completează cu AI", apoi „Vorbește", și spui normal ce ați făcut, ce materiale ați pus și cine a lucrat, cu orele. AI-ul îți arată ce a înțeles, tu bifezi ce e corect și apeși „Pune în raport". Verifică datele înainte să salvezi.\n\n1) Mai întâi apeși (adică atingi cu degetul) butonul pe care scrie „Raport zilnic nou".\n2) Aplicația îți arată data de azi, deja completată. Dacă scrii raportul pentru altă zi, apeși pe dată și o schimbi.\n3) Apoi bifezi (pui o bulină) în dreptul fiecărui coleg care a lucrat cu tine în ziua aceea și scrii câte ore a lucrat fiecare. Nu trebuie să aduni tu orele, pentru că aplicația le trece singură și la Pontaj.\n4) După aceea scrii, cu cuvintele tale, ce lucrări ați făcut. Dacă a fost o clădire cu apartamente, poți folosi „Lucrări pe apartamente", unde treci: cine a lucrat, la ce apartament, ce a făcut și ce cantități.\n5) Dacă ați folosit materiale, le treci la rubrica „Materiale folosite". Pe măsură ce scrii, aplicația îți propune denumiri, iar tu alegi denumirea potrivită și scrii cantitatea.\n6) La final apeși butonul „Salvează". Din acel moment, șeful primește automat o înștiințare că ai trimis raportul.\n\nDacă ai greșit ceva, poți intra pe raportul din listă și îl modifici apăsând pe creionul ✏️, sau îl ștergi apăsând pe coșul de gunoi 🗑. Ține minte: dacă seara nu ai trimis raportul, aplicația îți trimite o atenționare pe telefon, ca să nu uiți.',
     mgr: 'Tot în tab-ul Rapoarte, numai tu ca manager mai ai câteva unelte:\n\n• Sus poți alege o perioadă, adică o dată de început și o dată de sfârșit. După ce alegi perioada, apeși butonul „📊 Exportă Excel", iar aplicația îți face un fișier Excel cu toate rapoartele din acel interval.\n• Butonul „🧾 Exportă materiale folosite în Deviz" ia materialele scrise în rapoarte și le trece direct într-un deviz de materiale, ca să nu le scrii tu de mână.\n• Ca să faci un DEVIZ pentru client, aplicația îți arată butonul potrivit în funcție de cum ai setat facturarea șantierului (tarif pe oră, tarif pe oră plus lucrări, la poziție cu material de-al nostru, la poziție cu material al clientului, sau real executat). Alegi perioada, scrii numărul și data devizului și apeși „Generează", iar aplicația îți scoate un PDF. Ai buton separat de „Print" (tipărire) și de „Salvează PDF".\n• Felul de facturare al șantierului îl schimbi intrând să editezi șantierul (apeși pe creion).',
   },
   materiale: {
@@ -3934,6 +3934,169 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
   );
 }
 
+// 🎤 Completare raport cu AI: electricianul spune ce a făcut, AI-ul desprinde lucrările,
+// materialele și orele, iar apoi TU confirmi ce se pune în raport. Nu scrie nimic fără confirmare.
+function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
+  const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
+  const [deschis, setDeschis] = useState(false);
+  const [text, setText] = useState('');
+  const [asc, setAsc] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [rez, setRez] = useState(null);   // ce a înțeles AI-ul
+  const [bif, setBif] = useState({ lucrari:true, materiale:true, persoane:true, explicatii:true });
+  const recRef = useRef(null);
+  const speechOK = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  const dicteaza = () => {
+    if (asc && recRef.current) { try { recRef.current.stop(); } catch {} return; }
+    if (!speechOK) { setErr('Dictarea nu merge în acest browser. Poți folosi microfonul de pe tastatura telefonului (lângă bara de spațiu) și să scrii în căsuță.'); return; }
+    try {
+      const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const rec = new R();
+      rec.lang = 'ro-RO'; rec.interimResults = true; rec.continuous = true;
+      let final = text ? text.trim() + ' ' : '';
+      rec.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const tr = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += tr + ' '; else interim += tr;
+        }
+        setText((final + interim).trim());
+      };
+      rec.onerror = () => setAsc(false);
+      rec.onend = () => { setAsc(false); recRef.current = null; };
+      recRef.current = rec; setErr(''); setAsc(true); rec.start();
+    } catch (_) { setErr('Nu am putut porni dictarea.'); setAsc(false); }
+  };
+
+  const analizeaza = async () => {
+    if (!text.trim()) return;
+    setBusy(true); setErr(''); setRez(null);
+    const instr =
+      'Ești asistentul unei firme de instalații electrice din România. Din descrierea de mai jos, spusă de un electrician la finalul zilei, extrage datele pentru raportul zilnic.\n' +
+      'Răspunde DOAR cu JSON valid, fără explicații și fără marcaje de cod. Structura exactă:\n' +
+      '{"lucrari":["..."],"materiale":[{"denumire":"...","cantitate":0,"um":"buc"}],"persoane":[{"nume":"...","ore":0}],"explicatii":"...","intrebari":["..."]}\n' +
+      'Reguli: NU inventa nimic. Dacă o informație nu e spusă, las-o pe lista goală. Cantitățile doar dacă sunt spuse clar. ' +
+      'La „um" folosește unitatea potrivită (buc, m, ml, kg, set). La „persoane.nume" folosește exact numele din lista echipei, dacă se potrivește. ' +
+      'La „explicatii" pune un rezumat scurt, de o frază, al zilei. La „intrebari" pune întrebări scurte pentru ce lipsește (de ex. orele lucrate), maximum 3.\n' +
+      (echipaNume && echipaNume.length ? ('Echipa șantierului: ' + echipaNume.join(', ') + '.\n') : '') +
+      (materialeSugestii && materialeSugestii.length ? ('Materiale folosite de obicei: ' + materialeSugestii.slice(0,40).join(', ') + '.\n') : '') +
+      '\nDescriere: ' + text.trim();
+    try {
+      const r = await authFetch('/api/ai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ intrebare: instr, context: [] }) });
+      let d = {}; try { d = await r.json(); } catch {}
+      if (!r.ok || !d || !d.raspuns) {
+        if (r.status === 404) setErr('AI-ul nu e activat pe server (lipsește ruta /api/ai).');
+        else if (r.status === 500) setErr('AI-ul nu e configurat: lipsește cheia GEMINI_API_KEY în Vercel.');
+        else setErr((d && d.error) ? d.error : 'AI indisponibil momentan.');
+        setBusy(false); return;
+      }
+      let brut = String(d.raspuns).trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+      const i1 = brut.indexOf('{'), i2 = brut.lastIndexOf('}');
+      if (i1 >= 0 && i2 > i1) brut = brut.slice(i1, i2 + 1);
+      let obj = null;
+      try { obj = JSON.parse(brut); } catch (_) {}
+      if (!obj) { setErr('AI-ul a răspuns, dar nu am putut citi datele. Încearcă să spui mai simplu.'); setBusy(false); return; }
+      setRez({
+        lucrari: Array.isArray(obj.lucrari) ? obj.lucrari.filter((x)=>String(x||'').trim()) : [],
+        materiale: Array.isArray(obj.materiale) ? obj.materiale.filter((m)=>m && String(m.denumire||'').trim()) : [],
+        persoane: Array.isArray(obj.persoane) ? obj.persoane.filter((p)=>p && String(p.nume||'').trim()) : [],
+        explicatii: String(obj.explicatii || '').trim(),
+        intrebari: Array.isArray(obj.intrebari) ? obj.intrebari.filter((x)=>String(x||'').trim()).slice(0,3) : [],
+      });
+    } catch (_) { setErr('Fără conexiune la AI.'); }
+    setBusy(false);
+  };
+
+  const aplica = () => {
+    if (!rez) return;
+    onAplica({
+      lucrari: bif.lucrari ? rez.lucrari : [],
+      materiale: bif.materiale ? rez.materiale : [],
+      persoane: bif.persoane ? rez.persoane : [],
+      explicatii: bif.explicatii ? rez.explicatii : '',
+    });
+    setRez(null); setText(''); setDeschis(false);
+  };
+
+  if (!deschis) {
+    return (
+      <button onClick={()=>setDeschis(true)} className="text-xs px-3 py-2 rounded-lg font-semibold mb-3" style={{ color:'#14181C', background:'#C08CE0' }}>
+        🎤 Completează cu AI (spune ce ai făcut)
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ background:'var(--panel2)', border:'1px solid #C08CE066' }}>
+      <div className="flex items-center justify-between mb-1.5 gap-2">
+        <span className="text-sm font-semibold" style={{ color:'#C08CE0' }}>🎤 Completează cu AI</span>
+        <button onClick={()=>{ setDeschis(false); setRez(null); setErr(''); }} style={{ color:'var(--muted2)' }}>✕</button>
+      </div>
+      <p className="text-[11px] mb-2" style={{ color:'var(--muted)' }}>Apeși „Vorbește" și spui pe scurt ce ați făcut azi: lucrările, materialele și cine a lucrat, cu orele. Apoi AI-ul completează raportul, iar tu confirmi.</p>
+
+      <textarea value={text} onChange={(e)=>setText(e.target.value)} rows={3} placeholder="Ex: azi am tras cabluri la prize în bucătărie și am montat 6 doze, am fost eu cu Nicu 8 ore fiecare, am folosit 40 de metri de cablu 3x2.5" className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
+
+      <div className="flex flex-wrap gap-2">
+        <button onClick={dicteaza} className="text-xs px-3 py-2 rounded-lg font-semibold" style={{ color: asc?'#fff':'var(--text)', background: asc?'#E05252':'var(--panel)', border:'1px solid var(--border)' }}>{asc ? '⏹ Gata, am terminat' : '🎤 Vorbește'}</button>
+        <button onClick={analizeaza} disabled={busy || !text.trim()} className="text-xs px-3 py-2 rounded-lg font-semibold disabled:opacity-50" style={{ color:'#14181C', background:'#C08CE0' }}>{busy ? 'Se citește…' : '✨ Completează raportul'}</button>
+        {text && <button onClick={()=>{ setText(''); setRez(null); }} className="text-xs px-3 py-2 rounded-lg" style={{ color:'var(--muted)' }}>Șterge</button>}
+      </div>
+      {asc && <div className="text-[11px] mt-1.5" style={{ color:'#E05252' }}>🔴 Te ascult… vorbește normal, apoi apeși „Gata".</div>}
+      {err && <div className="text-[11px] mt-2 px-2.5 py-2 rounded-lg" style={{ color:'#E05252', background:'#E0525215' }}>{err}</div>}
+
+      {rez && (
+        <div className="mt-3 rounded-lg p-2.5" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
+          <div className="text-xs font-semibold mb-1.5" style={{ color:'var(--text)' }}>Asta am înțeles — bifează ce să pun în raport:</div>
+
+          {rez.lucrari.length > 0 && (
+            <label className="flex items-start gap-2 mb-1.5 cursor-pointer">
+              <input type="checkbox" checked={bif.lucrari} onChange={(e)=>setBif({ ...bif, lucrari:e.target.checked })} className="mt-0.5" />
+              <span className="text-[11px]" style={{ color:'var(--text)' }}><b>Lucrări:</b> {rez.lucrari.join(' · ')}</span>
+            </label>
+          )}
+          {rez.materiale.length > 0 && (
+            <label className="flex items-start gap-2 mb-1.5 cursor-pointer">
+              <input type="checkbox" checked={bif.materiale} onChange={(e)=>setBif({ ...bif, materiale:e.target.checked })} className="mt-0.5" />
+              <span className="text-[11px]" style={{ color:'var(--text)' }}><b>Materiale:</b> {rez.materiale.map((m)=>`${m.denumire}${m.cantitate?` ${m.cantitate} ${m.um||''}`:''}`).join(' · ')}</span>
+            </label>
+          )}
+          {rez.persoane.length > 0 && (
+            <label className="flex items-start gap-2 mb-1.5 cursor-pointer">
+              <input type="checkbox" checked={bif.persoane} onChange={(e)=>setBif({ ...bif, persoane:e.target.checked })} className="mt-0.5" />
+              <span className="text-[11px]" style={{ color:'var(--text)' }}><b>Cine a lucrat:</b> {rez.persoane.map((p)=>`${p.nume}${p.ore?` ${p.ore}h`:''}`).join(' · ')}</span>
+            </label>
+          )}
+          {rez.explicatii && (
+            <label className="flex items-start gap-2 mb-1.5 cursor-pointer">
+              <input type="checkbox" checked={bif.explicatii} onChange={(e)=>setBif({ ...bif, explicatii:e.target.checked })} className="mt-0.5" />
+              <span className="text-[11px]" style={{ color:'var(--text)' }}><b>Rezumat:</b> {rez.explicatii}</span>
+            </label>
+          )}
+          {rez.lucrari.length === 0 && rez.materiale.length === 0 && rez.persoane.length === 0 && !rez.explicatii && (
+            <div className="text-[11px]" style={{ color:'var(--muted2)' }}>Nu am înțeles date concrete. Spune mai clar ce ați lucrat, ce materiale ați pus și câte ore.</div>
+          )}
+
+          {rez.intrebari.length > 0 && (
+            <div className="mt-2 px-2.5 py-2 rounded-lg" style={{ background:'#E9A23B15', border:'1px solid #E9A23B40' }}>
+              <div className="text-[11px] font-semibold mb-0.5" style={{ color:'#E9A23B' }}>❓ Mai am nevoie să știu:</div>
+              {rez.intrebari.map((q,i)=><div key={i} className="text-[11px]" style={{ color:'var(--text)' }}>• {q}</div>)}
+              <div className="text-[10px] mt-1" style={{ color:'var(--muted2)' }}>Poți răspunde în căsuța de sus și apăsa din nou „Completează raportul", sau completezi manual după.</div>
+            </div>
+          )}
+
+          <div className="flex gap-2 mt-2">
+            <button onClick={aplica} className="text-xs px-3 py-2 rounded-lg font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>✓ Pune în raport</button>
+            <button onClick={()=>setRez(null)} className="text-xs px-3 py-2 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)' }}>Renunță</button>
+          </div>
+          <div className="text-[10px] mt-1.5" style={{ color:'var(--muted2)' }}>Verifică datele înainte de a salva raportul — AI-ul poate greși.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, concedii, onCancel, onSave }) {
   const modR = mod || 'orar';
   const arePozitii = modR==='pozitie_propriu' || modR==='pozitie_client';
@@ -3954,8 +4117,41 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
   const [lucrariApartamente, setLucrariApartamente] = useState(()=>normalizeLucrariApart(initial?.lucrariApartamente || []));
   const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
   const totalOreMin = persoane.reduce((s,p)=>s+personMinutes(p),0);
+
+  // Ce a înțeles AI-ul din vorbele electricianului se toarnă în câmpurile raportului.
+  const aplicaAI = ({ lucrari, materiale, persoane: pers, explicatii: expl }) => {
+    if (lucrari && lucrari.length) {
+      const exist = new Set(tipuriLucrari.map((t)=>String(t.denumire||'').toLowerCase().trim()));
+      const noi = lucrari.filter((l)=>!exist.has(String(l).toLowerCase().trim())).map((l)=>({ id: uid(), denumire: String(l) }));
+      if (noi.length) setTipuriLucrari([...tipuriLucrari, ...noi]);
+    }
+    if (materiale && materiale.length) {
+      const noiM = materiale.map((m)=>({ id: uid(), denumire: String(m.denumire||''), cantitate: Number(m.cantitate) || '', um: String(m.um || 'buc') }));
+      setMaterialeFolosite([...materialeFolosite, ...noiM]);
+    }
+    if (pers && pers.length) {
+      const exist = new Set(persoane.map((p)=>String(p.nume||'').toLowerCase().trim()));
+      const noiP = [];
+      pers.forEach((p)=>{
+        const nume = String(p.nume||'').trim();
+        if (!nume || exist.has(nume.toLowerCase())) return;
+        const ore = Number(p.ore) || 0;
+        let sf = oraSfarsit;
+        if (ore > 0) { // orele spuse → oră de sfârșit calculată din ora de început (+1h pauză peste 6h)
+          const [h, mi] = String(oraInceput || '08:00').split(':').map(Number);
+          const total = h * 60 + (mi || 0) + Math.round(ore * 60) + (ore > 6 ? 60 : 0);
+          sf = `${String(Math.floor(total / 60) % 24).padStart(2,'0')}:${String(total % 60).padStart(2,'0')}`;
+        }
+        noiP.push({ id: uid(), nume, oraInceput: oraInceput || '08:00', oraSfarsit: sf });
+      });
+      if (noiP.length) setPersoane([...persoane, ...noiP]);
+    }
+    if (expl) setExplicatii(explicatii ? (explicatii + '\n' + expl) : expl);
+  };
+
   return (
     <div className="rounded-xl p-4 mb-4" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
+      <AIRaportPanel echipaNume={echipaNume} materialeSugestii={(materials||[]).map((m)=>m.denumire).filter(Boolean)} onAplica={aplicaAI} />
       <div className="flex gap-3 mb-2 flex-wrap items-end">
         <div className="text-xs flex flex-col gap-1" style={{ color:'var(--muted)' }}>Data
           <RoCalendarPicker value={data} onChange={setData} />
@@ -6166,7 +6362,6 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
         {notifStatus && <p className="text-xs mt-2" style={{ color: notifStatus.startsWith('✅') ? '#4CAF7D' : '#E9A23B' }}>{notifStatus}</p>}
         {testStatus && <p className="text-xs mt-2" style={{ color: testStatus.startsWith('✅') ? '#4CAF7D' : testStatus.startsWith('⚠️') ? '#E9A23B' : '#E05252' }}>{testStatus}</p>}
       </div>
-      <RaportAITest />
       {bioSuportat() && (
         <div className="mt-5 rounded-xl p-4 max-w-md" style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
           <div className="text-sm font-semibold mb-1" style={{ color:'var(--text)' }}>🔐 Amprentă / FaceID pe acest dispozitiv</div>
@@ -8203,6 +8398,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 // aud = cine o vede: 'toti' (angajați + manager), 'angajat' (doar angajați), 'manager' (doar manager).
 // NU pune aici felicitările / mesajele de sărbători — alea sunt surpriză și apar singure când e cazul.
 const NOUTATI = [
+  { id: 'ai-raport-vocal', aud: 'toti', data: '31.07.2026', titlu: '🎤 Raportul se completeaza si din vorbe (AI)',
+    text: 'La „Raport zilnic nou” ai butonul „🎤 Completeaza cu AI”. Apesi „Vorbeste” si spui normal ce ati facut azi: lucrarile, materialele si cine a lucrat, cu orele. AI-ul iti arata ce a inteles, tu bifezi ce e corect si apesi „Pune in raport” — se completeaza singur lucrarile, materialele si orele. Daca ceva lipseste, iti pune si intrebari. Verifica mereu datele inainte sa salvezi, pentru ca AI-ul mai si greseste.' },
   { id: 'memento-toti', aud: 'toti', data: '31.07.2026', titlu: '🔔 Memento — aplicatia iti aduce aminte',
     text: 'In meniu ai „🔔 Memento”. Scrii ce ai de facut (o intalnire, de sunat pe cineva, de comandat ceva), pui data si ora, iar aplicatia iti da notificare pe telefon exact atunci. Poti pune si memento-uri care se repeta zilnic, saptamanal sau lunar. Cele de azi iti apar si sus in „Activitatea mea”, iar daca a trecut ora, apar cu rosu. Le poti amana cu un buton: +1 ora, maine, peste o saptamana.' },
   { id: 'notite-manager', aud: 'manager', data: '31.07.2026', titlu: '📝 Notite — carnetul tau in aplicatie',
