@@ -1962,6 +1962,9 @@ const HELP = {
   clienti: {
     text: 'Aici este lista clienților tăi. Ea se folosește când faci devize, oferte și facturi, ca să nu scrii datele de fiecare dată.\n\n• Apeși „+ Adaugă client" și treci numele, CUI-ul, adresa și datele de contact.\n• Un client existent îl poți modifica apăsând pe creion ✏️ sau îl poți șterge apăsând pe coșul de gunoi 🗑.',
   },
+  notite: {
+    text: 'Notițele sunt carnetul tău. Le vezi doar tu, angajații nu au acces la ele.\n\n1) Apeși „➕ Notiță nouă".\n2) Pui un titlu (de exemplu „Întâlnire Popescu — bloc Aurel Vlaicu").\n3) Alegi felul notiței: Întâlnire client, Necesar materiale, Ofertă / preț, De comandat, sau Idee.\n4) Dacă notița ține de un client sau de un șantier anume, le alegi din liste — apoi le poți filtra ușor.\n5) Scrii în căsuța mare tot ce s-a discutat, ce a cerut clientul, ce ai de făcut.\n6) Dacă ai nevoie de materiale, apeși „➕ Adaugă material" și treci denumirea și cantitatea, rând cu rând.\n7) Apeși „Salvează".\n\nLa fiecare notiță ai: 📌 ca s-o fixezi sus (rămâne prima în listă), 📋 ca s-o copiezi (o lipești apoi în WhatsApp sau e-mail), „Editează" și 🗑 ca s-o ștergi.\n\nCel mai util: dacă notița are materiale, apare butonul „💰 Fă ofertă din lista asta" — aplicația deschide o ofertă nouă cu materialele deja trecute și clientul completat; tu pui doar prețurile.\n\nSus ai căutare și butoane de filtrare pe fiecare fel de notiță.',
+  },
   proiecte: {
     text: 'Proiecte este arhiva firmei, organizata ca folderele de pe calculator.\n\n1) Deschizi folderul unui client (apesi pe numele lui).\n2) Inauntru gasesti SANTIERELE lui — se fac singure, cu numele santierului, de indata ce creezi un santier nou si ii pui beneficiarul. In folderul unui santier vezi adresa, descrierea lucrarilor, cate rapoarte are, si poti intra direct pe el.\n3) Tot acolo sunt DOSARELE de facturi: „Factura nr. … din data …", cu suma si starea. Deschizi dosarul si ai factura plus devizele care au stat la baza ei. Cu „➕ Pune un deviz in acest dosar" legi devizul de factura lui, cum faci pe calculator.\n4) In orice folder (client, santier sau factura) apesi „➕ Adauga document" si urci un PDF sau o poza — proces-verbal, contract, poza semnata, orice.\n\nCAUTAREA de sus cauta in TOT: nume de santiere, lucrarile scrise de baieti in rapoarte, apartamente (ex. „exituri etaj 4 scara 3 corp a"), devize, facturi, oferte si documentele urcate. Apesi pe un rezultat si te duce direct acolo.\n\nSantierele care nu au beneficiar pus apar jos, la „Santiere fara client asociat".',
   },
@@ -2067,6 +2070,7 @@ function GhidTab({ isManager }) {
         {fromHelp('📄','Oferte','oferte')}
         {fromHelp('🧾','Facturi','facturi')}
         {fromHelp('👥','Clienți','clienti')}
+        {fromHelp('📝','Notițe (carnetul tău)','notite')}
         {fromHelp('📁','Proiecte (arhiva pe clienți)','proiecte')}
         {fromHelp('🗂','Gestiune (materialele firmei)','gestiune')}
         {fromHelp('📈','Stocuri (istoricul stocului)','stocuri')}
@@ -6991,6 +6995,178 @@ function UsersTab({ currentUser }) {
 }
 
 // 📁 Proiecte — „dosarele" firmei, ca pe calculator: folder pe client → folder pe factură → înăuntru devizele + factura.
+// 📝 Notițe (doar manager) — tot ce afli la întâlniri, necesar de materiale, idei de preț.
+// Dintr-o notiță cu listă de materiale poți face direct o ofertă, fără să scrii de două ori.
+const NOTE_CATEGORII = [
+  { id:'intalnire', label:'🤝 Întâlnire client', culoare:'#2E8BD1' },
+  { id:'materiale', label:'📦 Necesar materiale', culoare:'#E9A23B' },
+  { id:'oferta', label:'💰 Ofertă / preț', culoare:'#4CAF7D' },
+  { id:'comanda', label:'🛒 De comandat', culoare:'#C08CE0' },
+  { id:'idee', label:'💡 Idee / de ținut minte', culoare:'#8B93A0' },
+];
+const noteCat = (id) => NOTE_CATEGORII.find((c)=>c.id===id) || NOTE_CATEGORII[4];
+
+function NotiteTab({ notite, setNotite, persist, clients, santiere, currentUser, onOfertaDinNota }) {
+  const inputStyle = { background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' };
+  const [form, setForm] = useState(null);
+  const [cauta, setCauta] = useState('');
+  const [filtru, setFiltru] = useState('');
+  const formRef = useRef(null);
+  const lista = notite || [];
+  const norm = (s)=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  useEffect(()=>{ if (form && formRef.current) { try { formRef.current.scrollIntoView({ behavior:'smooth', block:'center' }); } catch {} } }, [form && form.id]);
+
+  const formNou = () => ({ id: uid(), titlu:'', categorie:'intalnire', clientId:'', santierId:'', text:'', materiale:[], fixat:false, data: new Date().toISOString().slice(0,10), autor: currentUser?.nume || '' });
+  const salveaza = () => {
+    if (!String(form.titlu).trim() && !String(form.text).trim()) return;
+    const curat = { ...form, materiale: (form.materiale||[]).filter((m)=>String(m.denumire||'').trim()) };
+    const next = lista.some((n)=>n.id===curat.id) ? lista.map((n)=> n.id===curat.id ? curat : n) : [curat, ...lista];
+    setNotite(next); persist('notite', next); setForm(null);
+  };
+  const sterge = (id) => {
+    if (!window.confirm('Ștergi definitiv această notiță?')) return;
+    const next = lista.filter((n)=>n.id!==id);
+    setNotite(next); persist('notite', next);
+  };
+  const fixeaza = (id) => {
+    const next = lista.map((n)=> n.id===id ? { ...n, fixat: !n.fixat } : n);
+    setNotite(next); persist('notite', next);
+  };
+  const copiaza = (n) => {
+    const cl = (clients||[]).find((c)=>c.id===n.clientId);
+    const st = (santiere||[]).find((s)=>s.id===n.santierId);
+    const linii = [
+      n.titlu || '(fără titlu)',
+      `${noteCat(n.categorie).label} · ${fmtData(n.data)}`,
+      cl ? `Client: ${cl.nume}` : '', st ? `Șantier: ${st.nume}` : '',
+      '', n.text || '',
+      (n.materiale||[]).length ? '\nMateriale:' : '',
+      ...(n.materiale||[]).map((m)=>`• ${m.denumire} — ${m.cantitate || ''} ${m.um || ''}`.trim()),
+    ].filter((x)=>x !== '');
+    const txt = linii.join('\n');
+    try { navigator.clipboard.writeText(txt); window.alert('Notița a fost copiată. O poți lipi în WhatsApp, e-mail etc.'); }
+    catch (_) { window.prompt('Copiază textul:', txt); }
+  };
+
+  // --- Materiale în notiță ---
+  const addMat = () => setForm({ ...form, materiale:[...(form.materiale||[]), { id: uid(), denumire:'', cantitate:'', um:'buc' }] });
+  const updMat = (id, f, v) => setForm({ ...form, materiale:(form.materiale||[]).map((m)=> m.id===id ? { ...m, [f]:v } : m) });
+  const delMat = (id) => setForm({ ...form, materiale:(form.materiale||[]).filter((m)=>m.id!==id) });
+
+  const termeni = norm(cauta).split(/\s+/).filter((w)=>w.length>=2);
+  const numeClient = (id)=> (clients||[]).find((c)=>c.id===id)?.nume || '';
+  const numeSantier = (id)=> (santiere||[]).find((s)=>s.id===id)?.nume || '';
+  const vizibile = lista.filter((n)=>{
+    if (filtru && n.categorie !== filtru) return false;
+    if (!termeni.length) return true;
+    const t = norm([n.titlu, n.text, numeClient(n.clientId), numeSantier(n.santierId), noteCat(n.categorie).label, (n.materiale||[]).map((m)=>m.denumire).join(' ')].join(' '));
+    return termeni.every((w)=>t.includes(w));
+  }).slice().sort((a,b)=>{
+    if (!!b.fixat !== !!a.fixat) return b.fixat ? 1 : -1;
+    return String(b.data||'').localeCompare(String(a.data||''));
+  });
+
+  return (
+    <div className="max-w-2xl">
+      <div className="flex justify-between items-center mb-1 gap-2">
+        <h2 className="text-lg" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>📝 Notițe</h2>
+        {!form && <button onClick={()=>setForm(formNou())} className="text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap" style={{ color:'#14181C', background:'#2E8BD1' }}>➕ Notiță nouă</button>}
+      </div>
+      <p className="text-xs mb-3" style={{ color:'var(--muted2)' }}>Tot ce afli la întâlniri, ce materiale trebuie comandate, idei de preț. Le vezi doar tu. Dintr-o notiță cu materiale poți face direct o ofertă.</p>
+
+      {form && (
+        <div ref={formRef} className="rounded-xl p-4 mb-4 space-y-2" style={{ background:'var(--panel)', border:'1px solid #2E8BD166' }}>
+          <div className="text-sm font-semibold" style={{ color:'var(--text)' }}>{lista.some((n)=>n.id===form.id) ? '✏️ Editează notița' : '➕ Notiță nouă'}</div>
+          <input placeholder="Titlu (ex: Întâlnire Popescu — bloc Aurel Vlaicu)" value={form.titlu} onChange={(e)=>setForm({ ...form, titlu:e.target.value })} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          <div className="flex flex-wrap gap-1.5">
+            {NOTE_CATEGORII.map((c)=>(
+              <button key={c.id} onClick={()=>setForm({ ...form, categorie:c.id })} className="text-[11px] px-2.5 py-1 rounded-full" style={{ color: form.categorie===c.id?'#14181C':'var(--muted)', background: form.categorie===c.id?c.culoare:'var(--panel2)', border:'1px solid var(--border)', fontWeight: form.categorie===c.id?700:400 }}>{c.label}</button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <select value={form.clientId} onChange={(e)=>setForm({ ...form, clientId:e.target.value })} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+              <option value="" style={{ background:'var(--panel)' }}>— client (opțional) —</option>
+              {(clients||[]).map((c)=><option key={c.id} value={c.id} style={{ background:'var(--panel)' }}>{c.nume}</option>)}
+            </select>
+            <select value={form.santierId} onChange={(e)=>setForm({ ...form, santierId:e.target.value })} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+              <option value="" style={{ background:'var(--panel)' }}>— șantier (opțional) —</option>
+              {(santiere||[]).map((s)=><option key={s.id} value={s.id} style={{ background:'var(--panel)' }}>{s.nume}</option>)}
+            </select>
+          </div>
+          <textarea placeholder="Ce s-a discutat, ce a cerut clientul, ce ai de făcut..." value={form.text} onChange={(e)=>setForm({ ...form, text:e.target.value })} rows={5} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+
+          <div className="rounded-lg p-2.5" style={{ background:'var(--panel2)', border:'1px solid var(--border)' }}>
+            <div className="text-[11px] mb-1.5" style={{ color:'var(--muted)' }}>📦 Materiale de care e nevoie (opțional — din ele poți face oferta)</div>
+            {(form.materiale||[]).map((m)=>(
+              <div key={m.id} className="flex items-center gap-1.5 mb-1.5">
+                <input placeholder="Denumire" value={m.denumire} onChange={(e)=>updMat(m.id,'denumire',e.target.value)} className="flex-1 min-w-0 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                <input placeholder="Cant." value={m.cantitate} onChange={(e)=>updMat(m.id,'cantitate',e.target.value)} className="w-16 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                <input placeholder="buc" value={m.um} onChange={(e)=>updMat(m.id,'um',e.target.value)} className="w-14 rounded-lg px-2 py-1.5 text-xs outline-none" style={inputStyle} />
+                <button onClick={()=>delMat(m.id)} style={{ color:'#E05252' }}>🗑</button>
+              </div>
+            ))}
+            <button onClick={addMat} className="text-[11px] px-2 py-1 rounded" style={{ color:'#2E8BD1' }}>➕ Adaugă material</button>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={()=>setForm(null)} className="px-3 py-1.5 rounded-lg text-sm" style={{ color:'var(--muted)', background:'var(--panel2)' }}>Renunță</button>
+            <button onClick={salveaza} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>Salvează</button>
+          </div>
+        </div>
+      )}
+
+      <input value={cauta} onChange={(e)=>setCauta(e.target.value)} placeholder="🔍 Caută în notițe..." className="w-full rounded-lg px-3 py-2 text-sm outline-none mb-2" style={inputStyle} />
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        <button onClick={()=>setFiltru('')} className="text-[11px] px-2.5 py-1 rounded-full" style={{ color: !filtru?'#14181C':'var(--muted)', background: !filtru?'#2E8BD1':'var(--panel2)', border:'1px solid var(--border)' }}>Toate</button>
+        {NOTE_CATEGORII.map((c)=>(
+          <button key={c.id} onClick={()=>setFiltru(filtru===c.id?'':c.id)} className="text-[11px] px-2.5 py-1 rounded-full" style={{ color: filtru===c.id?'#14181C':'var(--muted)', background: filtru===c.id?c.culoare:'var(--panel2)', border:'1px solid var(--border)' }}>{c.label}</button>
+        ))}
+      </div>
+
+      {vizibile.length === 0 ? (
+        <div className="text-center py-12 text-sm" style={{ color:'var(--muted)' }}>{lista.length === 0 ? 'Nicio notiță încă. Apasă „➕ Notiță nouă".' : 'Nicio notiță găsită.'}</div>
+      ) : (
+        <div className="space-y-2">
+          {vizibile.map((n)=>{
+            const cat = noteCat(n.categorie);
+            const cl = numeClient(n.clientId), st = numeSantier(n.santierId);
+            return (
+              <div key={n.id} className="rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderLeft:`4px solid ${cat.culoare}` }}>
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold" style={{ color:'var(--text)' }}>{n.fixat && '📌 '}{n.titlu || '(fără titlu)'}</div>
+                    <div className="text-[11px]" style={{ color:'var(--muted2)' }}>
+                      <span style={{ color:cat.culoare }}>{cat.label}</span> · {fmtData(n.data)}{cl && ` · 👥 ${cl}`}{st && ` · 🏗 ${st}`}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={()=>fixeaza(n.id)} title={n.fixat?'Scoate din fixate':'Fixează sus'} className="px-1.5 py-0.5 rounded text-xs" style={{ color: n.fixat?'#E9A23B':'var(--muted2)' }}>📌</button>
+                    <button onClick={()=>copiaza(n)} title="Copiază notița" className="px-1.5 py-0.5 rounded text-xs" style={{ color:'var(--muted2)' }}>📋</button>
+                    <button onClick={()=>setForm({ ...n, materiale: n.materiale || [] })} className="text-[11px] px-2 py-1 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)' }}>Editează</button>
+                    <button onClick={()=>sterge(n.id)} style={{ color:'#E05252' }}>🗑</button>
+                  </div>
+                </div>
+                {n.text && <div className="text-xs mt-1" style={{ color:'var(--muted)', lineHeight:1.6, whiteSpace:'pre-line' }}>{n.text}</div>}
+                {(n.materiale||[]).length > 0 && (
+                  <div className="mt-2 rounded-lg p-2" style={{ background:'var(--panel2)' }}>
+                    <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color:'var(--muted2)' }}>📦 Materiale</div>
+                    {(n.materiale||[]).map((m)=>(
+                      <div key={m.id} className="text-[11px]" style={{ color:'var(--text)' }}>• {m.denumire} {m.cantitate ? `— ${m.cantitate} ${m.um||''}` : ''}</div>
+                    ))}
+                    {onOfertaDinNota && (
+                      <button onClick={()=>onOfertaDinNota(n)} className="text-[11px] px-2 py-1 rounded mt-1.5 font-semibold" style={{ color:'#14181C', background:'#4CAF7D' }}>💰 Fă ofertă din lista asta</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 📁 Proiecte — arhiva firmei, ca folderele de pe calculator.
 // Fiecare client are folderul lui; înăuntru sunt ȘANTIERELE (create automat când se face un șantier nou)
 // și DOSARELE de facturi (cu devizele lor). În orice folder poți adăuga documente (PDF, poze).
@@ -7716,6 +7892,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
 // aud = cine o vede: 'toti' (angajați + manager), 'angajat' (doar angajați), 'manager' (doar manager).
 // NU pune aici felicitările / mesajele de sărbători — alea sunt surpriză și apar singure când e cazul.
 const NOUTATI = [
+  { id: 'notite-manager', aud: 'manager', data: '31.07.2026', titlu: '📝 Notite — carnetul tau in aplicatie',
+    text: 'In meniu → Contabilitate → „📝 Notite” ai un carnet doar al tau (angajatii nu il vad). Notezi ce s-a discutat la intalnirea cu clientul, ce materiale trebuie comandate, idei de pret. Fiecare notita poate fi legata de un client sau un santier, o poti fixa sus cu 📌 sau copia cu 📋 ca s-o trimiti pe WhatsApp. Daca treci si o lista de materiale, apeși „💰 Fa oferta din lista asta” si aplicatia iti deschide o oferta noua cu materialele deja completate.' },
   { id: 'proiecte-santiere-search', aud: 'manager', data: '31.07.2026', titlu: '📁 Proiecte: șantiere automate, documente și căutare în tot',
     text: 'În „📁 Proiecte" (din meniu → Contabilitate) fiecare șantier nou apare automat ca folder cu numele lui, în dosarul clientului. În orice folder — client, șantier sau factură — apeși „➕ Adaugă document" și urci un PDF sau o poză (proces-verbal, contract, poză semnată). Iar bara de căutare de sus caută în TOT: lucrările scrise de băieți în rapoarte, apartamente (ex. „exituri etaj 4 scara 3 corp a"), șantiere, devize, facturi, oferte și documentele urcate.' },
   { id: 'cashflow-din-rapoarte', aud: 'manager', data: '31.07.2026', titlu: '🔨 Cashflow calculat din rapoartele băieților',
@@ -8897,6 +9075,7 @@ function App() {
   const [cereriSantier, setCereriSantier] = useState([]);
   const [cereriAlocare, setCereriAlocare] = useState([]); // cereri de auto-alocare pe șantier, spre aprobarea managerului
   const [proiecteFisiere, setProiecteFisiere] = useState([]); // documente puse manual în dosarele din Proiecte
+  const [notite, setNotite] = useState([]); // notițele managerului (întâlniri, necesar materiale, idei de preț)
   const [miscariSantier, setMiscariSantier] = useState([]);
   const [problemeSantier, setProblemeSantier] = useState([]);
   const [planseSantier, setPlanseSantier] = useState([]);
@@ -8966,6 +9145,7 @@ function App() {
       setCereriSantier(await loadKey('cereriSantier', []));
       setCereriAlocare(await loadKey('cereriAlocare', []));
       setProiecteFisiere(await loadKey('proiecteFisiere', []));
+      setNotite(await loadKey('notite', []));
       setMiscariSantier(await loadKey('miscariSantier', []));
       setProblemeSantier(await loadKey('problemeSantier', []));
       setPlanseSantier(await loadKey('planseSantier', []));
@@ -9130,6 +9310,7 @@ function App() {
       cereriSantier: (v)=>setCereriSantier(v ?? []),
       cereriAlocare: (v)=>setCereriAlocare(v ?? []),
       proiecteFisiere: (v)=>setProiecteFisiere(v ?? []),
+      notite: (v)=>setNotite(v ?? []),
       problemeSantier: (v)=>setProblemeSantier(v ?? []),
       miscariSantier: (v)=>setMiscariSantier(v ?? []),
       planseSantier: (v)=>setPlanseSantier(v ?? []),
@@ -9389,6 +9570,7 @@ function App() {
             <NavItem id="facturi" label="🧾 Facturi" />
             <NavItem id="clienti" label="👥 Clienți" />
             <NavItem id="proiecte" label="📁 Proiecte" />
+            <NavItem id="notite" label="📝 Notițe" />
           </div>
         )}
         </>
@@ -9473,7 +9655,7 @@ function App() {
                     {!offerForm && <button onClick={()=>setOfferForm({})} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium" style={{ color:'#14181C', background:'#2E8BD1' }}>+ Adaugă ofertă</button>}
                   </div>
                 </div>
-                {offerForm && <DocForm kind="Ofertă" clients={clients} materials={materials} initial={offerForm.id?offerForm:null} onCancel={()=>setOfferForm(null)} onSave={saveOffer} />}
+                {offerForm && <DocForm kind="Ofertă" clients={clients} materials={materials} initial={(offerForm.id || offerForm.items) ? offerForm : null} onCancel={()=>setOfferForm(null)} onSave={saveOffer} />}
                 <DocTable kind="Ofertă" docs={offers} clients={clients} statuses={OFFER_STATUSES} onEdit={setOfferForm} onDelete={deleteOffer} onStatusChange={offerStatus} onConvert={convertToInvoice} onPrint={printOne('Ofertă')} />
               </div>
             )}
@@ -9493,6 +9675,11 @@ function App() {
             )}
 
             {tab === 'clienti' && <ClientsTab clients={clients} setClients={setClients} persist={persist} />}
+            {tab === 'notite' && effectiveUser.rol === 'Manager' && <NotiteTab notite={notite} setNotite={setNotite} persist={persist} clients={clients} santiere={santiere} currentUser={effectiveUser} onOfertaDinNota={(n)=>{
+              const items = (n.materiale||[]).map((m)=>({ id: uid(), denumire: m.denumire, um: m.um || 'buc', cantitate: Number(m.cantitate) || 1, pretUnitar: 0, adaos: 0 }));
+              setOfferForm({ items, clientId: n.clientId || '' });
+              setTab('oferte');
+            }} />}
             {tab === 'proiecte' && effectiveUser.rol === 'Manager' && <ProiecteTab clients={clients} invoices={invoices} setInvoices={setInvoices} devize={devize} offers={offers} santiere={santiere} rapoarte={rapoarte} structuraSantier={structuraSantier} proiecteFisiere={proiecteFisiere} setProiecteFisiere={setProiecteFisiere} persist={persist} currentUser={effectiveUser} goToSite={(id)=>{ setPendingSiteNav({ santierId:id, siteView:'__closed__' }); setTab('santiere'); }} onCreeazaProiect={creeazaProiect} printFactura={printOne('Factură')} printDeviz={printDevizOne} printOferta={printOne('Ofertă')} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
