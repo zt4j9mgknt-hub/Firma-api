@@ -397,13 +397,44 @@ const PENDING_KEY = 'pendingWrites';
 function getPending(){ try{ return JSON.parse(localStorage.getItem(PENDING_KEY)||'[]'); }catch{ return []; } }
 function setPending(q){ try{ localStorage.setItem(PENDING_KEY, JSON.stringify(q)); }catch{} try{ window.dispatchEvent(new CustomEvent('offline-queue-change')); }catch{} }
 function enqueueWrite(key, value){ const q=getPending().filter((x)=>x.key!==key); q.push({ key, value }); setPending(q); }
+// Scoatem din coadă scrierile pentru o cheie care tocmai s-a salvat cu succes pe server:
+// altfel o ciornă veche rămâne acolo și se tot re-aplică peste datele bune.
+function dequeueWrite(key){ const q=getPending(); const q2=q.filter((x)=>x.key!==key); if(q2.length!==q.length) setPending(q2); }
+
+// ---- REGISTRU DE ȘTERGERI ----
+// Combinarea pe id nu poate exprima o ștergere: dacă o înregistrare există într-o ciornă veche,
+// ea reapare la fiecare combinare. De aceea ținem minte ce am șters, ca să nu se mai întoarcă.
+const STERSE_KEY = 'sm_sterse_v1';
+function getSterse(){ try{ return JSON.parse(localStorage.getItem(STERSE_KEY)||'{}'); }catch{ return {}; } }
+function setSterse(o){ try{ localStorage.setItem(STERSE_KEY, JSON.stringify(o)); }catch{} }
+function noteazaSterse(key, vechi, nou){
+  if(!Array.isArray(vechi)||!Array.isArray(nou)) return;
+  const idNou = new Set(nou.map((x)=>x&&x.id).filter((x)=>x!=null));
+  const disparute = vechi.map((x)=>x&&x.id).filter((id)=>id!=null && !idNou.has(id));
+  const o = getSterse(); const acum = Date.now();
+  if (disparute.length){ o[key] = o[key] || {}; disparute.forEach((id)=>{ o[key][String(id)] = acum; }); }
+  // Uităm ștergerile mai vechi de 60 de zile, ca registrul să nu crească la nesfârșit.
+  const limita = acum - 60*24*3600*1000;
+  Object.keys(o).forEach((k)=>{
+    Object.keys(o[k]).forEach((id)=>{ if(!(o[k][id] > limita)) delete o[k][id]; });
+    if(!Object.keys(o[k]).length) delete o[k];
+  });
+  setSterse(o);
+}
+function eSters(key, id){ const o=getSterse(); return !!(o[key] && o[key][String(id)]); }
+function faraSterse(key, arr){
+  if(!Array.isArray(arr)) return arr;
+  return arr.filter((x)=> !(x && typeof x==='object' && x.id!=null && eSters(key, x.id)));
+}
+
 // Combină pe id: pornește de la ce e pe server (păstrează ce-au adăugat alții) și aplică deasupra înregistrările tale.
-function mergeById(serverVal, clientVal){
+function mergeById(serverVal, clientVal, key){
   if(!Array.isArray(serverVal)||!Array.isArray(clientVal)) return clientVal;
   const ok=(arr)=>arr.every((x)=>x&&typeof x==='object'&&x.id!=null);
   if(!ok(serverVal)||!ok(clientVal)) return clientVal;
   const map=new Map(); serverVal.forEach((x)=>map.set(x.id,x)); clientVal.forEach((x)=>map.set(x.id,x));
-  return Array.from(map.values());
+  const out = Array.from(map.values());
+  return key ? faraSterse(key, out) : out;
 }
 
 async function loadKey(key, fallback) {
@@ -415,22 +446,30 @@ async function loadKey(key, fallback) {
     const r = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
     const data = await r.json();
     let val = data.value ?? fallback;
-    if (pending !== undefined) val = mergeById(val, pending.value);
+    if (pending !== undefined) val = mergeById(val, pending.value, key);
+    // Ce am șters de pe telefonul ăsta NU se mai întoarce, oricâte ciorne vechi ar exista.
+    const inainte = Array.isArray(val) ? val.length : -1;
+    val = faraSterse(key, val);
+    // Dacă ștersele erau încă pe server (le-a re-urcat un alt telefon cu date vechi),
+    // curățăm și serverul, ca să nu reapară la următoarea intrare în aplicație.
+    if (inainte >= 0 && val.length < inainte) {
+      try { authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value: val }) }); } catch {}
+    }
     // PLASĂ DE SIGURANȚĂ: serverul întoarce GOL dar avem date locale → probabil pierdere pe server.
     // Nu ștergem — păstrăm datele locale și le re-trimitem pe server.
     if (Array.isArray(val) && val.length === 0 && Array.isArray(cached) && cached.length > 0) {
-      enqueueWrite(key, cached);
-      try { syncQueue(); } catch {}
-      return cached;
+      const curat = faraSterse(key, cached);
+      if (curat.length > 0) { enqueueWrite(key, curat); try { syncQueue(); } catch {} cacheSet(key, curat); return curat; }
     }
     cacheSet(key, val);
     return val;
   } catch {
-    if (cached !== undefined) return pending !== undefined ? mergeById(cached, pending.value) : cached;
-    return pending !== undefined ? pending.value : fallback;
+    if (cached !== undefined) return faraSterse(key, pending !== undefined ? mergeById(cached, pending.value, key) : cached);
+    return faraSterse(key, pending !== undefined ? pending.value : fallback);
   }
 }
 async function saveKey(key, value) {
+  noteazaSterse(key, cacheGet(key), value); // ținem minte ce a dispărut față de ce aveam
   cacheSet(key, value); // salvează local imediat (optimist)
   let res;
   try {
@@ -442,6 +481,7 @@ async function saveKey(key, value) {
   let data = {};
   try { data = await res.json(); } catch {}
   if (!data.ok) throw new Error(data.error || 'Salvarea a eșuat.');
+  dequeueWrite(key); // s-a salvat pe server → ciorna veche din coadă nu mai are ce căuta
 }
 
 // Ce anunțăm managerului când apar înregistrări noi de la angajați (al doilea strat, pe lângă push).
@@ -537,7 +577,7 @@ async function syncQueue() {
       try {
         const r = await authFetch(`/api/data?key=${encodeURIComponent(item.key)}`);
         const d = await r.json();
-        toPost = mergeById(d.value, item.value);
+        toPost = mergeById(d.value, item.value, item.key);
       } catch {}
       let rr;
       try {
@@ -6583,7 +6623,7 @@ function ProfileTab({ currentUser, onLogout, tema, setTema }) {
       if (!Array.isArray(local) || local.length === 0) continue;
       let server = [];
       try { const r = await authFetch(`/api/data?key=${encodeURIComponent(k)}`); const d = await r.json(); server = Array.isArray(d.value) ? d.value : []; } catch {}
-      const merged = mergeById(server, local);
+      const merged = mergeById(server, local, k);
       try {
         const rr = await authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key:k, value:merged }) });
         const dd = await rr.json();
@@ -10370,10 +10410,11 @@ function App() {
     channel.bind('data-changed', async (payload) => {
       const setter = setters[payload?.key];
       if (!setter) return;
-      const nou = await loadKey(payload.key, payload.key === 'company' ? {} : []);
+      let nou = await loadKey(payload.key, payload.key === 'company' ? {} : []);
       // AL DOILEA STRAT DE SIGURANȚĂ (mai ales pentru manager): dacă apar înregistrări noi făcute de
       // altcineva, telefonul sună singur — chiar dacă notificarea trimisă de telefonul lor s-a pierdut.
       try {
+        if (Array.isArray(nou)) nou = faraSterse(payload.key, nou);
         if (Array.isArray(nou) && ANUNTA_LA_SCHIMBARE[payload.key]) {
           const vechi = cacheGet('sem_' + payload.key);
           const idVechi = new Set(Array.isArray(vechi) ? vechi : []);
