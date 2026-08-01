@@ -717,7 +717,7 @@ const ROLES = [
 // Când se termină testul, pune false ca să revină accesul complet.
 const PERIOADA_TEST = false;
 // Etichetă de versiune — apare jos în meniu, ca să confirmi că s-a încărcat ultima versiune.
-const APP_VERSION = 'v01.08-pagini4';
+const APP_VERSION = 'v01.08-an';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 // De când ținem evidența financiară în aplicație (graficele nu arată luni dinainte de asta).
@@ -8934,6 +8934,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
   const [cashOpen, setCashOpen] = useState(false);
   const [factOpen, setFactOpen] = useState(false);
   const [muncaOpen, setMuncaOpen] = useState(false);
+  // Ce lună e aleasă la „Din munca echipei". Gol = luna curentă.
+  const [muncaLuna, setMuncaLuna] = useState('');
 
   const devizeActive = devize.filter((d)=>d.status!=='Semnat').length;
   const oferteTrimise = offers.filter((o)=>o.status==='Trimisă').length;
@@ -9111,8 +9113,36 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
           const m = (materials||[]).find((x)=> String(x.denumire||'').toLowerCase().trim() === String(den||'').toLowerCase().trim());
           return m ? (Number(m.pret) || 0) * (1 + adaosMat / 100) : 0;
         };
+        // Perioada aleasă pentru „Din munca echipei". Poate fi o LUNĂ ('2026-05') sau un AN întreg ('2026').
+        // Filtrul e același în ambele cazuri — data raportului începe cu perioada aleasă.
+        const lunaMunca = muncaLuna || lunaCur;
+        const eAn = lunaMunca.length === 4;
+        const anCur = lunaCur.slice(0,4);
+        const etichetaLuna = (k)=>{
+          const s = String(k);
+          if (s.length === 4) return 'anul ' + s;
+          const [an,l] = s.split('-');
+          return (LUNI_L[Number(l)-1] || '') + ' ' + an;
+        };
+        const lunaVecina = (d)=>{
+          if (eAn) return String(Number(lunaMunca) + d);
+          const [an,l] = lunaMunca.split('-').map(Number);
+          const dt = new Date(an, l-1+d, 1);
+          return dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0');
+        };
+        const nuMaiPotInainte = eAn ? (lunaMunca >= anCur) : (lunaMunca >= lunaCur);
+        const luniDisponibile = (()=>{
+          const set = new Set([lunaCur, lunaMunca]);
+          (rapoarte||[]).forEach((r)=>{ const k = String(r.data||'').slice(0,7); if (k.length === 7) set.add(k); });
+          return Array.from(set).filter(Boolean).filter((k)=>k.length===7).sort().reverse();
+        })();
+        const aniDisponibili = (()=>{
+          const set = new Set([anCur, lunaMunca.slice(0,4)]);
+          (rapoarte||[]).forEach((r)=>{ const a = String(r.data||'').slice(0,4); if (a.length === 4) set.add(a); });
+          return Array.from(set).filter(Boolean).sort().reverse();
+        })();
         const dinRapoarte = santiere.map((s)=>{
-          const rapS = rapoarte.filter((r)=> r.santierId===s.id && String(r.data||'').startsWith(lunaCur));
+          const rapS = rapoarte.filter((r)=> r.santierId===s.id && String(r.data||'').startsWith(lunaMunca));
           const minute = rapS.reduce((acc,r)=> acc + (r.persoane||[]).filter((p)=>p.nume && String(p.nume).trim()).reduce((a,p)=> a + personMinutes(p), 0), 0);
           const ore = minute / 60;
           const tarif = Number(s.tarifOrar) || 0;
@@ -9235,11 +9265,26 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
           {/* Banii produși de echipă luna asta, calculați automat din rapoartele zilnice */}
           <div className="rounded-xl p-4 mb-3" style={{ background:'var(--panel)', border:'1px solid #2E8BD166', borderLeft:'4px solid #2E8BD1' }}>
             <div className="flex items-center justify-between mb-2 gap-2">
-              <span className="text-sm font-bold" style={{ color:'var(--acc1)' }}>🔨 Din munca echipei — {numeLuna}</span>
+              <span className="text-sm font-bold" style={{ color:'var(--acc1)' }}>🔨 Din munca echipei — {etichetaLuna(lunaMunca)}</span>
               <button onClick={()=>setMuncaOpen(!muncaOpen)} className="text-[11px] px-2.5 py-1 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>{muncaOpen?'Ascunde pe șantiere ▲':'Vezi pe șantiere ▼'}</button>
             </div>
+            {/* Alegi perioada: săgeți pas cu pas, listă de căutare, sau comuți pe tot anul. */}
+            <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
+              <button onClick={()=>setMuncaLuna(lunaVecina(-1))} className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold" style={{ color:'var(--acc1)', background:'var(--panel2)', border:'1px solid var(--border)' }}>‹ {eAn ? 'Anul trecut' : 'Luna trecută'}</button>
+              <select value={lunaMunca} onChange={(e)=>setMuncaLuna(e.target.value)} className="text-[11px] px-2 py-1.5 rounded-lg outline-none font-semibold" style={{ background:'var(--panel2)', color:'var(--text)', border:'1px solid var(--border)' }}>
+                <optgroup label="Pe an">
+                  {aniDisponibili.map((a)=>(<option key={'an'+a} value={a} style={{ background:'var(--panel)' }}>🔎 {etichetaLuna(a)}</option>))}
+                </optgroup>
+                <optgroup label="Pe lună">
+                  {luniDisponibile.map((k)=>(<option key={k} value={k} style={{ background:'var(--panel)' }}>🔎 {etichetaLuna(k)}</option>))}
+                </optgroup>
+              </select>
+              <button onClick={()=>setMuncaLuna(lunaVecina(1))} disabled={nuMaiPotInainte} className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-35" style={{ color:'var(--acc1)', background:'var(--panel2)', border:'1px solid var(--border)' }}>{eAn ? 'Anul următor' : 'Luna următoare'} ›</button>
+              <button onClick={()=>setMuncaLuna(eAn ? (lunaMunca === anCur ? '' : lunaMunca + '-01') : lunaMunca.slice(0,4))} className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'var(--acc1)' }}>{eAn ? '📅 Înapoi pe luni' : `📅 Tot anul ${lunaMunca.slice(0,4)}`}</button>
+              {lunaMunca !== lunaCur && <button onClick={()=>setMuncaLuna('')} className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'var(--acc2)' }}>↺ Luna curentă</button>}
+            </div>
             {dinRapoarte.length === 0 ? (
-              <div className="text-xs" style={{ color:'var(--muted2)' }}>Încă nu s-au trimis rapoarte luna asta.</div>
+              <div className="text-xs" style={{ color:'var(--muted2)' }}>Nu s-au trimis rapoarte în {etichetaLuna(lunaMunca)}.</div>
             ) : (<>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {stat('Ore lucrate', `${Math.round(totalOreLuna*10)/10} h`)}
