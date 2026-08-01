@@ -505,10 +505,15 @@ function noteazaSterse(key, vechi, nou){
 }
 function uitaTotSters(key){ const o=getSterse(); if(o[key]){ delete o[key]; setSterse(o); } }
 function eSters(key, id){ const o=getSterse(); return !!(o[key] && o[key][String(id)]); }
+let ASCUNSE_DE_STERGERI = 0;
 function faraSterse(key, arr){
   if(!Array.isArray(arr)) return arr;
-  return arr.filter((x)=> !(x && typeof x==='object' && x.id!=null && eSters(key, x.id)));
+  const out = arr.filter((x)=> !(x && typeof x==='object' && x.id!=null && eSters(key, x.id)));
+  if (out.length < arr.length) { ASCUNSE_DE_STERGERI += (arr.length - out.length);
+    try { console.warn('[sync] ' + (arr.length-out.length) + ' înregistrări ascunse la „' + key + '"'); } catch(_){} }
+  return out;
 }
+function golesteRegistrulSterse(){ try { localStorage.removeItem(STERSE_KEY); } catch(_){} ASCUNSE_DE_STERGERI = 0; }
 
 // Combină pe id: pornește de la ce e pe server (păstrează ce-au adăugat alții) și aplică deasupra înregistrările tale.
 function mergeById(serverVal, clientVal, key){
@@ -683,7 +688,7 @@ const ROLES = [
 // Când se termină testul, pune false ca să revină accesul complet.
 const PERIOADA_TEST = false;
 // Etichetă de versiune — apare jos în meniu, ca să confirmi că s-a încărcat ultima versiune.
-const APP_VERSION = 'v01.08-nav';
+const APP_VERSION = 'v01.08-nav2';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 // De când ținem evidența financiară în aplicație (graficele nu arată luni dinainte de asta).
@@ -5308,8 +5313,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     );
     return (
       <div>
-        <div className="flex items-center mb-3">
-          <button onClick={()=>setSelected(null)} className="btn3d text-xs font-semibold px-3 py-2 ml-auto" style={{ color:'var(--muted)' }}>🏗 Toate șantierele</button>
+        <div className="flex items-center gap-2 mb-3">
+          <button onClick={goBack} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>← {viewHistory.length ? 'Înapoi' : 'Șantiere'}</button>
+          <button onClick={goForward} disabled={viewForward.length===0} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>Înainte →</button>
+          <button onClick={()=>setSelected(null)} className="btn3d text-xs font-semibold px-3 py-2 ml-auto" style={{ color:'var(--muted)' }}>🏗 Toate</button>
         </div>
         <div style={{ display: prezAscuns ? 'none' : undefined }}>
         <h2 className="text-xl mb-0.5" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
@@ -10538,7 +10545,10 @@ function App() {
   const [pendingSiteNav, setPendingSiteNav] = useState(null);
   // Ce secțiune e deschisă în interiorul unui șantier — ca fundalul să se potrivească și acolo.
   const [siteSectiune, setSiteSectiune] = useState(null);
-  // Istoricul pașilor prin aplicație, pentru Înapoi / Înainte.
+  // Dacă registrul de ștergeri a ascuns ceva, spunem pe față și dăm un buton de readucere.
+  const [ascunse, setAscunse] = useState(0);
+  useEffect(() => { if (dateIncarcate) setAscunse(ASCUNSE_DE_STERGERI); }, [dateIncarcate]);
+  // Istoricul pașilor prin aplicație (doar tab-urile), pentru Înapoi / Înainte.
   const [navSantier, setNavSantier] = useState(null);
   const [istoric, setIstoric] = useState([]);
   const [inainteSt, setInainteSt] = useState([]);
@@ -10553,27 +10563,26 @@ function App() {
     }
   }, [tab]);
   const mergiInapoi = () => {
-    if (navSantier && tab === 'santiere' && navSantier.poateInapoi) { navSantier.inapoi(); return; }
     if (!istoric.length) return;
     const t = istoric[istoric.length - 1];
     setIstoric((h) => h.slice(0, -1)); setInainteSt((f) => [tab, ...f]);
     sarPeste.current = true; setTab(t);
   };
   const mergiInainte = () => {
-    if (navSantier && tab === 'santiere' && navSantier.poateInainte) { navSantier.inainte(); return; }
     if (!inainteSt.length) return;
     const t = inainteSt[0];
     setInainteSt((f) => f.slice(1)); setIstoric((h) => [...h, tab]);
     sarPeste.current = true; setTab(t);
   };
-  const navLocal = (tab === 'santiere' && navSantier) ? navSantier : null;
-  const potInapoi = navLocal ? navLocal.poateInapoi : istoric.length > 0;
-  const potInainte = navLocal ? navLocal.poateInainte : inainteSt.length > 0;
-  // Scrisul devine „Dashboard" DOAR când următorul pas înapoi chiar e ecranul de start.
-  const etichetaInapoi = navLocal ? navLocal.eticheta
-    : (istoric.length && istoric[istoric.length - 1] == null
-        ? (effectiveUser?.rol === 'Manager' ? 'Dashboard' : 'Activitatea mea')
-        : 'Înapoi');
+  // Cât timp ești ÎNTR-UN șantier, navigarea o face bara din șantier (una singură pe ecran).
+  const inSantier = tab === 'santiere' && !!navSantier;
+  // Pe Dashboard / Activitatea mea nu arătăm butoane de navigare: ăsta E începutul.
+  const peStart = !tab;
+  const potInapoi = !inSantier && !peStart && istoric.length > 0;
+  const potInainte = !inSantier && !peStart && inainteSt.length > 0;
+  const etichetaInapoi = (istoric.length && istoric[istoric.length - 1] == null)
+    ? (effectiveUser?.rol === 'Manager' ? 'Dashboard' : 'Activitatea mea')
+    : 'Înapoi';
   // Deschide o întrebare Q&A: de pe ȘANTIER → tab-ul Q&A al șantierului; GENERALĂ → Asistent. (Definit AICI, după problemeSantier/pendingSiteNav.)
   const goQA = (qid) => {
     const q = qid ? (problemeSantier || []).find((x) => x.id === qid) : null;
@@ -11073,7 +11082,7 @@ function App() {
   };
 
   const NavItem = ({ id, label }) => (
-    <button onClick={()=>{ setTab(id); setSidebarOpen(false); }} className="btn3d flex items-center gap-2.5 px-3 py-2.5 text-sm w-full text-left mb-1" style={{ color: tab===id?'#14181C':'var(--muted1)', background: tab===id?'var(--acc1)':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
+    <button onClick={()=>{ setTab(id); setSidebarOpen(false); }} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: tab===id?'#14181C':'var(--muted1)', background: tab===id?'var(--acc1)':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
   );
 
   if (!currentUser) {
@@ -11113,7 +11122,7 @@ function App() {
         <div style={{ height:1, background:'var(--border)', margin:'4px 4px 8px' }} />
         {effectiveUser.rol === 'Manager' && (
         <>
-        <button onClick={()=>setContabOpen(!contabOpen)} className="btn3d flex items-center justify-between px-3 py-2.5 text-sm w-full text-left mb-1" style={{ color: CONTAB_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
+        <button onClick={()=>setContabOpen(!contabOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: CONTAB_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
           <span>📊 Contabilitate</span>
           <span style={{ fontSize:10, transform: contabOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
         </button>
@@ -11129,7 +11138,7 @@ function App() {
         )}
         </>
         )}
-        <button onClick={()=>setMaterialeOpen(!materialeOpen)} className="btn3d flex items-center justify-between px-3 py-2.5 text-sm w-full text-left mb-1" style={{ color: MATERIALE_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
+        <button onClick={()=>setMaterialeOpen(!materialeOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: MATERIALE_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
           <span>📦 Materiale</span>
           <span style={{ fontSize:10, transform: materialeOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
         </button>
@@ -11178,6 +11187,14 @@ function App() {
         </div>
       </aside>
       <main className="flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0">
+        {!loading && ascunse > 0 && (
+          <div className="mb-3 rounded-xl p-3" style={{ background:'var(--panel)', border:'1px solid var(--acc3)' }}>
+            <div className="text-sm font-semibold" style={{ color:'var(--acc3)' }}>⚠ {ascunse} {ascunse===1?'înregistrare este ascunsă':'înregistrări sunt ascunse'}</div>
+            <div className="text-xs mt-1" style={{ color:'var(--muted)' }}>Registrul de ștergeri de pe telefonul ăsta le ține ascunse. Dacă nu tu le-ai șters, adu-le înapoi.</div>
+            <button onClick={()=>{ golesteRegistrulSterse(); setAscunse(0); window.location.reload(); }}
+              className="btn3d text-xs font-semibold px-3 py-2 mt-2" style={{ color:'var(--acc2)' }}>♻️ Adu-le înapoi</button>
+          </div>
+        )}
         {!loading && (potInapoi || potInainte) && (
           <div className="flex items-center gap-2 mb-3">
             <button onClick={mergiInapoi} disabled={!potInapoi} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>← {etichetaInapoi}</button>
