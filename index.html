@@ -60,18 +60,21 @@
   .aurora > .b, .aurora > .rim, .aurora > .grid { display:none; }
   /* ---- Ledurile din bulinele traseului: pastile mici care palpaie rar, ca la un tablou electric ---- */
   .leduri { position:absolute; inset:0; pointer-events:none; }
-  .led { position:absolute; width:5px; height:5px; margin:-2.5px 0 0 -2.5px; border-radius:50%; opacity:0;
-    animation-name:ledPalpai; animation-iteration-count:infinite; animation-timing-function:ease-in-out; }
-  .led-a { background:#7FD8FF; box-shadow:0 0 7px rgba(127,216,255,.9); }
-  .led-v { background:#86E9B4; box-shadow:0 0 7px rgba(134,233,180,.9); }
+  .led { position:absolute; width:5px; height:5px; margin:-2.5px 0 0 -2.5px; border-radius:50%;
+    opacity:calc(var(--pk, .9) * .18);
+    animation-name:ledVal; animation-iteration-count:infinite; animation-timing-function:ease-in-out; }
+  .led-a { background:#7FD8FF; box-shadow:0 0 5px rgba(127,216,255,.85); }
+  .led-v { background:#86E9B4; box-shadow:0 0 5px rgba(134,233,180,.85); }
   body[data-theme="zi"] .led-a { background:#1B9BD8; box-shadow:0 0 5px rgba(27,155,216,.65); }
   body[data-theme="zi"] .led-v { background:#2FA36F; box-shadow:0 0 5px rgba(47,163,111,.65); }
-  @keyframes ledPalpai {
-    0%, 72%, 100% { opacity:0; }
-    74% { opacity:.95; } 76% { opacity:.12; } 78% { opacity:.9; }
-    85% { opacity:.85; } 87% { opacity:.18; } 89% { opacity:.7; } 95% { opacity:0; }
+  /* Val calm: nu se stinge complet niciun led, doar creste si scade lin.
+     Decalajul de pornire il dam din pozitie, ca lumina sa treaca in diagonala peste ecran. */
+  @keyframes ledVal {
+    0%   { opacity:calc(var(--pk, .9) * .16); }
+    45%  { opacity:var(--pk, .9); }
+    100% { opacity:calc(var(--pk, .9) * .16); }
   }
-  @media (prefers-reduced-motion: reduce) { .led { animation:none; opacity:.55; } }
+  @media (prefers-reduced-motion: reduce) { .led { animation:none; opacity:calc(var(--pk, .9) * .6); } }
 
   /* ---- Ecran de login: acelasi tipar, dar mereu pe fond inchis, ca logo-ul si cardul sa iasa in fata ---- */
   .login-bg { position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;
@@ -6768,7 +6771,8 @@ function nasterePeDinCnp(cnp) {
 // Concediul automat consuma dintr-un buget anual de 21 zile x 8h (168h) platite; peste buget devine "I" (fara plata).
 // "panaLaLuna" (format YYYY-MM) opreste calculul la sfarsitul acelei luni, ca sa nu procesam degeaba tot anul.
 // Ledurile care palpaie in bulinele fundalului. Calculam unde cad bulinele tiparului
-// (dala de 78px, inclinata cu -12 grade) si punem un led doar in cateva dintre ele.
+// (dala de 78px, inclinata cu -12 grade) si punem cate un led in FIECARE bulina.
+// Culorile sunt incrucisate dinadins: bulina albastra are led verde, bulina verde are led albastru.
 function LeduriTipar() {
   const [dim, setDim] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
@@ -6778,7 +6782,7 @@ function LeduriTipar() {
     return () => { window.removeEventListener('resize', onR); window.removeEventListener('orientationchange', onR); };
   }, []);
   const leduri = useMemo(() => {
-    const T = 78, cos = 0.97815, sin = -0.20791;
+    const T = 78, cos = 0.97815, sin = -0.20791, CICLU = 7.2;
     const centre = [[68, 14, 'a'], [4, 58, 'v']];
     const out = [];
     const nI = Math.ceil(dim.w / T) + 6, nJ = Math.ceil(dim.h / T) + 6;
@@ -6790,19 +6794,23 @@ function LeduriTipar() {
           const X = x * cos - y * sin, Y = x * sin + y * cos;
           if (X < 12 || X > dim.w - 12 || Y < 12 || Y > dim.h - 12) continue;
           const h = Math.abs(Math.sin(i * 37.13 + j * 91.71 + (k ? 2.3 : 0.5)) * 43758.5453) % 1;
-          if (h > 0.14) continue;
+          const h2 = Math.abs(Math.sin(i * 12.9898 + j * 78.233 + (k ? 5.7 : 1.1)) * 24634.6345) % 1;
+          // Faza vine din pozitie: lumina urca in diagonala, ca un val lent peste tot ecranul.
+          // Peste ea punem un mic zgomot, ca sa nu para desenat cu rigla.
+          const val = (X * 0.55 + Y) / (dim.w * 0.55 + dim.h);
+          const faza = -(((val * 1.9) % 1) * CICLU) - h * 0.5;
           out.push({ id: i + '_' + j + '_' + tip, X: X, Y: Y, tip: tip,
-                     delay: (h * 71) % 7, dur: 5 + ((h * 137) % 5) });
+                     delay: faza, dur: CICLU, pk: 0.62 + h2 * 0.34 });
         }
       }
     }
-    return out.slice(0, 26);
+    return out.slice(0, 340);
   }, [dim.w, dim.h]);
   return (
     <div className="leduri" aria-hidden="true">
       {leduri.map((l) => (
-        <i key={l.id} className={'led ' + (l.tip === 'a' ? 'led-a' : 'led-v')}
-           style={{ left: l.X.toFixed(1) + 'px', top: l.Y.toFixed(1) + 'px',
+        <i key={l.id} className={'led ' + (l.tip === 'a' ? 'led-v' : 'led-a')}
+           style={{ left: l.X.toFixed(1) + 'px', top: l.Y.toFixed(1) + 'px', '--pk': l.pk.toFixed(2),
                     animationDelay: l.delay.toFixed(2) + 's', animationDuration: l.dur.toFixed(2) + 's' }} />
       ))}
     </div>
