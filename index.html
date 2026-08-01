@@ -717,7 +717,7 @@ const ROLES = [
 // Când se termină testul, pune false ca să revină accesul complet.
 const PERIOADA_TEST = false;
 // Etichetă de versiune — apare jos în meniu, ca să confirmi că s-a încărcat ultima versiune.
-const APP_VERSION = 'v01.08-curat';
+const APP_VERSION = 'v01.08-pagini4';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 // De când ținem evidența financiară în aplicație (graficele nu arată luni dinainte de asta).
@@ -5055,8 +5055,8 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     if (pinPanelOpen) { setPinPanelOpen(false); return; }
     if (viewHistory.length) { const prev = viewHistory[viewHistory.length-1]; setViewHistory(viewHistory.slice(0,-1)); setViewForward((f)=>[siteView, ...f]); setSiteView(prev); return; }
     if (siteView !== '__closed__') { setSiteView('__closed__'); return; }
-    if (selected) { setSelected(null); return; }
-    if (onIesire) onIesire();
+    if (selected) { setSelected(null); setSiteView('__closed__'); setViewHistory([]); setViewForward([]); return; }
+    if (onIesire) onIesire(); // ultimul pas: meniul principal
   };
   // Ce scrie pe butonul de Înapoi: îți spune unde te duce următoarea apăsare.
   const undeDuceInapoi = () => {
@@ -5065,7 +5065,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     if (pinPanelOpen) return 'Închide';
     if (viewHistory.length || siteView !== '__closed__') return 'Înapoi';
     if (selected) return 'Șantiere';
-    return 'Dashboard';
+    return 'Meniu';
   };
   const goForward = () => {
     if (viewForward.length) { const nx = viewForward[0]; setViewForward(viewForward.slice(1)); setViewHistory((h)=>[...h, siteView]); setSiteView(nx); }
@@ -5315,16 +5315,34 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const totalOreSantierMin = rapoarteSantier.reduce((s,r)=>s+r.persoane.reduce((s2,p)=>s2+personMinutes(p),0),0);
         // Titlurile de secțiune. Structura și onClick rămân identice; adăugăm doar clase,
         // iar pagina dedicată se face din CSS — așa nu se poate pierde nicio funcție.
-        const accHeader = (k, icon, label, count) => (
-          <button key={'acc'+k} onClick={()=>navTo(siteView===k ? '__closed__' : k)}
+        const accHeader = (k, icon, label, count) => {
+          const deschis = siteView === k;
+          // PAGINI ÎNTREGI: dacă o secțiune e deschisă, titlurile celorlalte dispar complet.
+          // Conținutul lor era deja ascuns, deci nu se pierde nicio funcție — doar lista de titluri.
+          if (siteView !== '__closed__' && !deschis) return null;
+          if (deschis) return (
+            <div key={'acc'+k} className="flex items-center gap-2 rounded-xl px-3 py-2.5 mb-3 sticky top-0 z-20"
+                 style={{ background:'var(--panelA)', border:'1px solid var(--border)', backdropFilter:'blur(10px)' }}>
+              <button onClick={()=>navTo('__closed__')} className="btn3d text-xs font-semibold px-3 py-2 shrink-0" style={{ color:'var(--acc1)' }}>‹ Secțiuni</button>
+              <span style={{ fontSize:18 }}>{icon}</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold truncate" style={{ color:'var(--text)' }}>{label}</div>
+                <div className="text-[10px] truncate" style={{ color:'var(--muted2)' }}>{santier?.nume}</div>
+              </div>
+              {count != null && <span className="text-xs shrink-0" style={{ color:'var(--muted2)' }}>{count}</span>}
+            </div>
+          );
+          return (
+          <button key={'acc'+k} onClick={()=>navTo(k)}
                   className="w-full flex items-center gap-2 rounded-lg px-3 py-2.5 mb-1.5"
-                  style={{ background: siteView===k ? 'var(--panelA)' : 'var(--panel)', border:'1px solid var(--border)' }}>
-            <span style={{ fontSize:10, color:'var(--muted)', display:'inline-block', transform: siteView===k ? 'rotate(90deg)' : 'none', transition:'transform .15s' }}>▶</span>
+                  style={{ background:'var(--panel)', border:'1px solid var(--border)' }}>
             <span>{icon}</span>
             <span className="text-sm font-semibold flex-1 text-left" style={{ color:'var(--text)' }}>{label}</span>
             {count != null && <span className="text-xs" style={{ color:'var(--muted2)' }}>{count}</span>}
+            <span style={{ fontSize:12, color:'var(--muted2)' }}>›</span>
           </button>
-        );
+          );
+        };
     // RAPORTUL ZILNIC pe pagină proprie: nimic altceva pe ecran, ca să fie aerisit.
     if (reportForm) return (
       <div className="raportPagina">
@@ -5348,6 +5366,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
           <button onClick={()=>setSelected(null)} className="btn3d text-xs font-semibold px-3 py-2 ml-auto" style={{ color:'var(--muted)' }}>🏗 Toate</button>
         </div>
         <div className="sitePrez">
+        {siteView === '__closed__' && (<>
         <h2 className="text-xl mb-0.5" style={{ color:'var(--text)', fontFamily:"'Space Grotesk', sans-serif" }}>{santier?.nume}</h2>
         <p className="text-xs mb-3" style={{ color:'var(--muted)' }}>
           {santier?.adresa && (
@@ -5366,7 +5385,6 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             {santier?.benefResponsabilTel && <a href={`tel:${String(santier.benefResponsabilTel).replace(/\s/g,'')}`} className="ml-auto text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ color:'#14181C', background:'var(--acc2)' }}>📞 Sună · {santier.benefResponsabilTel}</a>}
           </div>
         )}
-        {!reportForm && <button onClick={()=>setReportForm({})} className="w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4" style={{ color:'#14181C', background:'var(--acc1)' }}><Icon>+</Icon> Raport zilnic nou</button>}
         {false && <RaportForm initial={null} etape={etapeSantier} echipaPermisa={echipaUserIds(santier?.echipa)} echipaNume={echipaNormalizata(santier?.echipa).map((e)=>allUsers.find((u)=>u.id===e.userId)?.nume).filter(Boolean)} materials={materials} materialeLista={materialeListaSantier.filter((m)=>m.santierId===selected)} pozitii={pozitiiSantier.filter((p)=>p.santierId===selected)} structura={structuraSantier.filter((e)=>e.santierId===selected)} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} persist={persist} santierId={selected} mod={santier?.modFacturare || (santier?.tipFacturare==='pozitie' ? (santier?.materialeSursa==='client'?'pozitie_client':'pozitie_propriu') : 'orar')} concedii={concedii} rapoarte={rapoarte} isManager={currentUser?.rol === 'Manager'} onCancel={()=>setReportForm(null)} onSave={saveReport} />}
         <div className="mb-3 pinZona">
           {santier?.lat ? (
@@ -5431,9 +5449,16 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             </div>
           )}
         </div>
+        </>)}
         <div className="space-y-1.5">
         </div>
+        {siteView === '__closed__' && !reportForm && (
+          <button onClick={()=>setReportForm({})} className="w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4" style={{ color:'#14181C', background:'var(--acc1)' }}><Icon>+</Icon> Raport zilnic nou</button>
+        )}
         {accHeader('rapoarte','📋','Rapoarte zilnice', rapoarteSantier.length)}
+        {siteView === 'rapoarte' && !reportForm && (
+          <button onClick={()=>setReportForm({})} className="w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4" style={{ color:'#14181C', background:'var(--acc1)' }}><Icon>+</Icon> Raport zilnic nou</button>
+        )}
         {siteView === 'rapoarte' && <HelpNote text={HELP.rapoarte} isManager={currentUser?.rol === 'Manager'} />}
         {siteView === 'rapoarte' && (
         <>
@@ -10592,11 +10617,12 @@ function App() {
     }
   }, [tab]);
   const mergiInapoi = () => {
-    // Dacă nu mai am pași în istoric, ies direct în Dashboard. Nu rămâi niciodată blocat.
-    if (!istoric.length) { sarPeste.current = true; setTab(null); return; }
-    const t = istoric[istoric.length - 1];
+    // ÎNAPOI urcă până în MENIUL principal. Nu ne mai oprim niciodată în Dashboard:
+    // dacă pasul următor înapoi ar fi pagina de start, deschidem direct meniul.
+    const prev = istoric.length ? istoric[istoric.length - 1] : null;
+    if (prev == null) { setIstoric([]); setInainteSt([]); setSidebarOpen(true); return; }
     setIstoric((h) => h.slice(0, -1)); setInainteSt((f) => [tab, ...f]);
-    sarPeste.current = true; setTab(t);
+    sarPeste.current = true; setTab(prev);
   };
   const mergiInainte = () => {
     if (!inainteSt.length) return;
@@ -10608,11 +10634,11 @@ function App() {
   const inSantier = tab === 'santiere' && !!navSantier;
   // Pe Dashboard / Activitatea mea nu arătăm butoane: ăsta E începutul.
   const peStart = !tab;
-  // În rest, ÎNAPOI există MEREU. Dacă nu mai am istoric, te duce în Dashboard.
+  // În rest, ÎNAPOI există MEREU. Ultimul pas te duce în MENIUL principal.
   const potInapoi = !inSantier && !peStart;
   const potInainte = !inSantier && !peStart && inainteSt.length > 0;
   const numeStart = effectiveUser?.rol === 'Manager' ? 'Dashboard' : 'Activitatea mea';
-  const etichetaInapoi = (!istoric.length || istoric[istoric.length - 1] == null) ? numeStart : 'Înapoi';
+  const etichetaInapoi = (istoric.length && istoric[istoric.length - 1] != null) ? 'Înapoi' : 'Meniu';
   // Deschide o întrebare Q&A: de pe ȘANTIER → tab-ul Q&A al șantierului; GENERALĂ → Asistent. (Definit AICI, după problemeSantier/pendingSiteNav.)
   const goQA = (qid) => {
     const q = qid ? (problemeSantier || []).find((x) => x.id === qid) : null;
@@ -11142,8 +11168,14 @@ function App() {
       )}
 
       <div className="w-full flex">
-      <aside className={`w-64 md:w-56 shrink-0 p-4 flex flex-col gap-1 fixed md:static inset-y-0 left-0 transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`} style={{ borderRight:'1px solid var(--border)', background:'var(--panel)', zIndex:50, overflowY:'auto' }}>
-        <button onClick={()=>{ setTab(effectiveUser.rol === 'Manager' ? null : 'activitate'); setSidebarOpen(false); }} className="flex items-center gap-2 px-2 mb-4">
+      <aside className={`w-full md:w-56 shrink-0 p-4 flex flex-col gap-1 fixed md:static inset-y-0 left-0 overflow-y-auto transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`} style={{ borderRight:'1px solid var(--border)', background:'var(--panel)', zIndex:50, overflowY:'auto' }}>
+        <div className="md:hidden flex items-center justify-between mb-3">
+          <button onClick={()=>{ setTab(effectiveUser.rol === 'Manager' ? null : 'activitate'); setSidebarOpen(false); }} className="flex items-center gap-2 px-2">
+            <img src="/logo.png" alt="Logo" style={{ height: 32, width: 'auto' }} />
+          </button>
+          <button onClick={()=>setSidebarOpen(false)} className="btn3d text-sm font-semibold px-3 py-2" style={{ color:'var(--muted)' }}>✕ Închide</button>
+        </div>
+        <button onClick={()=>{ setTab(effectiveUser.rol === 'Manager' ? null : 'activitate'); setSidebarOpen(false); }} className="hidden md:flex items-center gap-2 px-2 mb-4">
           <img src="/logo.png" alt="Logo" style={{ height: 32, width: 'auto' }} />
         </button>
         {accesLimitat && <div className="px-3 mb-2 text-[11px]" style={{ color:'var(--muted)', background:'var(--panel)', border:'1px solid var(--border)', borderRadius:8, padding:'8px 10px' }}>🧪 Perioadă de test — poți folosi <b style={{color:'var(--text)'}}>Activitatea mea, Șantiere, Profil</b>. Restul le vezi, dar se activează după test.</div>}
@@ -11292,7 +11324,7 @@ function App() {
             {tab === 'proiecte' && effectiveUser.rol === 'Manager' && <ProiecteTab clients={clients} invoices={invoices} setInvoices={setInvoices} devize={devize} offers={offers} santiere={santiere} rapoarte={rapoarte} structuraSantier={structuraSantier} proiecteFisiere={proiecteFisiere} setProiecteFisiere={setProiecteFisiere} persist={persist} currentUser={effectiveUser} goToSite={(id)=>{ setPendingSiteNav({ santierId:id, siteView:'__closed__' }); setTab('santiere'); }} onCreeazaProiect={creeazaProiect} printFactura={printOne('Factură')} printDeviz={printDevizOne} printOferta={printOne('Ofertă')} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} cereriAlocare={cereriAlocare} setCereriAlocare={setCereriAlocare} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} onSiteView={setSiteSectiune} onNav={setNavSantier} onIesire={()=>setTab(null)} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} cereriAlocare={cereriAlocare} setCereriAlocare={setCereriAlocare} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} onSiteView={setSiteSectiune} onNav={setNavSantier} onIesire={()=>setSidebarOpen(true)} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setRapoarte={setRapoarte} persist={persist} concedii={concedii} cereriAlocare={cereriAlocare} mementouri={mementouri} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />}
