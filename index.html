@@ -490,7 +490,11 @@ function noteazaSterse(key, vechi, nou){
   const idNou = new Set(nou.map((x)=>x&&x.id).filter((x)=>x!=null));
   const disparute = vechi.map((x)=>x&&x.id).filter((id)=>id!=null && !idNou.has(id));
   const o = getSterse(); const acum = Date.now();
-  if (disparute.length){ o[key] = o[key] || {}; disparute.forEach((id)=>{ o[key][String(id)] = acum; }); }
+  // PRUDENȚĂ: notăm doar ștergerile mici, făcute cu mâna (cel mult 3 deodată).
+  // Dacă dispar multe înregistrări dintr-odată, nu e o ștergere, ci o salvare cu date vechi —
+  // atunci NU notăm nimic, ca să nu se piardă munca nimănui.
+  if (disparute.length > 0 && disparute.length <= 3){ o[key] = o[key] || {}; disparute.forEach((id)=>{ o[key][String(id)] = acum; }); }
+  else if (disparute.length > 3) { try { console.warn('[sync] ' + disparute.length + ' înregistrări lipsesc la „' + key + '" — NU le marchez ca șterse.'); } catch(_){} }
   // Uităm ștergerile mai vechi de 60 de zile, ca registrul să nu crească la nesfârșit.
   const limita = acum - 60*24*3600*1000;
   Object.keys(o).forEach((k)=>{
@@ -499,6 +503,7 @@ function noteazaSterse(key, vechi, nou){
   });
   setSterse(o);
 }
+function uitaTotSters(key){ const o=getSterse(); if(o[key]){ delete o[key]; setSterse(o); } }
 function eSters(key, id){ const o=getSterse(); return !!(o[key] && o[key][String(id)]); }
 function faraSterse(key, arr){
   if(!Array.isArray(arr)) return arr;
@@ -525,14 +530,9 @@ async function loadKey(key, fallback) {
     const data = await r.json();
     let val = data.value ?? fallback;
     if (pending !== undefined) val = mergeById(val, pending.value, key);
-    // Ce am șters de pe telefonul ăsta NU se mai întoarce, oricâte ciorne vechi ar exista.
-    const inainte = Array.isArray(val) ? val.length : -1;
+    // Ce am șters de pe telefonul ăsta nu se mai întoarce din ciornele vechi.
+    // NU mai atingem serverul: filtrăm doar ce se afișează, ca să nu existe risc de pierdere.
     val = faraSterse(key, val);
-    // Dacă ștersele erau încă pe server (le-a re-urcat un alt telefon cu date vechi),
-    // curățăm și serverul, ca să nu reapară la următoarea intrare în aplicație.
-    if (inainte >= 0 && val.length < inainte) {
-      try { authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key, value: val }) }); } catch {}
-    }
     // PLASĂ DE SIGURANȚĂ: serverul întoarce GOL dar avem date locale → probabil pierdere pe server.
     // Nu ștergem — păstrăm datele locale și le re-trimitem pe server.
     if (Array.isArray(val) && val.length === 0 && Array.isArray(cached) && cached.length > 0) {
@@ -4995,7 +4995,7 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
   );
 }
 
-function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, concedii, cereriAlocare, setCereriAlocare, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav, onSiteView }) {
+function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, concedii, cereriAlocare, setCereriAlocare, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav, onSiteView, onNav }) {
   const [form, setForm] = useState(null);
   const [selected, setSelected] = useState(null);
   const [quickForm, setQuickForm] = useState(null); // angajat: creare rapidă șantier (doar nume + adresă)
@@ -5019,6 +5019,18 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
   const goForward = () => {
     if (viewForward.length) { const nx = viewForward[0]; setViewForward(viewForward.slice(1)); setViewHistory((h)=>[...h, siteView]); setSiteView(nx); }
   };
+  // Spunem aplicației ce poate face navigarea din șantier, ca butoanele de sus să fie unele singure.
+  useEffect(() => {
+    if (!onNav) return;
+    onNav(selected ? {
+      poateInapoi: true,
+      poateInainte: viewForward.length > 0,
+      inapoi: goBack,
+      inainte: goForward,
+      eticheta: viewHistory.length ? 'Înapoi' : 'Șantiere',
+    } : null);
+  }, [selected, siteView, viewHistory.length, viewForward.length]);
+  useEffect(() => () => { if (onNav) onNav(null); }, []);
   const [allUsers, setAllUsers] = useState([]);
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
   const [echipaVizibila, setEchipaVizibila] = useState(false);
@@ -5296,10 +5308,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     );
     return (
       <div>
-        {/* Navigarea rămâne mereu la vedere, și când ești într-o secțiune. */}
-        <div className="flex items-center gap-2 mb-3">
-          <button onClick={goBack} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>← Înapoi</button>
-          <button onClick={goForward} disabled={viewForward.length===0} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>Înainte →</button>
+        <div className="flex items-center mb-3">
           <button onClick={()=>setSelected(null)} className="btn3d text-xs font-semibold px-3 py-2 ml-auto" style={{ color:'var(--muted)' }}>🏗 Toate șantierele</button>
         </div>
         <div style={{ display: prezAscuns ? 'none' : undefined }}>
@@ -6742,7 +6751,8 @@ function ProfileTab({ currentUser, onLogout, tema, setTema, carduri, setCarduri 
       if (!Array.isArray(local) || local.length === 0) continue;
       let server = [];
       try { const r = await authFetch(`/api/data?key=${encodeURIComponent(k)}`); const d = await r.json(); server = Array.isArray(d.value) ? d.value : []; } catch {}
-      const merged = mergeById(server, local, k);
+      uitaTotSters(k); // recuperarea aduce înapoi tot, deci uităm ștergerile notate pentru cheia asta
+      const merged = mergeById(server, local);
       try {
         const rr = await authFetch('/api/data', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ key:k, value:merged }) });
         const dd = await rr.json();
@@ -10528,6 +10538,42 @@ function App() {
   const [pendingSiteNav, setPendingSiteNav] = useState(null);
   // Ce secțiune e deschisă în interiorul unui șantier — ca fundalul să se potrivească și acolo.
   const [siteSectiune, setSiteSectiune] = useState(null);
+  // Istoricul pașilor prin aplicație, pentru Înapoi / Înainte.
+  const [navSantier, setNavSantier] = useState(null);
+  const [istoric, setIstoric] = useState([]);
+  const [inainteSt, setInainteSt] = useState([]);
+  const tabAnterior = useRef(tab);
+  const sarPeste = useRef(false);
+  useEffect(() => {
+    if (sarPeste.current) { sarPeste.current = false; tabAnterior.current = tab; return; }
+    if (tabAnterior.current !== tab) {
+      setIstoric((h) => [...h, tabAnterior.current].slice(-40));
+      setInainteSt([]);
+      tabAnterior.current = tab;
+    }
+  }, [tab]);
+  const mergiInapoi = () => {
+    if (navSantier && tab === 'santiere' && navSantier.poateInapoi) { navSantier.inapoi(); return; }
+    if (!istoric.length) return;
+    const t = istoric[istoric.length - 1];
+    setIstoric((h) => h.slice(0, -1)); setInainteSt((f) => [tab, ...f]);
+    sarPeste.current = true; setTab(t);
+  };
+  const mergiInainte = () => {
+    if (navSantier && tab === 'santiere' && navSantier.poateInainte) { navSantier.inainte(); return; }
+    if (!inainteSt.length) return;
+    const t = inainteSt[0];
+    setInainteSt((f) => f.slice(1)); setIstoric((h) => [...h, tab]);
+    sarPeste.current = true; setTab(t);
+  };
+  const navLocal = (tab === 'santiere' && navSantier) ? navSantier : null;
+  const potInapoi = navLocal ? navLocal.poateInapoi : istoric.length > 0;
+  const potInainte = navLocal ? navLocal.poateInainte : inainteSt.length > 0;
+  // Scrisul devine „Dashboard" DOAR când următorul pas înapoi chiar e ecranul de start.
+  const etichetaInapoi = navLocal ? navLocal.eticheta
+    : (istoric.length && istoric[istoric.length - 1] == null
+        ? (effectiveUser?.rol === 'Manager' ? 'Dashboard' : 'Activitatea mea')
+        : 'Înapoi');
   // Deschide o întrebare Q&A: de pe ȘANTIER → tab-ul Q&A al șantierului; GENERALĂ → Asistent. (Definit AICI, după problemeSantier/pendingSiteNav.)
   const goQA = (qid) => {
     const q = qid ? (problemeSantier || []).find((x) => x.id === qid) : null;
@@ -11027,7 +11073,7 @@ function App() {
   };
 
   const NavItem = ({ id, label }) => (
-    <button onClick={()=>{ setTab(id); setSidebarOpen(false); }} className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: tab===id?'#14181C':'var(--muted1)', background: tab===id?'var(--acc1)':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
+    <button onClick={()=>{ setTab(id); setSidebarOpen(false); }} className="btn3d flex items-center gap-2.5 px-3 py-2.5 text-sm w-full text-left mb-1" style={{ color: tab===id?'#14181C':'var(--muted1)', background: tab===id?'var(--acc1)':'transparent', fontWeight: tab===id?600:400 }}>{label}</button>
   );
 
   if (!currentUser) {
@@ -11067,7 +11113,7 @@ function App() {
         <div style={{ height:1, background:'var(--border)', margin:'4px 4px 8px' }} />
         {effectiveUser.rol === 'Manager' && (
         <>
-        <button onClick={()=>setContabOpen(!contabOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: CONTAB_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
+        <button onClick={()=>setContabOpen(!contabOpen)} className="btn3d flex items-center justify-between px-3 py-2.5 text-sm w-full text-left mb-1" style={{ color: CONTAB_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
           <span>📊 Contabilitate</span>
           <span style={{ fontSize:10, transform: contabOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
         </button>
@@ -11083,7 +11129,7 @@ function App() {
         )}
         </>
         )}
-        <button onClick={()=>setMaterialeOpen(!materialeOpen)} className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left" style={{ color: MATERIALE_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
+        <button onClick={()=>setMaterialeOpen(!materialeOpen)} className="btn3d flex items-center justify-between px-3 py-2.5 text-sm w-full text-left mb-1" style={{ color: MATERIALE_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight:600 }}>
           <span>📦 Materiale</span>
           <span style={{ fontSize:10, transform: materialeOpen ? 'rotate(90deg)' : 'none', display:'inline-block' }}>▶</span>
         </button>
@@ -11132,11 +11178,10 @@ function App() {
         </div>
       </aside>
       <main className="flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0">
-        {tab && !loading && (
+        {!loading && (potInapoi || potInainte) && (
           <div className="flex items-center gap-2 mb-3">
-            <button onClick={()=>setTab(null)} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>
-              ← {effectiveUser.rol === 'Manager' ? 'Dashboard' : 'Activitatea mea'}
-            </button>
+            <button onClick={mergiInapoi} disabled={!potInapoi} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>← {etichetaInapoi}</button>
+            <button onClick={mergiInainte} disabled={!potInainte} className="btn3d text-xs font-semibold px-3 py-2" style={{ color:'var(--acc1)' }}>Înainte →</button>
           </div>
         )}
         <Prinde>
@@ -11200,7 +11245,7 @@ function App() {
             {tab === 'proiecte' && effectiveUser.rol === 'Manager' && <ProiecteTab clients={clients} invoices={invoices} setInvoices={setInvoices} devize={devize} offers={offers} santiere={santiere} rapoarte={rapoarte} structuraSantier={structuraSantier} proiecteFisiere={proiecteFisiere} setProiecteFisiere={setProiecteFisiere} persist={persist} currentUser={effectiveUser} goToSite={(id)=>{ setPendingSiteNav({ santierId:id, siteView:'__closed__' }); setTab('santiere'); }} onCreeazaProiect={creeazaProiect} printFactura={printOne('Factură')} printDeviz={printDevizOne} printOferta={printOne('Ofertă')} />}
             {(tab === 'gestiune' || tab === 'stocuri') && <MaterialsTab materials={materials} setMaterials={setMaterials} stockMoves={stockMoves} setStockMoves={setStockMoves} persist={persist} company={company} subTab={tab} />}
 
-            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} cereriAlocare={cereriAlocare} setCereriAlocare={setCereriAlocare} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} onSiteView={setSiteSectiune} />}
+            {tab === 'santiere' && <SantiereTab santiere={santiere} setSantiere={setSantiere} rapoarte={rapoarte} setRapoarte={setRapoarte} etape={etape} setEtape={setEtape} persist={persist} company={company} materials={materials} sculeSantier={sculeSantier} setSculeSantier={setSculeSantier} cereriSantier={cereriSantier} setCereriSantier={setCereriSantier} miscariSantier={miscariSantier} setMiscariSantier={setMiscariSantier} problemeSantier={problemeSantier} setProblemeSantier={setProblemeSantier} planseSantier={planseSantier} setPlanseSantier={setPlanseSantier} mediaSantier={mediaSantier} setMediaSantier={setMediaSantier} structuraSantier={structuraSantier} setStructuraSantier={setStructuraSantier} pozitiiSantier={pozitiiSantier} setPozitiiSantier={setPozitiiSantier} materialeListaSantier={materialeListaSantier} setMaterialeListaSantier={setMaterialeListaSantier} checklistSantier={checklistSantier} setChecklistSantier={setChecklistSantier} checklistConfirmari={checklistConfirmari} setChecklistConfirmari={setChecklistConfirmari} checklistSablon={checklistSablon} setChecklistSablon={setChecklistSablon} clients={clients} concedii={concedii} cereriAlocare={cereriAlocare} setCereriAlocare={setCereriAlocare} onExportToDeviz={exportConsumToDeviz} onExportMaterialeFolosite={exportMaterialeFolositeToDeviz} onCerereMaterial={proceseazaCerereMaterial} currentUser={effectiveUser} pendingSiteNav={pendingSiteNav} setPendingSiteNav={setPendingSiteNav} onSiteView={setSiteSectiune} onNav={setNavSantier} />}
             {tab === 'firma' && <CompanyTab company={company} setCompany={setCompany} persist={persist} />}
 
             {tab === 'activitate' && <ActivitateaMeaTab santiere={santiere} materials={materials} cereriSantier={cereriSantier} rapoarte={rapoarte} setRapoarte={setRapoarte} persist={persist} concedii={concedii} cereriAlocare={cereriAlocare} mementouri={mementouri} problemeSantier={problemeSantier} setTab={setTab} setPendingSiteNav={setPendingSiteNav} goQA={goQA} currentUser={effectiveUser} />}
