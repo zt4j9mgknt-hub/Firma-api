@@ -12,9 +12,12 @@ const MODEL_IMPLICIT = 'gemini-2.0-flash';
 // Dacă modelul cerut nu există (Google mai schimbă numele), încercăm pe rând și astea.
 const REZERVE = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-flash-latest'];
 
-async function cereGemini({ key, model, sistem, text, json }) {
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model +
-    ':generateContent?key=' + encodeURIComponent(key);
+// Cheile de la AI Studio vin în două formate: cele vechi („AIza…") și cele noi („AQ.Ab8…").
+// Cele noi nu merg întotdeauna trimise în adresă, așa că le trimitem în antet și, dacă
+// serverul le refuză, mai încercăm o dată pe vechea cale. Așa merg amândouă.
+async function cereGemini({ key, model, sistem, text, json, inAdresa }) {
+  const baza = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent';
+  const url = inAdresa ? (baza + '?key=' + encodeURIComponent(key)) : baza;
   const generationConfig = {
     // Extragerea raportului scoate un JSON cu lucrări, materiale și oameni — 800 de tokeni
     // se terminau la mijloc și JSON-ul ieșea rupt. La modul JSON dăm loc de întors.
@@ -23,9 +26,11 @@ async function cereGemini({ key, model, sistem, text, json }) {
   };
   // Modul JSON: Gemini garantează că răspunsul e JSON valid, fără ``` în jur.
   if (json) generationConfig.responseMimeType = 'application/json';
+  const headers = { 'content-type': 'application/json' };
+  if (!inAdresa) headers['x-goog-api-key'] = key;
   const r = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({
       system_instruction: { parts: [{ text: sistem }] },
       contents: [{ role: 'user', parts: [{ text }] }],
@@ -88,7 +93,12 @@ export default async function handler(req, res) {
     const deIncercat = [cerut, ...REZERVE.filter((m) => m !== cerut)];
     let ultimaEroare = 'AI a răspuns cu eroare.';
     for (const model of deIncercat) {
-      const { r, d } = await cereGemini({ key, model, sistem, text, json });
+      let { r, d } = await cereGemini({ key, model, sistem, text, json, inAdresa: false });
+      // Cheie refuzată în antet? Mai încercăm o dată cu ea pusă în adresă (formatul vechi).
+      if (!r.ok && (r.status === 401 || r.status === 403)) {
+        const dinNou = await cereGemini({ key, model, sistem, text, json, inAdresa: true });
+        r = dinNou.r; d = dinNou.d;
+      }
       if (r.ok) {
         let raspuns = '';
         try {
@@ -107,6 +117,15 @@ export default async function handler(req, res) {
         return res.status(200).json({ raspuns, model });
       }
       const msg = (d && d.error && d.error.message) ? d.error.message : '';
+      const stare = (d && d.error && d.error.status) ? d.error.status : '';
+      // Cazul cel mai des întâlnit la cheile noi „AQ.…": Google le blochează pe ruta asta.
+      if (/API_KEY_SERVICE_BLOCKED|SERVICE_DISABLED|API_KEY_INVALID/i.test(msg + ' ' + stare)) {
+        return res.status(502).json({
+          error: 'Google a refuzat cheia pe ruta Gemini. Intră în AI Studio → Chei API, șterge cheia și fă una nouă ' +
+                 'într-un proiect nou (butonul „Creează cheie API" → „Proiect nou"). Dacă tot nu merge, activează ' +
+                 '„Generative Language API" în Google Cloud, la proiectul cheii. Mesajul de la Google: ' + msg,
+        });
+      }
       ultimaEroare = msg || ultimaEroare;
       const lipsesteModelul = r.status === 404 || /not found|not supported|unsupported/i.test(msg);
       if (!lipsesteModelul) break; // altă problemă (cheie greșită, cotă depășită) — nu are rost să reîncercăm
