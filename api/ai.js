@@ -4,13 +4,13 @@
 // Necesită o variabilă de mediu în Vercel (Settings → Environment Variables):
 //   GEMINI_API_KEY  = cheia gratuită de la Google AI Studio (aistudio.google.com/apikey)
 // Opțional:
-//   GEMINI_MODEL    = model (implicit: gemini-2.0-flash)
+//   GEMINI_MODEL    = model (implicit: gemini-2.5-flash)
 //
 // Fără cheie, ruta întoarce 500 și aplicația folosește automat căutarea locală.
 
-const MODEL_IMPLICIT = 'gemini-2.0-flash';
+const MODEL_IMPLICIT = 'gemini-2.5-flash';
 // Dacă modelul cerut nu există (Google mai schimbă numele), încercăm pe rând și astea.
-const REZERVE = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-flash-latest'];
+const REZERVE = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
 
 // Cheile de la AI Studio vin în două formate: cele vechi („AIza…") și cele noi („AQ.Ab8…").
 // Cele noi nu merg întotdeauna trimise în adresă, așa că le trimitem în antet și, dacă
@@ -124,6 +124,13 @@ export default async function handler(req, res) {
           error: 'Google a refuzat cheia pe ruta Gemini. Intră în AI Studio → Chei API, șterge cheia și fă una nouă ' +
                  'într-un proiect nou (butonul „Creează cheie API" → „Proiect nou"). Dacă tot nu merge, activează ' +
                  '„Generative Language API" în Google Cloud, la proiectul cheii. Mesajul de la Google: ' + msg,
+        });
+      }
+      if (/limit: 0/i.test(msg) || (/quota/i.test(msg) && /free_tier/i.test(msg) && /limit: 0/i.test(msg))) {
+        return res.status(502).json({
+          error: 'Google nu mai dă cotă gratuită pe acest model (îți răspunde „limit: 0"). Nu ai consumat nimic — ' +
+                 'pur și simplu proiectul are nevoie de un cont de facturare activat, chiar dacă rămâi sub pragul gratuit lunar. ' +
+                 'Se activează din console.cloud.google.com → Billing, pe proiectul cheii.',
         });
       }
       ultimaEroare = msg || ultimaEroare;
