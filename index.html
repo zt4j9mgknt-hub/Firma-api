@@ -717,7 +717,7 @@ const ROLES = [
 // Când se termină testul, pune false ca să revină accesul complet.
 const PERIOADA_TEST = false;
 // Etichetă de versiune — apare jos în meniu, ca să confirmi că s-a încărcat ultima versiune.
-const APP_VERSION = 'v01.08-an2';
+const APP_VERSION = 'v01.08-proiecte';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 // De când ținem evidența financiară în aplicație (graficele nu arată luni dinainte de asta).
@@ -8598,6 +8598,7 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
   const [openS, setOpenS] = useState({});
   const [openF, setOpenF] = useState({});
   const [attachFor, setAttachFor] = useState(null);
+  const [aratTotiClientii, setAratTotiClientii] = useState(false);
   const [upBusy, setUpBusy] = useState('');
   const [upErr, setUpErr] = useState('');
   const fileRef = useRef(null);
@@ -8717,7 +8718,19 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
     return out;
   }, [cauta, santiere, rapoarte, invoices, devize, offers, structuraSantier, proiecteFisiere, clients]);
 
-  const clientiFiltrati = (clients||[]).slice().sort((a,b)=> String(a.nume).localeCompare(String(b.nume), 'ro'));
+  // În Proiecte arătăm DOAR clienții care au ceva în dosar (șantier, factură, deviz, ofertă sau document).
+  // Altfel toată lista importată din contabilitate apărea ca foldere goale și nu mai găseai nimic.
+  const totiClientii = (clients||[]).slice().sort((a,b)=> String(a.nume).localeCompare(String(b.nume), 'ro'));
+  const areCeva = (c) => (
+    (invoices||[]).some((i)=>i.clientId===c.id) ||
+    (devize||[]).some((d)=>d.clientId===c.id) ||
+    (offers||[]).some((o)=>o.clientId===c.id) ||
+    (santiere||[]).some((s)=>s.benefClientId===c.id) ||
+    fisiere.some((x)=>x.scopeType==='client' && x.scopeId===c.id)
+  );
+  const clientiCuDosar = totiClientii.filter(areCeva);
+  const clientiFiltrati = aratTotiClientii ? totiClientii : clientiCuDosar;
+  const nrGoi = totiClientii.length - clientiCuDosar.length;
   const santiereFaraClient = (santiere||[]).filter((s)=> !s.benefClientId);
 
   // ---- Un folder de ȘANTIER (creat automat pentru fiecare șantier) ----
@@ -8852,6 +8865,12 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
         </div>
       ) : (
         <div className="space-y-2">
+          {nrGoi > 0 && (
+            <div className="flex items-center justify-between gap-2 text-[11px] px-3 py-2 rounded-lg" style={{ color:'var(--muted)', background:'var(--panel2)', border:'1px solid var(--border)' }}>
+              <span>{aratTotiClientii ? `Toți cei ${totiClientii.length} clienți, inclusiv ${nrGoi} fără nimic în dosar.` : `${clientiCuDosar.length} ${clientiCuDosar.length===1?'client cu dosar':'clienți cu dosar'} · ${nrGoi} ${nrGoi===1?'client e ascuns, n-are nimic':'clienți sunt ascunși, n-au nimic'}.`}</span>
+              <button onClick={()=>setAratTotiClientii(!aratTotiClientii)} className="shrink-0 px-2.5 py-1 rounded-lg font-semibold" style={{ color:'var(--acc1)', background:'var(--panel)', border:'1px solid var(--border)' }}>{aratTotiClientii ? 'Doar cu dosar' : 'Arată-i pe toți'}</button>
+            </div>
+          )}
           {clientiFiltrati.length === 0 && santiereFaraClient.length === 0 && <div className="text-center py-10 text-sm" style={{ color:'var(--muted)' }}>Niciun client sau șantier încă.</div>}
           {santiereFaraClient.length > 0 && (
             <div className="rounded-xl" style={{ background:'var(--panel)', border:'1px dashed var(--border)' }}>
