@@ -253,6 +253,21 @@
 <script>"use strict";
 const { useState, useEffect, useRef, useMemo } = React;
 const uid = () => Math.random().toString(36).slice(2, 10);
+const urmatorulNumar = (prefix, lista) => {
+    const an = new Date().getFullYear();
+    const cap = `${prefix}-${an}-`;
+    let maxim = 0;
+    (lista || []).forEach((d) => {
+        const nr = String(d && d.numar || '');
+        if (!nr.startsWith(cap))
+            return;
+        const n = parseInt(nr.slice(cap.length), 10);
+        if (!isNaN(n) && n > maxim)
+            maxim = n;
+    });
+    return cap + String(maxim + 1).padStart(3, '0');
+};
+const TVA_IMPLICIT = 21;
 const money = (n) => new Intl.NumberFormat('ro-RO', { style: 'currency', currency: 'RON' }).format(n || 0);
 const fmtData = (iso) => { if (!iso)
     return ''; const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`; };
@@ -856,7 +871,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.08-arhiva';
+const APP_VERSION = 'v01.08-santier';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -917,8 +932,9 @@ function LineItemsEditor({ items, setItems, materials }) {
 function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
     const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
     const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire: '', um: 'buc', cantitate: 1, pretUnitar: 0, adaos: 0 }]);
-    const [tva, setTva] = useState(initial?.tva ?? 19);
+    const [tva, setTva] = useState(initial?.tva ?? TVA_IMPLICIT);
     const _dataDoc = initial?.data || new Date().toISOString().slice(0, 10);
+    const [dataDoc, setDataDoc] = useState(_dataDoc);
     const _scadentaImplicita = (() => { try {
         const d = new Date(_dataDoc + 'T00:00:00');
         d.setDate(d.getDate() + 30);
@@ -942,6 +958,10 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
                     React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "TVA"),
                     React.createElement("input", { type: "number", value: tva, onChange: (e) => setTva(e.target.value), className: "w-12 bg-transparent outline-none text-sm py-2", style: { color: 'var(--text)' } }),
                     React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "%"))),
+            React.createElement("div", { className: "flex items-center gap-2 mb-3 flex-wrap" },
+                React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Data documentului:"),
+                React.createElement(RoCalendarPicker, { value: dataDoc, onChange: setDataDoc }),
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "O po\u021Bi pune \u00EEn urm\u0103, dac\u0103 introduci acum un document emis mai devreme.")),
             kind === 'Factură' && (React.createElement("div", { className: "flex items-center gap-2 mb-3 flex-wrap" },
                 React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Scaden\u021B\u0103 (termen de plat\u0103):"),
                 React.createElement(RoCalendarPicker, { value: scadenta, onChange: setScadenta }),
@@ -956,11 +976,25 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
                     React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)))),
             React.createElement("div", { className: "flex justify-end gap-2 mt-4" },
                 React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"),
-                React.createElement("button", { onClick: () => onSave({ id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0, 10), scadenta: kind === 'Factură' ? scadenta : undefined, clientId, items, tva: Number(tva), status: initial?.status || (kind === 'Ofertă' ? 'Ciornă' : 'De încasat'), offerId: initial?.offerId }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103"))))));
+                React.createElement("button", { onClick: () => onSave({ ...(initial || {}), id: initial?.id || uid(), numar: initial?.numar, data: dataDoc, scadenta: kind === 'Factură' ? scadenta : undefined, clientId, items, tva: Number(tva), status: initial?.status || (kind === 'Ofertă' ? 'Ciornă' : 'De încasat'), offerId: initial?.offerId }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103"))))));
 }
-function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusChange, onConvert, onPrint, onSmartBill }) {
+function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusChange, onConvert, onPrint, onSmartBill, onDuplica }) {
     const [sbState, setSbState] = useState({});
+    const [cauta, setCauta] = useState('');
+    const [filtruStare, setFiltruStare] = useState('');
     const clientName = (id) => clients.find((c) => c.id === id)?.nume || '—';
+    const stareDoc = (d) => kind === 'Factură' ? normStatusFactura(d.status) : d.status;
+    const normC = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const vizibile = docs.filter((d) => {
+        if (filtruStare && stareDoc(d) !== filtruStare)
+            return false;
+        if (!cauta.trim())
+            return true;
+        const t = normC([d.numar, clientName(d.clientId), d.data, d.santierNume, d.lucrare].join(' '));
+        return normC(cauta).split(/\s+/).filter(Boolean).every((w) => t.includes(w));
+    });
+    const totalVizibil = vizibile.reduce((a, d) => a + calcSubtotal(d.items) * (1 + (Number(d.tva) || 0) / 100), 0);
+    const nrPeStare = (st) => docs.filter((d) => stareDoc(d) === st).length;
     if (docs.length === 0)
         return React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } },
             "Nicio ",
@@ -976,37 +1010,57 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
             setSbState((s) => ({ ...s, [d.id]: { status: 'error', message: e.message || 'Eroare la trimitere.' } }));
         }
     };
-    return (React.createElement("div", { className: "space-y-2" }, docs.slice().sort((a, b) => a.numar < b.numar ? 1 : -1).map((d) => {
-        const total = calcSubtotal(d.items) * (1 + d.tva / 100);
-        const sb = sbState[d.id];
-        return (React.createElement("div", { key: d.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-            React.createElement("div", { className: "flex items-center justify-between gap-4" },
-                React.createElement("div", { className: "flex flex-col gap-0.5 min-w-0" },
-                    React.createElement("span", { className: "text-sm font-medium truncate", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, d.numar),
-                    React.createElement("span", { className: "text-xs truncate", style: { color: 'var(--muted)' } },
-                        clientName(d.clientId),
-                        " \u00B7 ",
-                        d.data)),
-                React.createElement("span", { className: "text-sm shrink-0", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)),
-                React.createElement("div", { className: "shrink-0" },
-                    React.createElement(StatusSwitch, { status: d.status, options: statuses, onChange: (s) => onStatusChange(d.id, s) })),
-                React.createElement("div", { className: "flex items-center gap-2 shrink-0" },
-                    onConvert && React.createElement("button", { onClick: () => onConvert(d), className: "text-xs flex items-center gap-1 px-2 py-1 rounded-lg", style: { color: 'var(--acc2)', background: 'var(--panel2)' } },
-                        React.createElement(Icon, null, "\u2192"),
-                        " Factureaz\u0103"),
-                    onSmartBill && (React.createElement("button", { onClick: () => sendToSmartBill(d), disabled: sb?.status === 'loading', className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1 disabled:opacity-40", style: { color: 'var(--acc2)', background: 'var(--panel2)' } },
-                        React.createElement(Icon, null, "\u2601"),
-                        " ",
-                        sb?.status === 'loading' ? '...' : 'SmartBill')),
-                    React.createElement("button", { onClick: () => onPrint(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--muted)', background: 'var(--panel2)' } },
-                        React.createElement(Icon, null, "\uD83D\uDDA8"),
-                        " PDF"),
-                    React.createElement("button", { onClick: () => onEdit(d), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"),
-                    React.createElement("button", { onClick: () => onDelete(d.id), style: { color: 'var(--acc4)' } },
-                        React.createElement(Icon, null, "\uD83D\uDDD1")))),
-            sb?.message && (React.createElement("div", { className: "text-xs mt-2", style: { color: sb.status === 'error' ? 'var(--acc4)' : 'var(--acc2)' } }, sb.message)),
-            d.stocMesaj && (React.createElement("div", { className: "text-xs mt-2", style: { color: d.stocMesaj.startsWith('Nepotrivite') ? 'var(--acc3)' : 'var(--acc2)' } }, d.stocMesaj))));
-    })));
+    return (React.createElement("div", null,
+        React.createElement("div", { className: "flex items-center gap-2 mb-3 flex-wrap" },
+            React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: `🔍 Caută după număr, client sau lucrare`, className: "rounded-lg px-3 py-2 text-sm outline-none flex-1 min-w-[180px]", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+            React.createElement("button", { onClick: () => setFiltruStare(''), className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: !filtruStare ? '#14181C' : 'var(--muted)', background: !filtruStare ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+                "Toate (",
+                docs.length,
+                ")"),
+            statuses.map((st) => nrPeStare(st) > 0 ? (React.createElement("button", { key: st, onClick: () => setFiltruStare(filtruStare === st ? '' : st), className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: filtruStare === st ? '#14181C' : 'var(--muted)', background: filtruStare === st ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+                st,
+                " (",
+                nrPeStare(st),
+                ")")) : null)),
+        React.createElement("div", { className: "flex items-center justify-between gap-2 mb-2 px-1" },
+            React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, vizibile.length === docs.length ? `${docs.length} ${docs.length === 1 ? 'document' : 'documente'}` : `${vizibile.length} din ${docs.length}`),
+            React.createElement("span", { className: "text-xs font-semibold", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } },
+                "Total afi\u0219at: ",
+                money(totalVizibil))),
+        vizibile.length === 0 && React.createElement("div", { className: "text-center py-10 text-sm", style: { color: 'var(--muted)' } }, "Niciun rezultat. Schimb\u0103 c\u0103utarea sau filtrul."),
+        React.createElement("div", { className: "space-y-2" }, vizibile.slice().sort((a, b) => a.numar < b.numar ? 1 : -1).map((d) => {
+            const total = calcSubtotal(d.items) * (1 + d.tva / 100);
+            const sb = sbState[d.id];
+            return (React.createElement("div", { key: d.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                React.createElement("div", { className: "flex items-center justify-between gap-4" },
+                    React.createElement("div", { className: "flex flex-col gap-0.5 min-w-0" },
+                        React.createElement("span", { className: "text-sm font-medium truncate", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, d.numar),
+                        React.createElement("span", { className: "text-xs truncate", style: { color: 'var(--muted)' } },
+                            clientName(d.clientId),
+                            " \u00B7 ",
+                            fmtData(d.data),
+                            d.scadenta ? ` · scadent ${fmtData(d.scadenta)}` : '')),
+                    React.createElement("span", { className: "text-sm shrink-0", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)),
+                    React.createElement("div", { className: "shrink-0" },
+                        React.createElement(StatusSwitch, { status: kind === 'Factură' ? normStatusFactura(d.status) : d.status, options: statuses, onChange: (s) => onStatusChange(d.id, s) })),
+                    React.createElement("div", { className: "flex items-center gap-2 shrink-0" },
+                        onConvert && React.createElement("button", { onClick: () => onConvert(d), className: "text-xs flex items-center gap-1 px-2 py-1 rounded-lg", style: { color: 'var(--acc2)', background: 'var(--panel2)' }, title: "Duce pozi\u021Biile ofertei \u00EEntr-un deviz nou" },
+                            React.createElement(Icon, null, "\u2192"),
+                            " F\u0103 deviz"),
+                        onSmartBill && (React.createElement("button", { onClick: () => sendToSmartBill(d), disabled: sb?.status === 'loading', className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1 disabled:opacity-40", style: { color: 'var(--acc2)', background: 'var(--panel2)' } },
+                            React.createElement(Icon, null, "\u2601"),
+                            " ",
+                            sb?.status === 'loading' ? '...' : 'SmartBill')),
+                        React.createElement("button", { onClick: () => onPrint(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--muted)', background: 'var(--panel2)' } },
+                            React.createElement(Icon, null, "\uD83D\uDDA8"),
+                            " PDF"),
+                        React.createElement("button", { onClick: () => onEdit(d), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"),
+                        onDuplica && React.createElement("button", { onClick: () => onDuplica(d), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Face un document nou, cu acelea\u0219i pozi\u021Bii" }, "\u29C9 Dubleaz\u0103"),
+                        React.createElement("button", { onClick: () => onDelete(d.id), style: { color: 'var(--acc4)' } },
+                            React.createElement(Icon, null, "\uD83D\uDDD1")))),
+                sb?.message && (React.createElement("div", { className: "text-xs mt-2", style: { color: sb.status === 'error' ? 'var(--acc4)' : 'var(--acc2)' } }, sb.message)),
+                d.stocMesaj && (React.createElement("div", { className: "text-xs mt-2", style: { color: d.stocMesaj.startsWith('Nepotrivite') ? 'var(--acc3)' : 'var(--acc2)' } }, d.stocMesaj))));
+        }))));
 }
 const CLIENT_IMPORT_SEED = [
     ['1 ST RESIDENCE SRL', 'juridica', 'RO43688087', 'Str. Avram Iancu, Nr. 423b, C.P. 407280, Floresti, Cluj', '', ''],
@@ -1552,6 +1606,12 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     };
     const gestiuni = [...new Set(baseList.map((m) => m.categorie).filter(Boolean))].sort();
     const [stocShowAll, setStocShowAll] = useState(false);
+    const [doarSubMinim, setDoarSubMinim] = useState(false);
+    const setMinim = (id, v) => {
+        const next = materials.map((m) => m.id === id ? { ...m, stocMinim: Number(v) || 0 } : m);
+        setMaterials(next);
+        persist('materials', next);
+    };
     const [gestShowAll, setGestShowAll] = useState(false);
     const [gestFlatAll, setGestFlatAll] = useState(false);
     const [gestGroup, setGestGroup] = useState(null);
@@ -1670,10 +1730,17 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
         subTab === 'stocuri' && (React.createElement("div", null,
             React.createElement("div", { className: "flex items-center gap-2 mb-4 flex-wrap" },
                 React.createElement("input", { placeholder: "\uD83D\uDD0D Caut\u0103 (ex: cablu 3x2,5)", value: filter, onChange: (e) => setFilter(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                (() => {
+                    const n = materialeActive.filter((m) => Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim)).length;
+                    return n > 0 ? (React.createElement("button", { onClick: () => setDoarSubMinim(!doarSubMinim), className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: doarSubMinim ? '#14181C' : 'var(--acc4)', background: doarSubMinim ? 'var(--acc4)' : 'var(--panel2)', border: '1px solid #E0525266' } },
+                        "\u26A0 Sub minim (",
+                        n,
+                        ")")) : null;
+                })(),
                 !stocShowAll && !searchingGestiune && (React.createElement("button", { onClick: () => setStocShowAll(true), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCE6 Afi\u0219eaz\u0103 stoc integral")),
                 stocShowAll && !searchingGestiune && (React.createElement("button", { onClick: () => setStocShowAll(false), className: "text-xs px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Ascunde lista"))),
-            materialeActive.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun material \u2014 adaug\u0103 mai \u00EEnt\u00E2i din tab-ul \u201EGestiune\".")) : !stocShowAll && !searchingGestiune ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Caut\u0103 un material, sau apas\u0103 \u201EAfi\u0219eaz\u0103 stoc integral\".")) : (React.createElement("div", { className: "space-y-2" }, filteredStocuri.map((m) => {
-                const low = Number(m.stoc) < Number(m.stocMinim);
+            materialeActive.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun material \u2014 adaug\u0103 mai \u00EEnt\u00E2i din tab-ul \u201EGestiune\".")) : !stocShowAll && !searchingGestiune ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Caut\u0103 un material, sau apas\u0103 \u201EAfi\u0219eaz\u0103 stoc integral\".")) : (React.createElement("div", { className: "space-y-2" }, filteredStocuri.filter((m) => !doarSubMinim || (Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim))).map((m) => {
+                const low = Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim);
                 const moves = stockMoves.filter((mv) => mv.materialId === m.id).slice(0, 8);
                 return (React.createElement("div", { key: m.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: `1px solid ${low ? '#E0525266' : 'var(--border)'}` } },
                     React.createElement("div", { className: "flex items-center justify-between gap-3" },
@@ -1686,9 +1753,9 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                                     m.stoc,
                                     " ",
                                     m.um),
-                                React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                                React.createElement("div", { className: "text-[11px] flex items-center gap-1 justify-end", style: { color: 'var(--muted2)' } },
                                     "min ",
-                                    m.stocMinim)),
+                                    React.createElement("input", { type: "number", inputMode: "decimal", value: m.stocMinim ?? 0, onChange: (e) => setMinim(m.id, e.target.value), className: "w-12 rounded px-1 py-0.5 text-[11px] outline-none text-center", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' }, title: "Sub cifra asta prime\u0219ti avertizare" }))),
                             moveState?.materialId === m.id ? (React.createElement(MoveInput, { tip: moveState.tip, defaultPret: m.pret, onConfirm: (c, n, p) => confirmMove(m, moveState.tip, c, n, p), onCancel: () => setMoveState(null) })) : (React.createElement("div", { className: "flex items-center gap-1.5" },
                                 React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'intrare' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc2)', background: 'var(--panel2)' } }, "+ Intrare"),
                                 React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'iesire' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "\u2212 Ie\u0219ire"))))),
@@ -1707,7 +1774,7 @@ const DEVIZ_STATUSES = ['Ciornă', 'Emis', 'Semnat'];
 function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) {
     const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
     const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire: '', um: 'buc', cantitate: 1, pretUnitar: 0, adaos: 0 }]);
-    const [tva, setTva] = useState(initial?.tva ?? 21);
+    const [tva, setTva] = useState(initial?.tva ?? TVA_IMPLICIT);
     const [nrContract, setNrContract] = useState(initial?.nrContract || '');
     const [dataContract, setDataContract] = useState(initial?.dataContract || '');
     const [actAditional, setActAditional] = useState(initial?.actAditional || '');
@@ -1724,12 +1791,16 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
             return;
         }
         setSantierNume(sx.nume || '');
-        if (sx.adresa)
-            setAdresaLucrare(sx.adresa);
+        if (sx.adresaDeviz || sx.adresa)
+            setAdresaLucrare(sx.adresaDeviz || sx.adresa);
         if (sx.lucrare)
             setLucrare(sx.lucrare);
         if (sx.benefClientId)
             setClientId(sx.benefClientId);
+        if (sx.contract)
+            setNrContract(sx.contract);
+        if (sx.actAditional)
+            setActAditional(sx.actAditional);
     };
     const subtotal = calcSubtotal(items);
     const total = subtotal * (1 + tva / 100);
@@ -1785,7 +1856,7 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
                         nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, santierId, santierNume,
                     }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103"))))));
 }
-function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill }) {
+function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill, onFactureaza }) {
     const [form, setForm] = useState(prefill || null);
     useEffect(() => {
         if (prefill) {
@@ -1793,11 +1864,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
             onConsumePrefill();
         }
     }, [prefill]);
-    const nextNumber = (list) => {
-        const year = new Date().getFullYear();
-        const n = list.filter((d) => d.numar?.includes(`DEV-${year}`)).length + 1;
-        return `DEV-${year}-${String(n).padStart(3, '0')}`;
-    };
+    const nextNumber = (list) => urmatorulNumar('DEV', list);
     const save = (d) => {
         const withNumber = { ...d, numar: d.numar || nextNumber(devize) };
         const original = devize.find((x) => x.id === d.id);
@@ -1854,7 +1921,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
                         React.createElement("span", { className: "text-xs truncate", style: { color: 'var(--muted)' } },
                             clientName(d.clientId),
                             " \u00B7 ",
-                            d.data,
+                            fmtData(d.data),
                             d.santierNume ? ` · 🏗 ${d.santierNume}` : '',
                             d.adresaLucrare ? ` · 📍 ${d.adresaLucrare}` : '',
                             d.lucrare ? ` · ${d.lucrare}` : '')),
@@ -1862,6 +1929,9 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
                     React.createElement("div", { className: "shrink-0" },
                         React.createElement(StatusSwitch, { status: d.status, options: DEVIZ_STATUSES, onChange: (s) => setStatus(d.id, s) })),
                     React.createElement("div", { className: "flex items-center gap-2 shrink-0" },
+                        onFactureaza && React.createElement("button", { onClick: () => onFactureaza(d), className: "text-xs flex items-center gap-1 px-2 py-1 rounded-lg", style: { color: 'var(--acc2)', background: 'var(--panel2)' }, title: "Factur\u0103 cu un singur r\u00E2nd \u2014 conform contract, anex\u0103 \u0219i deviz \u2014 cu totalul devizului" },
+                            React.createElement(Icon, null, "\u2192"),
+                            " Factureaz\u0103"),
                         React.createElement("button", { onClick: () => printOne(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--muted)', background: 'var(--panel2)' } },
                             React.createElement(Icon, null, "\uD83D\uDDA8"),
                             " PDF"),
@@ -3326,7 +3396,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     </style></head><body>${PRINT_TOOLBAR}
       <div class="page">
         <div class="header-row">
-          <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
+          <img class="logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
           <div class="title-block">
             <div class="title">CERERE MATERIALE</div>
             <div style="font-size:11px;color:#555;margin-top:2mm;">Șantier: ${esc(santierNume)}</div>
@@ -3891,7 +3961,7 @@ function PozitiiExecutateEditor({ pozitiiExecutate, setPozitiiExecutate, pozitii
             const optiuni = (pozitii || []).map((p) => ({ key: p.id, label: (p.nrCrt ? p.nrCrt + '. ' : '') + String(p.denumire), um: p.um, id: p.id }));
             const displayVal = x.cautaText != null ? x.cautaText : (poz ? poz.denumire : '');
             return (React.createElement("div", { key: x.id, className: "flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1.5", style: { background: 'var(--panel2)' } },
-                React.createElement(AutocompleteInput, { value: displayVal, onChange: (v) => update(x.id, 'cautaText', v), onPick: (o) => setPozitiiExecutate(pozitiiExecutate.map((y) => y.id === x.id ? { ...y, pozitieId: o.id, cautaText: o.label } : y)), options: optiuni, placeholder: "Caut\u0103 pozi\u021Bia...", minWidth: "150px" }),
+                React.createElement(AutocompleteInput, { value: displayVal, onChange: (v) => update(x.id, 'cautaText', v), onPick: (o) => setPozitiiExecutate(pozitiiExecutate.map((y) => y.id === x.id ? { ...y, pozitieId: o.id, cautaText: o.label, denumire: o.label, um: o.um } : y)), options: optiuni, placeholder: "Caut\u0103 pozi\u021Bia...", minWidth: "150px" }),
                 React.createElement("input", { type: "number", inputMode: "decimal", placeholder: "Cant.", value: x.cantitate, onChange: (e) => update(x.id, 'cantitate', e.target.value), className: "w-20 rounded-lg px-2 py-1.5 text-xs outline-none text-center", style: inputStyle }),
                 React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted)' } }, poz?.um || ''),
                 React.createElement("button", { onClick: () => remove(x.id), className: "opacity-60", style: { color: 'var(--acc4)' } },
@@ -4192,6 +4262,48 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
     const [lucrariApartamente, setLucrariApartamente] = useState(() => normalizeLucrariApart(initial?.lucrariApartamente || []));
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const totalOreMin = persoane.reduce((s, p) => s + personMinutes(p), 0);
+    const ultimulRaport = useMemo(() => {
+        if (initial)
+            return null;
+        const ale = (rapoarte || []).filter((r) => r.santierId === santierId && (r.persoane || []).some((x) => x.nume && String(x.nume).trim()));
+        if (!ale.length)
+            return null;
+        return ale.slice().sort((a, b) => (a.data < b.data ? 1 : -1))[0];
+    }, [rapoarte, santierId, initial]);
+    const [precompletat, setPrecompletat] = useState(false);
+    const preiaDinUltimul = () => {
+        if (!ultimulRaport)
+            return;
+        const p = (ultimulRaport.persoane || []).filter((x) => x.nume && String(x.nume).trim())
+            .map((x) => ({ id: uid(), nume: x.nume, oraInceput: x.oraInceput || oraInceput, oraSfarsit: x.oraSfarsit || oraSfarsit }));
+        setPersoane(p);
+        if (ultimulRaport.oraInceput)
+            setOraInceput(ultimulRaport.oraInceput);
+        if (ultimulRaport.oraSfarsit)
+            setOraSfarsit(ultimulRaport.oraSfarsit);
+        if (ultimulRaport.etapaId)
+            setEtapaId(ultimulRaport.etapaId);
+        setPrecompletat(true);
+    };
+    const rezumatUltim = ultimulRaport
+        ? (ultimulRaport.persoane || []).filter((x) => x.nume && String(x.nume).trim())
+            .map((x) => String(x.nume).split(' ')[0]).join(', ')
+        : '';
+    const numeNorm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const pozitiiNepotrivite = useMemo(() => {
+        if (!pozitii || !pozitii.length)
+            return [];
+        const cunoscute = new Set((pozitii || []).map((x) => numeNorm(x.denumire)));
+        const out = [];
+        (lucrariApartamente || []).forEach((l) => {
+            lucrariDinRand(l).forEach((w) => {
+                const d = String(w.denumire || '').trim();
+                if (d && !cunoscute.has(numeNorm(d)))
+                    out.push(d);
+            });
+        });
+        return [...new Set(out)];
+    }, [lucrariApartamente, pozitii]);
     const aplicaAI = ({ lucrari, materiale, persoane: pers, explicatii: expl }) => {
         if (lucrari && lucrari.length) {
             const exist = new Set(tipuriLucrari.map((t) => String(t.denumire || '').toLowerCase().trim()));
@@ -4227,6 +4339,17 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
     };
     return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement(AIRaportPanel, { echipaNume: echipaNume, materialeSugestii: (materials || []).map((m) => m.denumire).filter(Boolean), onAplica: aplicaAI }),
+        ultimulRaport && !precompletat && persoane.length === 0 && (React.createElement("div", { className: "flex items-center gap-2 mb-3 rounded-xl px-3 py-2.5 flex-wrap", style: { background: 'var(--panel2)', border: '1px solid #4CAF7D66' } },
+            React.createElement("span", { className: "text-xs flex-1 min-w-0", style: { color: 'var(--text)' } },
+                React.createElement("b", null, "Ca ultima dat\u0103:"),
+                " ",
+                rezumatUltim || 'echipa de atunci',
+                ultimulRaport.oraInceput ? ` · ${ultimulRaport.oraInceput}–${ultimulRaport.oraSfarsit}` : '',
+                React.createElement("span", { style: { color: 'var(--muted2)' } },
+                    " (",
+                    fmtData(ultimulRaport.data),
+                    ")")),
+            React.createElement("button", { type: "button", onClick: preiaDinUltimul, className: "text-xs px-3 py-2 rounded-lg font-semibold shrink-0", style: { color: '#14181C', background: 'var(--acc2)' } }, "Folose\u0219te"))),
         React.createElement("div", { className: "flex gap-3 mb-2 flex-wrap items-end" },
             React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } },
                 "Data",
@@ -4244,9 +4367,10 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
                     etape.map((e) => React.createElement("option", { key: e.id, value: e.id, style: { background: 'var(--panel)' } }, e.nume)))))),
         React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)' } }, "Orele implicite se aplic\u0103 persoanelor noi ad\u0103ugate; fiecare persoan\u0103 \u00EE\u0219i poate ajusta apoi propriul interval."),
         React.createElement(PersonHoursEditor, { persoane: persoane, setPersoane: setPersoane, defaultInceput: oraInceput, defaultSfarsit: oraSfarsit, echipaPermisa: echipaPermisa, concedii: concedii, rapoarte: rapoarte, data: data }),
-        arePozitii && !areStructura && pozitii && pozitii.length > 0 && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
+        ((arePozitii && pozitii && pozitii.length > 0) || pozitiiExecutate.length > 0) && !areStructura && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
             React.createElement(PozitiiExecutateEditor, { pozitiiExecutate: pozitiiExecutate, setPozitiiExecutate: setPozitiiExecutate, pozitii: pozitii }))),
-        areMateriale && !areStructura && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
+        (areMateriale || materialeFolosite.length > 0) && !areStructura && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
+            !areMateriale && React.createElement("div", { className: "text-[11px] mb-1.5", style: { color: 'var(--acc3)' } }, "\u2139\uFE0F \u0218antierul \u0103sta se factureaz\u0103 pe ore, deci materialele sunt doar informative \u2014 dar se salveaz\u0103 \u00EEn raport \u0219i le vede managerul."),
             React.createElement(MaterialeFolositeEditor, { materialeFolosite: materialeFolosite, setMaterialeFolosite: setMaterialeFolosite, materials: materials, materialeLista: materialeLista, materialClient: false, pretDinLista: modR === 'real_executat', isManager: isManager }))),
         modR === 'orar_lucrari' && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
             React.createElement(TipuriLucrariEditor, { tipuriLucrari: tipuriLucrari, setTipuriLucrari: setTipuriLucrari }))),
@@ -4259,13 +4383,26 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
                 React.createElement(SiteStructuraTab, { santierId: santierId, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, materials: materials, materialeLista: materialeLista }))),
             structura && structura.length > 0 ? (React.createElement(LucrariApartamenteEditor, { lucrari: lucrariApartamente, setLucrari: setLucrariApartamente, structura: structura, persoane: persoane, echipaNume: echipaNume, pozitii: pozitii, materialeLista: materialeLista })) : (React.createElement("p", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Adaug\u0103 etaje/apartamente cu butonul \u201E\u270E Etaje / apartamente\" de sus, apoi po\u021Bi nota cine a lucrat unde.")))),
         React.createElement("textarea", { placeholder: "Alte observa\u021Bii (op\u021Bional)...", value: explicatii, onChange: (e) => setExplicatii(e.target.value), rows: 2, className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-3", style: inputStyle }),
+        pozitiiNepotrivite.length > 0 && (React.createElement("div", { className: "mt-3 rounded-lg px-3 py-2.5", style: { background: '#E9A23B15', border: '1px solid #E9A23B55' } },
+            React.createElement("div", { className: "text-xs font-semibold mb-1", style: { color: 'var(--acc3)' } },
+                "\u26A0 ",
+                pozitiiNepotrivite.length === 1 ? 'O lucrare nu e în lista de poziții' : `${pozitiiNepotrivite.length} lucrări nu sunt în lista de poziții`),
+            React.createElement("div", { className: "text-[11px]", style: { color: 'var(--text)' } },
+                pozitiiNepotrivite.slice(0, 6).join(' · '),
+                pozitiiNepotrivite.length > 6 ? ' …' : ''),
+            React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--muted2)' } }, "Se salveaz\u0103 \u00EEn raport, dar NU intr\u0103 singure \u00EEn deviz, pentru c\u0103 nu se potrivesc cu nicio pozi\u021Bie din list\u0103. Alege-le din sugestii sau spune-i managerului s\u0103 le adauge \u00EEn \u201EPozi\u021Bii / Materiale\"."))),
         React.createElement("div", { className: "flex justify-between items-center mt-3" },
             React.createElement("span", { className: "text-sm", style: { color: 'var(--muted)' } },
                 "Total ore: ",
                 React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(totalOreMin))),
             React.createElement("div", { className: "flex gap-2" },
                 React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"),
-                React.createElement("button", { onClick: () => onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, explicatii }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))));
+                React.createElement("button", { onClick: () => {
+                        const cuNume = persoane.filter((p) => p.nume && String(p.nume).trim());
+                        if (!cuNume.length && !window.confirm('N-ai bifat pe nimeni care a lucrat azi. Orele nu vor intra în Pontaj. Salvezi totuși?'))
+                            return;
+                        onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, explicatii });
+                    }, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))));
 }
 function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack, rapoarte, materials, materialeLista }) {
     const normM = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -4944,10 +5081,30 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const [rapDeschise, setRapDeschise] = useState({});
     const [luniDeschise, setLuniDeschise] = useState({});
     const [devizNr, setDevizNr] = useState('');
+    const [devizNrAtins, setDevizNrAtins] = useState(false);
+    const urmatorulDevizSantier = (sx) => String((Number(sx && sx.ultimNrDeviz) || 0) + 1);
+    const retineNrDeviz = (sx, nr) => {
+        const n = parseInt(String(nr), 10);
+        if (!sx || isNaN(n))
+            return;
+        if (n <= (Number(sx.ultimNrDeviz) || 0))
+            return;
+        const next = santiere.map((x) => x.id === sx.id ? { ...x, ultimNrDeviz: n } : x);
+        setSantiere(next);
+        persist('santiere', next);
+        setDevizNrAtins(false);
+    };
     const [devizData, setDevizData] = useState(new Date().toISOString().slice(0, 10));
     const _aziD = new Date();
     const [devizFrom, setDevizFrom] = useState(new Date(_aziD.getFullYear(), _aziD.getMonth(), 1).toISOString().slice(0, 10));
     const [devizTo, setDevizTo] = useState(new Date(_aziD.getFullYear(), _aziD.getMonth() + 1, 0).toISOString().slice(0, 10));
+    useEffect(() => {
+        if (!selected)
+            return;
+        const sx = santiere.find((x) => x.id === selected);
+        if (sx && !devizNrAtins)
+            setDevizNr(urmatorulDevizSantier(sx));
+    }, [selected, santiere]);
     useEffect(() => {
         if (!pendingSiteNav)
             return;
@@ -5338,14 +5495,18 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                             React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "p\u00E2n\u0103 la"),
                             React.createElement(RoCalendarPicker, { value: devizTo, onChange: setDevizTo }),
                             React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nr."),
-                            React.createElement("input", { value: devizNr, onChange: (e) => setDevizNr(e.target.value), placeholder: "ex: 2", className: "w-16 rounded-lg px-2 py-1.5 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                            React.createElement("input", { value: devizNr, onChange: (e) => { setDevizNr(e.target.value); setDevizNrAtins(true); }, placeholder: "ex: 2", className: "w-16 rounded-lg px-2 py-1.5 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                            Number(santier?.ultimNrDeviz) > 0 && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                                "(ultimul pe \u0219antierul \u0103sta: ",
+                                santier.ultimNrDeviz,
+                                ")"),
                             React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Data deviz"),
                             React.createElement(RoCalendarPicker, { value: devizData, onChange: setDevizData }),
-                            areOre && (React.createElement("button", { onClick: () => openDevizOrar({ santier, company, rapoarte: rapInterval(), nr: devizNr || '—', data: fmtData(devizData), includeLucrari: modS === 'orar_lucrari' }), className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Genereaz\u0103 deviz (PDF)")),
+                            areOre && (React.createElement("button", { onClick: () => { retineNrDeviz(santier, devizNr); openDevizOrar({ santier, company, rapoarte: rapInterval(), nr: devizNr || '—', data: fmtData(devizData), includeLucrari: modS === 'orar_lucrari' }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Genereaz\u0103 deviz (PDF)")),
                             estePoz && (React.createElement(React.Fragment, null,
-                                React.createElement("button", { onClick: () => openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }), className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83D\uDCCB Deviz manoper\u0103"),
-                                modS === 'pozitie_propriu' && (React.createElement("button", { onClick: () => openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }), className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDF0 Deviz materiale")))),
-                            esteReal && (React.createElement("button", { onClick: () => openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }), className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83E\uDDFE Deviz real executat")),
+                                React.createElement("button", { onClick: () => { retineNrDeviz(santier, devizNr); openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83D\uDCCB Deviz manoper\u0103"),
+                                modS === 'pozitie_propriu' && (React.createElement("button", { onClick: () => { retineNrDeviz(santier, devizNr); openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDF0 Deviz materiale")))),
+                            esteReal && (React.createElement("button", { onClick: () => { retineNrDeviz(santier, devizNr); openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83E\uDDFE Deviz real executat")),
                             (!santier?.benefNume) && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Completeaz\u0103 \u201EDetalii pentru deviz\" la editarea \u0219antierului (beneficiar, contract)."),
                             estePoz && pozitiiS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 pozi\u021Biile la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."),
                             esteReal && materialeListaS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 lista de materiale/opera\u021Biuni cu pre\u021Buri la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."),
@@ -7347,7 +7508,9 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
             const end = new Date(c.dataSfarsit);
             while (d <= end) {
                 const ds = d.toISOString().slice(0, 10);
-                if (ds.startsWith(luna))
+                const zi = d.getDay();
+                const eSarbatoare = (SARBATORI_LEGALE[d.getFullYear()] || []).includes(ds);
+                if (ds.startsWith(luna) && zi !== 0 && zi !== 6 && !eSarbatoare)
                     cnt++;
                 d.setDate(d.getDate() + 1);
             }
@@ -7492,7 +7655,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     </style></head><body>${PRINT_TOOLBAR}
       <div class="page">
         <div class="header-row">
-          <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
+          <img class="logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
           <div class="title-block">
             <div class="title">PONTAJ</div>
             <div style="font-size:11px;color:#555;margin-top:2mm;">${santierFiltruNume ? 'Șantier: ' + esc(santierFiltruNume) + ' — ' : ''}${esc(lunaNume)} ${esc(anNume)}</div>
@@ -7581,7 +7744,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
             ${company?.regCom ? `Numar registrul comertului:${esc(company.regCom)}<br/>` : ''}
             SANTIER: ${esc(santier.nume)}${santier.adresa ? ' , ' + esc(santier.adresa) : ''}
           </div>
-          <img class="logo" src="${window.location.origin}/logo.png" alt="Logo" />
+          <img class="logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
         </div>
         <div class="title">FOAIE COLECTIVA DE PREZENTA - EVIDENTA NUMARULUI DE ORE LUCRATE</div>
         <div class="subtitle">LUNA ${esc(lunaNume.toUpperCase())} ${esc(anNume)}</div>
@@ -7726,9 +7889,15 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, co
                 return;
         }
         if (form.id) {
+            const veche = (concedii || []).find((c) => c.id === form.id);
+            if (veche && veche.status === 'Aprobat') {
+                if (!window.confirm('Concediul ăsta e deja APROBAT. Dacă îl modifici, iese din aprobare și managerul trebuie să îl aprobe din nou. Continui?'))
+                    return;
+            }
             const next = concedii.map((c) => c.id === form.id ? { ...c, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', status: 'Cerut' } : c);
             setConcedii(next);
             persist('concedii', next);
+            notifica('manageri', { title: veche && veche.status === 'Aprobat' ? 'Concediu modificat — de reaprobat' : 'Cerere de concediu modificată', body: `${currentUser?.nume || 'Un coleg'}: ${form.dataInceput} → ${form.dataSfarsit}.`, tag: 'concediu' }, currentUser?.id);
         }
         else {
             const c = { id: uid(), userId: currentUser.id, nume: currentUser.nume, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', status: 'Cerut' };
@@ -7957,6 +8126,7 @@ function AchizitiiTab({ achizitii, setAchizitii, persist }) {
                     React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1"))))))))));
 }
 function UsersTab({ currentUser }) {
+    const [parolaVizibila, setParolaVizibila] = useState(false);
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [form, setForm] = useState(null);
@@ -8023,7 +8193,9 @@ function UsersTab({ currentUser }) {
         form && (React.createElement("div", { className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
             React.createElement("input", { placeholder: "Nume complet", value: form.nume, onChange: (e) => setForm({ ...form, nume: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
             React.createElement("input", { placeholder: "Username", value: form.username, onChange: (e) => setForm({ ...form, username: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
-            React.createElement("input", { type: "text", placeholder: form.id ? 'Parolă nouă (lasă gol ca să nu o schimbi)' : 'Parolă standard', value: form.password, onChange: (e) => setForm({ ...form, password: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("input", { type: parolaVizibila ? 'text' : 'password', autoComplete: "new-password", placeholder: form.id ? 'Parolă nouă (lasă gol ca să nu o schimbi)' : 'Parolă standard', value: form.password, onChange: (e) => setForm({ ...form, password: e.target.value }), className: "flex-1 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
+                React.createElement("button", { onClick: () => setParolaVizibila(!parolaVizibila), className: "px-3 py-2 rounded-lg text-sm shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Arat\u0103 sau ascunde parola" }, parolaVizibila ? '🙈' : '👁')),
             React.createElement("input", { placeholder: "Telefon (op\u021Bional)", value: form.telefon, onChange: (e) => setForm({ ...form, telefon: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
             React.createElement("input", { placeholder: "CNP (op\u021Bional, 13 cifre \u2014 pentru ziua de na\u0219tere)", value: form.cnp, onChange: (e) => setForm({ ...form, cnp: e.target.value.replace(/\D/g, '').slice(0, 13) }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { ...inputStyle, fontFamily: "'JetBrains Mono', monospace" } }),
             React.createElement("div", { className: "flex gap-2" }, ROLES.map((r) => (React.createElement("button", { key: r.id, onClick: () => setForm({ ...form, rol: r.id }), className: "flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5", style: { color: form.rol === r.id ? '#14181C' : 'var(--muted)', background: form.rol === r.id ? 'var(--acc1)' : 'var(--panel2)' } },
@@ -8132,7 +8304,8 @@ function MementoTab({ mementouri, setMementouri, persist, clients, santiere, cur
         persist('mementouri', next);
     };
     const amanaOra = (m, ore) => {
-        const d = new Date(memMoment(m));
+        const programat = new Date(memMoment(m)).getTime();
+        const d = new Date(Math.max(Date.now(), programat));
         d.setHours(d.getHours() + ore);
         const next = lista.map((x) => x.id === m.id ? { ...x, data: d.toISOString().slice(0, 10), ora: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, anuntat: false, gata: false } : x);
         setMementouri(next);
@@ -9590,15 +9763,67 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
 }
 function CompanyTab({ company, setCompany, persist }) {
     const [form, setForm] = useState(company);
+    const [salvat, setSalvat] = useState('');
+    const [urcare, setUrcare] = useState('');
+    const refLogo = useRef(null);
+    const refStampila = useRef(null);
     useEffect(() => setForm(company), [company]);
-    const save = () => { setCompany(form); persist('company', form); };
-    const fields = [['nume', 'Denumire firmă'], ['cui', 'CUI'], ['regCom', 'Nr. Registrul Comerțului'], ['adresa', 'Adresă sediu'], ['iban', 'IBAN'], ['email', 'E-mail'], ['telefon', 'Telefon'], ['administrator', 'Administrator (nume)'], ['emailContabil', 'E-mail contabilă (pt. concedii/adeverințe)'], ['adaosMaterial', 'Adaos la materiale % (implicit 15)']];
+    const save = () => { setCompany(form); persist('company', form); setSalvat('✅ Salvat.'); setTimeout(() => setSalvat(''), 2500); };
+    const urcaImagine = async (camp, file) => {
+        if (!file)
+            return;
+        if (file.size > 1.5 * 1024 * 1024) {
+            setUrcare('Imaginea e prea mare (peste 1,5 MB). Fă-o mai mică și încearcă din nou.');
+            return;
+        }
+        setUrcare('Se încarcă…');
+        try {
+            const dataUrl = await new Promise((rez, rej) => { const fr = new FileReader(); fr.onload = () => rez(fr.result); fr.onerror = rej; fr.readAsDataURL(file); });
+            const nou = { ...form, [camp]: dataUrl };
+            setForm(nou);
+            setCompany(nou);
+            await persist('company', nou);
+            setUrcare('');
+            setSalvat('✅ Salvat.');
+            setTimeout(() => setSalvat(''), 2500);
+        }
+        catch (_) {
+            setUrcare('Nu am putut încărca imaginea.');
+        }
+    };
+    const scoate = (camp) => { const nou = { ...form }; delete nou[camp]; setForm(nou); setCompany(nou); persist('company', nou); };
+    const GRUPE = [
+        ['Identificare', [['nume', 'Denumire firmă'], ['cui', 'CUI'], ['regCom', 'Nr. Registrul Comerțului'], ['adresa', 'Adresă sediu']]],
+        ['Contact', [['email', 'E-mail'], ['telefon', 'Telefon'], ['administrator', 'Administrator (nume)'], ['emailContabil', 'E-mail contabilă (pentru concedii și adeverințe)']]],
+        ['Facturare', [['iban', 'IBAN'], ['adaosMaterial', 'Adaos la materiale % (implicit 15)']]],
+    ];
+    const zonaImagine = (camp, titlu, explicatie, ref, inaltime) => (React.createElement("div", { className: "rounded-lg p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+        React.createElement("div", { className: "text-xs font-semibold mb-0.5", style: { color: 'var(--text)' } }, titlu),
+        React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, explicatie),
+        form[camp] ? (React.createElement("div", { className: "flex items-center gap-3" },
+            React.createElement("img", { src: form[camp], alt: "", style: { height: inaltime, width: 'auto', background: '#fff', borderRadius: 6, padding: 4 } }),
+            React.createElement("div", { className: "flex flex-col gap-1.5" },
+                React.createElement("button", { onClick: () => ref.current && ref.current.click(), className: "text-xs px-2.5 py-1.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "Schimb\u0103"),
+                React.createElement("button", { onClick: () => scoate(camp), className: "text-xs px-2.5 py-1.5 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel)', border: '1px solid #E0525244' } }, "Scoate")))) : (React.createElement("button", { onClick: () => ref.current && ref.current.click(), className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCE4 \u00CEncarc\u0103")),
+        React.createElement("input", { ref: ref, type: "file", accept: "image/*", style: { display: 'none' }, onChange: (e) => { const f = e.target.files && e.target.files[0]; if (e.target)
+                e.target.value = ''; urcaImagine(camp, f); } })));
     return (React.createElement("div", null,
         React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Firma mea"),
         React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted)' } }, "Aceste date apar ca emitent pe fiecare document exportat \u00EEn PDF."),
-        React.createElement("div", { className: "rounded-xl p-4 space-y-2 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-            fields.map(([f, label]) => (React.createElement("input", { key: f, placeholder: label, value: form[f] || '', onChange: (e) => setForm({ ...form, [f]: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }))),
-            React.createElement("div", { className: "flex justify-end pt-2" },
+        React.createElement("div", { className: "rounded-xl p-4 space-y-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            GRUPE.map(([titlu, campuri]) => (React.createElement("div", { key: titlu },
+                React.createElement("div", { className: "text-[11px] font-bold uppercase tracking-wider mb-2", style: { color: 'var(--muted2)' } }, titlu),
+                React.createElement("div", { className: "space-y-2" }, campuri.map(([f, label]) => (React.createElement("div", { key: f },
+                    React.createElement("div", { className: "text-[11px] mb-1", style: { color: 'var(--muted)' } }, label),
+                    React.createElement("input", { placeholder: label, value: form[f] || '', onChange: (e) => setForm({ ...form, [f]: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } })))))))),
+            React.createElement("div", null,
+                React.createElement("div", { className: "text-[11px] font-bold uppercase tracking-wider mb-2", style: { color: 'var(--muted2)' } }, "Sigla \u0219i \u0219tampila"),
+                React.createElement("div", { className: "space-y-2" },
+                    zonaImagine('logo', '🖼 Sigla firmei', 'Apare sus pe devize, oferte, facturi și adeverințe. Dacă o lași goală, se folosește sigla din aplicație.', refLogo, 44),
+                    zonaImagine('stampila', '🔖 Ștampila și semnătura', 'Apare jos, la rubrica Executant. Fă o poză pe hârtie albă sau scaneaz-o. Fără ea, documentele ies cu ștampila de probă din aplicație.', refStampila, 70)),
+                urcare && React.createElement("div", { className: "text-[11px] mt-2", style: { color: urcare.startsWith('Se') ? 'var(--muted)' : 'var(--acc4)' } }, urcare)),
+            React.createElement("div", { className: "flex justify-end items-center gap-3 pt-1" },
+                salvat && React.createElement("span", { className: "text-xs", style: { color: 'var(--acc2)' } }, salvat),
                 React.createElement("button", { onClick: save, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))));
 }
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -9652,7 +9877,7 @@ function pageHtml({ doc, kind, client, company }) {
     <td>${esc(money((Number(it.cantitate) || 0) * pretFinal(it)))}</td></tr>`).join('');
     return `<div class="print-page">
     <div class="pp-header-row">
-      <img class="pp-logo" src="${window.location.origin}/logo.png" alt="Logo" />
+      <img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
       <div class="pp-title-block">
         <div class="pp-title">${kind === 'Ofertă' ? 'OFERTĂ' : 'FACTURĂ'}</div>
         <div class="pp-number">Nr. ${esc(doc.numar)} din ${esc(doc.data)}</div>
@@ -9718,7 +9943,7 @@ function devizPageHtml({ doc, client, company }) {
         metaLines.push(`<b>Lucrare:</b> ${esc(doc.lucrare)}`);
     return `<div class="print-page">
     <div class="pp-header-row">
-      <img class="pp-logo" src="${window.location.origin}/logo.png" alt="Logo" />
+      <img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
       <div class="pp-title-block">
         <div class="pp-title">DEVIZ LUCRĂRI</div>
         <div class="pp-number">Nr. ${esc(doc.numar)} din ${esc(doc.data)}</div>
@@ -9962,7 +10187,7 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrar
         ${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}
       </div>
       <div style="flex:0 0 auto; text-align:center; padding:0 2mm;">
-        <img src="${window.location.origin}/logo.png" alt="Logo" style="height:80px; width:auto;" />
+        <img src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" style="height:80px; width:auto;" />
       </div>
       <div style="flex:1; font-size:10px; line-height:1.55; text-align:right;">
         <div style="font-weight:700;">BENEFICIAR:</div>
@@ -10083,7 +10308,7 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr,
         ${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}
       </div>
       <div style="flex:0 0 auto; text-align:center; padding:0 2mm;">
-        <img src="${window.location.origin}/logo.png" alt="Logo" style="height:80px; width:auto;" />
+        <img src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" style="height:80px; width:auto;" />
       </div>
       <div style="flex:1; font-size:10px; line-height:1.55; text-align:right;">
         <div style="font-weight:700;">BENEFICIAR:</div>
@@ -10213,7 +10438,7 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
         ${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}
       </div>
       <div style="flex:0 0 auto; text-align:center; padding:0 2mm;">
-        <img src="${window.location.origin}/logo.png" alt="Logo" style="height:80px; width:auto;" />
+        <img src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" style="height:80px; width:auto;" />
       </div>
       <div style="flex:1; font-size:10px; line-height:1.55; text-align:right;">
         <div style="font-weight:700;">BENEFICIAR:</div>
@@ -10938,10 +11163,49 @@ function App() {
             persist('stockMoves', nextMoves);
         }
     };
-    const nextNumber = (prefix, list) => {
-        const year = new Date().getFullYear();
-        const n = list.filter((d) => d.numar?.includes(`${prefix}-${year}`)).length + 1;
-        return `${prefix}-${year}-${String(n).padStart(3, '0')}`;
+    const nextNumber = (prefix, list) => urmatorulNumar(prefix, list);
+    const duplicaDoc = (kind) => (d) => {
+        const copie = { ...d, id: uid(), numar: undefined, data: new Date().toISOString().slice(0, 10),
+            status: kind === 'Ofertă' ? 'Ciornă' : 'De încasat', devizeIds: undefined, stocDedus: undefined, stocMesaj: undefined,
+            items: (d.items || []).map((it) => ({ ...it, id: uid() })) };
+        if (kind === 'Ofertă')
+            setOfferForm(copie);
+        else
+            setInvoiceForm(copie);
+    };
+    const randDinDeviz = (d) => {
+        const bucati = ['Lucrări executate'];
+        if (d.nrContract)
+            bucati.push(`conform contract nr. ${d.nrContract}${d.dataContract ? ' din ' + fmtData(d.dataContract) : ''}`);
+        if (d.actAditional)
+            bucati.push(`conform anexa nr. ${d.actAditional}${d.dataActAditional ? ' din ' + fmtData(d.dataActAditional) : ''}`);
+        if (d.numar)
+            bucati.push(`conform deviz nr. ${d.numar}${d.data ? ' din ' + fmtData(d.data) : ''}`);
+        if (d.santierNume)
+            bucati.push(`— ${d.santierNume}`);
+        return bucati.join(', ').replace(', —', ' —');
+    };
+    const facturaDinDeviz = (d) => {
+        const valoare = calcSubtotal(d.items || []);
+        setInvoiceForm({
+            id: uid(), clientId: d.clientId,
+            items: [{ id: uid(), denumire: randDinDeviz(d), um: 'buc', cantitate: 1, pretUnitar: valoare, adaos: 0 }],
+            tva: d.tva, status: 'De încasat', data: new Date().toISOString().slice(0, 10),
+            santierId: d.santierId, santierNume: d.santierNume, adresaLucrare: d.adresaLucrare, lucrare: d.lucrare,
+            nrContract: d.nrContract, dataContract: d.dataContract, actAditional: d.actAditional, dataActAditional: d.dataActAditional,
+            devizeIds: [d.id],
+        });
+        setTab('facturi');
+    };
+    const devizDinOferta = (o) => {
+        const sX = (santiere || []).find((x) => x.benefClientId === o.clientId) || null;
+        setDevizPrefill({
+            clientId: o.clientId, items: (o.items || []).map((it) => ({ ...it, id: uid() })), tva: o.tva,
+            santierId: sX?.id || '', santierNume: sX?.nume || '', adresaLucrare: sX?.adresaDeviz || sX?.adresa || '',
+            lucrare: sX?.lucrare || '', nrContract: sX?.contract || '', actAditional: sX?.actAditional || '',
+            dinOfertaId: o.id,
+        });
+        setTab('devize');
     };
     const saveOffer = (o) => {
         const withNumber = { ...o, numar: o.numar || nextNumber('OF', offers) };
@@ -11151,7 +11415,7 @@ function App() {
                         React.createElement("button", { onClick: () => setTab('santiere'), className: "mt-4 text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83C\uDFD7 Mergi la \u0218antiere"))) : (React.createElement(React.Fragment, null,
                         error && React.createElement("div", { className: "text-xs mb-4 px-3 py-2 rounded-lg", style: { color: 'var(--acc4)', background: 'rgba(224,82,82,.14)' } }, error),
                         HELP[tab] && React.createElement(HelpNote, { text: HELP[tab], isManager: effectiveUser.rol === 'Manager' }),
-                        tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, clients: clients, materials: materials, santiere: santiere, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => deductStock(doc.items, `Deviz ${doc.numar}`), onReverse: (doc) => reverseStock(doc.items, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null) })),
+                        tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, clients: clients, materials: materials, santiere: santiere, onFactureaza: facturaDinDeviz, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => deductStock(doc.items, `Deviz ${doc.numar}`), onReverse: (doc) => reverseStock(doc.items, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null) })),
                         tab === 'oferte' && (React.createElement("div", null,
                             React.createElement("div", { className: "flex justify-between items-center mb-4" },
                                 React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Oferte"),
@@ -11159,7 +11423,7 @@ function App() {
                                     offers.length > 0 && React.createElement("button", { onClick: () => printAll(offers, 'Ofertă'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
                                     !offerForm && React.createElement("button", { onClick: () => setOfferForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 ofert\u0103"))),
                             offerForm && React.createElement(DocForm, { kind: "Ofert\u0103", clients: clients, materials: materials, initial: (offerForm.id || offerForm.items) ? offerForm : null, onCancel: () => setOfferForm(null), onSave: saveOffer }),
-                            React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: convertToInvoice, onPrint: printOne('Ofertă') }))),
+                            React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: devizDinOferta, onPrint: printOne('Ofertă'), onDuplica: duplicaDoc('Ofertă') }))),
                         tab === 'facturi' && (React.createElement("div", null,
                             React.createElement("div", { className: "flex justify-between items-center mb-4" },
                                 React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Facturi"),
@@ -11167,7 +11431,7 @@ function App() {
                                     invoices.length > 0 && React.createElement("button", { onClick: () => printAll(invoices, 'Factură'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
                                     !invoiceForm && React.createElement("button", { onClick: () => setInvoiceForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 factur\u0103"))),
                             invoiceForm && React.createElement(DocForm, { kind: "Factur\u0103", clients: clients, materials: materials, initial: invoiceForm.id ? invoiceForm : null, onCancel: () => setInvoiceForm(null), onSave: saveInvoice }),
-                            React.createElement(DocTable, { kind: "Factur\u0103", docs: invoices, clients: clients, statuses: INVOICE_STATUSES, onEdit: setInvoiceForm, onDelete: deleteInvoice, onStatusChange: invoiceStatus, onPrint: printOne('Factură'), onSmartBill: sendInvoiceToSmartBill }))),
+                            React.createElement(DocTable, { kind: "Factur\u0103", docs: invoices, clients: clients, statuses: INVOICE_STATUSES, onEdit: setInvoiceForm, onDelete: deleteInvoice, onStatusChange: invoiceStatus, onPrint: printOne('Factură'), onSmartBill: sendInvoiceToSmartBill, onDuplica: duplicaDoc('Factură') }))),
                         tab === 'clienti' && React.createElement(ClientsTab, { clients: clients, setClients: setClients, persist: persist }),
                         tab === 'notite' && effectiveUser.rol === 'Manager' && React.createElement(NotiteTab, { notite: notite, setNotite: setNotite, persist: persist, clients: clients, santiere: santiere, currentUser: effectiveUser, onOfertaDinNota: (n) => {
                                 const items = (n.materiale || []).map((m) => ({ id: uid(), denumire: m.denumire, um: m.um || 'buc', cantitate: Number(m.cantitate) || 1, pretUnitar: 0, adaos: 0 }));
