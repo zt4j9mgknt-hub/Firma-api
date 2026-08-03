@@ -1,15 +1,53 @@
 // api/ai.js
-// Asistentul Q&A cu AI. Primește întrebarea + răspunsurile date anterior de manager (context)
-// și întoarce un răspuns în limba română, bazat pe acele răspunsuri.
+// Asistentul cu AI (Q&A + raport din vorbe). Folosește Google Gemini — are un nivel GRATUIT, fără card.
 //
 // Necesită o variabilă de mediu în Vercel (Settings → Environment Variables):
-//   ANTHROPIC_API_KEY  = cheia ta de la Anthropic (console.anthropic.com)
+//   GEMINI_API_KEY  = cheia gratuită de la Google AI Studio (aistudio.google.com/apikey)
 // Opțional:
-//   AI_MODEL           = model (implicit: claude-3-5-haiku-latest, cel mai ieftin)
+//   GEMINI_MODEL    = model (implicit: gemini-2.0-flash)
 //
-// Fără cheie, ruta întoarce 500 și aplicația folosește automat căutarea în răspunsurile existente.
+// Fără cheie, ruta întoarce 500 și aplicația folosește automat căutarea locală.
+
+const MODEL_IMPLICIT = 'gemini-2.0-flash';
+// Dacă modelul cerut nu există (Google mai schimbă numele), încercăm pe rând și astea.
+const REZERVE = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-flash-latest'];
+
+async function cereGemini({ key, model, sistem, text, json }) {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model +
+    ':generateContent?key=' + encodeURIComponent(key);
+  const generationConfig = {
+    // Extragerea raportului scoate un JSON cu lucrări, materiale și oameni — 800 de tokeni
+    // se terminau la mijloc și JSON-ul ieșea rupt. La modul JSON dăm loc de întors.
+    maxOutputTokens: json ? 2048 : 800,
+    temperature: json ? 0.1 : 0.3,
+  };
+  // Modul JSON: Gemini garantează că răspunsul e JSON valid, fără ``` în jur.
+  if (json) generationConfig.responseMimeType = 'application/json';
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: sistem }] },
+      contents: [{ role: 'user', parts: [{ text }] }],
+      generationConfig,
+    }),
+  });
+  let d = {};
+  try { d = await r.json(); } catch (_) {}
+  return { r, d };
+}
 
 export default async function handler(req, res) {
+  // Verificare rapidă din aplicație: „merge AI-ul?", fără să consume nimic la Google.
+  if (req.method === 'GET') {
+    return res.status(200).json({
+      ok: !!process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL || MODEL_IMPLICIT,
+      mesaj: process.env.GEMINI_API_KEY
+        ? 'Ruta există și cheia e pusă.'
+        : 'Ruta există, dar lipsește GEMINI_API_KEY din variabilele de mediu Vercel.',
+    });
+  }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Doar POST.' });
   }
@@ -19,50 +57,61 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Lipsește tokenul aplicației.' });
   }
 
-  const key = process.env.ANTHROPIC_API_KEY;
+  const key = process.env.GEMINI_API_KEY;
   if (!key) {
-    return res.status(500).json({ error: 'Lipsește ANTHROPIC_API_KEY din variabilele de mediu.' });
+    return res.status(500).json({ error: 'Lipsește GEMINI_API_KEY din variabilele de mediu.' });
   }
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-    const intrebare = String(body.intrebare || '').slice(0, 2000).trim();
+    const intrebare = String(body.intrebare || '').slice(0, 8000).trim();
     const context = Array.isArray(body.context) ? body.context.slice(0, 20).map((x) => String(x).slice(0, 1500)) : [];
+    const json = body.json === true;
     if (!intrebare) return res.status(400).json({ error: 'Fără întrebare.' });
 
-    const sistem = 'Ești asistentul tehnic al firmei de instalații electrice SC SMART ELECTROCONECT. ' +
-      'Răspunzi scurt, clar și practic, în limba română, ca un electrician-șef cu experiență. ' +
-      'Folosește CU PRIORITATE răspunsurile date anterior de manager (mai jos). ' +
-      'Dacă informația nu se găsește acolo, dă un răspuns tehnic general prudent și spune clar că trebuie confirmat de manager. ' +
-      'Nu inventa valori exacte nesigure (secțiuni de cablu, amperaje) — dacă nu ești sigur, recomandă verificarea cu managerul.';
+    const sistem = json
+      ? 'Ești asistentul unei firme de instalații electrice din România. Răspunzi DOAR cu JSON valid, ' +
+        'exact în structura cerută de utilizator. Nu inventa date care nu au fost spuse: ce lipsește rămâne listă goală sau text gol.'
+      : 'Ești asistentul tehnic al firmei de instalații electrice SC SMART ELECTROCONECT. ' +
+        'Răspunzi scurt, clar și practic, în limba română, ca un electrician-șef cu experiență. ' +
+        'Folosește CU PRIORITATE răspunsurile date anterior de manager (dacă sunt oferite mai jos). ' +
+        'Dacă informația nu se găsește acolo, dă un răspuns tehnic general prudent și spune clar că trebuie confirmat de manager. ' +
+        'Nu inventa valori exacte nesigure (secțiuni de cablu, amperaje) — dacă nu ești sigur, recomandă verificarea cu managerul.';
 
     const contextText = context.length
-      ? ('Răspunsuri date anterior de manager (bază de cunoștințe a firmei):\n\n' + context.join('\n\n'))
-      : 'Nu există încă răspunsuri anterioare în baza de cunoștințe.';
+      ? ('Răspunsuri date anterior de manager (bază de cunoștințe a firmei):\n\n' + context.join('\n\n') + '\n\n')
+      : '';
+    const text = contextText + intrebare;
 
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: process.env.AI_MODEL || 'claude-3-5-haiku-latest',
-        max_tokens: 700,
-        system: sistem,
-        messages: [{ role: 'user', content: contextText + '\n\nÎntrebarea: ' + intrebare }],
-      }),
-    });
-
-    const d = await r.json();
-    if (!r.ok) {
-      const msg = (d && d.error && d.error.message) ? d.error.message : 'AI a răspuns cu eroare.';
-      return res.status(502).json({ error: msg });
+    // Încercăm modelul cerut, apoi rezervele — dar numai dacă a picat fiindcă modelul nu există.
+    const cerut = process.env.GEMINI_MODEL || MODEL_IMPLICIT;
+    const deIncercat = [cerut, ...REZERVE.filter((m) => m !== cerut)];
+    let ultimaEroare = 'AI a răspuns cu eroare.';
+    for (const model of deIncercat) {
+      const { r, d } = await cereGemini({ key, model, sistem, text, json });
+      if (r.ok) {
+        let raspuns = '';
+        try {
+          const parts = d && d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts;
+          if (Array.isArray(parts)) raspuns = parts.map((p) => p.text || '').join('').trim();
+        } catch (_) {}
+        if (!raspuns) {
+          // Cel mai des: răspunsul s-a oprit din lipsă de tokeni sau a fost blocat de filtre.
+          const motiv = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
+          return res.status(502).json({
+            error: motiv === 'MAX_TOKENS'
+              ? 'Răspunsul AI a fost prea lung și s-a tăiat. Spune mai pe scurt.'
+              : ('AI nu a întors text.' + (motiv ? ' (' + motiv + ')' : '')),
+          });
+        }
+        return res.status(200).json({ raspuns, model });
+      }
+      const msg = (d && d.error && d.error.message) ? d.error.message : '';
+      ultimaEroare = msg || ultimaEroare;
+      const lipsesteModelul = r.status === 404 || /not found|not supported|unsupported/i.test(msg);
+      if (!lipsesteModelul) break; // altă problemă (cheie greșită, cotă depășită) — nu are rost să reîncercăm
     }
-    const raspuns = (d && Array.isArray(d.content) && d.content[0] && d.content[0].text) ? d.content[0].text : '';
-    if (!raspuns) return res.status(502).json({ error: 'AI nu a întors text.' });
-    return res.status(200).json({ raspuns });
+    return res.status(502).json({ error: ultimaEroare });
   } catch (err) {
     return res.status(400).json({ error: (err && err.message) ? err.message : 'Eroare AI.' });
   }
