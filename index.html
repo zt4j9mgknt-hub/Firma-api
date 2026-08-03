@@ -722,7 +722,7 @@ const ROLES = [
 // Când se termină testul, pune false ca să revină accesul complet.
 const PERIOADA_TEST = false;
 // Etichetă de versiune — apare jos în meniu, ca să confirmi că s-a încărcat ultima versiune.
-const APP_VERSION = 'v01.08-devizsantier';
+const APP_VERSION = 'v01.08-ai';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 // De când ținem evidența financiară în aplicație (graficele nu arată luni dinainte de asta).
@@ -4300,7 +4300,7 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
       (materialeSugestii && materialeSugestii.length ? ('Materiale folosite de obicei: ' + materialeSugestii.slice(0,40).join(', ') + '.\n') : '') +
       '\nDescriere: ' + text.trim();
     try {
-      const r = await authFetch('/api/ai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ intrebare: instr, context: [] }) });
+      const r = await authFetch('/api/ai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ intrebare: instr, context: [], json: true }) });
       let d = {}; try { d = await r.json(); } catch {}
       if (!r.ok || !d || !d.raspuns) {
         if (r.status === 404) setErr('AI-ul nu e activat pe server (lipsește ruta /api/ai).');
@@ -6763,6 +6763,20 @@ function RaportAITest() {
 }
 
 function ProfileTab({ currentUser, onLogout, tema, setTema, carduri, setCarduri }) {
+  // Test AI: îți spune pe loc dacă lipsește ruta, dacă lipsește cheia, sau dacă merge.
+  const [aiCheck, setAiCheck] = useState('');
+  const verificaAI = async () => {
+    setAiCheck('...');
+    try {
+      const r = await authFetch('/api/ai', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ intrebare:'Răspunde doar cu cuvântul: merge', context: [] }) });
+      let d = {}; try { d = await r.json(); } catch (_) {}
+      if (r.status === 404) { setAiCheck('⚠ Ruta /api/ai nu există pe server. Pune fișierul api/ai.js în proiect și publică din nou.'); return; }
+      if (r.status === 401) { setAiCheck('⚠ Serverul nu a primit tokenul de autentificare. Ieși din cont și intră din nou.'); return; }
+      if (r.status === 500) { setAiCheck('⚠ Ruta există, dar lipsește cheia GEMINI_API_KEY din Vercel → Settings → Environment Variables.'); return; }
+      if (!r.ok || !d.raspuns) { setAiCheck('⚠ ' + ((d && d.error) ? d.error : 'AI indisponibil momentan.')); return; }
+      setAiCheck('✅ AI-ul merge' + (d.model ? ' (model: ' + d.model + ')' : '') + '. A răspuns: „' + String(d.raspuns).slice(0,60) + '".');
+    } catch (_) { setAiCheck('⚠ Fără conexiune la server.'); }
+  };
   const [expandedForm, setExpandedForm] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -6976,6 +6990,11 @@ function ProfileTab({ currentUser, onLogout, tema, setTema, carduri, setCarduri 
           <p className="text-xs mb-3" style={{ color:'var(--muted)' }}>Dacă lipsesc șantiere/clienți create recent, apasă aici <b>pe dispozitivul unde le-ai creat</b>. Caută datele salvate local și le trimite pe server (nu șterge nimic, doar adaugă).</p>
           <button onClick={recupereaza} disabled={recLoading} className="text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50" style={{ color:'#14181C', background:'var(--acc2)' }}>{recLoading ? 'Se recuperează...' : '🛟 Recuperează datele locale'}</button>
           {recStatus && <p className="text-xs mt-2" style={{ color: recStatus.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' }}>{recStatus}</p>}
+          <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
+            <p className="text-xs mb-2" style={{ color:'var(--muted)' }}>Verifică dacă asistentul AI e pornit pe server. Îți spune exact ce lipsește, dacă lipsește ceva.</p>
+            <button onClick={verificaAI} disabled={aiCheck==='...'} className="text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50" style={{ color:'#14181C', background:'#C08CE0' }}>{aiCheck==='...' ? 'Verific…' : '✨ Testează AI'}</button>
+            {aiCheck && aiCheck!=='...' && <p className="text-xs mt-2" style={{ color: aiCheck.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' }}>{aiCheck}</p>}
+          </div>
           <div className="mt-3 pt-3" style={{ borderTop:'1px solid var(--border)' }}>
             <p className="text-xs mb-2" style={{ color:'var(--muted)' }}>Telefonul ăsta ține minte ce ai șters, ca lucrurile șterse să nu reapară singure. Dacă bănuiești că ascunde ceva ce n-ai șters tu, golește registrul de aici.</p>
             <button onClick={()=>{ golesteRegistrulSterse(); window.location.reload(); }} className="text-sm px-3 py-2 rounded-lg font-semibold" style={{ color:'var(--acc2)', background:'var(--panel2)', border:'1px solid var(--border)' }}>♻️ Golește registrul de ștergeri</button>
