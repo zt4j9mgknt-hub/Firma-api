@@ -722,7 +722,7 @@ const ROLES = [
 // Când se termină testul, pune false ca să revină accesul complet.
 const PERIOADA_TEST = false;
 // Etichetă de versiune — apare jos în meniu, ca să confirmi că s-a încărcat ultima versiune.
-const APP_VERSION = 'v01.08-inapoi2';
+const APP_VERSION = 'v01.08-devizsantier';
 
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 // De când ținem evidența financiară în aplicație (graficele nu arată luni dinainte de asta).
@@ -1725,7 +1725,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
 
 const DEVIZ_STATUSES = ['Ciornă', 'Emis', 'Semnat'];
 
-function DevizForm({ clients, materials, initial, onCancel, onSave }) {
+function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) {
   const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
   const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire:'', um:'buc', cantitate:1, pretUnitar:0, adaos:0 }]);
   const [tva, setTva] = useState(initial?.tva ?? 21);
@@ -1735,6 +1735,18 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
   const [dataActAditional, setDataActAditional] = useState(initial?.dataActAditional || '');
   const [adresaLucrare, setAdresaLucrare] = useState(initial?.adresaLucrare || '');
   const [lucrare, setLucrare] = useState(initial?.lucrare || '');
+  // Șantierul e separat de client: numele lucrării nu e tot una cu numele beneficiarului.
+  const [santierId, setSantierId] = useState(initial?.santierId || '');
+  const [santierNume, setSantierNume] = useState(initial?.santierNume || '');
+  const alegeSantier = (id) => {
+    setSantierId(id);
+    const sx = (santiere||[]).find((x)=>x.id===id);
+    if (!sx) { setSantierNume(''); return; }
+    setSantierNume(sx.nume || '');
+    if (sx.adresa) setAdresaLucrare(sx.adresa);        // le poți corecta după, sunt doar completate
+    if (sx.lucrare) setLucrare(sx.lucrare);
+    if (sx.benefClientId) setClientId(sx.benefClientId);
+  };
   const subtotal = calcSubtotal(items);
   const total = subtotal * (1 + tva/100);
 
@@ -1770,8 +1782,24 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
             <div className="text-xs flex flex-col gap-1" style={{ color:'var(--muted)' }}>Data act adițional
               <RoCalendarPicker value={dataActAditional} onChange={setDataActAditional} />
             </div>
-            <input placeholder="Adresă șantier" value={adresaLucrare} onChange={(e)=>setAdresaLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-            <input placeholder="Lucrare (ex: Instalații electrice interioare)" value={lucrare} onChange={(e)=>setLucrare(e.target.value)} className="col-span-2 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            <div className="col-span-2">
+              <div className="text-xs mb-1" style={{ color:'var(--muted)' }}>🏗 Șantier <span style={{ color:'var(--muted2)' }}>— alege-l și se completează singure adresa și lucrarea</span></div>
+              <select value={santierId} onChange={(e)=>alegeSantier(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+                <option value="" style={{ background:'var(--panel)' }}>— fără șantier / scriu manual —</option>
+                {(santiere||[]).map((sx)=>(<option key={sx.id} value={sx.id} style={{ background:'var(--panel)' }}>{sx.nume}</option>))}
+              </select>
+              {!santierId && (
+                <input placeholder="sau scrie numele șantierului" value={santierNume} onChange={(e)=>setSantierNume(e.target.value)} className="w-full mt-1.5 rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+              )}
+            </div>
+            <div className="col-span-2">
+              <div className="text-xs mb-1" style={{ color:'var(--muted)' }}>Adresa șantierului</div>
+              <input placeholder="ex: Str. Memorandumului 28, Cluj-Napoca" value={adresaLucrare} onChange={(e)=>setAdresaLucrare(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            </div>
+            <div className="col-span-2">
+              <div className="text-xs mb-1" style={{ color:'var(--muted)' }}>Lucrarea</div>
+              <input placeholder="ex: Instalații electrice interioare" value={lucrare} onChange={(e)=>setLucrare(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+            </div>
           </div>
 
           <LineItemsEditor items={items} setItems={setItems} materials={materials} />
@@ -1785,7 +1813,7 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
               onClick={()=>onSave({
                 id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0,10),
                 clientId, items, tva:Number(tva), status: initial?.status || 'Ciornă',
-                nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare,
+                nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, santierId, santierNume,
               })}
               className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ color:'#14181C', background:'var(--acc1)' }}>Salvează</button>
           </div>
@@ -1795,7 +1823,7 @@ function DevizForm({ clients, materials, initial, onCancel, onSave }) {
   );
 }
 
-function DevizTab({ devize, setDevize, clients, materials, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill }) {
+function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill }) {
   const [form, setForm] = useState(prefill || null);
 
   useEffect(() => {
@@ -1854,7 +1882,7 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
         </div>
       </div>
 
-      {form && <DevizForm clients={clients} materials={materials} initial={form} onCancel={()=>setForm(null)} onSave={save} />}
+      {form && <DevizForm clients={clients} materials={materials} santiere={santiere} initial={form} onCancel={()=>setForm(null)} onSave={save} />}
 
       {devize.length === 0 && !form ? (
         <div className="text-center py-12 text-sm" style={{ color:'var(--muted)' }}>Niciun deviz încă. Apasă „Deviz nou" pentru a crea primul.</div>
@@ -1867,7 +1895,7 @@ function DevizTab({ devize, setDevize, clients, materials, company, persist, pri
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex flex-col gap-0.5 min-w-0">
                     <span className="text-sm font-medium truncate" style={{ color:'var(--text)', fontFamily:"'JetBrains Mono', monospace" }}>{d.numar}</span>
-                    <span className="text-xs truncate" style={{ color:'var(--muted)' }}>{clientName(d.clientId)} · {d.data}{d.lucrare ? ` · ${d.lucrare}` : ''}</span>
+                    <span className="text-xs truncate" style={{ color:'var(--muted)' }}>{clientName(d.clientId)} · {d.data}{d.santierNume ? ` · 🏗 ${d.santierNume}` : ''}{d.lucrare ? ` · ${d.lucrare}` : ''}</span>
                   </div>
                   <span className="text-sm shrink-0" style={{ color:'var(--acc1)', fontFamily:"'JetBrains Mono', monospace" }}>{money(total)}</span>
                   <div className="shrink-0"><StatusSwitch status={d.status} options={DEVIZ_STATUSES} onChange={(s)=>setStatus(d.id,s)} /></div>
@@ -10052,6 +10080,7 @@ function devizPageHtml({ doc, client, company }) {
   const metaLines = [];
   if (doc.nrContract) metaLines.push(`<b>Contract:</b> Nr. ${esc(doc.nrContract)}${doc.dataContract ? ` din ${esc(doc.dataContract)}` : ''}`);
   if (doc.actAditional) metaLines.push(`<b>Act adițional:</b> ${esc(doc.actAditional)}${doc.dataActAditional ? ` din ${esc(doc.dataActAditional)}` : ''}`);
+  if (doc.santierNume) metaLines.push(`<b>Șantier:</b> ${esc(doc.santierNume)}`);
   if (doc.adresaLucrare) metaLines.push(`<b>Adresă:</b> ${esc(doc.adresaLucrare)}`);
   if (doc.lucrare) metaLines.push(`<b>Lucrare:</b> ${esc(doc.lucrare)}`);
 
@@ -11366,7 +11395,7 @@ function App() {
             {HELP[tab] && <HelpNote text={HELP[tab]} isManager={effectiveUser.rol === 'Manager'} />}
 
             {tab === 'devize' && (
-              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} prefill={devizPrefill} onConsumePrefill={()=>setDevizPrefill(null)} />
+              <DevizTab devize={devize} setDevize={setDevize} clients={clients} materials={materials} santiere={santiere} company={company} persist={persist} printOne={printDevizOne} printAll={printDevizAll} onEmis={(doc)=>deductStock(doc.items, `Deviz ${doc.numar}`)} onReverse={(doc)=>reverseStock(doc.items, `Anulare deviz ${doc.numar}`)} prefill={devizPrefill} onConsumePrefill={()=>setDevizPrefill(null)} />
             )}
 
             {tab === 'oferte' && (
