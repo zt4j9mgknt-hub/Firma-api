@@ -3,7 +3,7 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v38';
+const CACHE = 'firma-cache-v39';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
