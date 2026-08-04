@@ -871,7 +871,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.08-apart';
+const APP_VERSION = 'v01.08-qa';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -1458,7 +1458,7 @@ const MATERIAL_IMPORT_SEED = [
     ['Taxă verde categoria 5.32', 'Smart', 'bucata', 4.0, 0.37],
     ['Taxă verde categoria 5.39', 'Smart', 'bucata', 4.0, 0.67],
 ];
-function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist, company, subTab }) {
+function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist, company, subTab, currentUser }) {
     const [form, setForm] = useState(null);
     const [moveState, setMoveState] = useState(null);
     const [expanded, setExpanded] = useState(null);
@@ -1499,7 +1499,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
         }
         setMaterials(nextMaterials);
         persist('materials', nextMaterials);
-        const move = { id: uid(), materialId: material.id, tip, cantitate, nota, pret: tip === 'intrare' ? pret : undefined, data: new Date().toISOString().slice(0, 10) };
+        const move = { id: uid(), materialId: material.id, tip, cantitate, nota, pret: tip === 'intrare' ? pret : undefined, data: new Date().toISOString().slice(0, 10), userNume: currentUser?.nume || '' };
         const nextMoves = [move, ...stockMoves];
         setStockMoves(nextMoves);
         persist('stockMoves', nextMoves);
@@ -1607,6 +1607,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     const gestiuni = [...new Set(baseList.map((m) => m.categorie).filter(Boolean))].sort();
     const [stocShowAll, setStocShowAll] = useState(false);
     const [doarSubMinim, setDoarSubMinim] = useState(false);
+    const [istoricTot, setIstoricTot] = useState({});
     const setMinim = (id, v) => {
         const next = materials.map((m) => m.id === id ? { ...m, stocMinim: Number(v) || 0 } : m);
         setMaterials(next);
@@ -1741,7 +1742,8 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                 stocShowAll && !searchingGestiune && (React.createElement("button", { onClick: () => setStocShowAll(false), className: "text-xs px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Ascunde lista"))),
             materialeActive.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun material \u2014 adaug\u0103 mai \u00EEnt\u00E2i din tab-ul \u201EGestiune\".")) : !stocShowAll && !searchingGestiune ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Caut\u0103 un material, sau apas\u0103 \u201EAfi\u0219eaz\u0103 stoc integral\".")) : (React.createElement("div", { className: "space-y-2" }, filteredStocuri.filter((m) => !doarSubMinim || (Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim))).map((m) => {
                 const low = Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim);
-                const moves = stockMoves.filter((mv) => mv.materialId === m.id).slice(0, 8);
+                const toateMiscarile = stockMoves.filter((mv) => mv.materialId === m.id);
+                const moves = (istoricTot[m.id] ? toateMiscarile : toateMiscarile.slice(0, 8));
                 return (React.createElement("div", { key: m.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: `1px solid ${low ? '#E0525266' : 'var(--border)'}` } },
                     React.createElement("div", { className: "flex items-center justify-between gap-3" },
                         React.createElement("div", { className: "min-w-0" },
@@ -1759,15 +1761,20 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                             moveState?.materialId === m.id ? (React.createElement(MoveInput, { tip: moveState.tip, defaultPret: m.pret, onConfirm: (c, n, p) => confirmMove(m, moveState.tip, c, n, p), onCancel: () => setMoveState(null) })) : (React.createElement("div", { className: "flex items-center gap-1.5" },
                                 React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'intrare' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc2)', background: 'var(--panel2)' } }, "+ Intrare"),
                                 React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'iesire' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "\u2212 Ie\u0219ire"))))),
-                    expanded === m.id && moves.length > 0 && (React.createElement("div", { className: "mt-2 space-y-1" }, moves.map((mv) => (React.createElement("div", { key: mv.id, className: "flex items-center justify-between text-xs px-2 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } },
-                        React.createElement("span", { style: { color: 'var(--muted)' } },
-                            mv.data,
-                            " ",
-                            mv.nota && `· ${mv.nota}`),
-                        React.createElement("span", { style: { color: mv.tip === 'intrare' ? 'var(--acc2)' : 'var(--acc4)', fontFamily: "'JetBrains Mono', monospace" } },
-                            mv.tip === 'intrare' ? '+' : '−',
-                            mv.cantitate,
-                            mv.tip === 'intrare' && mv.pret ? ` @ ${money(mv.pret)}` : ''))))))));
+                    expanded === m.id && moves.length > 0 && (React.createElement("div", { className: "mt-2 space-y-1" },
+                        moves.map((mv) => (React.createElement("div", { key: mv.id, className: "flex items-center justify-between text-xs px-2 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } },
+                            React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--muted)' } },
+                                fmtData(mv.data),
+                                mv.userNume ? ` · ${mv.userNume}` : '',
+                                mv.nota ? ` · ${mv.nota}` : ''),
+                            React.createElement("span", { style: { color: mv.tip === 'intrare' ? 'var(--acc2)' : 'var(--acc4)', fontFamily: "'JetBrains Mono', monospace" } },
+                                mv.tip === 'intrare' ? '+' : '−',
+                                mv.cantitate,
+                                mv.tip === 'intrare' && mv.pret ? ` @ ${money(mv.pret)}` : '')))),
+                        !istoricTot[m.id] && toateMiscarile.length > 8 && (React.createElement("button", { onClick: () => setIstoricTot((x) => ({ ...x, [m.id]: true })), className: "w-full text-[11px] px-2 py-1.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)' } },
+                            "Vezi toate mi\u0219c\u0103rile (",
+                            toateMiscarile.length,
+                            ")"))))));
             })))))));
 }
 const DEVIZ_STATUSES = ['Ciornă', 'Emis', 'Semnat'];
@@ -2363,12 +2370,26 @@ function HelpNote({ text, isManager }) {
         open && React.createElement("div", { className: "text-xs mt-1 rounded-lg px-3 py-2", style: { background: 'var(--panel2)', color: 'var(--muted)', border: '1px solid var(--border)', lineHeight: 1.55, whiteSpace: 'pre-line' } }, full)));
 }
 function GhidTab({ isManager }) {
-    const Sec = ({ icon, title, children }) => (React.createElement("div", { className: "rounded-xl p-4 mb-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-        React.createElement("div", { className: "text-sm font-semibold mb-1.5", style: { color: 'var(--text)' } },
-            icon,
-            " ",
-            title),
-        React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)', lineHeight: 1.7, whiteSpace: 'pre-line' } }, children)));
+    const [cauta, setCauta] = useState('');
+    const [deschise, setDeschise] = useState({});
+    const normG = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const cautaN = normG(cauta).trim();
+    const potrivit = (titlu, text) => !cautaN || normG(titlu + ' ' + text).includes(cautaN);
+    const Sec = ({ icon, title, children }) => {
+        const text = String(children == null ? '' : children);
+        if (!potrivit(title, text))
+            return null;
+        const cheie = title;
+        const desch = !!deschise[cheie] || !!cautaN;
+        return (React.createElement("div", { className: "rounded-xl mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("button", { onClick: () => setDeschise((d) => ({ ...d, [cheie]: !d[cheie] })), className: "w-full flex items-center gap-2 px-4 py-3 text-left" },
+                React.createElement("span", { style: { fontSize: 10, color: 'var(--muted2)', display: 'inline-block', transform: desch ? 'rotate(90deg)' : 'none', transition: 'transform .15s' } }, "\u25B6"),
+                React.createElement("span", { className: "text-sm font-semibold flex-1 min-w-0", style: { color: 'var(--text)' } },
+                    icon,
+                    " ",
+                    title)),
+            desch && React.createElement("div", { className: "text-xs px-4 pb-4", style: { color: 'var(--muted)', lineHeight: 1.7, whiteSpace: 'pre-line' } }, children)));
+    };
     const Titlu = ({ children, sub }) => (React.createElement("div", { className: "mt-5 mb-2" },
         React.createElement("div", { className: "text-sm font-bold uppercase tracking-wide", style: { color: 'var(--acc1)' } }, children),
         sub && React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, sub)));
@@ -2376,6 +2397,11 @@ function GhidTab({ isManager }) {
     const fromHelp = (icon, title, key) => renderSec(icon, title, (HELP[key] && HELP[key].text) || '', (HELP[key] && HELP[key].mgr) || '');
     return (React.createElement("div", { className: "max-w-2xl" },
         React.createElement("h2", { className: "text-xl mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDCD6 Ghid de utilizare"),
+        React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "\uD83D\uDD0D Caut\u0103 \u00EEn ghid (ex: concediu, deviz, raport)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-2 mb-1", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+        cauta.trim() && React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } },
+            "Se arat\u0103 doar sec\u021Biunile care con\u021Bin \u201E",
+            cauta,
+            "\", deschise."),
         React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } },
             "Ghid simplu, pas cu pas, scris pe \u00EEn\u021Belesul oricui. Ia-l de sus \u00EEn jos. Nu ai cum s\u0103 strici nimic \u2014 orice gre\u0219eal\u0103 se poate \u0219terge sau modifica. Exact acelea\u0219i explica\u021Bii le g\u0103se\u0219ti \u0219i la butonul \u201E\u2139\uFE0F Cum se folose\u0219te\" din fiecare ecran.",
             isManager ? ' Ca manager vezi în plus secțiunea de administrare, jos.' : ''),
@@ -2396,9 +2422,9 @@ function GhidTab({ isManager }) {
         React.createElement(Sec, { icon: "\uD83D\uDCD8", title: "14. Normativ I7" }, 'Aici ai tot normativul I7 pentru instalații electrice, cu modificările din 2023 incluse.\n1) Îl deschizi din meniu, de la „📘 Normativ I7".\n2) Scrii ce cauți (de exemplu „spital" sau „legare la pământ") sau apeși pe o etichetă gata pusă. Poți scrie și un număr de pagină (de exemplu 478) ca să sari direct la ea.\n3) Aplicația îți arată paginile unde apare cuvântul căutat.\n4) Apeși pe un rezultat și se deschide fix la pagina aceea. Te muți între pagini cu săgețile ‹ ›, iar cu două degete mărești.\n\nCa să se poată deschide paginile, managerul trebuie să încarce o singură dată fișierul PDF al normativului (din pagina „📘 Normativ I7").'),
         fromHelp('🔔', '15. Memento (sa nu uiti nimic)', 'memento'),
         fromHelp('🕐', '16. Pontaj (orele tale)', 'pontaj'),
-        fromHelp('🏖', '16. Concediu', 'concedii'),
-        React.createElement(Sec, { icon: "\uD83D\uDD14", title: "17. Notific\u0103ri (\u00EEn\u0219tiin\u021B\u0103rile pe telefon)" }, 'Notificările sunt înștiințările care îți vin pe telefon.\n• Le pornești o singură dată: intri la „👤 Profilul meu", apeși pe „🔔 Activează notificările" și apoi pe „Permite".\n• Primești pe telefon, cu sunet, doar ce te privește (ai fost pus pe un șantier, ți s-a aprobat sau respins un material, ai primit răspuns la concediu sau la o întrebare).\n• Pe iconița aplicației apare o bulină cu numărul de lucruri pe care le ai de rezolvat; ea dispare când le rezolvi.\n• Când șeful îți respinge ceva, îți apare cu ROȘU în „Activitatea mea"; apeși pe „Am văzut" ca să dispară.\n• Dacă vrei să verifici că funcționează, apeși pe „📨 Trimite notificare de test" din Profil.'),
-        fromHelp('👤', '18. Profil (parolă, amprentă, aspect)', 'profil'),
+        fromHelp('🏖', '17. Concediu', 'concedii'),
+        React.createElement(Sec, { icon: "\uD83D\uDD14", title: "18. Notific\u0103ri (\u00EEn\u0219tiin\u021B\u0103rile pe telefon)" }, 'Notificările sunt înștiințările care îți vin pe telefon.\n• Le pornești o singură dată: intri la „👤 Profilul meu", apeși pe „🔔 Activează notificările" și apoi pe „Permite".\n• Primești pe telefon, cu sunet, doar ce te privește (ai fost pus pe un șantier, ți s-a aprobat sau respins un material, ai primit răspuns la concediu sau la o întrebare).\n• Pe iconița aplicației apare o bulină cu numărul de lucruri pe care le ai de rezolvat; ea dispare când le rezolvi.\n• Când șeful îți respinge ceva, îți apare cu ROȘU în „Activitatea mea"; apeși pe „Am văzut" ca să dispară.\n• Dacă vrei să verifici că funcționează, apeși pe „📨 Trimite notificare de test" din Profil.'),
+        fromHelp('👤', '19. Profil (parolă, amprentă, aspect)', 'profil'),
         isManager && (React.createElement(React.Fragment, null,
             React.createElement(Titlu, { sub: "Vizibil doar pentru Manager" }, "Ghid Manager (administrare)"),
             React.createElement(Sec, { icon: "\uD83C\uDFD7", title: "Administrarea \u0219antierului" }, 'Aici creezi și modifici șantierele.\n• Când faci un șantier nou, treci numele, adresa, beneficiarul (clientul), numărul de contract, eventualul act adițional și responsabilul de la client cu numărul lui de telefon.\n• La „Raport zilnic cerut începând de:" alegi Azi, De mâine sau o anumită dată. Până la data aleasă, echipa nu primește memento de raport. În mod normal este pus „de mâine", ca să nu ceri raport chiar în ziua în care ai făcut șantierul.\n• La „Descrierea lucrărilor de efectuat" scrii ce este de făcut; textul apare cu albastru, sus pe șantier, și îl vede toată echipa.\n• Alegi felul de facturare al șantierului (vezi secțiunea Devize). Pentru lucrări mărunte, fără planuri, folosești tipul „🔧 Lucrare mică (fără planuri)", care se facturează pe ore.\n• Tot de aici pui sau scoți colegi din echipă și le dai starea Activ sau Pauză; când pui un coleg pe șantier, el primește o înștiințare.\n• Șantierul îl marchezi „Finalizat" din Checklist, după ce totul este bifat și confirmat.'),
@@ -2594,7 +2620,7 @@ function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, p
             error && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, error),
             mediaAici.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nimic \u00EEnc\u0103rcat \u00EEnc\u0103.")) : (React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3" }, mediaAici.map((m) => (React.createElement("div", { key: m.id, className: "rounded-lg overflow-hidden relative", style: { background: 'var(--panel2)' } },
                 m.tip === 'video' ? (React.createElement("video", { src: blobViewUrl(m.pathname), controls: true, className: "w-full", style: { maxHeight: 140, objectFit: 'cover' } })) : (React.createElement("button", { onClick: () => setViewing(m), className: "block w-full" },
-                    React.createElement("img", { src: blobViewUrl(m.pathname), alt: m.nume, className: "w-full", style: { height: 140, objectFit: 'cover' } }))),
+                    React.createElement("img", { src: blobViewUrl(m.pathname), alt: m.nume, loading: "lazy", decoding: "async", className: "w-full", style: { height: 140, objectFit: 'cover', background: 'var(--panel2)' } }))),
                 React.createElement("div", { className: "flex items-center justify-between px-2 py-1" },
                     React.createElement("span", { className: "text-[11px] truncate", style: { color: 'var(--muted)' } }, m.data),
                     React.createElement("button", { onClick: () => remove(m), style: { color: 'var(--acc4)' } },
@@ -2809,6 +2835,21 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
     }, [qaTarget, problemeSantier]);
     const [q, setQ] = useState('');
     const [aiRasp, setAiRasp] = useState(null);
+    const [salvatMsg, setSalvatMsg] = useState('');
+    const [bazaOpen, setBazaOpen] = useState(false);
+    const [cautaBaza, setCautaBaza] = useState('');
+    const salveazaRaspunsAI = () => {
+        if (!aiRasp || !q.trim())
+            return;
+        const item = { id: uid(), santierId: '', intrebare: q.trim(), creatDe: currentUser?.nume || '', creatId: currentUser?.id,
+            data: new Date().toISOString().slice(0, 10),
+            raspunsuri: [{ id: uid(), text: aiRasp.text, autor: (currentUser?.nume || 'Manager') + ' (via AI)', corect: true, data: new Date().toISOString().slice(0, 10) }] };
+        const next = [item, ...(problemeSantier || [])];
+        setProblemeSantier(next);
+        persist('problemeSantier', next);
+        setSalvatMsg('✅ Salvat în baza de cunoștințe.');
+        setTimeout(() => setSalvatMsg(''), 3000);
+    };
     const [aiLoading, setAiLoading] = useState(false);
     const [aiEroare, setAiEroare] = useState('');
     const [raspunsForm, setRaspunsForm] = useState({});
@@ -2895,8 +2936,27 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
             aiRasp && (React.createElement("div", { className: "rounded-lg px-3 py-2 mt-2", style: { background: '#C08CE018', border: '1px solid #C08CE066' } },
                 React.createElement("div", { className: "text-[11px] font-bold", style: { color: '#C08CE0' } }, "\u2728 R\u0103spuns AI (pe baza r\u0103spunsurilor voastre)"),
                 React.createElement("div", { className: "text-sm mt-1 whitespace-pre-wrap", style: { color: 'var(--text)' } }, aiRasp.text),
-                React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--muted2)' } }, "Verific\u0103-l \u00EEnainte s\u0103-l aplici \u2014 e orientativ."))),
+                React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--muted2)' } }, "Verific\u0103-l \u00EEnainte s\u0103-l aplici \u2014 e orientativ."),
+                isManager && (React.createElement("button", { onClick: salveazaRaspunsAI, className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold mt-2", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCBE Salveaz\u0103 ca r\u0103spuns cunoscut")),
+                salvatMsg && React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--acc2)' } }, salvatMsg))),
             aiEroare && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc3)' } }, aiEroare)),
+        !q.trim() && rezolvate.length > 0 && (React.createElement("div", { className: "mb-5" },
+            React.createElement("button", { onClick: () => setBazaOpen(!bazaOpen), className: "w-full flex items-center gap-2 rounded-xl px-3 py-2.5", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                React.createElement("span", { style: { fontSize: 10, color: 'var(--muted2)', display: 'inline-block', transform: bazaOpen ? 'rotate(90deg)' : 'none', transition: 'transform .15s' } }, "\u25B6"),
+                React.createElement("span", { className: "text-sm font-semibold flex-1 text-left", style: { color: 'var(--text)' } }, "\uD83D\uDCDA Toate r\u0103spunsurile confirmate"),
+                React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, rezolvate.length)),
+            bazaOpen && (React.createElement("div", { className: "mt-2" },
+                React.createElement("input", { value: cautaBaza, onChange: (e) => setCautaBaza(e.target.value), placeholder: "\uD83D\uDD0D Caut\u0103 \u00EEn r\u0103spunsuri", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mb-2", style: inputStyle }),
+                React.createElement("div", { className: "space-y-2" }, rezolvate
+                    .filter((p) => !cautaBaza.trim() || (p.intrebare + ' ' + raspunsuriQA(p).map((r) => r.text).join(' ')).toLowerCase().includes(cautaBaza.toLowerCase()))
+                    .slice(0, 60)
+                    .map((p) => (React.createElement("div", { key: p.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid #4CAF7D' } },
+                    React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } },
+                        "\u2753 ",
+                        p.intrebare),
+                    raspunsuriQA(p).filter((r) => r.corect).map((r) => (React.createElement("div", { key: r.id, className: "text-xs mt-1", style: { color: 'var(--muted)' } },
+                        "\u2705 ",
+                        r.text))))))))))),
         q.trim().length >= 3 && (React.createElement("div", { className: "mb-5" },
             React.createElement("div", { className: "text-[11px] uppercase tracking-wider mb-1.5", style: { color: 'var(--muted2)' } },
                 "Din r\u0103spunsurile de p\u00E2n\u0103 acum ",
@@ -3187,6 +3247,17 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
                 React.createElement("div", null,
                     React.createElement("div", { className: "text-xs font-semibold mb-1", style: { color: 'var(--acc2)' } }, "\uD83D\uDCE6 Materiale"),
                     React.createElement("div", { className: "space-y-1" }, startMateriale.length === 0 ? React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun material ad\u0103ugat.") : startMateriale.map((it) => React.createElement(StartRow, { key: it.id, it: it }))),
+                    (() => {
+                        const cate = (materialeLista || []).filter((m) => m.denumire).length + (cereri || []).filter((c) => c.denumire).length + (pozitii || []).filter((p) => p.denumire).length;
+                        if (!cate)
+                            return null;
+                        return (React.createElement("button", { onClick: genDinDeviz, className: "w-full mt-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } },
+                            "\uD83D\uDCCB Ia tot din deviz (",
+                            cate,
+                            " ",
+                            cate === 1 ? 'poziție' : 'poziții',
+                            ")"));
+                    })(),
                     React.createElement("button", { onClick: () => setPickerMatOpen(!pickerMatOpen), className: "w-full mt-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, pickerMatOpen ? 'Închide' : '➕ Adaugă materiale'),
                     pickerMatOpen && (React.createElement("div", { className: "rounded-lg p-2 mt-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
                         React.createElement("div", { className: "flex gap-1 mb-2" },
@@ -5770,6 +5841,15 @@ function NormativTab({ normativPdf, setNormativPdf, normativIndexFile, setNormat
             }
             catch (_) { }
             try {
+                if (Array.isArray(normativIndexFile) && normativIndexFile.length && !anulat) {
+                    NORMATIV_INDEX_CACHE = normativIndexFile;
+                    setIdx(normativIndexFile);
+                    setIdxStare('ok');
+                    return;
+                }
+            }
+            catch (_) { }
+            try {
                 const local = localStorage.getItem('normativIdx_v1');
                 if (local) {
                     const d = JSON.parse(local);
@@ -5831,6 +5911,14 @@ function NormativTab({ normativPdf, setNormativPdf, normativIndexFile, setNormat
                 localStorage.setItem('normativIdx_v1', JSON.stringify(out));
             }
             catch (_) { }
+            if (isManager && persist) {
+                try {
+                    await persist('normativIndexFile', out);
+                    setNormativIndexFile(out);
+                    setUpErr('');
+                }
+                catch (_) { }
+            }
         }
         catch (e) {
             setIdxStare('lipsa');
@@ -7435,13 +7523,17 @@ function AdeverinteTab({ company }) {
     };
     return (React.createElement("div", { className: "max-w-lg" }, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDCC4 Adeverin\u021Be"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Completezi datele \u0219i ape\u0219i \u201EGenereaz\u0103\". Iese o adeverin\u021B\u0103 A4 \u0219tampilat\u0103 \u0219i semnat\u0103 (aceea\u0219i \u0219tampil\u0103 ca pe devize), gata de printat sau salvat ca PDF."), React.createElement("div", { className: "rounded-xl p-4 space-y-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement(CampForm, { label: "Angajat" }, React.createElement("select", { value: f.userId, onChange: (e) => alegeUser(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 alege din list\u0103 \u2014"), users.map((u) => React.createElement("option", { key: u.id, value: u.id, style: { background: 'var(--panel)' } }, u.nume)))), React.createElement("div", { className: "grid grid-cols-2 gap-3" }, React.createElement(CampForm, { label: "Nume (po\u021Bi edita)" }, React.createElement("input", { value: f.nume, onChange: (e) => setF({ ...f, nume: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement(CampForm, { label: "CNP (op\u021Bional)" }, React.createElement("input", { value: f.cnp, onChange: (e) => setF({ ...f, cnp: e.target.value.replace(/\D/g, '').slice(0, 13) }), inputMode: "numeric", className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { ...inputStyle, fontFamily: "'JetBrains Mono', monospace" } }))), React.createElement("div", { className: "grid grid-cols-2 gap-3" }, React.createElement(CampForm, { label: "Func\u021Bia" }, React.createElement("input", { value: f.functia, onChange: (e) => setF({ ...f, functia: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement(CampForm, { label: "Contract" }, React.createElement("select", { value: f.contract, onChange: (e) => setF({ ...f, contract: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { style: { background: 'var(--panel)' } }, "pe perioad\u0103 nedeterminat\u0103"), React.createElement("option", { style: { background: 'var(--panel)' } }, "pe perioad\u0103 determinat\u0103")))), React.createElement("div", { className: "grid grid-cols-2 gap-3" }, React.createElement(CampForm, { label: "Data angaj\u0103rii" }, React.createElement(RoCalendarPicker, { value: f.dataAngajarii, onChange: (v) => setF({ ...f, dataAngajarii: v }) })), React.createElement(CampForm, { label: "Tip adeverin\u021B\u0103" }, React.createElement("select", { value: f.tip, onChange: (e) => setF({ ...f, tip: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "salariat", style: { background: 'var(--panel)' } }, "De salariat"), React.createElement("option", { value: "medic", style: { background: 'var(--panel)' } }, "Pentru medicul de familie"), React.createElement("option", { value: "venit", style: { background: 'var(--panel)' } }, "De venit (cu salariu)")))), f.tip === 'venit' && (React.createElement("div", { className: "grid grid-cols-2 gap-3" }, React.createElement(CampForm, { label: "Salariu brut (lei)" }, React.createElement("input", { value: f.salariuBrut, onChange: (e) => setF({ ...f, salariuBrut: e.target.value }), inputMode: "numeric", className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement(CampForm, { label: "Salariu net (lei)" }, React.createElement("input", { value: f.salariuNet, onChange: (e) => setF({ ...f, salariuNet: e.target.value }), inputMode: "numeric", className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })))), React.createElement(CampForm, { label: "Scop / destina\u021Bie (ex. pentru banc\u0103, pentru medicul de familie)" }, React.createElement("input", { value: f.scop, onChange: (e) => setF({ ...f, scop: e.target.value }), placeholder: "Las\u0103 gol pentru textul standard", className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("button", { onClick: genereaza, className: "w-full px-4 py-2.5 rounded-lg text-sm font-semibold", style: { color: '#fff', background: 'var(--acc1)' } }, "\uD83D\uDCC4 Genereaz\u0103 PDF")), !(company?.stampila) && React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--muted2)' } }, "\u0218tampila \u0219i semn\u0103tura vin din \u201E\u2699 Firma mea\" (aceea\u0219i folosit\u0103 pe devize/oferte).")));
 }
-function AchizitiiTab({ achizitii, setAchizitii, persist }) {
+function AchizitiiTab({ achizitii, setAchizitii, persist, materials, onReceptie }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const [form, setForm] = useState(null);
+    const [cauta, setCauta] = useState('');
+    const [filtruStare, setFiltruStare] = useState('');
+    const [mesaj, setMesaj] = useState('');
     const save = () => {
-        if (!form.furnizor.trim() && !form.descriere.trim())
+        if (!String(form.furnizor || '').trim() && !String(form.descriere || '').trim())
             return;
-        const next = achizitii.some((x) => x.id === form.id) ? achizitii.map((x) => x.id === form.id ? form : x) : [form, ...achizitii];
+        const curat = { ...form, randuri: (form.randuri || []).filter((r) => String(r.denumire || '').trim()) };
+        const next = achizitii.some((x) => x.id === curat.id) ? achizitii.map((x) => x.id === curat.id ? curat : x) : [curat, ...achizitii];
         setAchizitii(next);
         persist('achizitii', next);
         setForm(null);
@@ -7458,8 +7550,119 @@ function AchizitiiTab({ achizitii, setAchizitii, persist }) {
         setAchizitii(next);
         persist('achizitii', next);
     };
-    const total = achizitii.reduce((s, a) => s + (Number(a.suma) || 0), 0);
-    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-1" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDED2 Achizi\u021Bii"), !form && React.createElement("button", { onClick: () => setForm({ id: uid(), data: new Date().toISOString().slice(0, 10), furnizor: '', descriere: '', suma: 0, status: ACHIZITIE_STATUSES[0] }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Achizi\u021Bie nou\u0103")), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Achizi\u021Bii \u0219i comenzi ale firmei (unelte, echipamente, servicii etc.)."), form && (React.createElement("div", { className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement(RoCalendarPicker, { value: form.data, onChange: (v) => setForm({ ...form, data: v }) }), React.createElement("input", { placeholder: "Furnizor", value: form.furnizor, onChange: (e) => setForm({ ...form, furnizor: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { placeholder: "Descriere", value: form.descriere, onChange: (e) => setForm({ ...form, descriere: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { type: "number", placeholder: "Sum\u0103 (lei)", value: form.suma, onChange: (e) => setForm({ ...form, suma: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: save, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))), achizitii.length > 0 && (React.createElement("div", { className: "flex justify-end mb-2 text-sm", style: { color: 'var(--muted)' } }, "Total: ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)))), achizitii.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio achizi\u021Bie \u00EEnregistrat\u0103.")) : (React.createElement("div", { className: "space-y-2" }, achizitii.map((a) => (React.createElement("div", { key: a.id, className: "rounded-xl p-3 flex items-center justify-between gap-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } }, a.furnizor, a.furnizor && a.descriere ? ' — ' : '', a.descriere), React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted)' } }, fmtData(a.data), " \u00B7 ", money(a.suma))), React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, React.createElement("select", { value: a.status, onChange: (e) => setStatus(a.id, e.target.value), className: "text-xs rounded-lg px-2 py-1 outline-none", style: inputStyle }, ACHIZITIE_STATUSES.map((s) => React.createElement("option", { key: s, value: s, style: { background: 'var(--panel)' } }, s))), React.createElement("button", { onClick: () => setForm(a), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"), React.createElement("button", { onClick: () => del(a.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1"))))))))));
+    const receptie = (a) => {
+        const randuri = (a.randuri || []).filter((r) => String(r.denumire || '').trim() && (Number(r.cantitate) || 0) > 0);
+        if (!randuri.length) {
+            setMesaj('Achiziția n-are rânduri de material cu cantitate. Editeaz-o și adaugă-le.');
+            return;
+        }
+        if (a.inStoc && !window.confirm('Achiziția asta a mai fost pusă în stoc o dată. O pui din nou? Cantitățile se adună.'))
+            return;
+        const n = onReceptie ? onReceptie(randuri, `Achiziție${a.furnizor ? ' — ' + a.furnizor : ''}${a.data ? ' din ' + fmtData(a.data) : ''}`) : 0;
+        if (!n) {
+            setMesaj('Nu a intrat nimic în stoc.');
+            return;
+        }
+        const next = achizitii.map((x) => x.id === a.id ? { ...x, inStoc: true, status: 'Primit' } : x);
+        setAchizitii(next);
+        persist('achizitii', next);
+        setMesaj(`✅ ${n} ${n === 1 ? 'material a intrat' : 'materiale au intrat'} în gestiune.`);
+        setTimeout(() => setMesaj(''), 4000);
+    };
+    const sumaRanduri = (a) => (a.randuri || []).reduce((t, r) => t + (Number(r.cantitate) || 0) * (Number(r.pretUnitar) || 0), 0);
+    const valoare = (a) => (Number(a.suma) || 0) || sumaRanduri(a);
+    const normC = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const vizibile = achizitii.filter((a) => {
+        if (filtruStare && a.status !== filtruStare)
+            return false;
+        if (!cauta.trim())
+            return true;
+        const t = normC([a.furnizor, a.descriere, a.data, (a.randuri || []).map((r) => r.denumire).join(' ')].join(' '));
+        return normC(cauta).split(/\s+/).filter(Boolean).every((w) => t.includes(w));
+    });
+    const totalPeStare = (st) => achizitii.filter((a) => a.status === st).reduce((t, a) => t + valoare(a), 0);
+    const setRand = (idx, camp, val) => setForm({ ...form, randuri: (form.randuri || []).map((r, i) => i === idx ? { ...r, [camp]: val } : r) });
+    const adaugaRand = () => setForm({ ...form, randuri: [...(form.randuri || []), { id: uid(), denumire: '', cantitate: 1, um: 'buc', pretUnitar: 0 }] });
+    const stergeRand = (idx) => setForm({ ...form, randuri: (form.randuri || []).filter((_, i) => i !== idx) });
+    const sugestii = (materials || []).filter((m) => !m.arhivat).map((m) => ({ key: m.id, label: m.denumire, um: m.um }));
+    return (React.createElement("div", null,
+        React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2 flex-wrap" },
+            React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDED2 Achizi\u021Bii"),
+            !form && React.createElement("button", { onClick: () => setForm({ id: uid(), data: new Date().toISOString().slice(0, 10), furnizor: '', descriere: '', suma: 0, status: ACHIZITIE_STATUSES[0], randuri: [] }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } },
+                React.createElement(Icon, null, "+"),
+                " Achizi\u021Bie nou\u0103")),
+        React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Comenzile firmei. Treci materialele pe r\u00E2nduri, iar la primire le pui \u00EEn gestiune cu un buton \u2014 nu le mai introduci a doua oar\u0103."),
+        form && (React.createElement("div", { className: "rounded-xl p-4 mb-4 space-y-2 max-w-xl", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } },
+            React.createElement("div", { className: "flex gap-2 flex-wrap items-center" },
+                React.createElement(RoCalendarPicker, { value: form.data, onChange: (v) => setForm({ ...form, data: v }) }),
+                React.createElement("select", { value: form.status, onChange: (e) => setForm({ ...form, status: e.target.value }), className: "rounded-lg px-2 py-2 text-sm outline-none", style: inputStyle }, ACHIZITIE_STATUSES.map((st) => React.createElement("option", { key: st, value: st, style: { background: 'var(--panel)' } }, st)))),
+            React.createElement("input", { placeholder: "Furnizor", value: form.furnizor, onChange: (e) => setForm({ ...form, furnizor: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
+            React.createElement("input", { placeholder: "Descriere (ex: comand\u0103 cabluri etaj 4)", value: form.descriere, onChange: (e) => setForm({ ...form, descriere: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
+            React.createElement("div", { className: "pt-1" },
+                React.createElement("div", { className: "text-[11px] font-bold uppercase tracking-wider mb-1.5", style: { color: 'var(--muted2)' } }, "Materiale comandate"),
+                (form.randuri || []).length === 0 && React.createElement("div", { className: "text-[11px] mb-1.5", style: { color: 'var(--muted2)' } }, "F\u0103r\u0103 r\u00E2nduri, achizi\u021Bia r\u0103m\u00E2ne doar o not\u0103 \u2014 nu poate intra \u00EEn gestiune."),
+                React.createElement("div", { className: "space-y-1.5" }, (form.randuri || []).map((r, idx) => (React.createElement("div", { key: r.id || idx, className: "flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1.5", style: { background: 'var(--panel2)' } },
+                    React.createElement(AutocompleteInput, { value: r.denumire, onChange: (v) => setRand(idx, 'denumire', v), onPick: (o) => setForm({ ...form, randuri: (form.randuri || []).map((x, i) => i === idx ? { ...x, denumire: o.label, um: o.um || x.um } : x) }), options: sugestii, placeholder: "Material...", minWidth: "150px" }),
+                    React.createElement("input", { type: "number", inputMode: "decimal", value: r.cantitate, onChange: (e) => setRand(idx, 'cantitate', e.target.value), placeholder: "Cant.", className: "w-20 rounded-lg px-2 py-1.5 text-xs outline-none text-center", style: inputStyle }),
+                    React.createElement("input", { value: r.um, onChange: (e) => setRand(idx, 'um', e.target.value), placeholder: "buc", className: "w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center", style: inputStyle }),
+                    React.createElement("input", { type: "number", inputMode: "decimal", value: r.pretUnitar, onChange: (e) => setRand(idx, 'pretUnitar', e.target.value), placeholder: "Pre\u021B", className: "w-20 rounded-lg px-2 py-1.5 text-xs outline-none text-center", style: inputStyle }),
+                    React.createElement("button", { onClick: () => stergeRand(idx), className: "opacity-60", style: { color: 'var(--acc4)' } },
+                        React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1")))))),
+                React.createElement("button", { onClick: adaugaRand, className: "text-xs px-3 py-1.5 rounded-lg font-semibold mt-2", style: { color: '#14181C', background: 'var(--acc2)' } }, "+ Adaug\u0103 material")),
+            React.createElement("div", { className: "flex items-center gap-2 pt-1 flex-wrap" },
+                React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Sum\u0103 total\u0103 (lei):"),
+                React.createElement("input", { type: "number", inputMode: "decimal", placeholder: String(Math.round(sumaRanduri(form) * 100) / 100), value: form.suma, onChange: (e) => setForm({ ...form, suma: e.target.value }), className: "w-28 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
+                sumaRanduri(form) > 0 && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                    "din r\u00E2nduri: ",
+                    money(sumaRanduri(form)))),
+            React.createElement("div", { className: "flex justify-end gap-2 pt-1" },
+                React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"),
+                React.createElement("button", { onClick: save, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))),
+        mesaj && React.createElement("div", { className: "text-xs mb-2 px-3 py-2 rounded-lg", style: { color: mesaj.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, mesaj),
+        achizitii.length > 0 && (React.createElement("div", { className: "flex items-center gap-2 mb-3 flex-wrap" },
+            React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "\uD83D\uDD0D Caut\u0103 furnizor, material sau descriere", className: "rounded-lg px-3 py-2 text-sm outline-none flex-1 min-w-[180px]", style: inputStyle }),
+            React.createElement("button", { onClick: () => setFiltruStare(''), className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: !filtruStare ? '#14181C' : 'var(--muted)', background: !filtruStare ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+                "Toate (",
+                achizitii.length,
+                ")"),
+            ACHIZITIE_STATUSES.map((st) => {
+                const n = achizitii.filter((a) => a.status === st).length;
+                return n ? React.createElement("button", { key: st, onClick: () => setFiltruStare(filtruStare === st ? '' : st), className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: filtruStare === st ? '#14181C' : 'var(--muted)', background: filtruStare === st ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+                    st,
+                    " (",
+                    n,
+                    ")") : null;
+            }))),
+        achizitii.length > 0 && (React.createElement("div", { className: "flex items-center justify-end gap-4 mb-2 px-1 text-[11px] flex-wrap", style: { color: 'var(--muted2)' } }, ACHIZITIE_STATUSES.map((st) => totalPeStare(st) > 0 ? React.createElement("span", { key: st },
+            st,
+            ": ",
+            React.createElement("b", { style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, money(totalPeStare(st)))) : null))),
+        achizitii.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio achizi\u021Bie \u00EEnregistrat\u0103.")) : vizibile.length === 0 ? (React.createElement("div", { className: "text-center py-10 text-sm", style: { color: 'var(--muted)' } }, "Niciun rezultat.")) : (React.createElement("div", { className: "space-y-2" }, vizibile.map((a) => (React.createElement("div", { key: a.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap" },
+                React.createElement("div", { className: "min-w-0" },
+                    React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } },
+                        a.furnizor,
+                        a.furnizor && a.descriere ? ' — ' : '',
+                        a.descriere),
+                    React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted)' } },
+                        fmtData(a.data),
+                        " \u00B7 ",
+                        money(valoare(a)),
+                        (a.randuri || []).length > 0 && React.createElement(React.Fragment, null,
+                            " \u00B7 ",
+                            a.randuri.length,
+                            " ",
+                            a.randuri.length === 1 ? 'material' : 'materiale'),
+                        a.inStoc && React.createElement("span", { style: { color: 'var(--acc2)' } }, " \u00B7 \u2705 pus \u00EEn gestiune"))),
+                React.createElement("div", { className: "flex items-center gap-2 shrink-0" },
+                    React.createElement("select", { value: a.status, onChange: (e) => setStatus(a.id, e.target.value), className: "text-xs rounded-lg px-2 py-1 outline-none", style: inputStyle }, ACHIZITIE_STATUSES.map((st) => React.createElement("option", { key: st, value: st, style: { background: 'var(--panel)' } }, st))),
+                    React.createElement("button", { onClick: () => setForm({ ...a, randuri: a.randuri || [] }), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"),
+                    React.createElement("button", { onClick: () => del(a.id), style: { color: 'var(--acc4)' } },
+                        React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1")))),
+            (a.randuri || []).length > 0 && (React.createElement("div", { className: "text-[11px] mt-1.5", style: { color: 'var(--muted2)' } },
+                "\uD83D\uDCE6 ",
+                a.randuri.map((r) => `${r.denumire}${(Number(r.cantitate) || 0) > 0 ? ` ${r.cantitate} ${r.um || ''}` : ''}`).join(' · '))),
+            !a.inStoc && (a.randuri || []).length > 0 && (React.createElement("button", { onClick: () => receptie(a), className: "text-xs px-3 py-2 rounded-lg font-semibold mt-2", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCE5 Am primit \u2014 pune \u00EEn gestiune")))))))));
 }
 function UsersTab({ currentUser }) {
     const [parolaVizibila, setParolaVizibila] = useState(false);
@@ -8604,15 +8807,34 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     const sarbatoriiZi = colegiUsers.filter((u) => { const n = nasterePeDinCnp(u.cnp); return n && n.zi === aziDate.getDate() && n.luna === aziDate.getMonth() + 1; });
     const santiereMele = santiere.filter((s) => inEchipa(s.echipa, currentUser?.id));
     const santiereFaraRaportAzi = dupa17 ? santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
+    const zileRestante = (() => {
+        const out = [];
+        const d = new Date(azi + 'T00:00:00');
+        for (let k = 1; k <= 14 && out.length < 10; k++) {
+            d.setDate(d.getDate() - (k === 1 ? 1 : 1));
+            const zi = d.getDay();
+            if (zi === 0 || zi === 6)
+                continue;
+            const ds = d.toISOString().slice(0, 10);
+            if ((SARBATORI_LEGALE[d.getFullYear()] || []).includes(ds))
+                continue;
+            santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, ds) && !rapoarte.some((r) => r.santierId === s.id && r.data === ds))
+                .forEach((s) => out.push({ santier: s, data: ds }));
+        }
+        return out.slice(0, 12);
+    })();
     const idSantiereMele = new Set(santiereMele.map((s) => s.id));
     const cereriLaSantiereleMele = cereriSantier.filter((c) => idSantiereMele.has(c.santierId)).slice().reverse().slice(0, 6);
-    const nimicDeFacut = isManager
-        ? materialeSubStoc.length === 0 && cereriInAsteptarePeSantier.length === 0 && santiereActiveFaraRaportAzi.length === 0 && concediiInAsteptare.length === 0 && alocariInAsteptare.length === 0
-        : santiereFaraRaportAzi.length === 0 && santiereMele.length === 0 && cereriLaSantiereleMele.length === 0;
     const qaSite = (problemeSantier || []).filter((p) => p.santierId);
     const qaRelevante = (isManager
         ? qaSite.filter((p) => !raspunsCorectQA(p))
         : qaSite.filter((p) => raspunsuriQA(p).length === 0 && (p.creatId === currentUser?.id || santiereMele.some((s) => s.id === p.santierId)))).slice().reverse();
+    const nimicDeFacut = (isManager
+        ? materialeSubStoc.length === 0 && cereriInAsteptarePeSantier.length === 0 && santiereActiveFaraRaportAzi.length === 0 && concediiInAsteptare.length === 0 && alocariInAsteptare.length === 0
+        : santiereFaraRaportAzi.length === 0 && zileRestante.length === 0 && santiereMele.length === 0 && cereriLaSantiereleMele.length === 0)
+        && (qaRelevante || []).length === 0
+        && (respinseAfisate || []).length === 0
+        && (mementouri || []).filter((m) => !m.gata).length === 0;
     return (React.createElement("div", null,
         React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\u26A1 Activitatea mea"),
         React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Tot ce ai de rezolvat sau de urm\u0103rit, \u00EEntr-un singur loc."),
@@ -8802,7 +9024,6 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                         React.createElement("span", { style: { color: 'var(--acc1)' } }, "\u2192")),
                     React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)' } }, membri.length > 0 ? `👥 ${membri.join(', ')}` : '⚠ Fără echipă asignată')))))));
         })(),
-        nimicDeFacut && (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "\u2705 Nimic de f\u0103cut acum.")),
         !isManager && oraAcum >= 17 && santiereFaraRaportAzi.length > 0 && (React.createElement("div", { className: "mb-6" },
             React.createElement("button", { onClick: () => setMementoOpen(!mementoOpen), className: "w-full flex items-center justify-between rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid #E05252' } },
                 React.createElement("span", { className: "text-sm font-medium", style: { color: 'var(--acc4)' } },
@@ -8820,6 +9041,21 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                     s.nume,
                     "\""),
                 React.createElement("span", { style: { color: 'var(--acc4)' } }, "\u2192")))))))),
+        !isManager && zileRestante.length > 0 && (React.createElement("div", { className: "mb-6" },
+            React.createElement("div", { className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid #E9A23B' } },
+                React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--acc3)' } },
+                    "\uD83D\uDCCC ",
+                    zileRestante.length,
+                    " ",
+                    zileRestante.length === 1 ? 'raport restant din zilele trecute' : 'rapoarte restante din zilele trecute'),
+                React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, "Orele din ele nu sunt \u00EEn Pontaj p\u00E2n\u0103 nu le scrii."),
+                React.createElement("div", { className: "space-y-1.5" }, zileRestante.map((x, i) => (React.createElement("button", { key: i, onClick: () => goToSite(x.santier.id, 'rapoarte'), className: "w-full text-left rounded-lg px-3 py-2 flex items-center justify-between gap-2", style: { background: 'var(--panel2)' } },
+                    React.createElement("span", { className: "text-xs min-w-0 truncate", style: { color: 'var(--text)' } },
+                        fmtData(x.data),
+                        " \u00B7 \u201E",
+                        x.santier.nume,
+                        "\""),
+                    React.createElement("span", { className: "shrink-0", style: { color: 'var(--acc3)' } }, "\u2192")))))))),
         !isManager && (() => {
             const acum = new Date();
             const zi = acum.getDay();
@@ -8979,7 +9215,8 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                         " ",
                         alocariInAsteptare.length === 1 ? 'cerere' : 'cereri',
                         " de alocare pe \u0219antier \u2014 de aprobat"),
-                    React.createElement("span", { style: { color: 'var(--acc3)' } }, "\u2192"))))))));
+                    React.createElement("span", { style: { color: 'var(--acc3)' } }, "\u2192")))))),
+        nimicDeFacut && (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "\u2705 Nimic de f\u0103cut acum."))));
 }
 function CompanyTab({ company, setCompany, persist }) {
     const [form, setForm] = useState(company);
@@ -9803,9 +10040,23 @@ function App() {
     const TABURI_TEST = [null, 'activitate', 'santiere', 'asistent', 'calculator', 'normativ', 'profil', 'ghid'];
     const tabBlocatTest = accesLimitat && !!tab && !TABURI_TEST.includes(tab);
     const CONTAB_TABS = ['proiecte', 'devize', 'oferte', 'facturi', 'clienti', 'notite'];
-    const [contabOpen, setContabOpen] = useState(false);
-    const MATERIALE_TABS = ['gestiune', 'stocuri'];
-    const [materialeOpen, setMaterialeOpen] = useState(false);
+    const MATERIALE_TABS = ['gestiune', 'stocuri', 'achizitii'];
+    const OAMENI_TABS = ['pontaj', 'concedii', 'adeverinte', 'utilizatori'];
+    const UNELTE_TABS = ['asistent', 'memento', 'calculator', 'normativ', 'ghid'];
+    const SETARI_TABS = ['firma', 'profil'];
+    const [grupDeschis, setGrupDeschis] = useState(null);
+    useEffect(() => {
+        if (CONTAB_TABS.includes(tab))
+            setGrupDeschis('contab');
+        else if (MATERIALE_TABS.includes(tab))
+            setGrupDeschis('materiale');
+        else if (OAMENI_TABS.includes(tab))
+            setGrupDeschis('oameni');
+        else if (UNELTE_TABS.includes(tab))
+            setGrupDeschis('unelte');
+        else if (SETARI_TABS.includes(tab))
+            setGrupDeschis('setari');
+    }, [tab]);
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -10509,6 +10760,37 @@ function App() {
             santierId: sY?.id || '', santierNume: santierNume || '', adresaLucrare: sY?.adresa || '',
             lucrare: santierNume ? `Materiale folosite — ${santierNume}` : '' });
     };
+    const receptioneazaAchizitie = (randuri, nota) => {
+        let nextMaterials = materials.slice();
+        const miscariNoi = [];
+        const azi2 = new Date().toISOString().slice(0, 10);
+        (randuri || []).forEach((r) => {
+            const den = String(r.denumire || '').trim();
+            const cant = Number(r.cantitate) || 0;
+            if (!den || cant <= 0)
+                return;
+            const pret = Number(r.pretUnitar) || 0;
+            let mat = nextMaterials.find((m) => m.denumire === den && !m.arhivat);
+            if (!mat) {
+                mat = { id: uid(), denumire: den, categorie: '', um: r.um || 'buc', stoc: 0, stocMinim: 0, pret: 0, arhivat: false };
+                nextMaterials = [...nextMaterials, mat];
+            }
+            const stocVechi = Number(mat.stoc) || 0;
+            const pretVechi = Number(mat.pret) || 0;
+            const stocNou = stocVechi + cant;
+            const pretNou = pret > 0 ? (stocNou > 0 ? ((stocVechi * pretVechi) + (cant * pret)) / stocNou : pret) : pretVechi;
+            nextMaterials = nextMaterials.map((m) => m.id === mat.id ? { ...m, stoc: stocNou, pret: Math.round(pretNou * 100) / 100 } : m);
+            miscariNoi.push({ id: uid(), materialId: mat.id, tip: 'intrare', cantitate: cant, pret: pret || undefined, nota: nota || 'Recepție achiziție', data: azi2, userNume: currentUser?.nume || '' });
+        });
+        if (!miscariNoi.length)
+            return 0;
+        setMaterials(nextMaterials);
+        persist('materials', nextMaterials);
+        const nextMoves = [...miscariNoi, ...stockMoves];
+        setStockMoves(nextMoves);
+        persist('stockMoves', nextMoves);
+        return miscariNoi.length;
+    };
     const proceseazaCerereMaterial = (denumire, um, cantitate, santierNume) => {
         let mat = materials.find((m) => m.denumire === denumire && !m.arhivat);
         let nextMaterials;
@@ -10587,34 +10869,56 @@ function App() {
                     effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: null, label: "\uD83C\uDFE0 Dashboard" }),
                     React.createElement(NavItem, { id: "activitate", label: effectiveUser.rol === 'Manager' ? '⚡ Activitatea mea' : '🏠 Activitatea mea' }),
                     React.createElement("div", { style: { height: 1, background: 'var(--border)', margin: '4px 4px 8px' } }),
-                    effectiveUser.rol === 'Manager' && (React.createElement(React.Fragment, null,
-                        React.createElement("button", { onClick: () => setContabOpen(!contabOpen), className: "flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left", style: { color: CONTAB_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight: 600 } },
-                            React.createElement("span", null, "\uD83D\uDCCA Contabilitate"),
-                            React.createElement("span", { style: { fontSize: 10, transform: contabOpen ? 'rotate(90deg)' : 'none', display: 'inline-block' } }, "\u25B6")),
-                        contabOpen && (React.createElement("div", { className: "flex flex-col gap-1 pl-3" },
-                            React.createElement(NavItem, { id: "proiecte", label: "\uD83D\uDCC1 Proiecte (documente)" }),
-                            React.createElement(NavItem, { id: "clienti", label: "\uD83D\uDC65 Clien\u021Bi" }),
-                            React.createElement(NavItem, { id: "notite", label: "\uD83D\uDCDD Noti\u021Be" }))))),
-                    React.createElement("button", { onClick: () => setMaterialeOpen(!materialeOpen), className: "flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left", style: { color: MATERIALE_TABS.includes(tab) ? 'var(--acc1)' : 'var(--muted1)', fontWeight: 600 } },
-                        React.createElement("span", null, "\uD83D\uDCE6 Materiale"),
-                        React.createElement("span", { style: { fontSize: 10, transform: materialeOpen ? 'rotate(90deg)' : 'none', display: 'inline-block' } }, "\u25B6")),
-                    materialeOpen && (React.createElement("div", { className: "flex flex-col gap-1 pl-3" },
-                        effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "gestiune", label: "\uD83D\uDDC2 Gestiune" }),
-                        React.createElement(NavItem, { id: "stocuri", label: "\uD83D\uDCC8 Stocuri" }))),
                     React.createElement(NavItem, { id: "santiere", label: "\uD83C\uDFD7 \u0218antiere" }),
-                    React.createElement(NavItem, { id: "asistent", label: "\uD83E\uDD16 Asistent Q&A" }),
-                    React.createElement(NavItem, { id: "memento", label: "\uD83D\uDD14 Memento" }),
-                    React.createElement(NavItem, { id: "calculator", label: "\uD83E\uDDEE Calculator" }),
-                    React.createElement(NavItem, { id: "normativ", label: "\uD83D\uDCD8 Normativ I7" }),
-                    React.createElement(NavItem, { id: "pontaj", label: "\uD83D\uDD50 Pontaj" }),
-                    React.createElement(NavItem, { id: "concedii", label: "\uD83C\uDFD6 Concedii" }),
-                    effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "achizitii", label: "\uD83D\uDED2 Achizi\u021Bii" }),
-                    effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "adeverinte", label: "\uD83D\uDCC4 Adeverin\u021Be" }),
-                    React.createElement("div", { style: { height: 1, background: 'var(--border)', margin: '8px 4px' } }),
-                    effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "firma", label: "\u2699 Firma mea" }),
-                    React.createElement(NavItem, { id: "profil", label: "\uD83D\uDC64 Profilul meu" }),
-                    React.createElement(NavItem, { id: "ghid", label: "\uD83D\uDCD6 Ghid" }),
-                    effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "utilizatori", label: "\uD83D\uDD11 Utilizatori" }),
+                    (() => {
+                        const GRUPE = [
+                            ['contab', '📁', 'Documente', CONTAB_TABS, true, [
+                                    ['proiecte', '📁 Proiecte (dosare)', true],
+                                    ['clienti', '👥 Clienți', true],
+                                    ['notite', '📝 Notițe', true],
+                                ]],
+                            ['materiale', '📦', 'Materiale', MATERIALE_TABS, false, [
+                                    ['gestiune', '🗂 Gestiune', true],
+                                    ['stocuri', '📈 Stocuri', false],
+                                    ['achizitii', '🛒 Achiziții', true],
+                                ]],
+                            ['oameni', '👥', 'Oameni', OAMENI_TABS, false, [
+                                    ['pontaj', '🕐 Pontaj', false],
+                                    ['concedii', '🏖 Concedii', false],
+                                    ['adeverinte', '📄 Adeverințe', true],
+                                    ['utilizatori', '🔑 Utilizatori', true],
+                                ]],
+                            ['unelte', '🧰', 'Unelte', UNELTE_TABS, false, [
+                                    ['asistent', '🤖 Asistent Q&A', false],
+                                    ['memento', '🔔 Memento', false],
+                                    ['calculator', '🧮 Calculator', false],
+                                    ['normativ', '📘 Normativ I7', false],
+                                    ['ghid', '📖 Ghid', false],
+                                ]],
+                            ['setari', '⚙', 'Setări', SETARI_TABS, false, [
+                                    ['firma', '⚙ Firma mea', true],
+                                    ['profil', '👤 Profilul meu', false],
+                                ]],
+                        ];
+                        const eManager = effectiveUser.rol === 'Manager';
+                        return GRUPE.map(([cheie, icon, eticheta, taburi, doarManager, copii]) => {
+                            if (doarManager && !eManager)
+                                return null;
+                            const vizibili = copii.filter(([, , numaiMgr]) => !numaiMgr || eManager);
+                            if (!vizibili.length)
+                                return null;
+                            const deschis = grupDeschis === cheie;
+                            const activ = taburi.includes(tab);
+                            return (React.createElement("div", { key: cheie },
+                                React.createElement("button", { onClick: () => setGrupDeschis(deschis ? null : cheie), className: "flex items-center justify-between px-3 py-2.5 rounded-lg text-sm w-full text-left", style: { color: activ ? 'var(--acc1)' : 'var(--muted1)', fontWeight: 600 } },
+                                    React.createElement("span", null,
+                                        icon,
+                                        " ",
+                                        eticheta),
+                                    React.createElement("span", { style: { fontSize: 10, transform: deschis ? 'rotate(90deg)' : 'none', display: 'inline-block' } }, "\u25B6")),
+                                deschis && (React.createElement("div", { className: "flex flex-col gap-1 pl-3" }, vizibili.map(([id, label]) => React.createElement(NavItem, { key: id, id: id, label: label }))))));
+                        });
+                    })(),
                     React.createElement("div", { className: "mt-auto pt-3", style: { borderTop: '1px solid var(--border)' } },
                         currentUser.rol === 'Manager' && (React.createElement("div", { className: "px-3 mb-2" },
                             React.createElement("div", { className: "text-[10px] uppercase tracking-wider mb-1", style: { color: 'var(--muted2)' } }, "\uD83E\uDDEA Vezi ca (test)"),
@@ -10684,13 +10988,13 @@ function App() {
                                 setTab('oferte');
                             } }),
                         tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz }),
-                        (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
+                        (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
                         tab === 'santiere' && React.createElement(SantiereTab, { santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu }),
                         tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist }),
                         tab === 'activitate' && React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
                         tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
                         tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company }),
-                        tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist }),
+                        tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist, materials: materials, onReceptie: receptioneazaAchizitie }),
                         tab === 'adeverinte' && effectiveUser.rol === 'Manager' && React.createElement(AdeverinteTab, { company: company }),
                         tab === 'profil' && React.createElement(ProfileTab, { currentUser: effectiveUser, onLogout: logout, tema: tema, setTema: setTema, carduri: carduri, setCarduri: setCarduri }),
                         tab === 'asistent' && React.createElement(AsistentTab, { problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, santiere: santiere, persist: persist, currentUser: effectiveUser, qaTarget: qaTarget, clearQaTarget: () => setQaTarget(null) }),
