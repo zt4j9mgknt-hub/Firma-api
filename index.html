@@ -288,8 +288,39 @@ function calcOreDinInterval(inceput, sfarsit) {
     let minute = (h2 * 60 + m2) - (h1 * 60 + m1);
     if (minute <= 0)
         minute += 24 * 60;
-    minute -= 60;
     return Math.max(0, minute);
+}
+const PRAG_PAUZA_MIN = 9 * 60;
+const PAUZA_MIN = 60;
+function scadePauzaZi(minuteBrute) {
+    const m = Number(minuteBrute) || 0;
+    return m >= PRAG_PAUZA_MIN ? Math.max(0, m - PAUZA_MIN) : m;
+}
+function minuteFacturabile(toateRapoartele, r, p) {
+    const brutRand = personMinutes(p);
+    if (!brutRand)
+        return 0;
+    let brutZi = 0;
+    (toateRapoartele || []).forEach((x) => {
+        if (x.data !== r.data)
+            return;
+        (x.persoane || []).forEach((pp) => { if (pp && pp.nume === p.nume)
+            brutZi += personMinutes(pp); });
+    });
+    if (brutZi <= 0)
+        return brutRand;
+    const netZi = scadePauzaZi(brutZi);
+    return Math.round(brutRand * (netZi / brutZi));
+}
+function minutePersoanaZi(rapoarte, nume, data) {
+    let brut = 0;
+    (rapoarte || []).forEach((r) => {
+        if (r.data !== data)
+            return;
+        (r.persoane || []).forEach((p) => { if (p && p.nume === nume)
+            brut += personMinutes(p); });
+    });
+    return { brut, net: scadePauzaZi(brut), pauza: brut >= PRAG_PAUZA_MIN ? PAUZA_MIN : 0 };
 }
 function oreToMinutes(v) {
     if (v === null || v === undefined || v === '')
@@ -871,7 +902,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.08-qa';
+const APP_VERSION = 'v01.08-pauza2';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -5448,7 +5479,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             });
             return Array.from(peZi.values()).sort((a, b) => a.data < b.data ? 1 : -1);
         })();
-        const totalOreSantierMin = rapoarteSantier.reduce((s, r) => s + r.persoane.reduce((s2, p) => s2 + personMinutes(p), 0), 0);
+        const totalOreSantierMin = rapoarteSantier.reduce((s, r) => s + r.persoane.reduce((s2, p) => s2 + minuteFacturabile(rapoarte, r, p), 0), 0);
         const accHeader = (k, icon, label, count) => {
             const deschis = siteView === k;
             if (siteView !== '__closed__' && !deschis)
@@ -7012,6 +7043,7 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
         minuteLucratePeZi[r.data] = (minuteLucratePeZi[r.data] || 0) + personMinutes(p);
         dateRaportate.push(r.data);
     });
+    Object.keys(minuteLucratePeZi).forEach((zi) => { minuteLucratePeZi[zi] = scadePauzaZi(minuteLucratePeZi[zi]); });
     const primaZiCuDate = dateRaportate.length ? dateRaportate.slice().sort()[0] : null;
     const [anLimita, lunaLimita] = panaLaLuna.split('-').map(Number);
     const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
@@ -7129,11 +7161,21 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
             if (!isManager && p.nume !== currentUser?.nume)
                 return;
             if (!perPersoana[p.nume])
-                perPersoana[p.nume] = { nume: p.nume, totalMin: 0, peSantier: {} };
+                perPersoana[p.nume] = { nume: p.nume, totalMin: 0, peSantier: {}, brutPeZi: {} };
             const min = personMinutes(p);
             perPersoana[p.nume].totalMin += min;
+            perPersoana[p.nume].brutPeZi[r.data] = (perPersoana[p.nume].brutPeZi[r.data] || 0) + min;
             perPersoana[p.nume].peSantier[santierNume] = (perPersoana[p.nume].peSantier[santierNume] || 0) + min;
         });
+    });
+    Object.values(perPersoana).forEach((x) => {
+        if (!x.brutPeZi)
+            return;
+        let pauze = 0;
+        Object.values(x.brutPeZi).forEach((brutZi) => { if (brutZi >= PRAG_PAUZA_MIN)
+            pauze += PAUZA_MIN; });
+        x.pauzeMin = pauze;
+        x.totalMin = Math.max(0, x.totalMin - pauze);
     });
     if (isManager) {
         allUsersPontaj.filter((u) => u.rol === 'Electrician').forEach((u) => {
@@ -7206,7 +7248,8 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
                 if (persoana) {
                     const supl = info?.suplimentar > 0 ? ` (+${minutesToHM(info.suplimentar)} supl.)` : '';
                     const auto = (info?.status === 'partial' && info?.minuteAuto > 0) ? ` (+${minutesToHM(info.minuteAuto)} ${info.codAuto})` : '';
-                    return { start: persoana.oraInceput || '', sfarsit: persoana.oraSfarsit || '', pauza: '1:00', ore: minutesToHM(personMinutes(persoana)) + supl + auto };
+                    const zizi = minutePersoanaZi(rapoarte, nume, zi.dataStr);
+                    return { start: persoana.oraInceput || '', sfarsit: persoana.oraSfarsit || '', pauza: zizi.pauza ? minutesToHM(zizi.pauza) : '—', ore: minutesToHM(zizi.net) + supl + auto };
                 }
                 if (info?.status === 'absent')
                     return { start: info.codAuto, sfarsit: info.codAuto, pauza: info.codAuto, ore: info.codAuto };
@@ -8473,7 +8516,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             })();
             const dinRapoarte = santiere.map((s) => {
                 const rapS = rapoarte.filter((r) => r.santierId === s.id && String(r.data || '').startsWith(lunaMunca));
-                const minute = rapS.reduce((acc, r) => acc + (r.persoane || []).filter((p) => p.nume && String(p.nume).trim()).reduce((a, p) => a + personMinutes(p), 0), 0);
+                const minute = rapS.reduce((acc, r) => acc + (r.persoane || []).filter((p) => p.nume && String(p.nume).trim()).reduce((a, p) => a + minuteFacturabile(rapoarte, r, p), 0), 0);
                 const ore = minute / 60;
                 const tarif = Number(s.tarifOrar) || 0;
                 const manopera = ore * tarif;
@@ -9601,7 +9644,7 @@ function printAdeverinta(a, company) {
     w.document.close();
     w.focus();
 }
-function devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrari }) {
+function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, nr, data, includeLucrari }) {
     const tarif = Number(santier?.tarifOrar) || 75;
     const tva = 21;
     const zile = (rapoarte || [])
@@ -9614,7 +9657,7 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrar
         const pv = r.persoane.filter((p) => p.nume && String(p.nume).trim());
         const lucrariZi = includeLucrari ? (r.tipuriLucrari || []).map((t) => String(t.denumire || '').trim()).filter(Boolean).join(', ') : '';
         const grupe = {};
-        pv.forEach((p) => { const oreP = personMinutes(p) / 60; const k = oreP.toFixed(2); grupe[k] = (grupe[k] || 0) + 1; });
+        pv.forEach((p) => { const oreP = minuteFacturabile(toateRapoartele || rapoarte, r, p) / 60; const k = oreP.toFixed(2); grupe[k] = (grupe[k] || 0) + 1; });
         let firstOfDay = true;
         Object.keys(grupe).sort((a, b) => Number(b) - Number(a)).forEach((k) => {
             const ore = Number(k), nrPers = grupe[k];
@@ -9693,13 +9736,13 @@ function devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrar
     </div>
   </div>`;
 }
-function openDevizOrar({ santier, company, rapoarte, nr, data, includeLucrari }) {
+function openDevizOrar({ santier, company, rapoarte, toateRapoartele, nr, data, includeLucrari }) {
     const validPers = (rapoarte || []).some((r) => (r.persoane || []).some((p) => p.nume && String(p.nume).trim()));
     if (!validPers) {
         window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.');
         return;
     }
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, nr, data, includeLucrari })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, nr, data, includeLucrari })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
     const w = window.open('', '_blank');
     if (!w) {
         window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.');
@@ -10882,7 +10925,7 @@ function App() {
                                     ['stocuri', '📈 Stocuri', false],
                                     ['achizitii', '🛒 Achiziții', true],
                                 ]],
-                            ['oameni', '👥', 'Oameni', OAMENI_TABS, false, [
+                            ['oameni', effectiveUser.rol === 'Manager' ? '👷' : '👥', effectiveUser.rol === 'Manager' ? 'Angajați' : 'Echipa', OAMENI_TABS, false, [
                                     ['pontaj', '🕐 Pontaj', false],
                                     ['concedii', '🏖 Concedii', false],
                                     ['adeverinte', '📄 Adeverințe', true],
