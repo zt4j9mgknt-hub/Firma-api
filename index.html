@@ -290,37 +290,59 @@ function calcOreDinInterval(inceput, sfarsit) {
         minute += 24 * 60;
     return Math.max(0, minute);
 }
+const PAUZA_START_MIN = 12 * 60;
+const PAUZA_SFARSIT_MIN = 13 * 60;
+const PAUZA_MIN = PAUZA_SFARSIT_MIN - PAUZA_START_MIN;
 const PRAG_PAUZA_MIN = 9 * 60;
-const PAUZA_MIN = 60;
 function scadePauzaZi(minuteBrute) {
     const m = Number(minuteBrute) || 0;
     return m >= PRAG_PAUZA_MIN ? Math.max(0, m - PAUZA_MIN) : m;
 }
-function minuteFacturabile(toateRapoartele, r, p) {
-    const brutRand = personMinutes(p);
-    if (!brutRand)
+function suprapunerePauza(inceput, sfarsit) {
+    if (!inceput || !sfarsit)
         return 0;
-    let brutZi = 0;
-    (toateRapoartele || []).forEach((x) => {
-        if (x.data !== r.data)
-            return;
-        (x.persoane || []).forEach((pp) => { if (pp && pp.nume === p.nume)
-            brutZi += personMinutes(pp); });
+    const [h1, m1] = String(inceput).split(':').map(Number);
+    const [h2, m2] = String(sfarsit).split(':').map(Number);
+    if ([h1, m1, h2, m2].some((x) => !Number.isFinite(x)))
+        return 0;
+    const a = h1 * 60 + m1;
+    let b = h2 * 60 + m2;
+    if (b <= a)
+        b += 24 * 60;
+    let total = 0;
+    [0, 24 * 60].forEach((off) => {
+        const s = Math.max(a, PAUZA_START_MIN + off);
+        const e = Math.min(b, PAUZA_SFARSIT_MIN + off);
+        if (e > s)
+            total += e - s;
     });
-    if (brutZi <= 0)
-        return brutRand;
-    const netZi = scadePauzaZi(brutZi);
-    return Math.round(brutRand * (netZi / brutZi));
+    return total;
+}
+function minuteLucrate(p) {
+    const brut = personMinutes(p);
+    if (!brut)
+        return 0;
+    if (p && p.oraInceput && p.oraSfarsit)
+        return Math.max(0, brut - suprapunerePauza(p.oraInceput, p.oraSfarsit));
+    return scadePauzaZi(brut);
+}
+function minuteFacturabile(toateRapoartele, r, p) {
+    return minuteLucrate(p);
 }
 function minutePersoanaZi(rapoarte, nume, data) {
     let brut = 0;
+    let net = 0;
     (rapoarte || []).forEach((r) => {
         if (r.data !== data)
             return;
-        (r.persoane || []).forEach((p) => { if (p && p.nume === nume)
-            brut += personMinutes(p); });
+        (r.persoane || []).forEach((p) => {
+            if (!p || p.nume !== nume)
+                return;
+            brut += personMinutes(p);
+            net += minuteLucrate(p);
+        });
     });
-    return { brut, net: scadePauzaZi(brut), pauza: brut >= PRAG_PAUZA_MIN ? PAUZA_MIN : 0 };
+    return { brut, net, pauza: Math.max(0, brut - net) };
 }
 function oreToMinutes(v) {
     if (v === null || v === undefined || v === '')
@@ -902,7 +924,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.10-unde';
+const APP_VERSION = 'v01.11-pranz';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -3892,6 +3914,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
     const idExclus = useMemo(() => new Set((raportIds || []).filter(Boolean)), [raportIds]);
     const oreZi = useMemo(() => {
         const altundeva = {};
+        const lucratAlt = {};
         const unde = {};
         (rapoarte || []).forEach((r) => {
             if (r.data !== data)
@@ -3906,25 +3929,23 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
                 if (!min)
                     return;
                 altundeva[n] = (altundeva[n] || 0) + min;
-                (unde[n] = unde[n] || []).push({ santierId: r.santierId, raportId: r.id, inceput: p.oraInceput || r.oraInceput || '', sfarsit: p.oraSfarsit || r.oraSfarsit || '', min });
+                lucratAlt[n] = (lucratAlt[n] || 0) + minuteLucrate(p);
+                (unde[n] = unde[n] || []).push({ santierId: r.santierId, raportId: r.id, inceput: p.oraInceput || r.oraInceput || '', sfarsit: p.oraSfarsit || r.oraSfarsit || '', min: minuteLucrate(p) });
             });
         });
         Object.keys(unde).forEach((n) => unde[n].sort((a, b) => String(a.inceput) < String(b.inceput) ? -1 : 1));
         const brut = { ...altundeva };
+        const net = { ...lucratAlt };
         persoane.forEach((p) => {
             const n = String(p?.nume || '').trim();
-            if (n)
-                brut[n] = (brut[n] || 0) + personMinutes(p);
+            if (!n)
+                return;
+            brut[n] = (brut[n] || 0) + personMinutes(p);
+            net[n] = (net[n] || 0) + minuteLucrate(p);
         });
-        return { altundeva, brut, unde };
+        return { altundeva, brut, net, unde };
     }, [rapoarte, data, idExclus, persoane]);
     const numeSantier = (id) => (santiere || []).find((s) => s.id === id)?.nume || 'alt șantier';
-    const netRand = (nume, minRand) => {
-        const brutZi = nume ? (oreZi.brut[nume] || 0) : minRand;
-        if (brutZi <= 0)
-            return minRand;
-        return Math.round(minRand * (scadePauzaZi(brutZi) / brutZi));
-    };
     const numeDejaAdaugate = new Set(persoane.map((p) => p.nume));
     const iconFor = (rol) => ROLES.find((r) => r.id === rol)?.icon || '👤';
     const usersEchipa = (echipaPermisa && echipaPermisa.length > 0) ? users.filter((u) => echipaPermisa.includes(u.id)) : [];
@@ -3942,7 +3963,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
         persoane.length > 0 && (React.createElement("div", { className: "space-y-1.5" }, persoane.map((p) => {
             const mins = personMinutes(p);
             const numeP = String(p.nume || '').trim();
-            const minsNet = netRand(numeP, mins);
+            const minsNet = minuteLucrate(p);
             return (React.createElement("div", { key: p.id, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
                 React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1.5" },
                     React.createElement("input", { value: p.nume, onChange: (e) => update(p.id, 'nume', e.target.value), placeholder: "Nume persoan\u0103", className: "bg-transparent outline-none text-sm font-medium flex-1 min-w-0", style: { color: 'var(--text)' } }),
@@ -3951,7 +3972,9 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
                         " h",
                         minsNet !== mins && React.createElement("span", { className: "block text-[10px]", style: { color: 'var(--muted2)' } },
                             minutesToHM(mins),
-                            " prezent \u2212 pauz\u0103")),
+                            " prezent \u2212 ",
+                            minutesToHM(mins - minsNet),
+                            " pauz\u0103")),
                     React.createElement("button", { onClick: () => remove(p.id), className: "shrink-0 opacity-60", style: { color: 'var(--acc4)' } },
                         React.createElement(Icon, null, "\uD83D\uDDD1"))),
                 React.createElement("div", { className: "flex items-center gap-3 flex-wrap" },
@@ -3970,7 +3993,8 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
                     if (!nume || concediuActiv(concedii, { nume }, data))
                         return null;
                     const brutZi = oreZi.brut[nume] || 0;
-                    const netZi = scadePauzaZi(brutZi);
+                    const netZi = oreZi.net[nume] || 0;
+                    const pauzaZi = Math.max(0, brutZi - netZi);
                     const altundeva = oreZi.altundeva[nume] || 0;
                     const unde = oreZi.unde[nume] || [];
                     const randAlte = altundeva > 0 ? (React.createElement("div", { className: "text-[11px] mt-1.5", style: { color: 'var(--muted)' } },
@@ -3990,7 +4014,7 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
                             "Total pe zi: ",
                             minutesToHM(brutZi),
                             " h prezen\u021B\u0103",
-                            brutZi >= PRAG_PAUZA_MIN ? ' − 1:00 pauză' : '',
+                            pauzaZi > 0 ? ` − ${minutesToHM(pauzaZi)} pauză` : '',
                             " = ",
                             React.createElement("b", null,
                                 minutesToHM(netZi),
@@ -4435,25 +4459,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
     const [tipuriLucrari, setTipuriLucrari] = useState(initial?.tipuriLucrari || []);
     const [lucrariApartamente, setLucrariApartamente] = useState(() => normalizeLucrariApart(initial?.lucrariApartamente || []));
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
-    const totalOreMin = useMemo(() => {
-        const brutZi = {};
-        (rapoarte || []).forEach((r) => {
-            if (r.data !== data)
-                return;
-            if (initial?.id && r.id === initial.id)
-                return;
-            (r.persoane || []).forEach((p) => { const n = String(p?.nume || '').trim(); if (n)
-                brutZi[n] = (brutZi[n] || 0) + personMinutes(p); });
-        });
-        persoane.forEach((p) => { const n = String(p?.nume || '').trim(); if (n)
-            brutZi[n] = (brutZi[n] || 0) + personMinutes(p); });
-        return persoane.reduce((s, p) => {
-            const min = personMinutes(p);
-            const n = String(p?.nume || '').trim();
-            const b = n ? (brutZi[n] || 0) : min;
-            return s + (b > 0 ? Math.round(min * (scadePauzaZi(b) / b)) : min);
-        }, 0);
-    }, [persoane, rapoarte, data, initial]);
+    const totalOreMin = persoane.reduce((s, p) => s + minuteLucrate(p), 0);
     const ultimulRaport = useMemo(() => {
         if (initial)
             return null;
@@ -7153,10 +7159,9 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
         const p = (r.persoane || []).find((pp) => pp.nume === nume);
         if (!p)
             return;
-        minuteLucratePeZi[r.data] = (minuteLucratePeZi[r.data] || 0) + personMinutes(p);
+        minuteLucratePeZi[r.data] = (minuteLucratePeZi[r.data] || 0) + minuteLucrate(p);
         dateRaportate.push(r.data);
     });
-    Object.keys(minuteLucratePeZi).forEach((zi) => { minuteLucratePeZi[zi] = scadePauzaZi(minuteLucratePeZi[zi]); });
     const primaZiCuDate = dateRaportate.length ? dateRaportate.slice().sort()[0] : null;
     const [anLimita, lunaLimita] = panaLaLuna.split('-').map(Number);
     const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
@@ -7274,32 +7279,12 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
             if (!isManager && p.nume !== currentUser?.nume)
                 return;
             if (!perPersoana[p.nume])
-                perPersoana[p.nume] = { nume: p.nume, totalMin: 0, peSantier: {}, brutPeZi: {}, peZiSantier: {} };
-            const min = personMinutes(p);
-            perPersoana[p.nume].totalMin += min;
-            perPersoana[p.nume].brutPeZi[r.data] = (perPersoana[p.nume].brutPeZi[r.data] || 0) + min;
-            const peZi = perPersoana[p.nume].peZiSantier;
-            if (!peZi[r.data])
-                peZi[r.data] = {};
-            peZi[r.data][santierNume] = (peZi[r.data][santierNume] || 0) + min;
+                perPersoana[p.nume] = { nume: p.nume, totalMin: 0, peSantier: {}, pauzeMin: 0 };
+            const lucrat = minuteLucrate(p);
+            perPersoana[p.nume].totalMin += lucrat;
+            perPersoana[p.nume].pauzeMin += Math.max(0, personMinutes(p) - lucrat);
+            perPersoana[p.nume].peSantier[santierNume] = (perPersoana[p.nume].peSantier[santierNume] || 0) + lucrat;
         });
-    });
-    Object.values(perPersoana).forEach((x) => {
-        if (!x.brutPeZi)
-            return;
-        let pauze = 0;
-        x.peSantier = {};
-        Object.keys(x.brutPeZi).forEach((zi) => {
-            const brutZi = x.brutPeZi[zi];
-            if (brutZi >= PRAG_PAUZA_MIN)
-                pauze += PAUZA_MIN;
-            const f = brutZi > 0 ? (scadePauzaZi(brutZi) / brutZi) : 1;
-            Object.keys(x.peZiSantier[zi] || {}).forEach((sN) => {
-                x.peSantier[sN] = (x.peSantier[sN] || 0) + Math.round(x.peZiSantier[zi][sN] * f);
-            });
-        });
-        x.pauzeMin = pauze;
-        x.totalMin = Math.max(0, x.totalMin - pauze);
     });
     if (isManager) {
         allUsersPontaj.filter((u) => u.rol === 'Electrician').forEach((u) => {
