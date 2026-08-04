@@ -949,7 +949,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.16-aiapart';
+const APP_VERSION = 'v01.18-bilant2';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -4310,9 +4310,9 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
                                 n),
                             on && (React.createElement("input", { type: "number", inputMode: "decimal", min: "0", step: "0.5", value: oreN === undefined ? '' : oreN, onChange: (e) => setOrePersoana(g, n, e.target.value), title: `Câte ore a lucrat ${n} aici`, placeholder: "h", className: "w-11 mr-1 rounded-md px-1 py-0.5 text-[11px] text-center outline-none", style: { background: 'rgba(20,24,28,.22)', color: '#14181C', border: 'none', fontWeight: 700 } }))));
                     }),
-                    persG.length > 1 && (React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                    persG.length > 1 && oreRandTotal(g) > 0 && (React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
                         "\u00B7 total ",
-                        oreRandTotal(g) || 0,
+                        oreRandTotal(g),
                         " h"))),
                 React.createElement("div", { className: "flex items-center gap-1.5 mb-1.5 flex-wrap" },
                     React.createElement("select", { value: g.etajId, onChange: (e) => updateGrup(g.id, 'etajId', e.target.value), className: "rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle },
@@ -4348,11 +4348,12 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
         }),
         (() => {
             const h = (v) => (Math.round(v * 100) / 100).toString().replace('.', ',');
+            const bifatiUndeva = new Set(grupuri.flatMap((g) => persoaneDinRand(g)));
             const bilant = numePersoane.map((n) => {
                 const puse = grupuri.reduce((s, g) => s + (persoaneDinRand(g).includes(n) ? oreRandPersoana(g, n) : 0), 0);
                 const lucrate = (persoane || []).reduce((s, x) => s + (String(x.nume || '').trim() === n ? minuteLucrate(x) : 0), 0) / 60;
-                return { nume: n, puse, lucrate };
-            }).filter((x) => x.puse > 0 || x.lucrate > 0);
+                return { nume: n, puse, lucrate, bifat: bifatiUndeva.has(n) };
+            }).filter((x) => x.puse > 0 || x.lucrate > 0 || x.bifat);
             if (!bilant.length)
                 return null;
             return (React.createElement("div", { className: "text-[11px] mb-1.5 px-2 py-2 rounded-lg", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--muted)' } },
@@ -4361,6 +4362,13 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
                     React.createElement("b", { style: { color: 'var(--text)' } }, "C\u00E2t din ziua fiec\u0103ruia e repartizat pe apartamente"),
                     " \u2014 orele de aici nu se adun\u0103 peste pontaj, doar arat\u0103 unde s-au dus."),
                 React.createElement("div", { className: "space-y-0.5" }, bilant.map((x) => {
+                    if (x.lucrate === 0)
+                        return (React.createElement("div", { key: x.nume, style: { color: 'var(--acc4)' } },
+                            "\u26A0 ",
+                            React.createElement("b", { style: { color: 'var(--text)' } }, x.nume),
+                            ": ",
+                            x.puse ? `${h(x.puse)} h pe apartamente, dar ` : '',
+                            "nu e trecut sus la \u201Ecine a lucrat azi\" \u2014 adaug\u0103-l acolo, altfel nu intr\u0103 \u00EEn pontaj \u0219i nici \u00EEn deviz."));
                     const dif = Math.round((x.puse - x.lucrate) * 100) / 100;
                     const culoare = dif === 0 ? 'var(--acc2)' : (dif > 0 ? 'var(--acc4)' : 'var(--acc3)');
                     return (React.createElement("div", { key: x.nume, style: { color: culoare } },
@@ -4378,6 +4386,64 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
         })(),
         React.createElement("button", { onClick: add, disabled: etaje.length === 0, className: "text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "+ Adaug\u0103 persoan\u0103 / apartament"),
         etaje.length === 0 && React.createElement("span", { className: "text-[11px] ml-2", style: { color: 'var(--muted2)' } }, "Adaug\u0103 \u00EEnt\u00E2i etaje/apartamente la \u201E\uD83C\uDFE2 Structur\u0103\".")));
+}
+function reparaJSON(brut) {
+    let t = String(brut || '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const i1 = t.indexOf('{');
+    if (i1 < 0)
+        return null;
+    t = t.slice(i1);
+    const incearca = (x) => { try {
+        return JSON.parse(x);
+    }
+    catch (_) {
+        return null;
+    } };
+    let o = incearca(t);
+    if (o)
+        return o;
+    const i2 = t.lastIndexOf('}');
+    if (i2 > 0) {
+        o = incearca(t.slice(0, i2 + 1));
+        if (o)
+            return o;
+    }
+    let inSir = false, esc = false;
+    const stiva = [];
+    for (let i = 0; i < t.length; i++) {
+        const c = t[i];
+        if (esc) {
+            esc = false;
+            continue;
+        }
+        if (c === '\\') {
+            esc = true;
+            continue;
+        }
+        if (inSir) {
+            if (c === '"')
+                inSir = false;
+            continue;
+        }
+        if (c === '"') {
+            inSir = true;
+            continue;
+        }
+        if (c === '{' || c === '[')
+            stiva.push(c);
+        else if (c === '}' || c === ']')
+            stiva.pop();
+    }
+    let rep = t;
+    if (inSir)
+        rep += '"';
+    rep = rep.replace(/[,]\s*$/, '');
+    rep = rep.replace(/,?\s*"[^"]*"\s*:\s*$/, '');
+    rep = rep.replace(/,\s*$/, '');
+    for (let i = stiva.length - 1; i >= 0; i--)
+        rep += (stiva[i] === '{' ? '}' : ']');
+    rep = rep.replace(/,(\s*[}\]])/g, '$1');
+    return incearca(rep);
 }
 function AIRaportPanel({ echipaNume, materialeSugestii, structura, onAplica }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
@@ -4463,33 +4529,35 @@ function AIRaportPanel({ echipaNume, materialeSugestii, structura, onAplica }) {
             (materialeSugestii && materialeSugestii.length ? ('Materiale folosite de obicei: ' + materialeSugestii.slice(0, 40).join(', ') + '.\n') : '') +
             '\nDescriere: ' + text.trim();
         try {
-            const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intrebare: instr, context: [], json: true }) });
-            let d = {};
-            try {
-                d = await r.json();
+            let obj = null, taiat = false;
+            for (let incercare = 0; incercare < 2 && !obj; incercare++) {
+                const cerere = incercare === 0
+                    ? instr
+                    : (instr + '\nATENȚIE: răspunsul anterior a ieșit incomplet. Răspunde COMPACT: fără spații în plus, ' +
+                        'rezumat de maximum 12 cuvinte, „intrebari" listă goală. Structura rămâne exact aceeași.');
+                const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intrebare: cerere, context: [], json: true }) });
+                let d = {};
+                try {
+                    d = await r.json();
+                }
+                catch { }
+                if (!r.ok || !d || !d.raspuns) {
+                    if (r.status === 404)
+                        setErr('AI-ul nu e activat pe server (lipsește ruta /api/ai).');
+                    else if (r.status === 500)
+                        setErr('AI-ul nu e configurat: lipsește cheia GEMINI_API_KEY în Vercel.');
+                    else
+                        setErr((d && d.error) ? d.error : 'AI indisponibil momentan.');
+                    setBusy(false);
+                    return;
+                }
+                taiat = !!d.taiat;
+                obj = reparaJSON(d.raspuns);
             }
-            catch { }
-            if (!r.ok || !d || !d.raspuns) {
-                if (r.status === 404)
-                    setErr('AI-ul nu e activat pe server (lipsește ruta /api/ai).');
-                else if (r.status === 500)
-                    setErr('AI-ul nu e configurat: lipsește cheia GEMINI_API_KEY în Vercel.');
-                else
-                    setErr((d && d.error) ? d.error : 'AI indisponibil momentan.');
-                setBusy(false);
-                return;
-            }
-            let brut = String(d.raspuns).trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
-            const i1 = brut.indexOf('{'), i2 = brut.lastIndexOf('}');
-            if (i1 >= 0 && i2 > i1)
-                brut = brut.slice(i1, i2 + 1);
-            let obj = null;
-            try {
-                obj = JSON.parse(brut);
-            }
-            catch (_) { }
             if (!obj) {
-                setErr('AI-ul a răspuns, dar nu am putut citi datele. Încearcă să spui mai simplu.');
+                setErr('AI-ul a răspuns, dar răspunsul a venit rupt' + (taiat ? ' (s-a oprit din lipsă de spațiu)' : '') +
+                    '. Nu am pierdut nimic din ce ai scris — apasă din nou „Completează raportul". ' +
+                    'Dacă se repetă, spune pe rând, un apartament o dată.');
                 setBusy(false);
                 return;
             }
