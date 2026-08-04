@@ -135,7 +135,18 @@ export default async function handler(req, res) {
       }
       ultimaEroare = msg || ultimaEroare;
       const lipsesteModelul = r.status === 404 || /not found|not supported|unsupported/i.test(msg);
-      if (!lipsesteModelul) break; // altă problemă (cheie greșită, cotă depășită) — nu are rost să reîncercăm
+      // Cotă depășită pe modelul ăsta? Mai încercăm pe celelalte: fiecare are cota lui.
+      const cotaDepasita = r.status === 429 || /quota|rate limit|exceeded/i.test(msg);
+      if (!lipsesteModelul && !cotaDepasita) break; // cheie greșită sau altceva — nu are rost să insistăm
+    }
+    if (/quota|rate limit|exceeded/i.test(ultimaEroare)) {
+      const sec = (ultimaEroare.match(/retry in ([\d.]+)s/i) || [])[1];
+      return res.status(502).json({
+        error: 'S-a terminat cota gratuită de azi la Google, pe toate modelele încercate. ' +
+               (sec ? `Se poate relua peste ~${Math.ceil(Number(sec))} secunde. ` : '') +
+               'Dacă vrei să nu te mai lovești de asta, activează facturarea în Google Cloud — ' +
+               'la volumul unei firme mici costă cenți pe lună.',
+      });
     }
     return res.status(502).json({ error: ultimaEroare });
   } catch (err) {
