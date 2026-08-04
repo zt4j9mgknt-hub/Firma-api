@@ -437,15 +437,23 @@ function contopesteRapoarte(a, b) {
         explicatii: [...new Set(expl)].join('\n'),
     };
 }
+function persoaneDinRand(l) {
+    if (l && Array.isArray(l.persoaneNume) && l.persoaneNume.length) {
+        return l.persoaneNume.map((x) => String(x || '').trim()).filter(Boolean);
+    }
+    const n = String(l?.persoanaNume || '').trim();
+    return n ? [n] : [];
+}
+const textPersoane = (l) => persoaneDinRand(l).join(', ');
 function normalizeLucrariApart(arr) {
     return (arr || []).map((g) => {
         if (Array.isArray(g.lucrari))
-            return g;
+            return { ...g, persoaneNume: persoaneDinRand(g) };
         const w = (String(g.tipLucrare || '').trim() || (Number(g.cantitate) || 0))
             ? [{ id: uid(), denumire: g.tipLucrare || '', cantitate: g.cantitate || '', um: g.um || 'buc' }]
             : [{ id: uid(), denumire: '', cantitate: '', um: 'buc' }];
         const { tipLucrare, cantitate, um, ...rest } = g;
-        return { ...rest, lucrari: w };
+        return { ...rest, persoaneNume: persoaneDinRand(g), lucrari: w };
     });
 }
 function echipaNormalizata(echipa) {
@@ -924,7 +932,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.12-registru';
+const APP_VERSION = 'v01.13-apart';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -4217,7 +4225,7 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
     const updateWork = (g, wid, f, v) => setWorks(g.id, (g.lucrari || []).map((w) => w.id === wid ? { ...w, [f]: v } : w));
     const pickWork = (g, wid, o) => {
         const dup = (g.lucrari || []).find((w) => w.id !== wid && normL(w.denumire) === normL(o.label));
-        if (dup && window.confirm(`„${o.label}" există deja aici pentru ${g.persoanaNume || 'această persoană'}. Completează cantitatea la rândul existent în loc de un rând nou?`)) {
+        if (dup && window.confirm(`„${o.label}" există deja aici pentru ${textPersoane(g) || 'această persoană'}. Completează cantitatea la rândul existent în loc de un rând nou?`)) {
             const rest = (g.lucrari || []).filter((w) => w.id !== wid);
             setWorks(g.id, rest.length ? rest : [{ id: uid(), denumire: '', cantitate: '', um: 'buc' }]);
             return;
@@ -4225,17 +4233,43 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
         setWorks(g.id, (g.lucrari || []).map((w) => w.id === wid ? { ...w, denumire: o.label, um: o.um || w.um } : w));
     };
     const removeWork = (g, wid) => { const rest = (g.lucrari || []).filter((w) => w.id !== wid); setWorks(g.id, rest.length ? rest : [{ id: uid(), denumire: '', cantitate: '', um: 'buc' }]); };
-    const add = () => { const ultimul = grupuri[grupuri.length - 1]; setLucrari([...grupuri, { id: uid(), persoanaNume: (ultimul?.persoanaNume) || numePersoane[0] || '', etajId: (ultimul?.etajId) || etaje[0]?.id || '', apartamenteIds: [], ore: '', lucrari: [{ id: uid(), denumire: '', cantitate: '', um: 'buc' }] }]); };
+    const setPersoane_ = (g, lista) => setLucrari(grupuri.map((x) => x.id === g.id ? { ...x, persoaneNume: lista, persoanaNume: lista.join(', ') } : x));
+    const togglePersoana = (g, nume) => {
+        const cur = persoaneDinRand(g);
+        setPersoane_(g, cur.includes(nume) ? cur.filter((n) => n !== nume) : [...cur, nume]);
+    };
+    const add = () => {
+        const ultimul = grupuri[grupuri.length - 1];
+        const initPers = persoaneDinRand(ultimul).length ? persoaneDinRand(ultimul) : (numePersoane[0] ? [numePersoane[0]] : []);
+        setLucrari([...grupuri, { id: uid(), persoaneNume: initPers, persoanaNume: initPers.join(', '), etajId: (ultimul?.etajId) || etaje[0]?.id || '', apartamenteIds: [], ore: '', lucrari: [{ id: uid(), denumire: '', cantitate: '', um: 'buc' }] }]);
+    };
+    const deCateOri = {};
+    grupuri.forEach((g) => (g.apartamenteIds || []).forEach((id) => { deCateOri[id] = (deCateOri[id] || 0) + 1; }));
+    const numeAp = (id) => { for (const e of etaje) {
+        const a = (e.apartamente || []).find((x) => x.id === id);
+        if (a)
+            return a.nume;
+    } return '?'; };
     return (React.createElement("div", null,
-        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)' } }, "Alegi persoana \u0219i apartamentul, apoi treci lucr\u0103rile una sub alta (1, 2, 3...). C\u00E2nd persoana se mut\u0103 \u00EEn alt apartament, ape\u0219i \u201E+ Adaug\u0103\" jos \u0219i porne\u0219ti o list\u0103 nou\u0103."),
+        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)' } },
+            "Bifezi cine a lucrat \u2014 pot fi \u0219i doi sau trei \u00EEn acela\u0219i apartament \u2014 apoi alegi apartamentul \u0219i treci lucr\u0103rile una sub alta (1, 2, 3...). Cantit\u0103\u021Bile se scriu ",
+            React.createElement("b", null, "o singur\u0103 dat\u0103"),
+            ", nu pentru fiecare om: e aceea\u0219i lucrare. C\u00E2nd echipa se mut\u0103 \u00EEn alt apartament, ape\u0219i \u201E+ Adaug\u0103\" jos \u0219i porne\u0219ti o list\u0103 nou\u0103."),
         grupuri.map((g) => {
             const etaj = etaje.find((e) => e.id === g.etajId);
             const aps = (etaj?.apartamente || []).slice().sort(cmp);
+            const persG = persoaneDinRand(g);
             return (React.createElement("div", { key: g.id, className: "rounded-lg p-2 mb-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                React.createElement("div", { className: "flex flex-wrap gap-1 mb-1.5 items-center" },
+                    React.createElement("span", { className: "text-[11px] mr-0.5", style: { color: 'var(--muted2)' } }, "Cine:"),
+                    numePersoane.length === 0 && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc4)' } }, "Nicio persoan\u0103 \u00EEn echip\u0103 \u2014 adaug\u0103 \u00EEnt\u00E2i oamenii la raport."),
+                    numePersoane.map((n) => {
+                        const on = persG.includes(n);
+                        return (React.createElement("button", { key: n, onClick: () => togglePersoana(g, n), className: "text-[11px] px-2 py-1 rounded-lg", style: { color: on ? '#14181C' : 'var(--muted)', background: on ? '#C08CE0' : 'var(--panel)', border: '1px solid var(--border)', fontWeight: on ? 700 : 400 } },
+                            on ? '✓ ' : '',
+                            n));
+                    })),
                 React.createElement("div", { className: "flex items-center gap-1.5 mb-1.5 flex-wrap" },
-                    React.createElement("select", { value: g.persoanaNume, onChange: (e) => updateGrup(g.id, 'persoanaNume', e.target.value), className: "rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle },
-                        React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "Persoan\u0103..."),
-                        numePersoane.map((n) => React.createElement("option", { key: n, value: n, style: { background: 'var(--panel)' } }, n))),
                     React.createElement("select", { value: g.etajId, onChange: (e) => updateGrup(g.id, 'etajId', e.target.value), className: "rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle },
                         React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "Etaj..."),
                         etaje.map((e) => React.createElement("option", { key: e.id, value: e.id, style: { background: 'var(--panel)' } }, e.nume))),
@@ -4250,6 +4284,15 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
                         const on = (g.apartamenteIds || []).includes(a.id);
                         return (React.createElement("button", { key: a.id, onClick: () => toggleAp(g, a.id), className: "text-[11px] px-2 py-1 rounded-lg", style: { color: on ? '#14181C' : 'var(--muted)', background: on ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, a.nume));
                     }))),
+                (() => {
+                    const dubl = Array.from(new Set((g.apartamenteIds || []).filter((id) => deCateOri[id] > 1).map(numeAp)));
+                    if (!dubl.length)
+                        return null;
+                    return (React.createElement("div", { className: "text-[11px] mb-1.5 px-2 py-1.5 rounded-lg", style: { color: 'var(--acc3)', background: 'var(--panel)', border: '1px solid #E9A23B55' } },
+                        "\u26A0 ",
+                        dubl.length === 1 ? `Apartamentul ${dubl[0]} apare` : `Apartamentele ${dubl.join(', ')} apar`,
+                        " \u0219i la alt r\u00E2nd din raportul \u0103sta. Dac\u0103 a\u021Bi lucrat \u00EEmpreun\u0103 acolo, bifeaz\u0103 am\u00E2ndoi oamenii pe un singur r\u00E2nd \u0219i scrie cantit\u0103\u021Bile o singur\u0103 dat\u0103 \u2014 altfel se dubleaz\u0103 \u00EEn deviz."));
+                })(),
                 React.createElement("div", { className: "space-y-1" }, (g.lucrari || []).map((w, i) => (React.createElement("div", { key: w.id, className: "flex items-center gap-1.5" },
                     React.createElement("span", { className: "text-[11px] w-4 text-center shrink-0", style: { color: 'var(--muted2)' } }, i + 1),
                     React.createElement(AutocompleteInput, { value: w.denumire, onChange: (v) => updateWork(g, w.id, 'denumire', v), onPick: (o) => pickWork(g, w.id, o), options: optiuniLucrare, placeholder: "Ce a lucrat (caut\u0103 \u00EEn pozi\u021Bii/materiale sau scrie liber)", minWidth: "130px" }),
@@ -4259,7 +4302,7 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
                         React.createElement(Icon, { size: 12 }, "\uD83D\uDDD1")))))),
                 React.createElement("button", { onClick: () => addWork(g), className: "mt-1.5 text-[11px] px-2.5 py-1 rounded-lg font-medium", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid #2E8BD166' } },
                     "\u2795 Adaug\u0103 lucrare",
-                    g.persoanaNume ? ' pentru ' + g.persoanaNume : '')));
+                    textPersoane(g) ? ' pentru ' + textPersoane(g) : '')));
         }),
         React.createElement("button", { onClick: add, disabled: etaje.length === 0, className: "text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "+ Adaug\u0103 persoan\u0103 / apartament"),
         etaje.length === 0 && React.createElement("span", { className: "text-[11px] ml-2", style: { color: 'var(--muted2)' } }, "Adaug\u0103 \u00EEnt\u00E2i etaje/apartamente la \u201E\uD83C\uDFE2 Structur\u0103\".")));
@@ -4639,11 +4682,11 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
                 if (!(l.apartamenteIds || []).includes(apId))
                     return;
                 const works = lucrariDinRand(l);
-                if (!works.length && l.persoanaNume) {
-                    out.push({ data: r.data, persoanaNume: l.persoanaNume, tipLucrare: '', cantitate: '', um: '', ore: l.ore });
+                if (!works.length && textPersoane(l)) {
+                    out.push({ data: r.data, persoanaNume: textPersoane(l), tipLucrare: '', cantitate: '', um: '', ore: l.ore });
                     return;
                 }
-                works.forEach((w, idx) => out.push({ data: r.data, persoanaNume: l.persoanaNume, tipLucrare: w.denumire, cantitate: w.cantitate, um: w.um, ore: idx === 0 ? l.ore : '' }));
+                works.forEach((w, idx) => out.push({ data: r.data, persoanaNume: textPersoane(l), tipLucrare: w.denumire, cantitate: w.cantitate, um: w.um, ore: idx === 0 ? l.ore : '' }));
             });
         });
         return out.sort((a, b) => a.data < b.data ? 1 : -1);
@@ -5678,8 +5721,8 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                 (r.materialeFolosite || []).forEach((m) => { buc.push(`${m.denumire || ''} ${m.cantitate || ''} ${m.um || ''}`); });
                 (r.pozitiiExecutate || []).forEach((p) => { buc.push(`${p.denumire || ''} ${p.cantitate || ''} ${p.um || ''}`); });
                 (r.lucrariApartamente || []).forEach((l) => {
-                    if (l.persoanaNume)
-                        buc.push(l.persoanaNume);
+                    if (textPersoane(l))
+                        buc.push(textPersoane(l));
                     const etaj = structuraSantier.find((e) => e.id === l.etajId);
                     if (etaj?.nume)
                         buc.push(etaj.nume);
@@ -5722,12 +5765,12 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                         return React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--acc3)' } }, "\u23F3 \u00CEnc\u0103 nu a fost verificat de manager.");
                     return React.createElement("button", { onClick: () => marcheazaVerificat(idsR, { rapoarte, setRapoarte, persist, currentUser, santiere: [santier] }), className: "w-full mb-2 text-xs px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713 Am verificat raportul");
                 })(), React.createElement("div", { className: "flex items-center justify-end gap-2 mb-2" }, React.createElement("button", { onClick: () => setReportForm(r), className: "text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u270F\uFE0F Editeaz\u0103"), React.createElement("button", { onClick: () => delReport(r._idUnite && r._idUnite.length > 1 ? r._idUnite : r.id), className: "px-2 py-1.5 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, React.createElement(Icon, null, "\uD83D\uDDD1"))), React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, "\uD83D\uDD50 ", r.oraInceput, "\u2013", r.oraSfarsit, " \u00B7 ", r.persoane.filter((p) => p.nume.trim()).map((p) => `${p.nume} (${minutesToHM(minuteFacturabile(rapoarte, r, p))})`).join(', ') || 'fără persoane'), (r.tipuriLucrari || []).filter((t) => t.denumire).length > 0 && (React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--text)' } }, "\uD83D\uDD27 ", (r.tipuriLucrari || []).filter((t) => t.denumire).map((t) => t.denumire).join(' · '))), r.explicatii && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)', whiteSpace: 'pre-line' } }, r.explicatii), (r.materialeFolosite || []).filter((m) => m.denumire).length > 0 && (React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--acc3)' } }, "\uD83D\uDCE6 ", (r.materialeFolosite || []).filter((m) => m.denumire).map((m) => `${m.denumire}${(Number(m.cantitate) || 0) > 0 ? ` ${m.cantitate} ${m.um || ''}` : ''}`).join(' · '))), (r.pozitiiExecutate || []).filter((p) => p.denumire).length > 0 && (React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--acc2)' } }, "\uD83D\uDCCB ", (r.pozitiiExecutate || []).filter((p) => p.denumire).map((p) => `${p.denumire}${(Number(p.cantitate) || 0) > 0 ? ` ${p.cantitate} ${p.um || ''}` : ''}`).join(' · '))), (() => {
-                    const randuri = (r.lucrariApartamente || []).filter((l) => l.persoanaNume || lucrariDinRand(l).length);
+                    const randuri = (r.lucrariApartamente || []).filter((l) => textPersoane(l) || lucrariDinRand(l).length);
                     if (randuri.length === 0)
                         return null;
                     const peOm = new Map();
                     randuri.forEach((l) => {
-                        const nume = String(l.persoanaNume || '?').trim() || '?';
+                        const nume = textPersoane(l) || '?';
                         const etaj = structuraSantier.find((e) => e.id === l.etajId);
                         const apNames = (l.apartamenteIds || []).map((id) => etaj?.apartamente?.find((a) => a.id === id)?.nume).filter(Boolean).join(', ');
                         const unde = apNames ? `${etaj?.nume || ''} ${apNames}`.trim() : '';
@@ -8168,9 +8211,9 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
             (r.lucrariApartamente || []).forEach((l) => {
                 const ap = (l.apartamenteIds || []).map((id) => numeApart(r.santierId, id)).filter(Boolean).join(', ');
                 lucrariDinRand(l).forEach((w) => {
-                    const txt = [s?.nume, ap, w.denumire, l.persoanaNume].join(' ');
+                    const txt = [s?.nume, ap, w.denumire, textPersoane(l)].join(' ');
                     if (potrivit(txt) && out.length < 150) {
-                        out.push({ tip: '🔨 Lucrare', titlu: w.denumire || '(lucrare)', sub: `${s?.nume || '—'}${ap ? ' · ' + ap : ''} · ${fmtData(r.data)}${l.persoanaNume ? ' · ' + l.persoanaNume : ''}${w.cantitate ? ` · ${w.cantitate} ${w.um || ''}` : ''}`, santierId: r.santierId });
+                        out.push({ tip: '🔨 Lucrare', titlu: w.denumire || '(lucrare)', sub: `${s?.nume || '—'}${ap ? ' · ' + ap : ''} · ${fmtData(r.data)}${textPersoane(l) ? ' · ' + textPersoane(l) : ''}${w.cantitate ? ` · ${w.cantitate} ${w.um || ''}` : ''}`, santierId: r.santierId });
                     }
                 });
             });
