@@ -949,7 +949,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.14-ore';
+const APP_VERSION = 'v01.16-aiapart';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -4346,10 +4346,40 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
                     "\u2795 Adaug\u0103 lucrare",
                     textPersoane(g) ? ' pentru ' + textPersoane(g) : '')));
         }),
+        (() => {
+            const h = (v) => (Math.round(v * 100) / 100).toString().replace('.', ',');
+            const bilant = numePersoane.map((n) => {
+                const puse = grupuri.reduce((s, g) => s + (persoaneDinRand(g).includes(n) ? oreRandPersoana(g, n) : 0), 0);
+                const lucrate = (persoane || []).reduce((s, x) => s + (String(x.nume || '').trim() === n ? minuteLucrate(x) : 0), 0) / 60;
+                return { nume: n, puse, lucrate };
+            }).filter((x) => x.puse > 0 || x.lucrate > 0);
+            if (!bilant.length)
+                return null;
+            return (React.createElement("div", { className: "text-[11px] mb-1.5 px-2 py-2 rounded-lg", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--muted)' } },
+                React.createElement("div", { className: "mb-1" },
+                    "\u23F1 ",
+                    React.createElement("b", { style: { color: 'var(--text)' } }, "C\u00E2t din ziua fiec\u0103ruia e repartizat pe apartamente"),
+                    " \u2014 orele de aici nu se adun\u0103 peste pontaj, doar arat\u0103 unde s-au dus."),
+                React.createElement("div", { className: "space-y-0.5" }, bilant.map((x) => {
+                    const dif = Math.round((x.puse - x.lucrate) * 100) / 100;
+                    const culoare = dif === 0 ? 'var(--acc2)' : (dif > 0 ? 'var(--acc4)' : 'var(--acc3)');
+                    return (React.createElement("div", { key: x.nume, style: { color: culoare } },
+                        dif === 0 ? '✓' : '•',
+                        " ",
+                        React.createElement("b", { style: { color: 'var(--text)' } }, x.nume),
+                        ": ",
+                        h(x.puse),
+                        " h din ",
+                        h(x.lucrate),
+                        " h lucrate azi",
+                        dif < 0 ? ` — mai ai ${h(-dif)} h de repartizat` : '',
+                        dif > 0 ? ` — ai trecut cu ${h(dif)} h mai mult decât a lucrat` : ''));
+                }))));
+        })(),
         React.createElement("button", { onClick: add, disabled: etaje.length === 0, className: "text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "+ Adaug\u0103 persoan\u0103 / apartament"),
         etaje.length === 0 && React.createElement("span", { className: "text-[11px] ml-2", style: { color: 'var(--muted2)' } }, "Adaug\u0103 \u00EEnt\u00E2i etaje/apartamente la \u201E\uD83C\uDFE2 Structur\u0103\".")));
 }
-function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
+function AIRaportPanel({ echipaNume, materialeSugestii, structura, onAplica }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const [deschis, setDeschis] = useState(false);
     const [text, setText] = useState('');
@@ -4357,7 +4387,7 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
     const [rez, setRez] = useState(null);
-    const [bif, setBif] = useState({ lucrari: true, materiale: true, persoane: true, explicatii: true });
+    const [bif, setBif] = useState({ lucrari: true, materiale: true, persoane: true, explicatii: true, apartamente: true });
     const recRef = useRef(null);
     const speechOK = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
     const dicteaza = () => {
@@ -4402,6 +4432,7 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
             setAsc(false);
         }
     };
+    const listaApart = (structura || []).flatMap((e) => (e.apartamente || []).map((a) => `${a.nume}${e.nume ? ` (${e.nume})` : ''}`));
     const analizeaza = async () => {
         if (!text.trim())
             return;
@@ -4410,7 +4441,7 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
         setRez(null);
         const instr = 'Ești asistentul unei firme de instalații electrice din România. Din descrierea de mai jos, spusă de un electrician la finalul zilei, extrage datele pentru raportul zilnic.\n' +
             'Răspunde DOAR cu JSON valid, fără explicații și fără marcaje de cod. Structura exactă:\n' +
-            '{"lucrari":["..."],"materiale":[{"denumire":"...","cantitate":0,"um":"buc"}],"persoane":[{"nume":"...","ore":0}],"explicatii":"...","intrebari":["..."]}\n' +
+            '{"lucrari":["..."],"materiale":[{"denumire":"...","cantitate":0,"um":"buc"}],"persoane":[{"nume":"...","ore":0}],"apartamente":[],"explicatii":"...","intrebari":["..."]}\n' +
             'Reguli: NU inventa nimic. Dacă o informație nu e spusă, las-o pe lista goală. Cantitățile doar dacă sunt spuse clar. ' +
             'La „um" folosește unitatea potrivită (buc, m, ml, kg, set). La „persoane.nume" folosește exact numele din lista echipei, dacă se potrivește. ' +
             'La „explicatii" pune un rezumat scurt, de o frază, al zilei. La „intrebari" pune întrebări scurte pentru ce lipsește (de ex. orele lucrate), maximum 3.\n' +
@@ -4420,6 +4451,15 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
             'tablou de distribuție, circuit de iluminat, protecție diferențială), nu „fir", „bec", „am tras", „am băgat". ' +
             'Cifrele și cantitățile rămân exact cele spuse — se schimbă doar formularea.\n' +
             (echipaNume && echipaNume.length ? ('Echipa șantierului: ' + echipaNume.join(', ') + '.\n') : '') +
+            (listaApart.length
+                ? ('APARTAMENTE: clădirea are apartamente, iar oamenii spun în care au lucrat („în 410", „la 402 și 403"). ' +
+                    'Pentru fiecare apartament pomenit, pune un obiect în „apartamente", exact așa:\n' +
+                    '{"apartament":"410","etaj":"Etaj4","persoane":[{"nume":"Alex","ore":3}],"lucrari":[{"denumire":"...","cantitate":0,"um":"m"}]}\n' +
+                    'Dacă se spune „Alex și Răzvan au lucrat 3 ore în 410", înseamnă 3 ore pentru FIECARE, nu 3 împărțite. ' +
+                    'Cantitatea unei lucrări se trece O SINGURĂ DATĂ pe apartament, oricâți oameni au lucrat acolo. ' +
+                    'Dacă un apartament nu e pomenit, nu-l inventa. Aceiași oameni trebuie să apară și în „persoane", cu totalul orelor lor pe zi.\n' +
+                    'Apartamentele existente pe șantier: ' + listaApart.slice(0, 120).join(', ') + '.\n')
+                : '') +
             (materialeSugestii && materialeSugestii.length ? ('Materiale folosite de obicei: ' + materialeSugestii.slice(0, 40).join(', ') + '.\n') : '') +
             '\nDescriere: ' + text.trim();
         try {
@@ -4457,6 +4497,16 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
                 lucrari: Array.isArray(obj.lucrari) ? obj.lucrari.filter((x) => String(x || '').trim()) : [],
                 materiale: Array.isArray(obj.materiale) ? obj.materiale.filter((m) => m && String(m.denumire || '').trim()) : [],
                 persoane: Array.isArray(obj.persoane) ? obj.persoane.filter((p) => p && String(p.nume || '').trim()) : [],
+                apartamente: (Array.isArray(obj.apartamente) ? obj.apartamente : []).map((a) => ({
+                    apartament: String(a?.apartament || '').trim(),
+                    etaj: String(a?.etaj || '').trim(),
+                    persoane: (Array.isArray(a?.persoane) ? a.persoane : [])
+                        .map((p) => typeof p === 'string' ? { nume: p.trim(), ore: 0 } : { nume: String(p?.nume || '').trim(), ore: Number(p?.ore) || 0 })
+                        .filter((p) => p.nume),
+                    lucrari: (Array.isArray(a?.lucrari) ? a.lucrari : [])
+                        .map((w) => ({ denumire: String(w?.denumire || '').trim(), cantitate: Number(w?.cantitate) || '', um: String(w?.um || 'buc') }))
+                        .filter((w) => w.denumire),
+                })).filter((a) => a.apartament && (a.persoane.length || a.lucrari.length)),
                 explicatii: String(obj.explicatii || '').trim(),
                 intrebari: Array.isArray(obj.intrebari) ? obj.intrebari.filter((x) => String(x || '').trim()).slice(0, 3) : [],
             });
@@ -4473,6 +4523,7 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
             lucrari: bif.lucrari ? rez.lucrari : [],
             materiale: bif.materiale ? rez.materiale : [],
             persoane: bif.persoane ? rez.persoane : [],
+            apartamente: bif.apartamente ? (rez.apartamente || []) : [],
             explicatii: bif.explicatii ? rez.explicatii : '',
         });
         setRez(null);
@@ -4486,7 +4537,10 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
         React.createElement("div", { className: "flex items-center justify-between mb-1.5 gap-2" },
             React.createElement("span", { className: "text-sm font-semibold", style: { color: '#C08CE0' } }, "\uD83C\uDFA4 Completeaz\u0103 cu AI"),
             React.createElement("button", { onClick: () => { setDeschis(false); setRez(null); setErr(''); }, style: { color: 'var(--muted2)' } }, "\u2715")),
-        React.createElement("p", { className: "text-[11px] mb-2", style: { color: 'var(--muted)' } }, "Ape\u0219i \u201EVorbe\u0219te\" \u0219i spui pe scurt ce a\u021Bi f\u0103cut azi: lucr\u0103rile, materialele \u0219i cine a lucrat, cu orele. Apoi AI-ul completeaz\u0103 raportul, iar tu confirmi."),
+        React.createElement("p", { className: "text-[11px] mb-2", style: { color: 'var(--muted)' } },
+            "Ape\u0219i \u201EVorbe\u0219te\" \u0219i spui pe scurt ce a\u021Bi f\u0103cut azi: lucr\u0103rile, materialele \u0219i cine a lucrat, cu orele. ",
+            listaApart.length ? 'Spune și apartamentul — „Alex și Răzvan au lucrat 3 ore în 410, au tras 35 de metri de cablu de internet" — și se completează singur rândul pe apartament.' : '',
+            " Apoi AI-ul completeaz\u0103 raportul, iar tu confirmi."),
         React.createElement("textarea", { value: text, onChange: (e) => setText(e.target.value), rows: 3, placeholder: "Ex: azi am tras cabluri la prize \u00EEn buc\u0103t\u0103rie \u0219i am montat 6 doze, am fost eu cu Nicu 8 ore fiecare, am folosit 40 de metri de cablu 3x2.5", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mb-2", style: inputStyle }),
         React.createElement("div", { className: "flex flex-wrap gap-2" },
             React.createElement("button", { onClick: dicteaza, className: "text-xs px-3 py-2 rounded-lg font-semibold", style: { color: asc ? '#fff' : 'var(--text)', background: asc ? 'var(--acc4)' : 'var(--panel)', border: '1px solid var(--border)' } }, asc ? '⏹ Gata, am terminat' : '🎤 Vorbește'),
@@ -4514,13 +4568,24 @@ function AIRaportPanel({ echipaNume, materialeSugestii, onAplica }) {
                     React.createElement("b", null, "Cine a lucrat:"),
                     " ",
                     rez.persoane.map((p) => `${p.nume}${p.ore ? ` ${p.ore}h` : ''}`).join(' · ')))),
+            (rez.apartamente || []).length > 0 && (React.createElement("label", { className: "flex items-start gap-2 mb-1.5 cursor-pointer" },
+                React.createElement("input", { type: "checkbox", checked: bif.apartamente, onChange: (e) => setBif({ ...bif, apartamente: e.target.checked }), className: "mt-0.5" }),
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--text)' } },
+                    React.createElement("b", null, "Pe apartamente:"),
+                    rez.apartamente.map((a, i) => (React.createElement("span", { key: i, className: "block", style: { color: '#C08CE0' } },
+                        "\uD83C\uDFE2 ",
+                        a.apartament,
+                        a.etaj ? ` (${a.etaj})` : '',
+                        " \u2014 ",
+                        a.persoane.map((p) => `${p.nume}${p.ore ? ` ${p.ore}h` : ''}`).join(', ') || 'fără nume',
+                        a.lucrari.length ? ' · ' + a.lucrari.map((w) => `${w.denumire}${w.cantitate ? ` ${w.cantitate} ${w.um || ''}` : ''}`).join(', ') : '')))))),
             rez.explicatii && (React.createElement("label", { className: "flex items-start gap-2 mb-1.5 cursor-pointer" },
                 React.createElement("input", { type: "checkbox", checked: bif.explicatii, onChange: (e) => setBif({ ...bif, explicatii: e.target.checked }), className: "mt-0.5" }),
                 React.createElement("span", { className: "text-[11px]", style: { color: 'var(--text)' } },
                     React.createElement("b", null, "Rezumat:"),
                     " ",
                     rez.explicatii))),
-            rez.lucrari.length === 0 && rez.materiale.length === 0 && rez.persoane.length === 0 && !rez.explicatii && (React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Nu am \u00EEn\u021Beles date concrete. Spune mai clar ce a\u021Bi lucrat, ce materiale a\u021Bi pus \u0219i c\u00E2te ore.")),
+            rez.lucrari.length === 0 && rez.materiale.length === 0 && rez.persoane.length === 0 && (rez.apartamente || []).length === 0 && !rez.explicatii && (React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Nu am \u00EEn\u021Beles date concrete. Spune mai clar ce a\u021Bi lucrat, ce materiale a\u021Bi pus \u0219i c\u00E2te ore.")),
             rez.intrebari.length > 0 && (React.createElement("div", { className: "mt-2 px-2.5 py-2 rounded-lg", style: { background: '#E9A23B15', border: '1px solid #E9A23B40' } },
                 React.createElement("div", { className: "text-[11px] font-semibold mb-0.5", style: { color: 'var(--acc3)' } }, "\u2753 Mai am nevoie s\u0103 \u0219tiu:"),
                 rez.intrebari.map((q, i) => React.createElement("div", { key: i, className: "text-[11px]", style: { color: 'var(--text)' } },
@@ -4592,7 +4657,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
         });
         return [...new Set(out)];
     }, [lucrariApartamente, pozitii]);
-    const aplicaAI = ({ lucrari, materiale, persoane: pers, explicatii: expl }) => {
+    const aplicaAI = ({ lucrari, materiale, persoane: pers, apartamente: aparts, explicatii: expl }) => {
         if (lucrari && lucrari.length) {
             const exist = new Set(tipuriLucrari.map((t) => String(t.denumire || '').toLowerCase().trim()));
             const noi = lucrari.filter((l) => !exist.has(String(l).toLowerCase().trim())).map((l) => ({ id: uid(), denumire: String(l) }));
@@ -4622,11 +4687,53 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
             if (noiP.length)
                 setPersoane([...persoane, ...noiP]);
         }
+        if (aparts && aparts.length && structura && structura.length) {
+            const normAp = (x) => String(x || '').toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                .replace(/[\s.]/g, '').replace(/^ap/, '');
+            const noiA = [];
+            const negasite = [];
+            aparts.forEach((a) => {
+                let etajId = '', apId = '';
+                for (const e of (structura || [])) {
+                    const ap = (e.apartamente || []).find((x) => normAp(x.nume) === normAp(a.apartament));
+                    if (!ap)
+                        continue;
+                    etajId = e.id;
+                    apId = ap.id;
+                    if (!a.etaj || normAp(e.nume) === normAp(a.etaj))
+                        break;
+                }
+                if (!apId) {
+                    negasite.push(a.apartament);
+                    return;
+                }
+                const persNume = a.persoane.map((x) => x.nume);
+                const orePersoana = {};
+                a.persoane.forEach((x) => { if (x.ore)
+                    orePersoana[x.nume] = x.ore; });
+                const total = Object.values(orePersoana).reduce((sm, v) => sm + (Number(v) || 0), 0);
+                noiA.push({
+                    id: uid(),
+                    persoaneNume: persNume,
+                    persoanaNume: persNume.join(', '),
+                    etajId,
+                    apartamenteIds: [apId],
+                    orePersoana,
+                    ore: total ? String(total) : '',
+                    lucrari: (a.lucrari.length ? a.lucrari : [{ denumire: '', cantitate: '', um: 'buc' }]).map((w) => ({ id: uid(), denumire: w.denumire || '', cantitate: w.cantitate || '', um: w.um || 'buc' })),
+                });
+            });
+            if (noiA.length)
+                setLucrariApartamente([...lucrariApartamente, ...noiA]);
+            if (negasite.length)
+                window.alert('Nu am găsit în structura clădirii: ' + negasite.join(', ') + '. Adaugă-le la „🏢 Structură" sau completează rândul manual.');
+        }
         if (expl)
             setExplicatii(explicatii ? (explicatii + '\n' + expl) : expl);
     };
     return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-        React.createElement(AIRaportPanel, { echipaNume: echipaNume, materialeSugestii: (materials || []).map((m) => m.denumire).filter(Boolean), onAplica: aplicaAI }),
+        React.createElement(AIRaportPanel, { echipaNume: echipaNume, materialeSugestii: (materials || []).map((m) => m.denumire).filter(Boolean), structura: structura, onAplica: aplicaAI }),
         ultimulRaport && !precompletat && persoane.length === 0 && (React.createElement("div", { className: "flex items-center gap-2 mb-3 rounded-xl px-3 py-2.5 flex-wrap", style: { background: 'var(--panel2)', border: '1px solid #4CAF7D66' } },
             React.createElement("span", { className: "text-xs flex-1 min-w-0", style: { color: 'var(--text)' } },
                 React.createElement("b", null, "Ca ultima dat\u0103:"),
