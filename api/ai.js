@@ -19,9 +19,10 @@ async function cereGemini({ key, model, sistem, text, json, inAdresa }) {
   const baza = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent';
   const url = inAdresa ? (baza + '?key=' + encodeURIComponent(key)) : baza;
   const generationConfig = {
-    // Extragerea raportului scoate un JSON cu lucrări, materiale și oameni — 800 de tokeni
-    // se terminau la mijloc și JSON-ul ieșea rupt. La modul JSON dăm loc de întors.
-    maxOutputTokens: json ? 2048 : 800,
+    // Extragerea raportului scoate un JSON cu lucrări, materiale, oameni și apartamente.
+    // Cu 2048 de tokeni se mai tăia la mijloc când electricianul povestea 4 apartamente,
+    // iar JSON-ul rupt nu se mai putea citi. Acum are loc berechet.
+    maxOutputTokens: json ? 8192 : 800,
     temperature: json ? 0.1 : 0.3,
   };
   // Modul JSON: Gemini garantează că răspunsul e JSON valid, fără ``` în jur.
@@ -137,7 +138,10 @@ export default async function handler(req, res) {
               : ('AI nu a întors text.' + (motiv ? ' (' + motiv + ')' : '')),
           });
         }
-        return res.status(200).json({ raspuns, model });
+        // Îi spunem aplicației dacă răspunsul s-a oprit din lipsă de spațiu, ca să știe
+        // că JSON-ul poate fi incomplet și să-l repare în loc să arunce totul.
+        const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
+        return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
       }
       const msg = (d && d.error && d.error.message) ? d.error.message : '';
       const stare = (d && d.error && d.error.status) ? d.error.status : '';
