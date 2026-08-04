@@ -988,7 +988,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.19-norma';
+const APP_VERSION = 'v01.20-consilier';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -9739,6 +9739,317 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                     React.createElement("span", { style: { color: 'var(--acc3)' } }, "\u2192")))))),
         nimicDeFacut && (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "\u2705 Nimic de f\u0103cut acum."))));
 }
+const norm4 = (x) => String(x == null ? '' : x).toLowerCase().normalize('NFD')
+    .replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+function pretDinListe(denumire, pozitii, materialeLista) {
+    const d = norm4(denumire);
+    if (!d)
+        return 0;
+    const cauta = (lista) => (lista || []).find((x) => norm4(x.denumire) === d);
+    const p = cauta(pozitii) || cauta(materialeLista);
+    if (!p)
+        return 0;
+    return Number(p.pretUnitar) || Number(p.pret) || 0;
+}
+const SANTIER_ORAR = (s) => {
+    const m = String(s?.modFacturare || s?.tipFacturare || 'orar');
+    return m === 'orar' || m === 'orar_lucrari';
+};
+function randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la, costOra }) {
+    const peOm = {};
+    const adauga = (nume, camp, val) => {
+        const n = String(nume || '').trim();
+        if (!n)
+            return;
+        if (!peOm[n])
+            peOm[n] = { nume: n, minute: 0, valoare: 0, santiere: new Set(), zile: new Set(), valoareNecunoscuta: 0 };
+        peOm[n][camp] += val;
+    };
+    (rapoarte || []).forEach((r) => {
+        const data = String(r.data || '');
+        if (!data || (de && data < de) || (la && data > la))
+            return;
+        const s = (santiere || []).find((x) => x.id === r.santierId);
+        const pers = (r.persoane || []).filter((p) => String(p?.nume || '').trim());
+        if (!pers.length)
+            return;
+        const minutePers = {};
+        let minuteTotal = 0;
+        pers.forEach((p) => {
+            const m = minuteLucrate(p);
+            const n = String(p.nume).trim();
+            minutePers[n] = (minutePers[n] || 0) + m;
+            minuteTotal += m;
+            adauga(n, 'minute', m);
+            if (peOm[n]) {
+                peOm[n].zile.add(data);
+                if (r.santierId)
+                    peOm[n].santiere.add(r.santierId);
+            }
+        });
+        if (!minuteTotal)
+            return;
+        if (SANTIER_ORAR(s)) {
+            const tarif = Number(s?.tarifOrar) || 0;
+            Object.keys(minutePers).forEach((n) => adauga(n, 'valoare', (minutePers[n] / 60) * tarif));
+            return;
+        }
+        const poz = (pozitiiSantier || []).filter((p) => p.santierId === r.santierId);
+        const mat = (materialeListaSantier || []).filter((m) => m.santierId === r.santierId);
+        let valoareFaraOm = 0;
+        (r.lucrariApartamente || []).forEach((l) => {
+            const val = lucrariDinRand(l).reduce((sm, w) => sm + (Number(w.cantitate) || 0) * pretDinListe(w.denumire, poz, mat), 0);
+            if (!val)
+                return;
+            const oameni = persoaneDinRand(l);
+            if (!oameni.length) {
+                valoareFaraOm += val;
+                return;
+            }
+            const oreRand = {};
+            let totalRand = 0;
+            oameni.forEach((n) => { const o = oreRandPersoana(l, n) || 0; oreRand[n] = o; totalRand += o; });
+            oameni.forEach((n) => adauga(n, 'valoare', totalRand > 0 ? val * (oreRand[n] / totalRand) : val / oameni.length));
+        });
+        (r.pozitiiExecutate || []).forEach((p) => {
+            valoareFaraOm += (Number(p.cantitate) || 0) * pretDinListe(p.denumire, poz, mat);
+        });
+        if (valoareFaraOm) {
+            Object.keys(minutePers).forEach((n) => adauga(n, 'valoare', valoareFaraOm * (minutePers[n] / minuteTotal)));
+        }
+        if (!valoareFaraOm && !(r.lucrariApartamente || []).length) {
+            Object.keys(minutePers).forEach((n) => adauga(n, 'valoareNecunoscuta', minutePers[n]));
+        }
+    });
+    const cost = Number(costOra) || 0;
+    return Object.values(peOm).map((x) => {
+        const ore = x.minute / 60;
+        const costTotal = ore * cost;
+        return {
+            nume: x.nume, ore, valoare: x.valoare, cost: costTotal,
+            marja: x.valoare - costTotal,
+            marjaProc: x.valoare > 0 ? ((x.valoare - costTotal) / x.valoare) * 100 : null,
+            leiPeOra: ore > 0 ? x.valoare / ore : 0,
+            nrSantiere: x.santiere.size, nrZile: x.zile.size,
+            oreFaraValoare: x.valoareNecunoscuta / 60,
+        };
+    }).sort((a, b) => b.marja - a.marja);
+}
+function analizaConsilier({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, azi }) {
+    const A = String(azi || new Date().toISOString().slice(0, 10));
+    const zileInUrma = (n) => { const d = new Date(A + 'T00:00:00'); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+    const lei = (v) => Math.round(Number(v) || 0).toLocaleString('ro-RO') + ' lei';
+    const out = [];
+    const costOra = Number(company?.costOraMediu) || 0;
+    const tinta = Number(company?.tintaMarja) || 30;
+    const active = (santiere || []).filter((s) => (s.status || 'Activ') === 'Activ');
+    if (!costOra) {
+        out.push({ id: 'cost_lipsa', nivel: 'info', titlu: 'Nu știu cât te costă o oră de manoperă',
+            detaliu: 'Fără cifra asta nu pot spune dacă un șantier aduce sau ia bani, și nici cine e pe profit. Se trece o singură dată, la Setări → Firma mea → Costuri: cât te costă efectiv o oră de electrician, cu taxe cu tot.',
+            tab: 'firma' });
+    }
+    if (costOra) {
+        const prag = costOra * (1 + tinta / 100);
+        active.filter(SANTIER_ORAR).forEach((s) => {
+            const t = Number(s.tarifOrar) || 0;
+            if (!t)
+                return;
+            if (t < costOra) {
+                out.push({ id: 'tarif_' + s.id, nivel: 'rosu', titlu: `${s.nume}: tariful e sub costul tău`,
+                    detaliu: `Facturezi ${lei(t)}/oră, dar o oră te costă ${lei(costOra)}. Pierzi ${lei(costOra - t)} la fiecare oră lucrată acolo. La 8 ore pe zi și doi oameni, înseamnă ${lei((costOra - t) * 16)} pe zi.`,
+                    tab: 'santiere' });
+            }
+            else if (t < prag) {
+                out.push({ id: 'tarif_' + s.id, nivel: 'galben', titlu: `${s.nume}: marjă sub ținta ta`,
+                    detaliu: `La ${lei(t)}/oră și un cost de ${lei(costOra)}/oră, îți rămâne o marjă de ${Math.round(((t - costOra) / t) * 100)}%, sub ținta de ${tinta}%. Ca să atingi ținta, tariful ar trebui să fie ${lei(prag)}/oră.`,
+                    tab: 'santiere' });
+            }
+        });
+    }
+    active.forEach((s) => {
+        const devS = (devize || []).filter((d) => d.santierId === s.id);
+        const ultimaZiDevizata = devS.map((d) => (d.perioada && d.perioada.la) || d.data).filter(Boolean).sort().slice(-1)[0] || '';
+        const rapS = (rapoarte || []).filter((r) => r.santierId === s.id && (!ultimaZiDevizata || r.data > ultimaZiDevizata));
+        let minute = 0;
+        rapS.forEach((r) => (r.persoane || []).forEach((p) => { minute += minuteLucrate(p); }));
+        if (minute < 8 * 60)
+            return;
+        const ore = minute / 60;
+        const val = SANTIER_ORAR(s) ? ore * (Number(s.tarifOrar) || 0) : 0;
+        out.push({ id: 'nedevizat_' + s.id, nivel: ore >= 40 ? 'rosu' : 'galben',
+            titlu: `${s.nume}: ${Math.round(ore)} ore lucrate și nedevizate`,
+            detaliu: (ultimaZiDevizata ? `Ultimul deviz acoperă până la ${fmtData(ultimaZiDevizata)}. ` : 'Nu există niciun deviz pe șantierul ăsta. ') +
+                `De atunci s-au lucrat ${Math.round(ore)} ore` + (val ? `, adică ${lei(val)} nefacturați` : '') +
+                '. Banii ăștia stau la tine în telefon, nu în cont.',
+            tab: 'santiere' });
+    });
+    const neincasate = (invoices || []).filter((i) => i.status !== 'Încasată' && i.status !== 'Incasata' && i.status !== 'Anulată');
+    const restante = neincasate.filter((i) => i.scadenta && i.scadenta < A);
+    if (restante.length) {
+        const total = restante.reduce((s, i) => s + (i.items || []).reduce((a, it) => a + (Number(it.cantitate) || 0) * pretFinal(it), 0), 0);
+        const ceaMaiVeche = restante.slice().sort((a, b) => (a.scadenta < b.scadenta ? -1 : 1))[0];
+        const zile = Math.round((new Date(A) - new Date(ceaMaiVeche.scadenta)) / 86400000);
+        out.push({ id: 'restante', nivel: zile > 30 ? 'rosu' : 'galben',
+            titlu: `${restante.length} ${restante.length === 1 ? 'factură trecută' : 'facturi trecute'} de scadență`,
+            detaliu: `Ai ${lei(total)} de încasat peste termen. Cea mai veche e ${ceaMaiVeche.numar || 'fără număr'}, cu ${zile} zile întârziere. Banii ăștia îți lipsesc din firmă acum, nu la sfârșit de an.`,
+            tab: 'facturi' });
+    }
+    const peFacturi = new Set();
+    (invoices || []).forEach((i) => (i.devizeIds || []).forEach((x) => peFacturi.add(x)));
+    const devFaraFactura = (devize || []).filter((d) => !peFacturi.has(d.id) && d.data && d.data < zileInUrma(15));
+    if (devFaraFactura.length) {
+        const total = devFaraFactura.reduce((s, d) => s + (d.items || []).reduce((a, it) => a + (Number(it.cantitate) || 0) * pretFinal(it), 0), 0);
+        out.push({ id: 'deviz_fara_factura', nivel: 'galben',
+            titlu: `${devFaraFactura.length} ${devFaraFactura.length === 1 ? 'deviz mai vechi de 15 zile n-a ajuns' : 'devize mai vechi de 15 zile n-au ajuns'} pe factură`,
+            detaliu: `Valoare totală ${lei(total)}. Devizul e făcut, munca e făcută, dar factura nu e emisă. Verifică dacă e intenționat.`,
+            tab: 'proiecte' });
+    }
+    const zileN = zileCareNuIesLaNorma(rapoarte, concedii, A, 30);
+    if (zileN.length) {
+        const lipsa = zileN.filter((z) => z.dif < 0).reduce((s, z) => s + (-z.dif), 0) / 60;
+        const plus = zileN.filter((z) => z.dif > 0).reduce((s, z) => s + z.dif, 0) / 60;
+        out.push({ id: 'zile_norma', nivel: 'galben',
+            titlu: `${zileN.length} zile din ultima lună nu ies la 8 ore`,
+            detaliu: `În total ${Math.round(lipsa)} ore lipsă și ${Math.round(plus)} ore peste program, nerezolvate.` +
+                (costOra ? ` Orele lipsă înseamnă ${lei(lipsa * costOra)} plătiți fără acoperire în muncă, dacă nu se trec pe concediu.` : '') +
+                ' Le confirmi din „Activitatea mea".',
+            tab: 'activitate' });
+    }
+    (materials || []).forEach((m) => {
+        const ist = (achizitii || []).flatMap((a) => (a.randuri || []).filter((x) => norm4(x.denumire) === norm4(m.denumire) && (Number(x.pretUnitar) || 0) > 0).map((x) => ({ pret: Number(x.pretUnitar), data: a.data || '' })));
+        if (ist.length < 2)
+            return;
+        ist.sort((a, b) => (a.data < b.data ? -1 : 1));
+        const ultim = ist[ist.length - 1];
+        const inainte = ist.slice(0, -1);
+        const media = inainte.reduce((s, x) => s + x.pret, 0) / inainte.length;
+        if (media > 0 && ultim.pret > media * 1.15) {
+            out.push({ id: 'pret_' + m.id, nivel: 'galben',
+                titlu: `${m.denumire}: ultima achiziție cu ${Math.round(((ultim.pret - media) / media) * 100)}% peste media ta`,
+                detaliu: `Ai plătit ${lei(ultim.pret)}/${m.um || 'buc'}, față de o medie de ${lei(media)}. Dacă prețul e trecut greșit, corectează-l; dacă e real, urcă-l în ofertele următoare, altfel mănâncă din marjă.`,
+                tab: 'achizitii' });
+        }
+    });
+    if (!(Number(company?.adaosMaterial) > 0)) {
+        out.push({ id: 'adaos', nivel: 'galben', titlu: 'Vinzi materialele la preț de achiziție',
+            detaliu: 'Adaosul la materiale e 0 sau necompletat. Materialul cumpărat, depozitat, transportat și pus în operă are un cost al tău care nu se vede nicăieri. Se pune la Setări → Firma mea → Facturare.',
+            tab: 'firma' });
+    }
+    const ordine = { rosu: 0, galben: 1, info: 2 };
+    return out.sort((a, b) => ordine[a.nivel] - ordine[b.nivel]);
+}
+function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, setTab }) {
+    const [luni, setLuni] = useState(1);
+    const [parere, setParere] = useState('');
+    const [busyAI, setBusyAI] = useState(false);
+    const [errAI, setErrAI] = useState('');
+    const azi = new Date().toISOString().slice(0, 10);
+    const de = (() => { const d = new Date(azi + 'T00:00:00'); d.setMonth(d.getMonth() - luni); return d.toISOString().slice(0, 10); })();
+    const lei = (v) => Math.round(Number(v) || 0).toLocaleString('ro-RO') + ' lei';
+    const costOra = Number(company?.costOraMediu) || 0;
+    const semnale = useMemo(() => analizaConsilier({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, azi }), [company, santiere, rapoarte, devize, invoices, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier]);
+    const oameni = useMemo(() => randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la: azi, costOra }), [rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, costOra]);
+    const totalValoare = oameni.reduce((s, o) => s + o.valoare, 0);
+    const totalCost = oameni.reduce((s, o) => s + o.cost, 0);
+    const totalOre = oameni.reduce((s, o) => s + o.ore, 0);
+    const oreNeevaluate = oameni.reduce((s, o) => s + o.oreFaraValoare, 0);
+    const CULORI = { rosu: '#E05252', galben: '#E9A23B', info: '#2E8BD1' };
+    const ETICHETE = { rosu: 'Te costă bani acum', galben: 'Ai grijă', info: 'Îmi lipsește o informație' };
+    const cereParereaAI = async () => {
+        setBusyAI(true);
+        setErrAI('');
+        setParere('');
+        const rezumat = [
+            `Firma: ${company?.nume || 'firmă de instalații electrice'}. Cost intern manoperă: ${costOra ? costOra + ' lei/oră' : 'necunoscut'}. Marjă țintă: ${Number(company?.tintaMarja) || 30}%.`,
+            `Perioadă analizată: ultimele ${luni} ${luni === 1 ? 'lună' : 'luni'} (${de} → ${azi}).`,
+            `Ore lucrate total: ${Math.round(totalOre)}. Valoare produsă estimată: ${Math.round(totalValoare)} lei. Cost manoperă: ${Math.round(totalCost)} lei.`,
+            'Randament pe om (ore, valoare produsă lei, cost lei, marjă lei):',
+            ...oameni.map((o) => `- ${o.nume}: ${o.ore.toFixed(1)} h, ${Math.round(o.valoare)} lei, cost ${Math.round(o.cost)} lei, marjă ${Math.round(o.marja)} lei${o.oreFaraValoare > 0 ? `, din care ${o.oreFaraValoare.toFixed(1)} h fără valoare calculabilă` : ''}`),
+            'Semnale găsite automat:',
+            ...semnale.map((x) => `- [${x.nivel}] ${x.titlu}: ${x.detaliu}`),
+        ].join('\n');
+        const instr = 'Ești consultantul de afaceri al unei firme mici de instalații electrice din România. Mai jos ai cifrele reale ale firmei, ' +
+            'calculate din datele ei. Scrie o analiză scurtă și cinstită pentru patron, în limba română, la persoana a II-a, maximum 300 de cuvinte.\n' +
+            'Cerințe stricte: (1) Spune întâi lucrul care îl costă cel mai mulți bani, cu cifra din spate. ' +
+            '(2) Nu-l flata și nu înmuia concluziile; dacă ceva e prost, spune-o direct, dar fără să jignești oamenii din firmă. ' +
+            '(3) Nu inventa cifre care nu sunt mai jos și nu extrapola procente; dacă o informație lipsește, spune ce anume lipsește. ' +
+            '(4) Dacă un om pare neprofitabil, verifică întâi dacă nu cumva explicația e alta (șantier cu tarif mic, ore fără valoare calculabilă) și spune asta. ' +
+            '(5) Termină cu maximum 3 lucruri concrete de făcut săptămâna asta, în ordinea banilor recuperați.\n\n' + rezumat;
+        try {
+            const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intrebare: instr, context: [] }) });
+            let d = {};
+            try {
+                d = await r.json();
+            }
+            catch { }
+            if (r.ok && d && d.raspuns)
+                setParere(d.raspuns);
+            else
+                setErrAI((d && d.error) ? d.error : 'AI indisponibil momentan.');
+        }
+        catch (_) {
+            setErrAI('Fără conexiune la AI.');
+        }
+        setBusyAI(false);
+    };
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83E\uDDED Consilier"),
+        React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted)' } }, "Se uit\u0103 singur peste tot ce e \u00EEn aplica\u021Bie \u0219i \u00EE\u021Bi spune unde pierzi bani. Fiecare r\u00E2nd vine cu cifra din spate, ca s\u0103 po\u021Bi verifica. Ce nu poate calcula, \u00EE\u021Bi spune c\u0103 nu poate \u2014 nu inventeaz\u0103 procente."),
+        semnale.length === 0 ? (React.createElement("div", { className: "rounded-xl p-4 mb-6 text-sm", style: { background: '#4CAF7D14', border: '1px solid #4CAF7D66', color: 'var(--acc2)' } }, "\u2705 Nu am g\u0103sit nimic care s\u0103-\u021Bi m\u0103n\u00E2nce bani acum. Tarifele acoper\u0103 costurile, munca e devizat\u0103, facturile sunt \u00EEn termen.")) : (React.createElement("div", { className: "space-y-2 mb-6" }, semnale.map((x) => (React.createElement("div", { key: x.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid ' + CULORI[x.nivel] + '66', borderLeft: '4px solid ' + CULORI[x.nivel] } },
+            React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-0.5", style: { color: CULORI[x.nivel] } }, ETICHETE[x.nivel]),
+            React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, x.titlu),
+            React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)', lineHeight: 1.6 } }, x.detaliu),
+            x.tab && React.createElement("button", { onClick: () => setTab(x.tab), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: CULORI[x.nivel] } }, "Mergi acolo \u2192")))))),
+        React.createElement("div", { className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1 flex-wrap" },
+                React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\uD83D\uDC77 Cine c\u00E2t aduce"),
+                React.createElement("div", { className: "flex gap-1" }, [1, 3, 6].map((n) => (React.createElement("button", { key: n, onClick: () => setLuni(n), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: luni === n ? '#14181C' : 'var(--muted)', background: luni === n ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, n === 1 ? '1 lună' : n + ' luni'))))),
+            React.createElement("p", { className: "text-[11px] mb-3", style: { color: 'var(--muted2)', lineHeight: 1.55 } },
+                "Valoarea produs\u0103 = orele lui \u00D7 tariful \u0219antierului, la \u0219antierele pe or\u0103; la cele pe pozi\u021Bii, cantit\u0103\u021Bile trecute de el \u00EEn raport \u00D7 pre\u021Bul din list\u0103. Costul = orele lui \u00D7 costul intern din Set\u0103ri.",
+                !costOra && ' Completează costul orei ca să vezi și marja.'),
+            oameni.length === 0 ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nu sunt rapoarte \u00EEn perioada asta.")) : (React.createElement("div", { className: "space-y-1.5" },
+                oameni.map((o) => {
+                    const bun = costOra ? o.marja > 0 : true;
+                    return (React.createElement("div", { key: o.nume, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid ' + (costOra ? (bun ? '#4CAF7D33' : '#E0525255') : 'var(--border)') } },
+                        React.createElement("div", { className: "flex items-center justify-between gap-2" },
+                            React.createElement("span", { className: "text-xs font-semibold min-w-0 truncate", style: { color: 'var(--text)' } },
+                                "\uD83D\uDC77 ",
+                                o.nume),
+                            React.createElement("span", { className: "text-xs shrink-0", style: { color: costOra ? (bun ? 'var(--acc2)' : 'var(--acc4)') : 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, costOra ? (o.marja >= 0 ? '+' : '') + lei(o.marja) : lei(o.valoare))),
+                        React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--muted)' } },
+                            o.ore.toFixed(1),
+                            " h \u00B7 ",
+                            o.nrZile,
+                            " ",
+                            o.nrZile === 1 ? 'zi' : 'zile',
+                            " \u00B7 ",
+                            o.nrSantiere,
+                            " ",
+                            o.nrSantiere === 1 ? 'șantier' : 'șantiere',
+                            " \u00B7 produs ",
+                            lei(o.valoare),
+                            costOra ? ` · cost ${lei(o.cost)}` : '',
+                            o.leiPeOra > 0 ? ` · ${Math.round(o.leiPeOra)} lei/oră` : ''),
+                        o.oreFaraValoare > 0.5 && (React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--acc3)' } },
+                            "\u26A0 ",
+                            o.oreFaraValoare.toFixed(1),
+                            " h nu pot fi evaluate: rapoartele din zilele alea n-au cantit\u0103\u021Bi trecute, deci munca lui nu apare nic\u0103ieri \u00EEn bani."))));
+                }),
+                React.createElement("div", { className: "text-[11px] pt-1", style: { color: 'var(--muted2)' } },
+                    "Total: ",
+                    Math.round(totalOre),
+                    " h, produs ",
+                    lei(totalValoare),
+                    costOra ? `, cost ${lei(totalCost)}, marjă ${lei(totalValoare - totalCost)}` : '',
+                    ".",
+                    oreNeevaluate > 1 ? ` ${Math.round(oreNeevaluate)} h nu au valoare calculabilă.` : '')))),
+        React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid #C08CE066' } },
+            React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: '#C08CE0' } }, "\uD83E\uDD16 P\u0103rerea consultantului"),
+            React.createElement("p", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)', lineHeight: 1.55 } }, "Trimite cifrele de mai sus la AI \u0219i prime\u0219ti o analiz\u0103 scris\u0103, cu ce ai de f\u0103cut s\u0103pt\u0103m\u00E2na asta, \u00EEn ordinea banilor. Cifrele nu se schimb\u0103 \u2014 doar sunt citite. Nu se trimit nume de clien\u021Bi sau pre\u021Buri de contract."),
+            React.createElement("button", { onClick: cereParereaAI, disabled: busyAI, className: "text-xs px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, busyAI ? 'Se gândește…' : '✨ Cere părerea'),
+            errAI && React.createElement("div", { className: "text-[11px] mt-2 px-2.5 py-2 rounded-lg", style: { color: 'var(--acc4)', background: '#E0525215' } }, errAI),
+            parere && (React.createElement("div", { className: "text-xs mt-3 px-3 py-2.5 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)', whiteSpace: 'pre-line', lineHeight: 1.65 } }, parere)))));
+}
 function CompanyTab({ company, setCompany, persist }) {
     const [form, setForm] = useState(company);
     const [salvat, setSalvat] = useState('');
@@ -9774,6 +10085,10 @@ function CompanyTab({ company, setCompany, persist }) {
         ['Identificare', [['nume', 'Denumire firmă'], ['cui', 'CUI'], ['regCom', 'Nr. Registrul Comerțului'], ['adresa', 'Adresă sediu']]],
         ['Contact', [['email', 'E-mail'], ['telefon', 'Telefon'], ['administrator', 'Administrator (nume)'], ['emailContabil', 'E-mail contabilă (pentru concedii și adeverințe)']]],
         ['Facturare', [['iban', 'IBAN'], ['adaosMaterial', 'Adaos la materiale % (implicit 15)']]],
+        ['Costuri (pentru Consilier)', [
+                ['costOraMediu', 'Cât te costă o oră de electrician, cu taxe (lei)'],
+                ['tintaMarja', 'Marja pe care o vrei pe manoperă, % (implicit 30)'],
+            ]],
     ];
     const zonaImagine = (camp, titlu, explicatie, ref, inaltime) => (React.createElement("div", { className: "rounded-lg p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
         React.createElement("div", { className: "text-xs font-semibold mb-0.5", style: { color: 'var(--text)' } }, titlu),
@@ -11391,6 +11706,7 @@ function App() {
                     React.createElement(NavItem, { id: "activitate", label: effectiveUser.rol === 'Manager' ? '⚡ Activitatea mea' : '🏠 Activitatea mea' }),
                     React.createElement("div", { style: { height: 1, background: 'var(--border)', margin: '4px 4px 8px' } }),
                     React.createElement(NavItem, { id: "santiere", label: "\uD83C\uDFD7 \u0218antiere" }),
+                    effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "consilier", label: "\uD83E\uDDED Consilier" }),
                     (() => {
                         const GRUPE = [
                             ['contab', '📁', 'Documente', CONTAB_TABS, true, [
@@ -11511,6 +11827,7 @@ function App() {
                         tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz }),
                         (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
                         tab === 'santiere' && React.createElement(SantiereTab, { santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu }),
+                        tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
                         tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist }),
                         tab === 'activitate' && React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
                         tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
