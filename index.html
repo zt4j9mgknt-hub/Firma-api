@@ -546,6 +546,7 @@ function contopesteRapoarte(a, b) {
         materialeFolosite: mat,
         pozitiiExecutate: [...(a.pozitiiExecutate || []), ...(b.pozitiiExecutate || [])],
         lucrariApartamente: [...(a.lucrariApartamente || []), ...(b.lucrariApartamente || [])],
+        timpNeproductiv: uneste(a.timpNeproductiv, b.timpNeproductiv, (t) => String(t.categorie || '') + '|' + String(t.minute || '') + '|' + String(t.nota || '').toLowerCase().trim() + '|' + (Array.isArray(t.persoane) ? t.persoane.slice().sort().join(',') : '')),
         explicatii: [...new Set(expl)].join('\n'),
     };
 }
@@ -1061,7 +1062,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.22-bifez';
+const APP_VERSION = 'v01.23-timpi';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -4779,6 +4780,113 @@ function AIRaportPanel({ echipaNume, materialeSugestii, structura, onAplica }) {
                 React.createElement("button", { onClick: () => setRez(null), className: "text-xs px-3 py-2 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103")),
             React.createElement("div", { className: "text-[10px] mt-1.5", style: { color: 'var(--muted2)' } }, "Verific\u0103 datele \u00EEnainte de a salva raportul \u2014 AI-ul poate gre\u0219i.")))));
 }
+const CATEGORII_TIMP = [
+    { id: 'deplasare', icon: '🚚', nume: 'Deplasare între șantiere', ajutor: 'Drumul de la un punct de lucru la altul, în timpul programului.' },
+    { id: 'aprovizionare', icon: '📦', nume: 'Aprovizionare / ridicat marfă', ajutor: 'Drum la depozit, la magazin, ridicat sau descărcat materiale.' },
+    { id: 'pregatire', icon: '🧰', nume: 'Pregătit materiale și scule', ajutor: 'Tăiat, sortat, pregătit pe apartamente, încărcat schela.' },
+    { id: 'asteptare', icon: '⏳', nume: 'Așteptare front de lucru', ajutor: 'Nu se putea lucra: nu era gata zidăria, tencuiala, alt meșter în față.' },
+    { id: 'discutii', icon: '💬', nume: 'Discuții pe șantier', ajutor: 'Cu dirigintele, inginerul, beneficiarul, alte firme. Ședințe pe teren.' },
+    { id: 'uitat', icon: '🔁', nume: 'Întors după ceva uitat', ajutor: 'Sculă, material sau document uitat, pentru care s-a făcut un drum în plus.' },
+    { id: 'remediere', icon: '🔧', nume: 'Remediere / refacere', ajutor: 'S-a refăcut ceva făcut greșit sau stricat de altcineva.' },
+    { id: 'curatenie', icon: '🧹', nume: 'Curățenie și organizare', ajutor: 'Strâns șantierul, dus gunoiul, organizat depozitul.' },
+    { id: 'instructaj', icon: '📋', nume: 'Instructaj / acte', ajutor: 'Protecția muncii, permise de lucru, semnat hârtii.' },
+    { id: 'utilaj', icon: '⚠', nume: 'Defecțiune mașină / utilaj', ajutor: 'S-a stricat mașina, scula, liftul de materiale.' },
+    { id: 'altele', icon: '❓', nume: 'Altceva', ajutor: 'Scrie în dreptul rândului despre ce a fost vorba.' },
+];
+const numeCategorieTimp = (id) => (CATEGORII_TIMP.find((c) => c.id === id) || {}).nume || 'Altceva';
+const iconCategorieTimp = (id) => (CATEGORII_TIMP.find((c) => c.id === id) || {}).icon || '❓';
+function minutePierduteRand(t) {
+    const m = Number(t?.minute) || 0;
+    const n = Math.max(1, (Array.isArray(t?.persoane) ? t.persoane.filter(Boolean).length : 0) || 1);
+    return m * n;
+}
+function analizaTimpiMorti({ rapoarte, santiere, de, la, costOra }) {
+    const cost = Number(costOra) || 0;
+    const peCategorie = {};
+    const peSantier = {};
+    let totalMin = 0;
+    unificaRapoarte(rapoarte).forEach((r) => {
+        const data = String(r.data || '');
+        if (!data || (de && data < de) || (la && data > la))
+            return;
+        (r.timpNeproductiv || []).forEach((t) => {
+            const min = minutePierduteRand(t);
+            if (!min)
+                return;
+            totalMin += min;
+            const c = String(t.categorie || 'altele');
+            if (!peCategorie[c])
+                peCategorie[c] = { id: c, minute: 0, cazuri: 0, note: [] };
+            peCategorie[c].minute += min;
+            peCategorie[c].cazuri += 1;
+            if (t.nota && peCategorie[c].note.length < 6)
+                peCategorie[c].note.push(String(t.nota).trim());
+            const sid = String(r.santierId || '');
+            if (!peSantier[sid])
+                peSantier[sid] = { santierId: sid, nume: (santiere || []).find((s) => s.id === sid)?.nume || '—', minute: 0 };
+            peSantier[sid].minute += min;
+        });
+    });
+    const listaC = Object.values(peCategorie).map((x) => ({
+        ...x, nume: numeCategorieTimp(x.id), icon: iconCategorieTimp(x.id),
+        ore: x.minute / 60, cost: (x.minute / 60) * cost,
+    })).sort((a, b) => b.minute - a.minute);
+    const listaS = Object.values(peSantier).map((x) => ({ ...x, ore: x.minute / 60, cost: (x.minute / 60) * cost }))
+        .sort((a, b) => b.minute - a.minute);
+    return { totalMin, totalOre: totalMin / 60, totalCost: (totalMin / 60) * cost, peCategorie: listaC, peSantier: listaS };
+}
+function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
+    const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
+    const lista = timpi || [];
+    const numePersoane = (persoane || []).map((p) => String(p?.nume || '').trim()).filter(Boolean);
+    const update = (id, camp, val) => setTimpi(lista.map((t) => t.id === id ? { ...t, [camp]: val } : t));
+    const sterge = (id) => setTimpi(lista.filter((t) => t.id !== id));
+    const adauga = (cat) => setTimpi([...lista, { id: uid(), categorie: cat, minute: 30, persoane: numePersoane.slice(), nota: '' }]);
+    const comutaOm = (t, nume) => {
+        const cur = Array.isArray(t.persoane) ? t.persoane : [];
+        update(t.id, 'persoane', cur.includes(nume) ? cur.filter((n) => n !== nume) : [...cur, nume]);
+    };
+    const totalMin = lista.reduce((s, t) => s + minutePierduteRand(t), 0);
+    const hm = (m) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, '0')}`;
+    return (React.createElement("div", null,
+        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)', lineHeight: 1.55 } },
+            "Aici se trece timpul care ",
+            React.createElement("b", null, "nu"),
+            " s-a dus \u00EEn lucrare: drumuri, aprovizionat, a\u0219teptat frontul, discu\u021Bii pe \u0219antier, \u00EEntors dup\u0103 o scul\u0103. Nu e repro\u0219 pentru nimeni \u2014 e felul \u00EEn care vedem unde se duce ziua \u0219i ce putem organiza altfel. Bifezi cine a stat: 30 de minute pierdute de trei oameni \u00EEnseamn\u0103 o or\u0103 \u0219i jum\u0103tate de manoper\u0103."),
+        lista.length > 0 && (React.createElement("div", { className: "space-y-1.5 mb-2" },
+            lista.map((t) => (React.createElement("div", { key: t.id, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
+                    React.createElement("span", { className: "text-xs font-medium", style: { color: 'var(--text)' } },
+                        iconCategorieTimp(t.categorie),
+                        " ",
+                        numeCategorieTimp(t.categorie)),
+                    React.createElement("span", { className: "flex items-center gap-1 text-[11px]", style: { color: 'var(--muted)' } },
+                        React.createElement("input", { type: "number", inputMode: "numeric", min: "0", step: "5", value: t.minute, onChange: (e) => update(t.id, 'minute', e.target.value), className: "w-16 rounded-lg px-1.5 py-1 text-xs outline-none text-center", style: inputStyle }),
+                        " min"),
+                    React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } },
+                        "= ",
+                        hm(minutePierduteRand(t)),
+                        " manoper\u0103"),
+                    React.createElement("button", { onClick: () => sterge(t.id), className: "ml-auto opacity-60", style: { color: 'var(--acc4)' } },
+                        React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1"))),
+                numePersoane.length > 0 && (React.createElement("div", { className: "flex flex-wrap gap-1 mt-1.5" }, numePersoane.map((n) => {
+                    const on = (t.persoane || []).includes(n);
+                    return (React.createElement("button", { key: n, onClick: () => comutaOm(t, n), className: "text-[11px] px-2 py-0.5 rounded-lg", style: { color: on ? '#14181C' : 'var(--muted)', background: on ? 'var(--acc3)' : 'var(--panel)', border: '1px solid var(--border)', fontWeight: on ? 700 : 400 } },
+                        on ? '✓ ' : '',
+                        n));
+                }))),
+                React.createElement("input", { value: t.nota || '', onChange: (e) => update(t.id, 'nota', e.target.value), placeholder: "Ce anume? (ex: am a\u0219teptat zidarii la etajul 4)", className: "w-full mt-1.5 rounded-lg px-2 py-1.5 text-[11px] outline-none", style: inputStyle })))),
+            React.createElement("div", { className: "text-[11px]", style: { color: 'var(--acc3)' } },
+                "Total pierdut azi pe \u0219antierul \u0103sta: ",
+                React.createElement("b", null,
+                    hm(totalMin),
+                    " h"),
+                " de manoper\u0103."))),
+        React.createElement("div", { className: "flex flex-wrap gap-1.5" }, CATEGORII_TIMP.map((c) => (React.createElement("button", { key: c.id, onClick: () => adauga(c.id), title: c.ajutor, className: "text-[11px] px-2.5 py-1.5 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel)', border: '1px solid var(--border)' } },
+            c.icon,
+            " ",
+            c.nume))))));
+}
 function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, concedii, rapoarte, santiere, onMergiLaSantier, onCancel, onSave }) {
     const modR = mod || 'orar';
     const arePozitii = modR === 'pozitie_propriu' || modR === 'pozitie_client';
@@ -4795,6 +4903,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
     const [pozitiiExecutate, setPozitiiExecutate] = useState(initial?.pozitiiExecutate || []);
     const [tipuriLucrari, setTipuriLucrari] = useState(initial?.tipuriLucrari || []);
     const [lucrariApartamente, setLucrariApartamente] = useState(() => normalizeLucrariApart(initial?.lucrariApartamente || []));
+    const [timpNeproductiv, setTimpNeproductiv] = useState(initial?.timpNeproductiv || []);
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const totalOreMin = persoane.reduce((s, p) => s + minuteLucrate(p), 0);
     const ultimulRaport = useMemo(() => {
@@ -4944,6 +5053,9 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
                     etape.map((e) => React.createElement("option", { key: e.id, value: e.id, style: { background: 'var(--panel)' } }, e.nume)))))),
         React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)' } }, "Orele implicite se aplic\u0103 persoanelor noi ad\u0103ugate; fiecare persoan\u0103 \u00EE\u0219i poate ajusta apoi propriul interval."),
         React.createElement(PersonHoursEditor, { persoane: persoane, setPersoane: setPersoane, defaultInceput: oraInceput, defaultSfarsit: oraSfarsit, echipaPermisa: echipaPermisa, concedii: concedii, rapoarte: rapoarte, data: data, raportIds: initial ? (initial._idUnite && initial._idUnite.length ? initial._idUnite : [initial.id]) : [], santiere: santiere, santierId: santierId, onMergiLaSantier: onMergiLaSantier }),
+        React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
+            React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "\u23F3 Timp care nu s-a dus \u00EEn lucrare"),
+            React.createElement(TimpNeproductivEditor, { timpi: timpNeproductiv, setTimpi: setTimpNeproductiv, persoane: persoane })),
         ((arePozitii && pozitii && pozitii.length > 0) || pozitiiExecutate.length > 0) && !areStructura && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
             React.createElement(PozitiiExecutateEditor, { pozitiiExecutate: pozitiiExecutate, setPozitiiExecutate: setPozitiiExecutate, pozitii: pozitii }))),
         (areMateriale || materialeFolosite.length > 0) && !areStructura && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
@@ -4988,7 +5100,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
                             || String(explicatii || '').trim();
                         if (!areTreaba && !window.confirm('Raportul are doar orele — nu scrie nicăieri ce s-a lucrat. Peste o lună nu o să mai știi, iar în deviz nu intră nimic. Salvezi așa?'))
                             return;
-                        onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, explicatii });
+                        onSave({ id: initial?.id || uid(), data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, timpNeproductiv, explicatii });
                     }, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))));
 }
 function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack, rapoarte, materials, materialeLista }) {
@@ -10007,6 +10119,25 @@ function analizaConsilier({ company, santiere, rapoarte, devize, invoices, offer
                 tab: 'achizitii' });
         }
     });
+    {
+        const t = analizaTimpiMorti({ rapoarte, santiere, de: zileInUrma(30), la: A, costOra });
+        if (t.totalMin > 0) {
+            let oreLucrate = 0;
+            unificaRapoarte(rapoarte).forEach((r) => {
+                if (!r.data || r.data < zileInUrma(30) || r.data > A)
+                    return;
+                (r.persoane || []).forEach((p) => { oreLucrate += minuteLucrate(p) / 60; });
+            });
+            const proc = oreLucrate > 0 ? (t.totalOre / oreLucrate) * 100 : 0;
+            const cap = t.peCategorie[0];
+            out.push({ id: 'timpi_morti', nivel: proc >= 12 ? 'rosu' : 'galben',
+                titlu: `${Math.round(t.totalOre)} ore din ultima lună nu s-au dus în lucrare` + (proc ? ` (${Math.round(proc)}% din timpul plătit)` : ''),
+                detaliu: (costOra ? `Te costă ${lei(t.totalCost)}. ` : '') +
+                    (cap ? `Cel mai mult se duce pe „${cap.nume}": ${Math.round(cap.ore)} h în ${cap.cazuri} ${cap.cazuri === 1 ? 'situație' : 'situații'}${costOra ? `, adică ${lei(cap.cost)}` : ''}. ` : '') +
+                    'Vezi defalcarea completă mai jos, la „Unde se duce timpul".',
+                tab: 'consilier' });
+        }
+    }
     if (!(Number(company?.adaosMaterial) > 0)) {
         out.push({ id: 'adaos', nivel: 'galben', titlu: 'Vinzi materialele la preț de achiziție',
             detaliu: 'Adaosul la materiale e 0 sau necompletat. Materialul cumpărat, depozitat, transportat și pus în operă are un cost al tău care nu se vede nicăieri. Se pune la Setări → Firma mea → Facturare.',
@@ -10029,6 +10160,7 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
     const zonaParere = useRef(null);
     const semnale = useMemo(() => analizaConsilier({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, azi }), [company, santiere, rapoarte, devize, invoices, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier]);
     const oameni = useMemo(() => randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la: azi, costOra }), [rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, costOra]);
+    const timpi = useMemo(() => analizaTimpiMorti({ rapoarte, santiere, de, la: azi, costOra }), [rapoarte, santiere, de, costOra]);
     const totalValoare = oameni.reduce((s, o) => s + o.valoare, 0);
     const totalCost = oameni.reduce((s, o) => s + o.cost, 0);
     const totalOre = oameni.reduce((s, o) => s + o.ore, 0);
@@ -10044,7 +10176,7 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
         oameni: val ? {} : Object.fromEntries(oameni.map((o) => [o.nume, true])),
     });
     const nrBifate = semnale.filter((x) => bifatS(x.id)).length + oameni.filter((o) => bifatO(o.nume)).length;
-    const construiesteRezumat = (semnaleAlese, oameniAlesi, titlu) => [
+    const construiesteRezumat = (semnaleAlese, oameniAlesi, titlu, cuTimpi) => [
         `Firma: ${company?.nume || 'firmă de instalații electrice'}. Cost intern manoperă: ${costOra ? costOra + ' lei/oră' : 'necunoscut'}. Marjă țintă: ${Number(company?.tintaMarja) || 30}%.`,
         `Perioadă analizată: ultimele ${luni} ${luni === 1 ? 'lună' : 'luni'} (${de} → ${azi}).`,
         titlu ? `Cerere: analizează în special „${titlu}".` : '',
@@ -10053,8 +10185,11 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
         ...oameniAlesi.map((o) => `- ${o.nume}: ${o.ore.toFixed(1)} h în ${o.nrZile} zile pe ${o.nrSantiere} șantiere, ${Math.round(o.valoare)} lei produși (${Math.round(o.leiPeOra)} lei/oră), cost ${Math.round(o.cost)} lei, marjă ${Math.round(o.marja)} lei${o.oreFaraValoare > 0 ? `, din care ${o.oreFaraValoare.toFixed(1)} h fără valoare calculabilă (rapoarte fără cantități)` : ''}`),
         semnaleAlese.length ? 'Semnale găsite automat în datele firmei:' : '',
         ...semnaleAlese.map((x) => `- [${x.nivel}] ${x.titlu}: ${x.detaliu}`),
+        (cuTimpi && timpi.totalMin) ? `Timp care nu s-a dus în lucrare, în perioadă: ${timpi.totalOre.toFixed(1)} h${costOra ? ` (${Math.round(timpi.totalCost)} lei)` : ''}, pe categorii:` : '',
+        ...((cuTimpi && timpi.totalMin) ? timpi.peCategorie.map((c) => `- ${c.nume}: ${c.ore.toFixed(1)} h în ${c.cazuri} situații${costOra ? `, ${Math.round(c.cost)} lei` : ''}${c.note.length ? ` — exemple: ${c.note.join('; ')}` : ''}`) : []),
+        (cuTimpi && timpi.peSantier.length > 1) ? 'Pe șantiere: ' + timpi.peSantier.map((x) => `${x.nume} ${x.ore.toFixed(1)} h`).join(', ') : '',
     ].filter(Boolean).join('\n');
-    const intreaba = async (semnaleAlese, oameniAlesi, titlu) => {
+    const intreaba = async (semnaleAlese, oameniAlesi, titlu, cuTimpi) => {
         setBusyAI(true);
         setErrAI('');
         setParere('');
@@ -10069,7 +10204,8 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
             '(4) Dacă un om pare neprofitabil, verifică întâi dacă nu cumva explicația e alta (șantier cu tarif mic, ore fără valoare calculabilă) și spune asta. ' +
             '(5) Termină cu maximum 3 lucruri concrete de făcut săptămâna asta, în ordinea banilor recuperați. ' +
             '(6) Nu folosi titluri cu majuscule și nu scrie ca un raport oficial; scrie ca un om care îi explică patronului la o cafea, dar tehnic corect.\n\n' +
-            construiesteRezumat(semnaleAlese, oameniAlesi, titlu);
+            '(7) Dacă primești timpi care nu s-au dus în lucrare, spune care se pot elimina prin organizare (comandă din timp, listă de scule, program de aprovizionare) și care nu depind de firmă (așteptat alt meșter).\n\n' +
+            construiesteRezumat(semnaleAlese, oameniAlesi, titlu, cuTimpi !== false);
         try {
             const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intrebare: instr, context: [] }) });
             let d = {};
@@ -10096,8 +10232,9 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
         }
         catch (_) { } }, 100);
     };
-    const intreabaBifate = () => intreaba(semnale.filter((x) => bifatS(x.id)), oameni.filter((o) => bifatO(o.nume)), '');
-    const intreabaTot = () => intreaba(semnale, oameni, '');
+    const intreabaBifate = () => intreaba(semnale.filter((x) => bifatS(x.id)), oameni.filter((o) => bifatO(o.nume)), '', true);
+    const intreabaTot = () => intreaba(semnale, oameni, '', true);
+    const intreabaTimpi = () => intreaba([], [], 'timpii care nu s-au dus în lucrare', true);
     const butonAnaliza = (onClick, eticheta) => (React.createElement("button", { onClick: onClick, disabled: busyAI, className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, eticheta));
     return (React.createElement("div", null,
         React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83E\uDDED Consilier"),
@@ -10115,7 +10252,7 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
                     React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, x.titlu),
                     React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)', lineHeight: 1.6 } }, x.detaliu),
                     React.createElement("div", { className: "flex flex-wrap gap-1.5" },
-                        butonAnaliza(() => intreaba([x], [], x.titlu), '🔍 Analizează doar asta'),
+                        butonAnaliza(() => intreaba([x], [], x.titlu, x.id === 'timpi_morti'), '🔍 Analizează doar asta'),
                         x.tab && React.createElement("button", { onClick: () => setTab(x.tab), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: CULORI[x.nivel] } }, "Mergi acolo \u2192"))))))))),
         React.createElement("div", { className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
             React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1 flex-wrap" },
@@ -10154,7 +10291,7 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
                                     "\u26A0 ",
                                     o.oreFaraValoare.toFixed(1),
                                     " h nu pot fi evaluate: rapoartele din zilele alea n-au cantit\u0103\u021Bi trecute, deci munca lui nu apare nic\u0103ieri \u00EEn bani.")),
-                                React.createElement("div", { className: "mt-1.5" }, butonAnaliza(() => intreaba([], [o], 'situația lui ' + o.nume), '🔍 Analizează doar pe ' + o.nume.split(' ')[0]))))));
+                                React.createElement("div", { className: "mt-1.5" }, butonAnaliza(() => intreaba([], [o], 'situația lui ' + o.nume, false), '🔍 Analizează doar pe ' + o.nume.split(' ')[0]))))));
                 }),
                 React.createElement("div", { className: "text-[11px] pt-1", style: { color: 'var(--muted2)' } },
                     "Total: ",
@@ -10164,6 +10301,42 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
                     costOra ? `, cost ${lei(totalCost)}, marjă ${lei(totalValoare - totalCost)}` : '',
                     ".",
                     oreNeevaluate > 1 ? ` ${Math.round(oreNeevaluate)} h nu au valoare calculabilă.` : '')))),
+        React.createElement("div", { className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1 flex-wrap" },
+                React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\u23F3 Unde se duce timpul"),
+                timpi.totalMin > 0 && butonAnaliza(intreabaTimpi, '🔍 Analizează timpii')),
+            React.createElement("p", { className: "text-[11px] mb-3", style: { color: 'var(--muted2)', lineHeight: 1.55 } }, "Timpul pl\u0103tit care nu s-a dus \u00EEn lucrare, trecut de b\u0103ie\u021Bi \u00EEn raportul zilnic la \u201E\u23F3 Timp care nu s-a dus \u00EEn lucrare\". Nu e o list\u0103 de vinova\u021Bi \u2014 e harta locurilor unde se poate organiza mai bine."),
+            timpi.totalMin === 0 ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nu s-a trecut niciun timp pierdut \u00EEn perioada asta. Dac\u0103 nimeni nu-l trece, nu \u00EEnseamn\u0103 c\u0103 nu exist\u0103 \u2014 \u00EEnseamn\u0103 doar c\u0103 nu se vede. Spune-le b\u0103ie\u021Bilor s\u0103 bifeze categoriile din raport c\u00E2nd pierd o or\u0103 pe drumuri sau pe a\u0219teptat.")) : (React.createElement("div", { className: "space-y-1.5" },
+                timpi.peCategorie.map((c) => {
+                    const proc = timpi.totalMin > 0 ? (c.minute / timpi.totalMin) * 100 : 0;
+                    return (React.createElement("div", { key: c.id, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                        React.createElement("div", { className: "flex items-center justify-between gap-2" },
+                            React.createElement("span", { className: "text-xs font-semibold min-w-0 truncate", style: { color: 'var(--text)' } },
+                                c.icon,
+                                " ",
+                                c.nume),
+                            React.createElement("span", { className: "text-xs shrink-0", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } },
+                                c.ore.toFixed(1),
+                                " h",
+                                costOra ? ` · ${lei(c.cost)}` : '')),
+                        React.createElement("div", { className: "mt-1 rounded-full overflow-hidden", style: { height: 4, background: 'var(--panel)' } },
+                            React.createElement("div", { style: { width: Math.max(2, Math.round(proc)) + '%', height: '100%', background: 'var(--acc3)' } })),
+                        React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--muted)' } },
+                            Math.round(proc),
+                            "% din timpul pierdut \u00B7 ",
+                            c.cazuri,
+                            " ",
+                            c.cazuri === 1 ? 'situație' : 'situații',
+                            c.note.length ? ` · ${c.note.slice(0, 2).join('; ')}` : '')));
+                }),
+                React.createElement("div", { className: "text-[11px] pt-1", style: { color: 'var(--muted2)' } },
+                    "Total: ",
+                    timpi.totalOre.toFixed(1),
+                    " h",
+                    costOra ? `, adică ${lei(timpi.totalCost)}` : '',
+                    ".",
+                    totalOre > 0 ? ` Înseamnă ${Math.round((timpi.totalOre / totalOre) * 100)}% din orele plătite în perioada asta.` : '',
+                    timpi.peSantier.length > 1 ? ' Pe șantiere: ' + timpi.peSantier.slice(0, 4).map((x) => `${x.nume} ${x.ore.toFixed(1)} h`).join(', ') + '.' : '')))),
         React.createElement("div", { ref: zonaParere, className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid #C08CE066' } },
             React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: '#C08CE0' } }, "\uD83E\uDD16 P\u0103rerea consultantului"),
             React.createElement("p", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)', lineHeight: 1.55 } }, titluParere ? `Ultima analiză a fost cerută pentru: ${titluParere}.` : 'Cifrele de mai sus se trimit automat — nu ai nimic de copiat. Nu se trimit nume de clienți sau prețuri de contract.'),
