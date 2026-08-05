@@ -1091,7 +1091,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.33-vezi';
+const APP_VERSION = 'v01.35-dosare';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -8730,13 +8730,14 @@ function NotiteTab({ notite, setNotite, persist, clients, santiere, currentUser,
         return (React.createElement("div", { key: n.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: `4px solid ${cat.culoare}` } }, React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, n.fixat && '📌 ', n.titlu || '(fără titlu)'), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, React.createElement("span", { style: { color: cat.culoare } }, cat.label), " \u00B7 ", fmtData(n.data), cl && ` · 👥 ${cl}`, st && ` · 🏗 ${st}`)), React.createElement("div", { className: "flex items-center gap-1 shrink-0" }, React.createElement("button", { onClick: () => fixeaza(n.id), title: n.fixat ? 'Scoate din fixate' : 'Fixează sus', className: "px-1.5 py-0.5 rounded text-xs", style: { color: n.fixat ? 'var(--acc3)' : 'var(--muted2)' } }, "\uD83D\uDCCC"), React.createElement("button", { onClick: () => copiaza(n), title: "Copiaz\u0103 noti\u021Ba", className: "px-1.5 py-0.5 rounded text-xs", style: { color: 'var(--muted2)' } }, "\uD83D\uDCCB"), React.createElement("button", { onClick: () => setForm({ ...n, materiale: n.materiale || [] }), className: "text-[11px] px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"), React.createElement("button", { onClick: () => sterge(n.id), style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))), n.text && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)', lineHeight: 1.6, whiteSpace: 'pre-line' } }, n.text), (n.materiale || []).length > 0 && (React.createElement("div", { className: "mt-2 rounded-lg p-2", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: 'var(--muted2)' } }, "\uD83D\uDCE6 Materiale"), (n.materiale || []).map((m) => (React.createElement("div", { key: m.id, className: "text-[11px]", style: { color: 'var(--text)' } }, "\u2022 ", m.denumire, " ", m.cantitate ? `— ${m.cantitate} ${m.um || ''}` : ''))), onOfertaDinNota && (React.createElement("button", { onClick: () => onOfertaDinNota(n), className: "text-[11px] px-2 py-1 rounded mt-1.5 font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCB0 F\u0103 ofert\u0103 din lista asta"))))));
     })))));
 }
-function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere, rapoarte, structuraSantier, proiecteFisiere, setProiecteFisiere, persist, currentUser, goToSite, onCreeazaProiect, printFactura, printDeviz, printOferta, onDocNou, onFactureazaDeviz }) {
+function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers, santiere, rapoarte, structuraSantier, proiecteFisiere, setProiecteFisiere, persist, currentUser, goToSite, onCreeazaProiect, printFactura, printDeviz, printOferta, onDocNou, onFactureazaDeviz }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const [cauta, setCauta] = useState('');
     const [proiectNou, setProiectNou] = useState(null);
     const [openC, setOpenC] = useState({ __fc: true });
     const [openS, setOpenS] = useState({});
     const [openF, setOpenF] = useState({});
+    const [openD, setOpenD] = useState({});
     const [attachFor, setAttachFor] = useState(null);
     const [aratTotiClientii, setAratTotiClientii] = useState(false);
     const [upBusy, setUpBusy] = useState('');
@@ -8858,6 +8859,59 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
     const clientiFiltrati = aratTotiClientii ? totiClientii : clientiCuDosar;
     const nrGoi = totiClientii.length - clientiCuDosar.length;
     const santiereFaraClient = (santiere || []).filter((s) => !s.benefClientId);
+    const stergeDeviz = (d) => {
+        if (!setDevize)
+            return;
+        const peFacturi = (invoices || []).filter((i) => (i.devizeIds || []).includes(d.id));
+        const avert = peFacturi.length
+            ? `\n\nATENȚIE: devizul e pus pe ${peFacturi.length === 1 ? 'factura' : 'facturile'} ${peFacturi.map((i) => i.numar || '?').join(', ')}. Se scoate și de acolo, dar factura rămâne cu valoarea ei.`
+            : '';
+        if (!window.confirm(`Ștergi definitiv Devizul ${d.numar} din ${fmtData(d.data)} (${money(totalDoc(d))})?${avert}`))
+            return;
+        if (peFacturi.length && setInvoices) {
+            const nextF = (invoices || []).map((i) => (i.devizeIds || []).includes(d.id) ? { ...i, devizeIds: i.devizeIds.filter((x) => x !== d.id) } : i);
+            setInvoices(nextF);
+            persist('invoices', nextF);
+        }
+        const next = (devize || []).filter((x) => x.id !== d.id);
+        setDevize(next);
+        persist('devize', next);
+    };
+    const perioadaDeviz = (d) => {
+        const de = d && d.perioada && d.perioada.de;
+        const la = d && d.perioada && d.perioada.la;
+        if (!de && !la)
+            return '';
+        return `${fmtData(de) || '…'} – ${fmtData(la) || '…'}`;
+    };
+    const randDosarDeviz = (d) => {
+        const od = !!openD[d.id];
+        const per = perioadaDeviz(d);
+        return (React.createElement("div", { key: d.id, className: "rounded-lg", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+            React.createElement("button", { onClick: () => setOpenD((x) => ({ ...x, [d.id]: !x[d.id] })), className: "w-full flex items-center gap-2 px-2.5 py-2 text-left" },
+                React.createElement("span", null, od ? '📂' : '📁'),
+                React.createElement("span", { className: "text-xs font-semibold flex-1 min-w-0 truncate", style: { color: 'var(--text)' } },
+                    "Deviz nr. ",
+                    d.numar,
+                    " din ",
+                    fmtData(d.data),
+                    per ? ` (${per})` : ''),
+                React.createElement("span", { className: "text-[11px] shrink-0 font-semibold", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } }, money(totalDoc(d)))),
+            od && (React.createElement("div", { className: "px-2.5 pb-2.5 space-y-1" },
+                React.createElement("div", { className: "flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded", style: { background: 'var(--panel)' } },
+                    React.createElement("button", { onClick: () => printDeviz(d), className: "min-w-0 truncate text-left flex-1", style: { color: 'var(--text)' }, title: "Apas\u0103 ca s\u0103 vezi devizul" },
+                        "\uD83E\uDDEE Deviz ",
+                        d.numar,
+                        " \u00B7 ",
+                        fmtData(d.data),
+                        " \u00B7 ",
+                        money(totalDoc(d))),
+                    React.createElement("div", { className: "flex items-center gap-1 shrink-0" },
+                        React.createElement("button", { onClick: () => printDeviz(d), className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDC41 Vezi"),
+                        setDevize && React.createElement("button", { onClick: () => stergeDeviz(d), title: "\u0218terge devizul", className: "px-1.5 py-0.5 rounded", style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))),
+                onFactureazaDeviz && (React.createElement("button", { onClick: () => onFactureazaDeviz(d), className: "w-full text-[11px] px-2 py-1.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2192 F\u0103 factura din devizul \u0103sta")),
+                React.createElement("div", { className: "text-[10px] px-1", style: { color: 'var(--muted2)' } }, "Dup\u0103 ce faci factura, dosarul se redenume\u0219te \u00EEn \u201EFactura nr\u2026 \" \u0219i devizul r\u0103m\u00E2ne \u00EEn\u0103untru, l\u00E2ng\u0103 ea.")))));
+    };
     const randSantier = (s, doc) => {
         const os = !!openS[s.id];
         const rapS = (rapoarte || []).filter((r) => r.santierId === s.id);
@@ -8886,22 +8940,20 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
                     rapS.length,
                     " ",
                     rapS.length === 1 ? 'raport' : 'rapoarte'),
+                devS.length > 0 && (React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                    "\uD83E\uDDEE ",
+                    devS.length,
+                    " ",
+                    devS.length === 1 ? 'deviz' : 'devize',
+                    " pe \u0219antierul \u0103sta: ",
+                    devS.map((d) => `nr. ${d.numar}`).join(', '),
+                    factS.length > 0 ? ' — cele facturate sunt în dosarele de factură de mai jos.' : '')),
                 factS.length > 0 && (React.createElement(React.Fragment, null,
                     React.createElement("div", { className: "text-[10px] uppercase tracking-wide pt-1", style: { color: 'var(--muted2)' } }, "\uD83E\uDDFE Dosare de factur\u0103"),
                     factS.map((f) => randFactura(f, devS)))),
                 (devLibere.length > 0 || ofS.length > 0) && (React.createElement(React.Fragment, null,
-                    React.createElement("div", { className: "text-[10px] uppercase tracking-wide pt-1", style: { color: 'var(--muted2)' } }, "\uD83D\uDCC2 \u00CEnc\u0103 nefacturate"),
-                    devLibere.map((d) => (React.createElement("div", { key: d.id, className: "flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded", style: { background: 'var(--panel)' } },
-                        React.createElement("button", { onClick: () => printDeviz(d), className: "min-w-0 truncate text-left flex-1", style: { color: 'var(--text)' }, title: "Apas\u0103 ca s\u0103 vezi devizul" },
-                            "\uD83E\uDDEE Deviz ",
-                            d.numar,
-                            " \u00B7 ",
-                            fmtData(d.data),
-                            " \u00B7 ",
-                            money(totalDoc(d))),
-                        React.createElement("div", { className: "flex items-center gap-1 shrink-0" },
-                            React.createElement("button", { onClick: () => printDeviz(d), className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDC41 Vezi"),
-                            onFactureazaDeviz && React.createElement("button", { onClick: () => onFactureazaDeviz(d), className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2192 Factureaz\u0103"))))),
+                    React.createElement("div", { className: "text-[10px] uppercase tracking-wide pt-1", style: { color: 'var(--muted2)' } }, "\uD83D\uDCC2 Dosare de deviz (\u00EEnc\u0103 nefacturate)"),
+                    devLibere.map((d) => randDosarDeviz(d)),
                     ofS.map((o) => (React.createElement("div", { key: o.id, className: "flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded", style: { background: 'var(--panel)' } },
                         React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--text)' } },
                             "\uD83D\uDCC4 Ofert\u0103 ",
@@ -8949,16 +9001,18 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
                             normStatusFactura(f.status))),
                     React.createElement("button", { onClick: () => printFactura(f), className: "shrink-0 px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDC41 Vezi")),
                 devAt.map((d) => (React.createElement("div", { key: d.id, className: "flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded", style: { background: 'var(--panel)' } },
-                    React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--text)' } },
+                    React.createElement("button", { onClick: () => printDeviz(d), className: "min-w-0 truncate text-left flex-1", style: { color: 'var(--text)' }, title: "Apas\u0103 ca s\u0103 vezi devizul" },
                         "\uD83E\uDDEE Deviz ",
                         d.numar,
                         " \u00B7 ",
                         fmtData(d.data),
+                        perioadaDeviz(d) ? ` (${perioadaDeviz(d)})` : '',
                         " \u00B7 ",
                         money(totalDoc(d))),
                     React.createElement("div", { className: "flex items-center gap-1 shrink-0" },
                         React.createElement("button", { onClick: () => printDeviz(d), className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDC41 Vezi"),
-                        React.createElement("button", { onClick: () => detaseaza(f.id, d.id), title: "Scoate devizul din acest dosar", style: { color: 'var(--acc4)' } }, "\u2715"))))),
+                        React.createElement("button", { onClick: () => detaseaza(f.id, d.id), title: "Scoate devizul din acest dosar (r\u0103m\u00E2ne la nefacturate)", style: { color: 'var(--muted)' } }, "\u2715"),
+                        setDevize && React.createElement("button", { onClick: () => stergeDeviz(d), title: "\u0218terge definitiv devizul", className: "px-1.5 py-0.5 rounded", style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))))),
                 fF.map(randFisier),
                 attachFor === f.id ? (devLibere.length === 0 ? React.createElement("div", { className: "text-[11px] px-2", style: { color: 'var(--muted2)' } },
                     "Nu mai sunt devize nepuse \u00EEn vreun dosar la acest client. ",
@@ -9065,17 +9119,7 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, offers, santiere,
                             ofara && (React.createElement("div", { className: "px-2.5 pb-2.5 space-y-1" },
                                 React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Documente f\u0103cute \u00EEnainte de leg\u0103tura cu \u0219antierul. Le po\u021Bi l\u0103sa aici; cele noi intr\u0103 singure \u00EEn folderul \u0219antierului."),
                                 factFara.map((f) => randFactura(f, devFara)),
-                                devFara.filter((d) => !new Set((invoices || []).flatMap((i) => i.devizeIds || [])).has(d.id)).map((d) => (React.createElement("div", { key: d.id, className: "flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded", style: { background: 'var(--panel)' } },
-                                    React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--text)' } },
-                                        "\uD83E\uDDEE Deviz ",
-                                        d.numar,
-                                        " \u00B7 ",
-                                        fmtData(d.data),
-                                        " \u00B7 ",
-                                        money(totalDoc(d))),
-                                    React.createElement("div", { className: "flex items-center gap-1 shrink-0" },
-                                        React.createElement("button", { onClick: () => printDeviz(d), className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDC41 Vezi"),
-                                        onFactureazaDeviz && React.createElement("button", { onClick: () => onFactureazaDeviz(d), className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2192 Factureaz\u0103"))))),
+                                devFara.filter((d) => !new Set((invoices || []).flatMap((i) => i.devizeIds || [])).has(d.id)).map((d) => randDosarDeviz(d)),
                                 ofFara.map((o) => (React.createElement("div", { key: o.id, className: "flex items-center justify-between gap-2 text-[11px] px-2 py-1.5 rounded", style: { background: 'var(--panel)' } },
                                     React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--text)' } },
                                         "\uD83D\uDCC4 Ofert\u0103 ",
@@ -12262,7 +12306,7 @@ function App() {
                                 setOfferForm({ items, clientId: n.clientId || '' });
                                 setTab('oferte');
                             } }),
-                        tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz }),
+                        tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, setDevize: setDevize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz }),
                         (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
                         tab === 'santiere' && React.createElement(SantiereTab, { santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                         tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
