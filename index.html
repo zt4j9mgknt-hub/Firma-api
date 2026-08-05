@@ -1091,7 +1091,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.43-scaraplansei';
+const APP_VERSION = 'v01.44-cotareauto';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -11688,6 +11688,136 @@ function cautaSimboluri(im, sab, optiuni) {
     });
     return suprimaVecini(gasite);
 }
+const PRAG_INCHIS = 150;
+const DIRECTII_PERETE = [{ id: 'sus', dx: 0, dy: -1 }, { id: 'jos', dx: 0, dy: 1 },
+    { id: 'stanga', dx: -1, dy: 0 }, { id: 'dreapta', dx: 1, dy: 0 }];
+function pixelInchis(im, x, y, prag) {
+    if (x < 0 || y < 0 || x >= im.lat || y >= im.inalt)
+        return false;
+    return im.g[y * im.lat + x] < (prag || PRAG_INCHIS);
+}
+function pixelInchisTol(im, x, y, orizontala, prag, tol) {
+    const t = tol == null ? 2 : tol;
+    for (let k = -t; k <= t; k++) {
+        if (orizontala ? pixelInchis(im, x, y + k, prag) : pixelInchis(im, x + k, y, prag))
+            return true;
+    }
+    return false;
+}
+function eLinieAcolo(im, x, y, orizontala, prag, jumatate) {
+    const j = jumatate || 25;
+    let inchisi = 0, tot = 0;
+    for (let k = -j; k <= j; k++) {
+        const xx = orizontala ? x + k : x, yy = orizontala ? y : y + k;
+        if (xx < 0 || yy < 0 || xx >= im.lat || yy >= im.inalt)
+            continue;
+        tot++;
+        if (pixelInchisTol(im, xx, yy, orizontala, prag, 1))
+            inchisi++;
+    }
+    return tot > j && inchisi / tot >= 0.7;
+}
+function cautaPerete(im, px, py, dir, optiuni) {
+    const o = optiuni || {};
+    const prag = o.prag || PRAG_INCHIS;
+    const maxim = o.maxim || 500, start = o.start == null ? 8 : o.start;
+    const orizontala = dir.dy !== 0;
+    for (let t = start; t <= maxim; t++) {
+        const x = Math.round(px + dir.dx * t), y = Math.round(py + dir.dy * t);
+        if (x < 0 || y < 0 || x >= im.lat || y >= im.inalt)
+            return null;
+        if (pixelInchis(im, x, y, prag) && eLinieAcolo(im, x, y, orizontala, prag, o.lungimeLinie))
+            return { directie: dir.id, dist: t, x, y, orizontala };
+    }
+    return null;
+}
+function mergePePerete(im, x, y, orizontala, sens, optiuni) {
+    const o = optiuni || {};
+    const prag = o.prag || PRAG_INCHIS;
+    const maxim = o.maxim || 2000;
+    const golMic = o.golMic == null ? 3 : o.golMic;
+    const golMax = o.golMax == null ? 400 : o.golMax;
+    const dx = orizontala ? sens : 0, dy = orizontala ? 0 : sens;
+    let ultim = 0;
+    for (let t = 1; t <= maxim; t++) {
+        const xx = Math.round(x + dx * t), yy = Math.round(y + dy * t);
+        if (xx < 0 || yy < 0 || xx >= im.lat || yy >= im.inalt)
+            return { dist: ultim, gol: 0 };
+        if (pixelInchisTol(im, xx, yy, orizontala, prag)) {
+            ultim = t;
+            continue;
+        }
+        let reia = 0;
+        for (let k = 1; k <= golMax; k++) {
+            const ax = Math.round(x + dx * (t + k)), ay = Math.round(y + dy * (t + k));
+            if (ax < 0 || ay < 0 || ax >= im.lat || ay >= im.inalt)
+                break;
+            if (pixelInchisTol(im, ax, ay, orizontala, prag)) {
+                reia = k;
+                break;
+            }
+        }
+        if (reia > 0 && reia <= golMic) {
+            ultim = t + reia;
+            t += reia;
+            continue;
+        }
+        return { dist: ultim, gol: reia };
+    }
+    return { dist: ultim, gol: 0 };
+}
+function felReper(golPx, cmPePixel) {
+    if (!(golPx > 0))
+        return 'colț';
+    const cm = golPx * (Number(cmPePixel) || 0);
+    if (!(cm > 0))
+        return 'gol';
+    if (cm >= 55 && cm <= 130)
+        return 'ușă';
+    return 'gol';
+}
+function coteazaPin(im, px, py, optiuni) {
+    const o = optiuni || {};
+    const cmPePixel = Number(o.cmPePixel) || 0;
+    let cel = null;
+    DIRECTII_PERETE.forEach((d) => {
+        const p = cautaPerete(im, px, py, d, o);
+        if (p && (!cel || p.dist < cel.dist))
+            cel = p;
+    });
+    if (!cel)
+        return null;
+    const inainte = mergePePerete(im, cel.x, cel.y, cel.orizontala, 1, o);
+    const inapoi = mergePePerete(im, cel.x, cel.y, cel.orizontala, -1, o);
+    const variante = [{ sens: 1, ...inainte }, { sens: -1, ...inapoi }].filter((v) => v.dist > 0);
+    if (!variante.length)
+        return null;
+    variante.sort((a, b) => a.dist - b.dist);
+    const v = variante[0];
+    return {
+        perete: cel.directie, distPerete: cel.dist, orizontala: cel.orizontala,
+        ancoraX: cel.x, ancoraY: cel.y,
+        sens: v.sens, px: v.dist, fel: felReper(v.gol, cmPePixel),
+        cm: Math.round(v.dist * cmPePixel),
+        alternativa: variante[1] ? { sens: variante[1].sens, px: variante[1].dist,
+            fel: felReper(variante[1].gol, cmPePixel), cm: Math.round(variante[1].dist * cmPePixel) } : null,
+    };
+}
+function coteazaPlansa(im, pini, optiuni) {
+    const o = optiuni || {};
+    const latPagina = Number(o.latPagina) || im.lat;
+    const cmPePixel = (Number(o.metriPeLatime) || 0) / latPagina * 100;
+    if (!(cmPePixel > 0))
+        return [];
+    const out = [];
+    (pini || []).forEach((p) => {
+        const c = coteazaPin(im, Math.round(p.x * latPagina), Math.round(p.y * latPagina), { ...o, cmPePixel });
+        if (c && c.cm > 0)
+            out.push({ pinId: p.id, ...c });
+    });
+    return out;
+}
+const textCota = (c) => c ? c.cm + ' cm de la ' + (c.fel === 'ușă' ? 'ușă' : c.fel === 'gol' ? 'gol' : 'colț') : '';
 function lungimeTraseu(puncte, metriPeLatime) {
     const p = puncte || [];
     let d = 0;
@@ -11825,7 +11955,201 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const pini = (ante.pini || []).filter((p) => (p.pagina || 1) === pagina);
     const trasee = (ante.trasee || []).filter((t) => (t.pagina || 1) === pagina);
     const zone = (ante.zone || []).filter((z) => (z.pagina || 1) === pagina);
+    const cote = (ante.cote || []).filter((c) => (c.pagina || 1) === pagina);
     const culoareArt = (id) => (articole.find((a) => a.id === id) || {}).culoare || '#2E8BD1';
+    const [coteazaBusy, setCoteazaBusy] = useState(false);
+    const coteazaTot = () => {
+        if (!refGri.current || !refPagina.current)
+            return;
+        if (!(Number(ante.metriPeLatime) > 0)) {
+            setMod('calibrare');
+            setMesaj('Întâi pune scara — fără ea nu pot scrie centimetri.');
+            return;
+        }
+        if (!pini.length) {
+            setMesaj('Nu e niciun aparat pus pe planșă. Caută întâi simbolurile.');
+            return;
+        }
+        setCoteazaBusy(true);
+        setTimeout(() => {
+            try {
+                const lat = refPagina.current.width;
+                const brute = coteazaPlansa(refGri.current, pini, { latPagina: lat, metriPeLatime: ante.metriPeLatime });
+                const noi = brute.map((c) => ({
+                    id: uid(), pagina, pinId: c.pinId, orizontala: c.orizontala,
+                    ax: c.ancoraX / lat, ay: c.ancoraY / lat, lungime: c.px / lat, sens: c.sens, cm: c.cm, fel: c.fel,
+                    alt: c.alternativa ? { lungime: c.alternativa.px / lat, sens: c.alternativa.sens, cm: c.alternativa.cm, fel: c.alternativa.fel } : null,
+                }));
+                onSchimb({ cote: [...(ante.cote || []).filter((c) => (c.pagina || 1) !== pagina), ...noi] });
+                setMesaj('Am cotat ' + noi.length + ' din ' + pini.length + ' aparate.' + (noi.length < pini.length ? ' Cele necotate n-au avut un perete clar lângă ele — pune-le tu cota de mână.' : ''));
+            }
+            catch (e) {
+                setMesaj((e && e.message) || 'Cotarea nu a mers.');
+            }
+            setCoteazaBusy(false);
+        }, 30);
+    };
+    const intoarceCota = (pl) => {
+        let cea = null, dmin = 1e9;
+        cote.forEach((c) => {
+            const mij = { x: c.ax + (c.orizontala ? c.lungime * c.sens / 2 : 0), y: c.ay + (c.orizontala ? 0 : c.lungime * c.sens / 2) };
+            const d = Math.hypot(mij.x - pl.x, mij.y - pl.y);
+            if (d < dmin) {
+                dmin = d;
+                cea = c;
+            }
+        });
+        if (!cea || dmin > 0.05)
+            return;
+        if (!cea.alt) {
+            setMesaj('Cota asta n-are și o a doua variantă — peretele se termină doar într-o parte.');
+            return;
+        }
+        const inversa = { lungime: cea.lungime, sens: cea.sens, cm: cea.cm, fel: cea.fel };
+        onSchimb({ cote: (ante.cote || []).map((c) => c.id === cea.id
+                ? { ...c, lungime: cea.alt.lungime, sens: cea.alt.sens, cm: cea.alt.cm, fel: cea.alt.fel, alt: inversa } : c) });
+    };
+    const [exportBusy, setExportBusy] = useState(false);
+    const exportaCotata = async () => {
+        const pg = refPagina.current;
+        if (!pg)
+            return;
+        setExportBusy(true);
+        try {
+            if (!window.jspdf)
+                await new Promise((rez, rej) => {
+                    const el = document.createElement('script');
+                    el.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+                    el.onload = rez;
+                    el.onerror = () => rej(new Error('Nu am putut descărca biblioteca PDF. Verifică internetul.'));
+                    document.head.appendChild(el);
+                });
+            const JsPDF = (window.jspdf || {}).jsPDF;
+            if (!JsPDF)
+                throw new Error('Biblioteca PDF nu s-a încărcat.');
+            const cv = document.createElement('canvas');
+            cv.width = pg.width;
+            cv.height = pg.height;
+            const x = cv.getContext('2d');
+            x.drawImage(pg, 0, 0);
+            const laP = (nx, ny) => ({ x: nx * pg.width, y: ny * pg.width });
+            zone.forEach((z) => {
+                const a = laP(z.x, z.y), b = laP(z.x + z.w, z.y + z.h);
+                x.strokeStyle = '#E9A23B';
+                x.lineWidth = 2;
+                x.setLineDash([8, 5]);
+                x.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+                x.setLineDash([]);
+                x.fillStyle = '#B37414';
+                x.font = 'bold 15px sans-serif';
+                x.fillText(z.nume || '', a.x + 5, a.y + 18);
+            });
+            trasee.forEach((t) => {
+                const p = t.puncte || [];
+                if (p.length < 2)
+                    return;
+                x.strokeStyle = culoareArt(t.articolId);
+                x.lineWidth = 3;
+                x.lineJoin = 'round';
+                x.beginPath();
+                p.forEach((q, i) => { const e = laP(q.x, q.y); if (i === 0)
+                    x.moveTo(e.x, e.y);
+                else
+                    x.lineTo(e.x, e.y); });
+                x.stroke();
+            });
+            pini.forEach((p) => {
+                const e = laP(p.x, p.y);
+                x.beginPath();
+                x.arc(e.x, e.y, 7, 0, Math.PI * 2);
+                x.fillStyle = culoareArt(p.articolId);
+                x.fill();
+                x.strokeStyle = '#fff';
+                x.lineWidth = 2;
+                x.stroke();
+            });
+            cote.forEach((c) => {
+                const a = laP(c.ax, c.ay);
+                const b = laP(c.ax + (c.orizontala ? c.lungime * c.sens : 0), c.ay + (c.orizontala ? 0 : c.lungime * c.sens));
+                x.strokeStyle = '#C81E1E';
+                x.lineWidth = 2;
+                x.beginPath();
+                x.moveTo(a.x, a.y);
+                x.lineTo(b.x, b.y);
+                x.stroke();
+                x.beginPath();
+                if (c.orizontala) {
+                    x.moveTo(a.x, a.y - 7);
+                    x.lineTo(a.x, a.y + 7);
+                    x.moveTo(b.x, b.y - 7);
+                    x.lineTo(b.x, b.y + 7);
+                }
+                else {
+                    x.moveTo(a.x - 7, a.y);
+                    x.lineTo(a.x + 7, a.y);
+                    x.moveTo(b.x - 7, b.y);
+                    x.lineTo(b.x + 7, b.y);
+                }
+                x.stroke();
+                const et = c.cm + ' cm de la ' + (c.fel === 'ușă' ? 'ușă' : c.fel === 'gol' ? 'gol' : 'colț');
+                x.font = 'bold 14px sans-serif';
+                const w = x.measureText(et).width + 10;
+                const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+                x.fillStyle = '#ffffff';
+                x.fillRect(mx - w / 2, my - 22, w, 19);
+                x.strokeStyle = '#C81E1E';
+                x.lineWidth = 1;
+                x.strokeRect(mx - w / 2, my - 22, w, 19);
+                x.fillStyle = '#8a1010';
+                x.fillText(et, mx - w / 2 + 5, my - 8);
+            });
+            const rand = cantitatiAntemasuratoare({ ...ante, pini, trasee }).filter((r) => r.total > 0);
+            if (rand.length) {
+                const h = 22 * rand.length + 34;
+                x.fillStyle = '#ffffffee';
+                x.fillRect(10, 10, 340, h);
+                x.strokeStyle = '#123049';
+                x.lineWidth = 2;
+                x.strokeRect(10, 10, 340, h);
+                x.fillStyle = '#123049';
+                x.font = 'bold 15px sans-serif';
+                x.fillText('PLANȘĂ COTATĂ — ' + (ante.nume || ''), 20, 30);
+                x.font = '14px sans-serif';
+                rand.forEach((r, i) => {
+                    const y = 52 + i * 22;
+                    x.fillStyle = r.articol.culoare || '#2E8BD1';
+                    x.beginPath();
+                    x.arc(28, y - 5, 6, 0, Math.PI * 2);
+                    x.fill();
+                    x.fillStyle = '#1a1a1a';
+                    x.fillText(r.articol.nume + ' — ' + r.total + ' ' + (r.articol.um || 'buc'), 42, y);
+                });
+            }
+            const latMm = (ante.foaieMm && ante.foaieMm.lat) || (foaie && foaie.latMm) || 297;
+            const inaltMm = (ante.foaieMm && ante.foaieMm.inalt) || (foaie && foaie.inaltMm) || 210;
+            const pdf = new JsPDF({ unit: 'mm', format: [latMm, inaltMm], orientation: latMm >= inaltMm ? 'landscape' : 'portrait' });
+            pdf.addImage(cv.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, latMm, inaltMm);
+            const nume = ((ante.nume || 'plansa') + ' — cotata.pdf').replace(/[\\/:*?"<>|]/g, ' ');
+            const url = URL.createObjectURL(pdf.output('blob'));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = nume;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 30000);
+            setMesaj('Planșa cotată e descărcată, pe foaie de ' + Math.round(latMm) + '×' + Math.round(inaltMm) + ' mm.');
+        }
+        catch (e) {
+            setMesaj((e && e.message) || 'Nu am putut face planșa cotată.');
+        }
+        setExportBusy(false);
+    };
+    const stergeCotele = () => {
+        if (!cote.length || !window.confirm('Ștergi toate cotele de pe pagina asta?'))
+            return;
+        onSchimb({ cote: (ante.cote || []).filter((c) => (c.pagina || 1) !== pagina) });
+    };
     useEffect(() => {
         let anulat = false;
         setStare('Se deschide planșa…');
@@ -11942,6 +12266,42 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             ctx.fillStyle = '#fff';
             ctx.font = 'bold 11px sans-serif';
             ctx.fillText(rotunjeste2(m).toFixed(2) + ' m', e.x + 7, e.y - 2);
+        });
+        cote.forEach((c) => {
+            const a = laEcran(c.ax, c.ay);
+            const b = laEcran(c.ax + (c.orizontala ? c.lungime * c.sens : 0), c.ay + (c.orizontala ? 0 : c.lungime * c.sens));
+            ctx.strokeStyle = '#E05252';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+            const cap = 5;
+            ctx.beginPath();
+            if (c.orizontala) {
+                ctx.moveTo(a.x, a.y - cap);
+                ctx.lineTo(a.x, a.y + cap);
+                ctx.moveTo(b.x, b.y - cap);
+                ctx.lineTo(b.x, b.y + cap);
+            }
+            else {
+                ctx.moveTo(a.x - cap, a.y);
+                ctx.lineTo(a.x + cap, a.y);
+                ctx.moveTo(b.x - cap, b.y);
+                ctx.lineTo(b.x + cap, b.y);
+            }
+            ctx.stroke();
+            const et = c.cm + ' cm · ' + (c.fel === 'ușă' ? 'ușă' : c.fel === 'gol' ? 'gol' : 'colț');
+            ctx.font = 'bold 11px sans-serif';
+            const w = ctx.measureText(et).width + 8;
+            const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+            ctx.fillStyle = '#ffffffee';
+            ctx.fillRect(mx - w / 2, my - 16, w, 15);
+            ctx.strokeStyle = '#E05252';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(mx - w / 2, my - 16, w, 15);
+            ctx.fillStyle = '#8a1f1f';
+            ctx.fillText(et, mx - w / 2 + 4, my - 5);
         });
         pini.forEach((p) => {
             const e = laEcran(p.x, p.y);
@@ -12067,6 +12427,11 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         if (g.tip === 'calibrare') {
             if (!g.mutat)
                 adaugaPunctCalibrare(g.start);
+            return;
+        }
+        if (g.tip === 'cota') {
+            if (!g.mutat)
+                intoarceCota(g.start);
             return;
         }
         if (g.tip === 'zona') {
@@ -12218,8 +12583,9 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         ['traseu', '〰', 'Traseu'],
         ['zona', '▭', 'Zonă'],
         ['calibrare', '📏', 'Scara'],
+        ['cota', '📐', 'Cote'],
     ];
-    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : id === 'cota' ? 'Atinge o cotă ca s-o măsoare din partea cealaltă.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
         icon,
         " ",
         eticheta));
@@ -12332,6 +12698,13 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                         " ",
                         zone.length === 1 ? 'zonă' : 'zone'),
                     React.createElement("button", { onClick: onOferta, className: "ml-auto text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2192 F\u0103 oferta")),
+                React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1.5", style: { borderTop: '1px solid var(--border)' } },
+                    React.createElement("button", { onClick: coteazaTot, disabled: coteazaBusy, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#E05252' } }, coteazaBusy ? 'Cotez planșa…' : '📐 Cotează automat'),
+                    cote.length > 0 && React.createElement("span", { className: "text-[11px] self-center", style: { color: 'var(--muted2)' } },
+                        cote.length,
+                        " cote"),
+                    cote.length > 0 && React.createElement("button", { onClick: stergeCotele, className: "text-[11px] px-2 py-1.5 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "\u0218terge cotele"),
+                    React.createElement("button", { onClick: exportaCotata, disabled: exportBusy, className: "ml-auto text-[11px] px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' } }, exportBusy ? 'Fac PDF-ul…' : '📄 Planșă cotată (PDF)')),
                 zone.length > 0 && (React.createElement("div", { className: "pt-1.5 space-y-1" }, zone.map((z) => (React.createElement("div", { key: z.id, className: "flex items-center gap-2 text-[11px]" },
                     React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--acc3)' } },
                         "\u25AD ",
