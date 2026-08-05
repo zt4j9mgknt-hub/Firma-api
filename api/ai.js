@@ -15,18 +15,22 @@ const REZERVE = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-li
 // Cheile de la AI Studio vin în două formate: cele vechi („AIza…") și cele noi („AQ.Ab8…").
 // Cele noi nu merg întotdeauna trimise în adresă, așa că le trimitem în antet și, dacă
 // serverul le refuză, mai încercăm o dată pe vechea cale. Așa merg amândouă.
-async function cereGemini({ key, model, sistem, text, json, inAdresa }) {
+async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandire }) {
   const baza = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent';
   const url = inAdresa ? (baza + '?key=' + encodeURIComponent(key)) : baza;
   const generationConfig = {
     // Extragerea raportului scoate un JSON cu lucrări, materiale, oameni și apartamente.
-    // Cu 2048 de tokeni se mai tăia la mijloc când electricianul povestea 4 apartamente,
-    // iar JSON-ul rupt nu se mai putea citi. Acum are loc berechet.
-    maxOutputTokens: json ? 8192 : 800,
+    // Analiza consultantului e un text de câteva sute de cuvinte. Cu 800 de tokeni se
+    // tăia după titlu și omul rămânea cu o propoziție ruptă pe ecran.
+    maxOutputTokens: json ? 8192 : 4096,
     temperature: json ? 0.1 : 0.3,
   };
   // Modul JSON: Gemini garantează că răspunsul e JSON valid, fără ``` în jur.
   if (json) generationConfig.responseMimeType = 'application/json';
+  // Modelele „2.5" gândesc înainte să scrie, iar gândirea consumă din ACELAȘI buget de
+  // tokeni ca răspunsul. De aceea ieșea doar titlul: se ducea tot bugetul pe deliberare.
+  // Aici avem nevoie de text, nu de deliberare, așa că o oprim.
+  if (!faraGandire && /2\.5/.test(String(model))) generationConfig.thinkingConfig = { thinkingBudget: 0 };
   const headers = { 'content-type': 'application/json' };
   if (!inAdresa) headers['x-goog-api-key'] = key;
   const r = await fetch(url, {
@@ -118,6 +122,11 @@ export default async function handler(req, res) {
     let ultimaEroare = 'AI a răspuns cu eroare.';
     for (const model of deIncercat) {
       let { r, d } = await cereGemini({ key, model, sistem, text, json, inAdresa: false });
+      // Vreun model mai vechi care nu știe de „thinkingConfig"? Reîncercăm fără el.
+      if (!r.ok && r.status === 400 && /thinking/i.test((d && d.error && d.error.message) || '')) {
+        const dinNou = await cereGemini({ key, model, sistem, text, json, inAdresa: false, faraGandire: true });
+        r = dinNou.r; d = dinNou.d;
+      }
       // Cheie refuzată în antet? Mai încercăm o dată cu ea pusă în adresă (formatul vechi).
       if (!r.ok && (r.status === 401 || r.status === 403)) {
         const dinNou = await cereGemini({ key, model, sistem, text, json, inAdresa: true });
