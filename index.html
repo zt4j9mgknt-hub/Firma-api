@@ -1061,7 +1061,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.21-dublate';
+const APP_VERSION = 'v01.22-bifez';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -10018,12 +10018,15 @@ function analizaConsilier({ company, santiere, rapoarte, devize, invoices, offer
 function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, setTab }) {
     const [luni, setLuni] = useState(1);
     const [parere, setParere] = useState('');
+    const [titluParere, setTitluParere] = useState('');
     const [busyAI, setBusyAI] = useState(false);
     const [errAI, setErrAI] = useState('');
+    const [fara, setFara] = useState({ semnale: {}, oameni: {} });
     const azi = new Date().toISOString().slice(0, 10);
     const de = (() => { const d = new Date(azi + 'T00:00:00'); d.setMonth(d.getMonth() - luni); return d.toISOString().slice(0, 10); })();
     const lei = (v) => Math.round(Number(v) || 0).toLocaleString('ro-RO') + ' lei';
     const costOra = Number(company?.costOraMediu) || 0;
+    const zonaParere = useRef(null);
     const semnale = useMemo(() => analizaConsilier({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, azi }), [company, santiere, rapoarte, devize, invoices, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier]);
     const oameni = useMemo(() => randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la: azi, costOra }), [rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, costOra]);
     const totalValoare = oameni.reduce((s, o) => s + o.valoare, 0);
@@ -10032,26 +10035,41 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
     const oreNeevaluate = oameni.reduce((s, o) => s + o.oreFaraValoare, 0);
     const CULORI = { rosu: '#E05252', galben: '#E9A23B', info: '#2E8BD1' };
     const ETICHETE = { rosu: 'Te costă bani acum', galben: 'Ai grijă', info: 'Îmi lipsește o informație' };
-    const cereParereaAI = async () => {
+    const bifatS = (id) => !fara.semnale[id];
+    const bifatO = (nume) => !fara.oameni[nume];
+    const comutaS = (id) => setFara((f) => ({ ...f, semnale: { ...f.semnale, [id]: !f.semnale[id] } }));
+    const comutaO = (nume) => setFara((f) => ({ ...f, oameni: { ...f.oameni, [nume]: !f.oameni[nume] } }));
+    const bifeazaTot = (val) => setFara({
+        semnale: val ? {} : Object.fromEntries(semnale.map((x) => [x.id, true])),
+        oameni: val ? {} : Object.fromEntries(oameni.map((o) => [o.nume, true])),
+    });
+    const nrBifate = semnale.filter((x) => bifatS(x.id)).length + oameni.filter((o) => bifatO(o.nume)).length;
+    const construiesteRezumat = (semnaleAlese, oameniAlesi, titlu) => [
+        `Firma: ${company?.nume || 'firmă de instalații electrice'}. Cost intern manoperă: ${costOra ? costOra + ' lei/oră' : 'necunoscut'}. Marjă țintă: ${Number(company?.tintaMarja) || 30}%.`,
+        `Perioadă analizată: ultimele ${luni} ${luni === 1 ? 'lună' : 'luni'} (${de} → ${azi}).`,
+        titlu ? `Cerere: analizează în special „${titlu}".` : '',
+        oameniAlesi.length ? `Ore lucrate în perioadă (doar oamenii aleși): ${Math.round(oameniAlesi.reduce((s, o) => s + o.ore, 0))}. Valoare produsă: ${Math.round(oameniAlesi.reduce((s, o) => s + o.valoare, 0))} lei. Cost manoperă: ${Math.round(oameniAlesi.reduce((s, o) => s + o.cost, 0))} lei.` : '',
+        oameniAlesi.length ? 'Randament pe om (ore, valoare produsă lei, cost lei, marjă lei):' : '',
+        ...oameniAlesi.map((o) => `- ${o.nume}: ${o.ore.toFixed(1)} h în ${o.nrZile} zile pe ${o.nrSantiere} șantiere, ${Math.round(o.valoare)} lei produși (${Math.round(o.leiPeOra)} lei/oră), cost ${Math.round(o.cost)} lei, marjă ${Math.round(o.marja)} lei${o.oreFaraValoare > 0 ? `, din care ${o.oreFaraValoare.toFixed(1)} h fără valoare calculabilă (rapoarte fără cantități)` : ''}`),
+        semnaleAlese.length ? 'Semnale găsite automat în datele firmei:' : '',
+        ...semnaleAlese.map((x) => `- [${x.nivel}] ${x.titlu}: ${x.detaliu}`),
+    ].filter(Boolean).join('\n');
+    const intreaba = async (semnaleAlese, oameniAlesi, titlu) => {
         setBusyAI(true);
         setErrAI('');
         setParere('');
-        const rezumat = [
-            `Firma: ${company?.nume || 'firmă de instalații electrice'}. Cost intern manoperă: ${costOra ? costOra + ' lei/oră' : 'necunoscut'}. Marjă țintă: ${Number(company?.tintaMarja) || 30}%.`,
-            `Perioadă analizată: ultimele ${luni} ${luni === 1 ? 'lună' : 'luni'} (${de} → ${azi}).`,
-            `Ore lucrate total: ${Math.round(totalOre)}. Valoare produsă estimată: ${Math.round(totalValoare)} lei. Cost manoperă: ${Math.round(totalCost)} lei.`,
-            'Randament pe om (ore, valoare produsă lei, cost lei, marjă lei):',
-            ...oameni.map((o) => `- ${o.nume}: ${o.ore.toFixed(1)} h, ${Math.round(o.valoare)} lei, cost ${Math.round(o.cost)} lei, marjă ${Math.round(o.marja)} lei${o.oreFaraValoare > 0 ? `, din care ${o.oreFaraValoare.toFixed(1)} h fără valoare calculabilă` : ''}`),
-            'Semnale găsite automat:',
-            ...semnale.map((x) => `- [${x.nivel}] ${x.titlu}: ${x.detaliu}`),
-        ].join('\n');
+        setTitluParere(titlu || '');
+        const unSingur = (semnaleAlese.length + oameniAlesi.length) === 1;
         const instr = 'Ești consultantul de afaceri al unei firme mici de instalații electrice din România. Mai jos ai cifrele reale ale firmei, ' +
-            'calculate din datele ei. Scrie o analiză scurtă și cinstită pentru patron, în limba română, la persoana a II-a, maximum 300 de cuvinte.\n' +
+            'calculate din datele ei. Scrie o analiză scurtă și cinstită pentru patron, în limba română, la persoana a II-a, maximum ' +
+            (unSingur ? '150' : '300') + ' de cuvinte.\n' +
             'Cerințe stricte: (1) Spune întâi lucrul care îl costă cel mai mulți bani, cu cifra din spate. ' +
             '(2) Nu-l flata și nu înmuia concluziile; dacă ceva e prost, spune-o direct, dar fără să jignești oamenii din firmă. ' +
             '(3) Nu inventa cifre care nu sunt mai jos și nu extrapola procente; dacă o informație lipsește, spune ce anume lipsește. ' +
             '(4) Dacă un om pare neprofitabil, verifică întâi dacă nu cumva explicația e alta (șantier cu tarif mic, ore fără valoare calculabilă) și spune asta. ' +
-            '(5) Termină cu maximum 3 lucruri concrete de făcut săptămâna asta, în ordinea banilor recuperați.\n\n' + rezumat;
+            '(5) Termină cu maximum 3 lucruri concrete de făcut săptămâna asta, în ordinea banilor recuperați. ' +
+            '(6) Nu folosi titluri cu majuscule și nu scrie ca un raport oficial; scrie ca un om care îi explică patronului la o cafea, dar tehnic corect.\n\n' +
+            construiesteRezumat(semnaleAlese, oameniAlesi, titlu);
         try {
             const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intrebare: instr, context: [] }) });
             let d = {};
@@ -10059,8 +10077,13 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
                 d = await r.json();
             }
             catch { }
-            if (r.ok && d && d.raspuns)
-                setParere(d.raspuns);
+            if (r.ok && d && d.raspuns) {
+                const curat = String(d.raspuns)
+                    .replace(/\*\*/g, '').replace(/^#+\s*/gm, '')
+                    .replace(/^[*-]\s+/gm, '• ')
+                    .replace(/\n{3,}/g, '\n\n').trim();
+                setParere(curat);
+            }
             else
                 setErrAI((d && d.error) ? d.error : 'AI indisponibil momentan.');
         }
@@ -10068,15 +10091,32 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
             setErrAI('Fără conexiune la AI.');
         }
         setBusyAI(false);
+        setTimeout(() => { try {
+            zonaParere.current && zonaParere.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        catch (_) { } }, 100);
     };
+    const intreabaBifate = () => intreaba(semnale.filter((x) => bifatS(x.id)), oameni.filter((o) => bifatO(o.nume)), '');
+    const intreabaTot = () => intreaba(semnale, oameni, '');
+    const butonAnaliza = (onClick, eticheta) => (React.createElement("button", { onClick: onClick, disabled: busyAI, className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, eticheta));
     return (React.createElement("div", null,
         React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83E\uDDED Consilier"),
-        React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted)' } }, "Se uit\u0103 singur peste tot ce e \u00EEn aplica\u021Bie \u0219i \u00EE\u021Bi spune unde pierzi bani. Fiecare r\u00E2nd vine cu cifra din spate, ca s\u0103 po\u021Bi verifica. Ce nu poate calcula, \u00EE\u021Bi spune c\u0103 nu poate \u2014 nu inventeaz\u0103 procente."),
-        semnale.length === 0 ? (React.createElement("div", { className: "rounded-xl p-4 mb-6 text-sm", style: { background: '#4CAF7D14', border: '1px solid #4CAF7D66', color: 'var(--acc2)' } }, "\u2705 Nu am g\u0103sit nimic care s\u0103-\u021Bi m\u0103n\u00E2nce bani acum. Tarifele acoper\u0103 costurile, munca e devizat\u0103, facturile sunt \u00EEn termen.")) : (React.createElement("div", { className: "space-y-2 mb-6" }, semnale.map((x) => (React.createElement("div", { key: x.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid ' + CULORI[x.nivel] + '66', borderLeft: '4px solid ' + CULORI[x.nivel] } },
-            React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-0.5", style: { color: CULORI[x.nivel] } }, ETICHETE[x.nivel]),
-            React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, x.titlu),
-            React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)', lineHeight: 1.6 } }, x.detaliu),
-            x.tab && React.createElement("button", { onClick: () => setTab(x.tab), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: CULORI[x.nivel] } }, "Mergi acolo \u2192")))))),
+        React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Se uit\u0103 singur peste tot ce e \u00EEn aplica\u021Bie \u0219i \u00EE\u021Bi spune unde pierzi bani. Fiecare r\u00E2nd vine cu cifra din spate. Bifezi ce vrei s\u0103 analizeze \u0219i ape\u0219i butonul \u2014 nu ai nimic de copiat."),
+        React.createElement("div", { className: "rounded-xl p-3 mb-4 flex flex-wrap items-center gap-2", style: { background: 'var(--panel)', border: '1px solid #C08CE066' } },
+            butonAnaliza(intreabaTot, busyAI ? 'Se gândește…' : '✨ Analizează tot'),
+            butonAnaliza(intreabaBifate, `🔎 Analizează ce am bifat (${nrBifate})`),
+            React.createElement("button", { onClick: () => bifeazaTot(true), className: "text-[11px] px-2.5 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Bifeaz\u0103 tot"),
+            React.createElement("button", { onClick: () => bifeazaTot(false), className: "text-[11px] px-2.5 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Debifeaz\u0103 tot")),
+        semnale.length === 0 ? (React.createElement("div", { className: "rounded-xl p-4 mb-6 text-sm", style: { background: '#4CAF7D14', border: '1px solid #4CAF7D66', color: 'var(--acc2)' } }, "\u2705 Nu am g\u0103sit nimic care s\u0103-\u021Bi m\u0103n\u00E2nce bani acum. Tarifele acoper\u0103 costurile, munca e devizat\u0103, facturile sunt \u00EEn termen.")) : (React.createElement("div", { className: "space-y-2 mb-6" }, semnale.map((x) => (React.createElement("div", { key: x.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid ' + CULORI[x.nivel] + '66', borderLeft: '4px solid ' + CULORI[x.nivel], opacity: bifatS(x.id) ? 1 : 0.55 } },
+            React.createElement("div", { className: "flex items-start gap-2" },
+                React.createElement("input", { type: "checkbox", checked: bifatS(x.id), onChange: () => comutaS(x.id), className: "mt-1 shrink-0", title: "Bifat = intr\u0103 \u00EEn analiza AI" }),
+                React.createElement("div", { className: "min-w-0 flex-1" },
+                    React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-0.5", style: { color: CULORI[x.nivel] } }, ETICHETE[x.nivel]),
+                    React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, x.titlu),
+                    React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)', lineHeight: 1.6 } }, x.detaliu),
+                    React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+                        butonAnaliza(() => intreaba([x], [], x.titlu), '🔍 Analizează doar asta'),
+                        x.tab && React.createElement("button", { onClick: () => setTab(x.tab), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: CULORI[x.nivel] } }, "Mergi acolo \u2192"))))))))),
         React.createElement("div", { className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
             React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1 flex-wrap" },
                 React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\uD83D\uDC77 Cine c\u00E2t aduce"),
@@ -10087,30 +10127,34 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
             oameni.length === 0 ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nu sunt rapoarte \u00EEn perioada asta.")) : (React.createElement("div", { className: "space-y-1.5" },
                 oameni.map((o) => {
                     const bun = costOra ? o.marja > 0 : true;
-                    return (React.createElement("div", { key: o.nume, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid ' + (costOra ? (bun ? '#4CAF7D33' : '#E0525255') : 'var(--border)') } },
-                        React.createElement("div", { className: "flex items-center justify-between gap-2" },
-                            React.createElement("span", { className: "text-xs font-semibold min-w-0 truncate", style: { color: 'var(--text)' } },
-                                "\uD83D\uDC77 ",
-                                o.nume),
-                            React.createElement("span", { className: "text-xs shrink-0", style: { color: costOra ? (bun ? 'var(--acc2)' : 'var(--acc4)') : 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, costOra ? (o.marja >= 0 ? '+' : '') + lei(o.marja) : lei(o.valoare))),
-                        React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--muted)' } },
-                            o.ore.toFixed(1),
-                            " h \u00B7 ",
-                            o.nrZile,
-                            " ",
-                            o.nrZile === 1 ? 'zi' : 'zile',
-                            " \u00B7 ",
-                            o.nrSantiere,
-                            " ",
-                            o.nrSantiere === 1 ? 'șantier' : 'șantiere',
-                            " \u00B7 produs ",
-                            lei(o.valoare),
-                            costOra ? ` · cost ${lei(o.cost)}` : '',
-                            o.leiPeOra > 0 ? ` · ${Math.round(o.leiPeOra)} lei/oră` : ''),
-                        o.oreFaraValoare > 0.5 && (React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--acc3)' } },
-                            "\u26A0 ",
-                            o.oreFaraValoare.toFixed(1),
-                            " h nu pot fi evaluate: rapoartele din zilele alea n-au cantit\u0103\u021Bi trecute, deci munca lui nu apare nic\u0103ieri \u00EEn bani."))));
+                    return (React.createElement("div", { key: o.nume, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid ' + (costOra ? (bun ? '#4CAF7D33' : '#E0525255') : 'var(--border)'), opacity: bifatO(o.nume) ? 1 : 0.55 } },
+                        React.createElement("div", { className: "flex items-start gap-2" },
+                            React.createElement("input", { type: "checkbox", checked: bifatO(o.nume), onChange: () => comutaO(o.nume), className: "mt-1 shrink-0", title: "Bifat = intr\u0103 \u00EEn analiza AI" }),
+                            React.createElement("div", { className: "min-w-0 flex-1" },
+                                React.createElement("div", { className: "flex items-center justify-between gap-2" },
+                                    React.createElement("span", { className: "text-xs font-semibold min-w-0 truncate", style: { color: 'var(--text)' } },
+                                        "\uD83D\uDC77 ",
+                                        o.nume),
+                                    React.createElement("span", { className: "text-xs shrink-0", style: { color: costOra ? (bun ? 'var(--acc2)' : 'var(--acc4)') : 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, costOra ? (o.marja >= 0 ? '+' : '') + lei(o.marja) : lei(o.valoare))),
+                                React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--muted)' } },
+                                    o.ore.toFixed(1),
+                                    " h \u00B7 ",
+                                    o.nrZile,
+                                    " ",
+                                    o.nrZile === 1 ? 'zi' : 'zile',
+                                    " \u00B7 ",
+                                    o.nrSantiere,
+                                    " ",
+                                    o.nrSantiere === 1 ? 'șantier' : 'șantiere',
+                                    " \u00B7 produs ",
+                                    lei(o.valoare),
+                                    costOra ? ` · cost ${lei(o.cost)}` : '',
+                                    o.leiPeOra > 0 ? ` · ${Math.round(o.leiPeOra)} lei/oră` : ''),
+                                o.oreFaraValoare > 0.5 && (React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--acc3)' } },
+                                    "\u26A0 ",
+                                    o.oreFaraValoare.toFixed(1),
+                                    " h nu pot fi evaluate: rapoartele din zilele alea n-au cantit\u0103\u021Bi trecute, deci munca lui nu apare nic\u0103ieri \u00EEn bani.")),
+                                React.createElement("div", { className: "mt-1.5" }, butonAnaliza(() => intreaba([], [o], 'situația lui ' + o.nume), '🔍 Analizează doar pe ' + o.nume.split(' ')[0]))))));
                 }),
                 React.createElement("div", { className: "text-[11px] pt-1", style: { color: 'var(--muted2)' } },
                     "Total: ",
@@ -10120,10 +10164,12 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
                     costOra ? `, cost ${lei(totalCost)}, marjă ${lei(totalValoare - totalCost)}` : '',
                     ".",
                     oreNeevaluate > 1 ? ` ${Math.round(oreNeevaluate)} h nu au valoare calculabilă.` : '')))),
-        React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid #C08CE066' } },
+        React.createElement("div", { ref: zonaParere, className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid #C08CE066' } },
             React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: '#C08CE0' } }, "\uD83E\uDD16 P\u0103rerea consultantului"),
-            React.createElement("p", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)', lineHeight: 1.55 } }, "Trimite cifrele de mai sus la AI \u0219i prime\u0219ti o analiz\u0103 scris\u0103, cu ce ai de f\u0103cut s\u0103pt\u0103m\u00E2na asta, \u00EEn ordinea banilor. Cifrele nu se schimb\u0103 \u2014 doar sunt citite. Nu se trimit nume de clien\u021Bi sau pre\u021Buri de contract."),
-            React.createElement("button", { onClick: cereParereaAI, disabled: busyAI, className: "text-xs px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, busyAI ? 'Se gândește…' : '✨ Cere părerea'),
+            React.createElement("p", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)', lineHeight: 1.55 } }, titluParere ? `Ultima analiză a fost cerută pentru: ${titluParere}.` : 'Cifrele de mai sus se trimit automat — nu ai nimic de copiat. Nu se trimit nume de clienți sau prețuri de contract.'),
+            React.createElement("div", { className: "flex flex-wrap gap-2" },
+                butonAnaliza(intreabaTot, busyAI ? 'Se gândește…' : '✨ Analizează tot'),
+                butonAnaliza(intreabaBifate, `🔎 Doar ce am bifat (${nrBifate})`)),
             errAI && React.createElement("div", { className: "text-[11px] mt-2 px-2.5 py-2 rounded-lg", style: { color: 'var(--acc4)', background: '#E0525215' } }, errAI),
             parere && (React.createElement("div", { className: "text-xs mt-3 px-3 py-2.5 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)', whiteSpace: 'pre-line', lineHeight: 1.65 } }, parere)))));
 }
