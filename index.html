@@ -330,19 +330,67 @@ function minuteFacturabile(toateRapoartele, r, p) {
     return minuteLucrate(p);
 }
 function minutePersoanaZi(rapoarte, nume, data) {
-    let brut = 0;
-    let net = 0;
+    return intervalePersoanaZi(unificaRapoarte(rapoarte), nume, data);
+}
+function unificaRapoarte(rapoarte) {
+    const peZiSantier = new Map();
     (rapoarte || []).forEach((r) => {
-        if (r.data !== data)
+        const k = String(r.santierId || '') + '|' + String(r.data || '');
+        const ex = peZiSantier.get(k);
+        peZiSantier.set(k, ex ? contopesteRapoarte(ex, r) : { ...r });
+    });
+    return Array.from(peZiSantier.values());
+}
+function intervalePersoanaZi(rapoarte, nume, data) {
+    const bucati = [];
+    let faraCeas = 0;
+    (rapoarte || []).forEach((r) => {
+        if (String(r.data || '') !== String(data))
             return;
         (r.persoane || []).forEach((p) => {
-            if (!p || p.nume !== nume)
+            if (!p || String(p.nume || '').trim() !== String(nume).trim())
                 return;
-            brut += personMinutes(p);
-            net += minuteLucrate(p);
+            if (p.oraInceput && p.oraSfarsit) {
+                const [h1, m1] = String(p.oraInceput).split(':').map(Number);
+                const [h2, m2] = String(p.oraSfarsit).split(':').map(Number);
+                if (![h1, m1, h2, m2].every(Number.isFinite))
+                    return;
+                const a = h1 * 60 + m1;
+                let b = h2 * 60 + m2;
+                if (b <= a)
+                    b += 24 * 60;
+                if (b > a)
+                    bucati.push([a, b]);
+            }
+            else {
+                faraCeas = Math.max(faraCeas, personMinutes(p));
+            }
         });
     });
-    return { brut, net, pauza: Math.max(0, brut - net) };
+    bucati.sort((x, y) => x[0] - y[0]);
+    const unite = [];
+    bucati.forEach((b) => {
+        const ultim = unite[unite.length - 1];
+        if (ultim && b[0] <= ultim[1])
+            ultim[1] = Math.max(ultim[1], b[1]);
+        else
+            unite.push([b[0], b[1]]);
+    });
+    let brut = unite.reduce((s, b) => s + (b[1] - b[0]), 0);
+    let pauza = 0;
+    unite.forEach((b) => {
+        [0, 24 * 60].forEach((off) => {
+            const s2 = Math.max(b[0], PAUZA_START_MIN + off);
+            const e2 = Math.min(b[1], PAUZA_SFARSIT_MIN + off);
+            if (e2 > s2)
+                pauza += e2 - s2;
+        });
+    });
+    if (faraCeas) {
+        brut += faraCeas;
+        pauza += faraCeas - scadePauzaZi(faraCeas);
+    }
+    return { brut, pauza, net: Math.max(0, brut - pauza), intervale: unite };
 }
 const NORMA_ZI_MIN = 8 * 60;
 function zileCareNuIesLaNorma(rapoarte, concedii, panaLa, zile) {
@@ -351,7 +399,8 @@ function zileCareNuIesLaNorma(rapoarte, concedii, panaLa, zile) {
     d0.setDate(d0.getDate() - (zile === undefined || zile === null || zile === '' ? 14 : (Number(zile) || 0)));
     const deLa = d0.toISOString().slice(0, 10);
     const peOmZi = {};
-    (rapoarte || []).forEach((r) => {
+    const unificate = unificaRapoarte(rapoarte);
+    unificate.forEach((r) => {
         const data = String(r.data || '');
         if (!data || data < deLa || data > azi)
             return;
@@ -362,11 +411,11 @@ function zileCareNuIesLaNorma(rapoarte, concedii, panaLa, zile) {
             const k = nume + '|' + data;
             if (!peOmZi[k])
                 peOmZi[k] = { nume, data, minute: 0, santiere: new Set() };
-            peOmZi[k].minute += minuteLucrate(p);
             if (r.santierId)
                 peOmZi[k].santiere.add(r.santierId);
         });
     });
+    Object.values(peOmZi).forEach((x) => { x.minute = intervalePersoanaZi(unificate, x.nume, x.data).net; });
     const out = [];
     Object.values(peOmZi).forEach((x) => {
         const zi = new Date(x.data + 'T00:00:00').getDay();
@@ -427,19 +476,43 @@ function seCauta(text, q) {
 }
 function contopesteRapoarte(a, b) {
     const cheiaP = (p) => String(p && p.nume || '').toLowerCase().trim();
-    const pers = new Map();
+    const dupaNume = new Map();
     [...(a.persoane || []), ...(b.persoane || [])].forEach((p) => {
         const k = cheiaP(p);
         if (!k)
             return;
-        const ex = pers.get(k);
-        if (!ex) {
-            pers.set(k, { ...p });
-            return;
+        if (!dupaNume.has(k))
+            dupaNume.set(k, []);
+        dupaNume.get(k).push(p);
+    });
+    const inMinute = (t) => { const [h, m] = String(t || '').split(':').map(Number); return (Number.isFinite(h) && Number.isFinite(m)) ? h * 60 + m : null; };
+    const inCeas = (v) => String(Math.floor((v % 1440) / 60)).padStart(2, '0') + ':' + String(v % 60).padStart(2, '0');
+    const pers = new Map();
+    dupaNume.forEach((lista, k) => {
+        const cuCeas = [], faraCeas = [];
+        lista.forEach((p) => {
+            const i = inMinute(p.oraInceput), f = inMinute(p.oraSfarsit);
+            if (i === null || f === null) {
+                faraCeas.push(p);
+                return;
+            }
+            cuCeas.push({ p, a: i, b: f <= i ? f + 1440 : f });
+        });
+        cuCeas.sort((x, y) => x.a - y.a);
+        const unite = [];
+        cuCeas.forEach((x) => {
+            const ultim = unite[unite.length - 1];
+            if (ultim && x.a <= ultim.b)
+                ultim.b = Math.max(ultim.b, x.b);
+            else
+                unite.push({ p: x.p, a: x.a, b: x.b });
+        });
+        const iesire = unite.map((u) => ({ ...u.p, oraInceput: inCeas(u.a), oraSfarsit: inCeas(u.b) }));
+        if (!iesire.length && faraCeas.length) {
+            const celMaiMare = faraCeas.slice().sort((x, y) => personMinutes(y) - personMinutes(x))[0];
+            iesire.push({ ...celMaiMare });
         }
-        const min = (x, y) => (String(x || '99:99') < String(y || '99:99') ? x : y);
-        const max = (x, y) => (String(x || '00:00') > String(y || '00:00') ? x : y);
-        pers.set(k, { ...ex, oraInceput: min(ex.oraInceput, p.oraInceput), oraSfarsit: max(ex.oraSfarsit, p.oraSfarsit) });
+        pers.set(k, iesire);
     });
     const uneste = (arr1, arr2, cheie) => {
         const out = [], vaz = new Set();
@@ -468,7 +541,7 @@ function contopesteRapoarte(a, b) {
         oraInceput: (String(a.oraInceput || '99:99') < String(b.oraInceput || '99:99')) ? a.oraInceput : b.oraInceput,
         oraSfarsit: (String(a.oraSfarsit || '00:00') > String(b.oraSfarsit || '00:00')) ? a.oraSfarsit : b.oraSfarsit,
         etapaId: a.etapaId || b.etapaId,
-        persoane: Array.from(pers.values()),
+        persoane: Array.from(pers.values()).flat(),
         tipuriLucrari: uneste(a.tipuriLucrari, b.tipuriLucrari, (t) => String(t.denumire || '').toLowerCase().trim()),
         materialeFolosite: mat,
         pozitiiExecutate: [...(a.pozitiiExecutate || []), ...(b.pozitiiExecutate || [])],
@@ -988,7 +1061,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.20-consilier';
+const APP_VERSION = 'v01.21-dublate';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -3980,8 +4053,10 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
         const altundeva = {};
         const lucratAlt = {};
         const unde = {};
-        (rapoarte || []).forEach((r) => {
+        unificaRapoarte(rapoarte).forEach((r) => {
             if (r.data !== data)
+                return;
+            if (santierId && r.santierId === santierId)
                 return;
             if (idExclus.has(r.id))
                 return;
@@ -5959,7 +6034,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                         setPinStatus('Nu am putut lua locația: ' + msgFor(err));
                     }
                 }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
-            }, className: "w-full text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: pinLoading ? '#6b7683' : 'var(--acc1)' } }, pinLoading ? '⏳ Se caută locația...' : '📍 Ia coordonatele actuale'), pinCoords && (React.createElement("div", { className: "mt-3 rounded-lg p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Coordonatele tale acum (", pinCoords.method, ", \u00B1", Math.round(pinCoords.accuracy), "m):"), React.createElement("div", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, pinCoords.lat.toFixed(6), ", ", pinCoords.lng.toFixed(6)), React.createElement("button", { onClick: () => { setSantierLocatie(santier.id, pinCoords.lat, pinCoords.lng); setPinCoords(null); setPinStatus(''); setPinPanelOpen(false); }, className: "w-full mt-2 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCBE Salveaz\u0103 pin la aceste coordonate"))), santier?.lat && (React.createElement("div", { className: "mt-3 rounded-lg p-3", style: { background: 'rgba(76,175,125,.12)', border: '1px solid #4CAF7D66' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--acc2)' } }, "\u2705 Pin exact setat"), React.createElement("div", { className: "text-sm mb-2", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, Number(santier.lat).toFixed(6), ", ", Number(santier.lng).toFixed(6)), React.createElement("div", { className: "flex gap-1.5" }, React.createElement("a", { href: `https://www.google.com/maps/dir/?api=1&destination=${santier.lat},${santier.lng}`, target: "_blank", rel: "noopener noreferrer", className: "flex-1 text-center text-sm px-3 py-2 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDED Deschide naviga\u021Bia"), React.createElement("button", { onClick: () => { setSantierLocatie(santier.id, null, null); setPinCoords(null); setPinStatus('Pin șters — navigația va folosi din nou adresa text.'); }, className: "text-sm px-3 py-2 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525244' } }, "\u0218terge")))), pinStatus && React.createElement("p", { className: "text-sm mt-2 font-medium", style: { color: pinStatus.startsWith('Nu am putut') ? 'var(--acc4)' : 'var(--text)' } }, pinStatus)))))), React.createElement("div", { className: "space-y-1.5" }), siteView === '__closed__' && !reportForm && (React.createElement("button", { onClick: () => setReportForm({}), className: "w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Raport zilnic nou")), accHeader('rapoarte', '📋', 'Rapoarte zilnice', rapoarteSantier.length), siteView === 'rapoarte' && !reportForm && (React.createElement("button", { onClick: () => setReportForm({}), className: "w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Raport zilnic nou")), siteView === 'rapoarte' && React.createElement(HelpNote, { text: HELP.rapoarte, isManager: currentUser?.rol === 'Manager' }), siteView === 'rapoarte' && (React.createElement(React.Fragment, null, currentUser?.rol === 'Manager' && (React.createElement("div", { className: "flex items-center gap-2 mb-4 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Raport pentru perioada:"), React.createElement(RoCalendarPicker, { value: exportFrom, onChange: setExportFrom }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "\u2014"), React.createElement(RoCalendarPicker, { value: exportTo, onChange: setExportTo }), React.createElement("button", { onClick: () => exportExcel(selected, rapoarte.filter((r) => r.santierId === selected), etapeSantier), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCCA Export\u0103 Excel"), rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)).some((r) => (r.materialeFolosite || []).length > 0) && (React.createElement("button", { onClick: () => onExportMaterialeFolosite(rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)), santier?.nume), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDFE Export\u0103 materiale folosite \u00EEn Deviz")))), currentUser?.rol === 'Manager' && (() => {
+            }, className: "w-full text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: pinLoading ? '#6b7683' : 'var(--acc1)' } }, pinLoading ? '⏳ Se caută locația...' : '📍 Ia coordonatele actuale'), pinCoords && (React.createElement("div", { className: "mt-3 rounded-lg p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Coordonatele tale acum (", pinCoords.method, ", \u00B1", Math.round(pinCoords.accuracy), "m):"), React.createElement("div", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, pinCoords.lat.toFixed(6), ", ", pinCoords.lng.toFixed(6)), React.createElement("button", { onClick: () => { setSantierLocatie(santier.id, pinCoords.lat, pinCoords.lng); setPinCoords(null); setPinStatus(''); setPinPanelOpen(false); }, className: "w-full mt-2 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCBE Salveaz\u0103 pin la aceste coordonate"))), santier?.lat && (React.createElement("div", { className: "mt-3 rounded-lg p-3", style: { background: 'rgba(76,175,125,.12)', border: '1px solid #4CAF7D66' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--acc2)' } }, "\u2705 Pin exact setat"), React.createElement("div", { className: "text-sm mb-2", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, Number(santier.lat).toFixed(6), ", ", Number(santier.lng).toFixed(6)), React.createElement("div", { className: "flex gap-1.5" }, React.createElement("a", { href: `https://www.google.com/maps/dir/?api=1&destination=${santier.lat},${santier.lng}`, target: "_blank", rel: "noopener noreferrer", className: "flex-1 text-center text-sm px-3 py-2 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDED Deschide naviga\u021Bia"), React.createElement("button", { onClick: () => { setSantierLocatie(santier.id, null, null); setPinCoords(null); setPinStatus('Pin șters — navigația va folosi din nou adresa text.'); }, className: "text-sm px-3 py-2 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525244' } }, "\u0218terge")))), pinStatus && React.createElement("p", { className: "text-sm mt-2 font-medium", style: { color: pinStatus.startsWith('Nu am putut') ? 'var(--acc4)' : 'var(--text)' } }, pinStatus)))))), React.createElement("div", { className: "space-y-1.5" }), siteView === '__closed__' && !reportForm && (React.createElement("button", { onClick: () => setReportForm({}), className: "w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Raport zilnic nou")), accHeader('rapoarte', '📋', 'Rapoarte zilnice', rapoarteSantier.length), siteView === 'rapoarte' && !reportForm && (React.createElement("button", { onClick: () => setReportForm({}), className: "w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Raport zilnic nou")), siteView === 'rapoarte' && React.createElement(HelpNote, { text: HELP.rapoarte, isManager: currentUser?.rol === 'Manager' }), siteView === 'rapoarte' && (React.createElement(React.Fragment, null, currentUser?.rol === 'Manager' && (React.createElement("div", { className: "flex items-center gap-2 mb-4 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Raport pentru perioada:"), React.createElement(RoCalendarPicker, { value: exportFrom, onChange: setExportFrom }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "\u2014"), React.createElement(RoCalendarPicker, { value: exportTo, onChange: setExportTo }), React.createElement("button", { onClick: () => exportExcel(selected, unificaRapoarte(rapoarte).filter((r) => r.santierId === selected), etapeSantier), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCCA Export\u0103 Excel"), rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)).some((r) => (r.materialeFolosite || []).length > 0) && (React.createElement("button", { onClick: () => onExportMaterialeFolosite(rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)), santier?.nume), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDFE Export\u0103 materiale folosite \u00EEn Deviz")))), currentUser?.rol === 'Manager' && (() => {
             const modS = santier?.modFacturare || (santier?.tipFacturare === 'pozitie' ? (santier?.materialeSursa === 'client' ? 'pozitie_client' : 'pozitie_propriu') : 'orar');
             const rapInterval = () => rapoarte.filter((r) => r.santierId === selected && (!devizFrom || r.data >= devizFrom) && (!devizTo || r.data <= devizTo));
             const pozitiiS = pozitiiSantier.filter((p) => p.santierId === selected);
@@ -7479,15 +7554,17 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
     const concediiAprobate = (concedii || []).filter((c) => c.nume === nume && c.status === 'Aprobat');
     const minuteLucratePeZi = {};
     const dateRaportate = [];
-    rapoarte.forEach((r) => {
+    const unif = unificaRapoarte(rapoarte);
+    const zileCuOmul = new Set();
+    unif.forEach((r) => {
         if (!r.data?.startsWith(String(an)))
             return;
-        const p = (r.persoane || []).find((pp) => pp.nume === nume);
-        if (!p)
+        if (!(r.persoane || []).some((pp) => pp.nume === nume))
             return;
-        minuteLucratePeZi[r.data] = (minuteLucratePeZi[r.data] || 0) + minuteLucrate(p);
+        zileCuOmul.add(r.data);
         dateRaportate.push(r.data);
     });
+    zileCuOmul.forEach((zi) => { minuteLucratePeZi[zi] = intervalePersoanaZi(unif, nume, zi).net; });
     const primaZiCuDate = dateRaportate.length ? dateRaportate.slice().sort()[0] : null;
     const [anLimita, lunaLimita] = panaLaLuna.split('-').map(Number);
     const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
@@ -7576,7 +7653,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list' }) })
             .then((r) => r.json()).then((data) => setAllUsersPontaj(data.users || [])).catch(() => { });
     }, [isManager]);
-    const rapoarteLuna = rapoarte.filter((r) => r.data?.startsWith(luna) && (!santierFiltru || r.santierId === santierFiltru));
+    const rapoarteLuna = unificaRapoarte(rapoarte).filter((r) => r.data?.startsWith(luna) && (!santierFiltru || r.santierId === santierFiltru));
     const zileLibereLuna = (nume) => {
         const aprobate = (concedii || []).filter((c) => c.nume === nume && c.status === 'Aprobat');
         let cnt = 0;
@@ -9765,7 +9842,7 @@ function randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSan
             peOm[n] = { nume: n, minute: 0, valoare: 0, santiere: new Set(), zile: new Set(), valoareNecunoscuta: 0 };
         peOm[n][camp] += val;
     };
-    (rapoarte || []).forEach((r) => {
+    unificaRapoarte(rapoarte).forEach((r) => {
         const data = String(r.data || '');
         if (!data || (de && data < de) || (la && data > la))
             return;
@@ -9869,7 +9946,7 @@ function analizaConsilier({ company, santiere, rapoarte, devize, invoices, offer
     active.forEach((s) => {
         const devS = (devize || []).filter((d) => d.santierId === s.id);
         const ultimaZiDevizata = devS.map((d) => (d.perioada && d.perioada.la) || d.data).filter(Boolean).sort().slice(-1)[0] || '';
-        const rapS = (rapoarte || []).filter((r) => r.santierId === s.id && (!ultimaZiDevizata || r.data > ultimaZiDevizata));
+        const rapS = unificaRapoarte(rapoarte).filter((r) => r.santierId === s.id && (!ultimaZiDevizata || r.data > ultimaZiDevizata));
         let minute = 0;
         rapS.forEach((r) => (r.persoane || []).forEach((p) => { minute += minuteLucrate(p); }));
         if (minute < 8 * 60)
@@ -10440,7 +10517,7 @@ function printAdeverinta(a, company) {
 function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, nr, data, includeLucrari }) {
     const tarif = Number(santier?.tarifOrar) || 75;
     const tva = 21;
-    const zile = (rapoarte || [])
+    const zile = unificaRapoarte(rapoarte || [])
         .filter((r) => (r.persoane || []).some((p) => p.nume && String(p.nume).trim()))
         .slice().sort((a, b) => (a.data < b.data ? -1 : 1));
     let totalOreGeneral = 0;
