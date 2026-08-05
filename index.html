@@ -1091,7 +1091,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.36-print';
+const APP_VERSION = 'v01.37-pdfdosar';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -8730,7 +8730,7 @@ function NotiteTab({ notite, setNotite, persist, clients, santiere, currentUser,
         return (React.createElement("div", { key: n.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: `4px solid ${cat.culoare}` } }, React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, n.fixat && '📌 ', n.titlu || '(fără titlu)'), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, React.createElement("span", { style: { color: cat.culoare } }, cat.label), " \u00B7 ", fmtData(n.data), cl && ` · 👥 ${cl}`, st && ` · 🏗 ${st}`)), React.createElement("div", { className: "flex items-center gap-1 shrink-0" }, React.createElement("button", { onClick: () => fixeaza(n.id), title: n.fixat ? 'Scoate din fixate' : 'Fixează sus', className: "px-1.5 py-0.5 rounded text-xs", style: { color: n.fixat ? 'var(--acc3)' : 'var(--muted2)' } }, "\uD83D\uDCCC"), React.createElement("button", { onClick: () => copiaza(n), title: "Copiaz\u0103 noti\u021Ba", className: "px-1.5 py-0.5 rounded text-xs", style: { color: 'var(--muted2)' } }, "\uD83D\uDCCB"), React.createElement("button", { onClick: () => setForm({ ...n, materiale: n.materiale || [] }), className: "text-[11px] px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"), React.createElement("button", { onClick: () => sterge(n.id), style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))), n.text && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)', lineHeight: 1.6, whiteSpace: 'pre-line' } }, n.text), (n.materiale || []).length > 0 && (React.createElement("div", { className: "mt-2 rounded-lg p-2", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: 'var(--muted2)' } }, "\uD83D\uDCE6 Materiale"), (n.materiale || []).map((m) => (React.createElement("div", { key: m.id, className: "text-[11px]", style: { color: 'var(--text)' } }, "\u2022 ", m.denumire, " ", m.cantitate ? `— ${m.cantitate} ${m.um || ''}` : ''))), onOfertaDinNota && (React.createElement("button", { onClick: () => onOfertaDinNota(n), className: "text-[11px] px-2 py-1 rounded mt-1.5 font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCB0 F\u0103 ofert\u0103 din lista asta"))))));
     })))));
 }
-function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers, santiere, rapoarte, structuraSantier, proiecteFisiere, setProiecteFisiere, persist, currentUser, goToSite, onCreeazaProiect, printFactura, printDeviz, printOferta, onDocNou, onFactureazaDeviz }) {
+function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers, santiere, rapoarte, structuraSantier, proiecteFisiere, setProiecteFisiere, persist, currentUser, goToSite, onCreeazaProiect, printFactura, printDeviz, pdfDeviz, printOferta, onDocNou, onFactureazaDeviz }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const [cauta, setCauta] = useState('');
     const [proiectNou, setProiectNou] = useState(null);
@@ -8774,6 +8774,28 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers
             setUpErr((err && err.message) || 'Încărcare eșuată.');
         }
         setUpBusy('');
+    };
+    const [pdfBusy, setPdfBusy] = useState('');
+    const salveazaPdfDeviz = async (d, scopeType, scopeId) => {
+        if (!pdfDeviz)
+            return;
+        setPdfBusy(d.id);
+        setUpErr('');
+        try {
+            const blob = await pdfDeviz(d);
+            const nume = `Deviz ${d.numar || ''} din ${fmtData(d.data)}.pdf`.replace(/\s+/g, ' ').trim();
+            const f = new File([blob], nume, { type: 'application/pdf' });
+            const res = await uploadFileToBlob(f, 'proiecte');
+            const rec = { id: uid(), scopeType, scopeId, nume, pathname: res.pathname, url: res.url,
+                data: new Date().toISOString().slice(0, 10), adaugatDe: currentUser?.nume || '' };
+            const next = [rec, ...fisiere];
+            setProiecteFisiere(next);
+            await persist('proiecteFisiere', next);
+        }
+        catch (err) {
+            setUpErr((err && err.message) || 'Nu am putut face PDF-ul.');
+        }
+        setPdfBusy('');
     };
     const stergeFisier = async (id) => {
         if (!window.confirm('Scoți documentul din dosar?'))
@@ -8909,7 +8931,10 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers
                     React.createElement("div", { className: "flex items-center gap-1 shrink-0" },
                         React.createElement("button", { onClick: () => printDeviz(d), className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDC41 Vezi"),
                         setDevize && React.createElement("button", { onClick: () => stergeDeviz(d), title: "\u0218terge devizul", className: "px-1.5 py-0.5 rounded", style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))),
+                fisiereDin('deviz', d.id).map(randFisier),
+                pdfDeviz && (React.createElement("button", { onClick: () => salveazaPdfDeviz(d, 'deviz', d.id), disabled: pdfBusy === d.id, className: "w-full text-[11px] px-2 py-1.5 rounded font-semibold disabled:opacity-50", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid #2E8BD166' } }, pdfBusy === d.id ? 'Se face PDF-ul…' : '📎 Pune PDF-ul în dosar')),
                 onFactureazaDeviz && (React.createElement("button", { onClick: () => onFactureazaDeviz(d), className: "w-full text-[11px] px-2 py-1.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2192 F\u0103 factura din devizul \u0103sta")),
+                upErr && React.createElement("div", { className: "text-[10px] px-1", style: { color: 'var(--acc4)' } }, upErr),
                 React.createElement("div", { className: "text-[10px] px-1", style: { color: 'var(--muted2)' } }, "Dup\u0103 ce faci factura, dosarul se redenume\u0219te \u00EEn \u201EFactura nr\u2026 \" \u0219i devizul r\u0103m\u00E2ne \u00EEn\u0103untru, l\u00E2ng\u0103 ea.")))));
     };
     const randSantier = (s, doc) => {
@@ -10772,6 +10797,58 @@ function devizPageHtml({ doc, client, company }) {
     <div class="pp-status">Status: ${esc(doc.status)}</div>
   </div>`;
 }
+let _pdfLibs = null;
+async function incarcaPdfLibs() {
+    if (_pdfLibs)
+        return _pdfLibs;
+    const adaug = (src) => new Promise((rez, rej) => {
+        const el = document.createElement('script');
+        el.src = src;
+        el.onload = rez;
+        el.onerror = () => rej(new Error('Nu am putut descărca ' + src));
+        document.head.appendChild(el);
+    });
+    if (!window.html2canvas)
+        await adaug('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+    if (!window.jspdf)
+        await adaug('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    _pdfLibs = { html2canvas: window.html2canvas, jsPDF: (window.jspdf || {}).jsPDF };
+    if (!_pdfLibs.html2canvas || !_pdfLibs.jsPDF)
+        throw new Error('Bibliotecile PDF nu s-au încărcat.');
+    return _pdfLibs;
+}
+async function documentPdfBlob(items) {
+    const { html2canvas, jsPDF } = await incarcaPdfLibs();
+    const corp = items.map((it) => it.isDeviz ? devizPageHtml(it) : pageHtml(it)).join('');
+    const cadru = document.createElement('iframe');
+    cadru.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;';
+    document.body.appendChild(cadru);
+    try {
+        const d = cadru.contentDocument;
+        d.open();
+        d.write('<!doctype html><html><head><meta charset="utf-8"><style>' + PRINT_CSS +
+            '.print-page{width:794px;padding:38px 26px 46px;} .pp-pagefoot{display:none!important}</style></head><body>' + corp + '</body></html>');
+        d.close();
+        await new Promise((r) => setTimeout(r, 350));
+        const canvas = await html2canvas(d.body, { scale: 2, backgroundColor: '#ffffff', windowWidth: 794 });
+        const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+        const latA4 = 210, inaltA4 = 297;
+        const inaltImg = (canvas.height * latA4) / canvas.width;
+        const poza = canvas.toDataURL('image/jpeg', 0.92);
+        let ramas = inaltImg, y = 0;
+        while (ramas > 0.5) {
+            pdf.addImage(poza, 'JPEG', 0, y, latA4, inaltImg);
+            ramas -= inaltA4;
+            y -= inaltA4;
+            if (ramas > 0.5)
+                pdf.addPage();
+        }
+        return pdf.output('blob');
+    }
+    finally {
+        document.body.removeChild(cadru);
+    }
+}
 function openPrintWindow(items) {
     const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Export PDF</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${items.map((it) => it.isDeviz ? devizPageHtml(it) : pageHtml(it)).join('')}</body></html>`;
     const w = window.open('', '_blank');
@@ -11918,6 +11995,7 @@ function App() {
     };
     const printAll = (docs, kind) => openPrintWindow(docs.map((doc) => ({ doc, kind, client: clients.find((c) => c.id === doc.clientId), company })));
     const printDevizOne = (doc) => openPrintWindow([{ doc, isDeviz: true, client: clients.find((c) => c.id === doc.clientId), company }]);
+    const pdfDevizBlob = (doc) => documentPdfBlob([{ doc, isDeviz: true, client: clients.find((c) => c.id === doc.clientId), company }]);
     const printDevizAll = (docs) => openPrintWindow(docs.map((doc) => ({ doc, isDeviz: true, client: clients.find((c) => c.id === doc.clientId), company })));
     const deductStock = (items, refLabel) => {
         const unmatched = [];
@@ -12312,7 +12390,7 @@ function App() {
                                 setOfferForm({ items, clientId: n.clientId || '' });
                                 setTab('oferte');
                             } }),
-                        tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, setDevize: setDevize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz }),
+                        tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, setDevize: setDevize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, pdfDeviz: pdfDevizBlob, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz }),
                         (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
                         tab === 'santiere' && React.createElement(SantiereTab, { santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                         tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
