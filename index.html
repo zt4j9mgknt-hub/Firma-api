@@ -1091,7 +1091,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.38-pdfreal';
+const APP_VERSION = 'v01.39-devizdetaliat';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -5920,18 +5920,18 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     const urmatorulDevizSantier = (sx) => String((Number(sx && sx.ultimNrDeviz) || 0) + 1);
     const ETICHETA_DEVIZ = { orar: 'tarif orar', pozitie: 'manoperă la poziție', materiale: 'materiale' };
     const [salvatInProiecte, setSalvatInProiecte] = useState(null);
-    const salveazaDevizSantier = (sx, nr, dataDev) => {
-        const t = ULTIMUL_DEVIZ_SANTIER;
+    const salveazaDevizSantier = (sx, nr, dataDev, t) => {
         if (!sx || !t || !(t.subtotal > 0))
             return;
         const numar = String(nr || '').trim() || String((Number(sx.ultimNrDeviz) || 0));
         const denumire = `Lucrări executate — ${ETICHETA_DEVIZ[t.tip] || 'deviz'}` + (devizFrom || devizTo ? ` (${fmtData(devizFrom) || '…'} – ${fmtData(devizTo) || '…'})` : '');
         const deja = (devize || []).find((d) => d.santierId === sx.id && String(d.numar) === numar);
-        const doc = { id: deja ? deja.id : uid(), numar, data: dataDev, clientId: sx.benefClientId || '', santierId: sx.id, santierNume: sx.nume || '', adresaLucrare: sx.adresaDeviz || sx.adresa || '', lucrare: sx.lucrare || '', nrContract: sx.contract || '', actAditional: sx.actAditional || '', tva: Number(t.tva) || TVA_IMPLICIT, status: deja ? deja.status : 'Emis', dinSantier: true, tipDeviz: t.tip, perioada: { de: devizFrom, la: devizTo }, items: [{ id: uid(), denumire, um: 'buc', cantitate: 1, pretUnitar: t.subtotal, adaos: 0 }] };
+        const doc = { id: deja ? deja.id : uid(), numar, data: dataDev, clientId: sx.benefClientId || '', santierId: sx.id, santierNume: sx.nume || '', adresaLucrare: sx.adresaDeviz || sx.adresa || '', lucrare: sx.lucrare || '', nrContract: sx.contract || '', actAditional: sx.actAditional || '', tva: Number(t.tva) || TVA_IMPLICIT, status: deja ? deja.status : 'Emis', dinSantier: true, tipDeviz: t.tip, perioada: { de: devizFrom, la: devizTo },
+            detaliu: t, santierSnap: instantaneuSantier(sx),
+            items: [{ id: uid(), denumire, um: 'buc', cantitate: 1, pretUnitar: t.subtotal, adaos: 0 }] };
         const next = deja ? (devize || []).map((d) => d.id === deja.id ? doc : d) : [...(devize || []), doc];
         setDevize(next);
         persist('devize', next);
-        ULTIMUL_DEVIZ_SANTIER = null;
         const numeClient = (clients || []).find((c) => c.id === doc.clientId)?.nume || '';
         setSalvatInProiecte({ numar, santier: sx.nume || '', client: numeClient, cand: Date.now() });
     };
@@ -6295,10 +6295,22 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                 ' a fost deja devizată pe ' + suprapuneri.map((x) => 'nr. ' + (x.numar || '?')).join(', ') +
                 '.\n\nDacă generezi acum, rupți a doua oară aceeași muncă. Continui totuși?');
             return (React.createElement("div", { className: "rounded-xl p-3 mb-4 flex items-center gap-2 flex-wrap", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("span", { className: "text-sm font-semibold w-full", style: { color: 'var(--text)' } }, titlu), !santier?.benefClientId && React.createElement("div", { className: "w-full text-[11px] rounded-lg px-2.5 py-2", style: { background: '#E9A23B15', border: '1px solid #E9A23B55', color: 'var(--acc3)' } }, '⚠ Șantierul n-are client legat, așa că devizul nu are în ce dosar să intre la Proiecte. Alege clientul la editarea șantierului, la Facturare și date pentru deviz.'), salvatInProiecte && React.createElement("div", { className: "w-full rounded-lg px-2.5 py-2 flex items-center gap-2 flex-wrap", style: { background: '#4CAF7D15', border: '1px solid #4CAF7D66' } }, React.createElement("span", { className: "text-[11px] min-w-0 flex-1", style: { color: 'var(--acc2)' } }, `✅ Salvat în Proiecte: ${salvatInProiecte.client || 'fără client'} → ${salvatInProiecte.santier} → Deviz nr. ${salvatInProiecte.numar}`), setTab && React.createElement("button", { onClick: () => setTab('proiecte'), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold shrink-0", style: { color: '#14181C', background: 'var(--acc2)' } }, "📁 Deschide în Proiecte")), dejaFacturat.length > 0 && React.createElement("div", { className: "w-full text-[11px] rounded-lg px-2.5 py-2", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--muted)' } }, React.createElement("span", null, "📅 Deja devizat pe șantierul ăsta: "), React.createElement("b", { style: { color: 'var(--text)' } }, dejaFacturat.slice(-4).map((x) => `${fmtData(x.de)} – ${fmtData(x.la)} (nr. ${x.numar || '?'})`).join(' · ')), dejaFacturat.length > 4 && React.createElement("span", null, ` (și încă ${dejaFacturat.length - 4} mai vechi)`)), suprapuneri.length > 0 && React.createElement("div", { className: "w-full rounded-lg px-2.5 py-2", style: { background: '#E0525215', border: '1px solid #E0525266' } }, React.createElement("div", { className: "text-xs font-semibold mb-0.5", style: { color: 'var(--acc4)' } }, "⚠ Atenție: rupți de două ori aceeași muncă"), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--text)' } }, "Perioada aleasă (", fmtData(devizFrom) || '…', " – ", fmtData(devizTo) || '…', ") se suprapune cu ", suprapuneri.map((x) => `devizul nr. ${x.numar || '?'} din ${fmtData(x.data)} (${fmtData(x.de)} – ${fmtData(x.la)})`).join(' și cu '), "."), dinNou && React.createElement("button", { onClick: () => setDevizFrom(dinNou), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold mt-1.5", style: { color: '#14181C', background: 'var(--acc3)' } }, `▶ Continuă de la ${fmtData(dinNou)}`)), suprapuneri.length === 0 && dinNou && devizFrom && devizFrom > dinNou && React.createElement("div", { className: "w-full text-[11px] rounded-lg px-2.5 py-2", style: { background: '#E9A23B15', border: '1px solid #E9A23B55', color: 'var(--acc3)' } }, `⚠ Rămâne o perioadă nefacturată: din ${fmtData(dinNou)} până înainte de ${fmtData(devizFrom)}. Zilele lucrate atunci nu intră pe niciun deviz.`), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Perioada de la"), React.createElement(RoCalendarPicker, { value: devizFrom, onChange: setDevizFrom }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "p\u00E2n\u0103 la"), React.createElement(RoCalendarPicker, { value: devizTo, onChange: setDevizTo }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nr."), React.createElement("input", { value: devizNr, onChange: (e) => { setDevizNr(e.target.value); setDevizNrAtins(true); }, placeholder: "ex: 2", className: "w-16 rounded-lg px-2 py-1.5 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } }), Number(santier?.ultimNrDeviz) > 0 && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "(ultimul pe \u0219antierul \u0103sta: ", santier.ultimNrDeviz, ")"), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Data deviz"), React.createElement(RoCalendarPicker, { value: devizData, onChange: setDevizData }), areOre && (React.createElement("button", { onClick: () => { if (!potContinua())
-                    return; retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData); openDevizOrar({ santier, company, rapoarte: rapInterval(), nr: devizNr || '—', data: fmtData(devizData), includeLucrari: modS === 'orar_lucrari' }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Genereaz\u0103 deviz (PDF)")), estePoz && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: () => { if (!potContinua())
-                    return; retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData); openDevizPoz({ santier, company, rapoarte: rapInterval(), pozitii: pozitiiS, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83D\uDCCB Deviz manoper\u0103"), modS === 'pozitie_propriu' && (React.createElement("button", { onClick: () => { if (!potContinua())
-                    return; retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData); openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDF0 Deviz materiale")))), esteReal && (React.createElement("button", { onClick: () => { if (!potContinua())
-                    return; retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData); openDevizMateriale({ santier, company, rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, dinLucrari: areStructuraS, nr: devizNr || '—', data: fmtData(devizData) }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83E\uDDFE Deviz real executat")), (!santier?.benefNume) && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Completeaz\u0103 \u201EDetalii pentru deviz\" la editarea \u0219antierului (beneficiar, contract)."), estePoz && pozitiiS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 pozi\u021Biile la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), esteReal && materialeListaS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 lista de materiale/opera\u021Biuni cu pre\u021Buri la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--muted2)' } }, "Implicit e luna curent\u0103 (1 \u2192 sf\u00E2r\u0219it). ", (estePoz || esteReal) && areStructuraS ? 'Cantitățile se adună din „Lucrări pe apartamente" × prețul din listă.' : estePoz ? 'Manopera pe poziții' + (modS === 'pozitie_propriu' ? ' + materialele' : '') + ' se adună din rapoarte.' : esteReal ? 'Cantitățile se adună din rapoarte × prețul de manoperă din listă.' : (modS === 'orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar) || 75} lei.`), " TVA 21%.")));
+                    return; const det = devizOrarDetaliu({ santier, rapoarte: rapInterval(), structura: structuraSantier, includeLucrari: modS === 'orar_lucrari' }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.');
+                    return;
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizOrar({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Genereaz\u0103 deviz (PDF)")), estePoz && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: () => { if (!potContinua())
+                    return; const det = devizPozDetaliu({ rapoarte: rapInterval(), pozitii: pozitiiS, dinLucrari: areStructuraS }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert(areStructuraS ? 'Nu există cantități pe poziții în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de poziții.' : 'Nu există poziții executate raportate în perioada selectată pentru acest șantier.');
+                    return;
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizPoz({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83D\uDCCB Deviz manoper\u0103"), modS === 'pozitie_propriu' && (React.createElement("button", { onClick: () => { if (!potContinua())
+                    return; const det = devizMatDetaliu({ rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, dinLucrari: areStructuraS }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert('Nu există materiale folosite raportate în perioada selectată pentru acest șantier.');
+                    return;
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizMateriale({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDF0 Deviz materiale")))), esteReal && (React.createElement("button", { onClick: () => { if (!potContinua())
+                    return; const det = devizMatDetaliu({ rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, dinLucrari: areStructuraS }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert('Nu există cantități raportate în perioada selectată pentru acest șantier.');
+                    return;
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizMateriale({ santier, company, nr: devizNr || '—', data: fmtData(devizData), realExecutat: true, detaliu: det }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83E\uDDFE Deviz real executat")), (!santier?.benefNume) && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Completeaz\u0103 \u201EDetalii pentru deviz\" la editarea \u0219antierului (beneficiar, contract)."), estePoz && pozitiiS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 pozi\u021Biile la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), esteReal && materialeListaS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 lista de materiale/opera\u021Biuni cu pre\u021Buri la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--muted2)' } }, "Implicit e luna curent\u0103 (1 \u2192 sf\u00E2r\u0219it). ", (estePoz || esteReal) && areStructuraS ? 'Cantitățile se adună din „Lucrări pe apartamente" × prețul din listă.' : estePoz ? 'Manopera pe poziții' + (modS === 'pozitie_propriu' ? ' + materialele' : '') + ' se adună din rapoarte.' : esteReal ? 'Cantitățile se adună din rapoarte × prețul de manoperă din listă.' : (modS === 'orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar) || 75} lei.`), " TVA 21%.")));
         })(), (() => {
             const normT = (x) => String(x == null ? '' : x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
                 .replace(/,/g, '.').replace(/\s+/g, ' ').trim();
@@ -10683,7 +10695,6 @@ function CompanyTab({ company, setCompany, persist, santiere, setSantiere }) {
                 salvat && React.createElement("span", { className: "text-xs", style: { color: 'var(--acc2)' } }, salvat),
                 React.createElement("button", { onClick: save, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))));
 }
-let ULTIMUL_DEVIZ_SANTIER = null;
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const PRINT_CSS = `
   /* Elimină antetul/subsolul automat al browserului (URL, data, „pagina 1 din…"). */
@@ -10972,7 +10983,7 @@ function devizPageHtml({ doc, client, company }) {
   </div>`;
 }
 async function documentPdfBlob(items) {
-    const corp = items.map((it) => it.isDeviz ? devizPageHtml(it) : pageHtml(it)).join('');
+    const corp = items.map((it) => it.isDeviz ? devizArhivaPageHtml(it) : pageHtml(it)).join('');
     const cadru = document.createElement('iframe');
     cadru.style.cssText = 'position:fixed;left:-10000px;top:0;width:840px;height:1200px;border:0;opacity:0;';
     document.body.appendChild(cadru);
@@ -10997,7 +11008,7 @@ async function documentPdfBlob(items) {
 function openPrintWindow(items) {
     const p = items[0] || {};
     const titlu = ((p.isDeviz ? 'Deviz' : (p.kind || 'Document')) + ' ' + ((p.doc && p.doc.numar) || '') + (p.doc && p.doc.data ? ' din ' + fmtData(p.doc.data) : '')).replace(/\s+/g, ' ').trim();
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(titlu)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${items.map((it) => it.isDeviz ? devizPageHtml(it) : pageHtml(it)).join('')}</body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(titlu)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${items.map((it) => it.isDeviz ? devizArhivaPageHtml(it) : pageHtml(it)).join('')}</body></html>`;
     const w = window.open('', '_blank');
     if (!w) {
         window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.');
@@ -11149,84 +11160,55 @@ function printAdeverinta(a, company) {
     w.document.close();
     w.focus();
 }
-function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, nr, data, includeLucrari }) {
-    const tarif = Number(santier?.tarifOrar) || 75;
-    const tva = 21;
-    const zile = unificaRapoarte(rapoarte || [])
-        .filter((r) => (r.persoane || []).some((p) => p.nume && String(p.nume).trim()))
-        .slice().sort((a, b) => (a.data < b.data ? -1 : 1));
-    let totalOreGeneral = 0;
-    const rowsArr = [];
-    let idx = 0;
-    zile.forEach((r) => {
-        const pv = r.persoane.filter((p) => p.nume && String(p.nume).trim());
-        const lucrariZi = includeLucrari ? (r.tipuriLucrari || []).map((t) => String(t.denumire || '').trim()).filter(Boolean).join(', ') : '';
-        const grupe = {};
-        pv.forEach((p) => { const oreP = minuteFacturabile(toateRapoartele || rapoarte, r, p) / 60; const k = oreP.toFixed(2); grupe[k] = (grupe[k] || 0) + 1; });
-        let firstOfDay = true;
-        Object.keys(grupe).sort((a, b) => Number(b) - Number(a)).forEach((k) => {
-            const ore = Number(k), nrPers = grupe[k];
-            const totalOre = nrPers * ore;
-            const valoare = totalOre * tarif;
-            totalOreGeneral += totalOre;
-            idx++;
-            const lucrariCell = includeLucrari ? `<td style="text-align:left">${firstOfDay ? esc(lucrariZi) : ''}</td>` : '';
-            rowsArr.push(`<tr><td>${idx}</td><td>${esc(fmtData(r.data))}</td>${lucrariCell}<td>${nrPers}</td><td>${ore.toFixed(2)}</td><td>${totalOre.toFixed(2)}</td><td>${esc(money(tarif))}</td><td>${esc(money(valoare))}</td></tr>`);
-            firstOfDay = false;
-        });
-    });
-    const rows = rowsArr.join('');
-    const subtotal = totalOreGeneral * tarif;
-    const tvaVal = subtotal * tva / 100;
-    const total = subtotal + tvaVal;
-    ULTIMUL_DEVIZ_SANTIER = { tip: 'orar', subtotal, tva, total };
+const dataDoc = (v) => String(fmtData(v) || v || '').replace(/\//g, '.');
+function antetDevizHtml({ titlu, santier, company, nr, data, perioada }) {
+    const meta = [];
+    if (santier?.contract)
+        meta.push(`<b>Contract:</b> Nr. ${esc(santier.contract)}`);
+    if (santier?.actAditional)
+        meta.push(`<b>Act adițional:</b> ${esc(santier.actAditional)}`);
+    if (perioada && (perioada.de || perioada.la))
+        meta.push(`<b>Perioada lucrărilor:</b> ${esc(dataDoc(perioada.de) || '…')} – ${esc(dataDoc(perioada.la) || '…')}`);
+    if (santier?.obiectiv)
+        meta.push(`<b>Obiectiv:</b> ${esc(santier.obiectiv)}`);
+    if (santier?.nume)
+        meta.push(`<b>Șantier:</b> ${esc(santier.nume)}`);
+    const adr = santier?.adresaDeviz || santier?.adresa;
+    if (adr)
+        meta.push(`<b>Adresă:</b> ${esc(adr)}`);
+    meta.push(`<b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}`);
     const benefLines = String(santier?.benefInfo || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `<div>${esc(l)}</div>`).join('');
-    const dataDot = String(data).replace(/\//g, '.');
-    const execCuiReg = [company?.cui ? `C.U.I ${esc(company.cui)}` : '', company?.regCom ? esc(company.regCom) : ''].filter(Boolean).join('&nbsp;&nbsp;&nbsp;&nbsp;');
-    return `<div class="print-page">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:6mm; margin-bottom:2mm;">
-      <div style="flex:1; font-size:10px; line-height:1.55;">
-        <div style="font-weight:700;">EXECUTANT:</div>
-        <div style="font-weight:700;">${esc(company?.nume) || '(completează datele firmei în „Firma mea")'}</div>
-        ${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}
-        ${execCuiReg ? `<div>${execCuiReg}</div>` : ''}
-        ${company?.email ? `<div>e-mail: ${esc(company.email)}</div>` : ''}
-        ${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}
+    return `<div class="pp-header-row">
+      <img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
+      <div class="pp-title-block">
+        <div class="pp-title">${esc(titlu)}</div>
+        <div class="pp-number">Nr. ${esc(nr)} din ${esc(dataDoc(data))}</div>
       </div>
-      <div style="flex:0 0 auto; text-align:center; padding:0 2mm;">
-        <img src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" style="height:80px; width:auto;" />
+    </div>
+    <div class="pp-meta">${meta.join('<br/>')}</div>
+    <div class="pp-parties">
+      <div class="pp-party-col">
+        <div class="pp-label">Executant</div>
+        <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei în „Firma mea")'}</div>
+        ${company?.cui ? `<div>CUI: ${esc(company.cui)}</div>` : ''}${company?.regCom ? `<div>Reg. com.: ${esc(company.regCom)}</div>` : ''}
+        ${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}${company?.iban ? `<div>IBAN: ${esc(company.iban)}</div>` : ''}${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}${company?.email ? `<div>${esc(company.email)}</div>` : ''}
       </div>
-      <div style="flex:1; font-size:10px; line-height:1.55; text-align:right;">
-        <div style="font-weight:700;">BENEFICIAR:</div>
-        <div style="font-weight:700;">${esc(santier?.benefNume) || '—'}</div>
+      <div class="pp-party-col">
+        <div class="pp-label">Beneficiar</div>
+        <div class="pp-party-name">${esc(santier?.benefNume) || '—'}</div>
         ${benefLines}
       </div>
-    </div>
-
-    <div style="text-align:center; margin:5mm 0 2mm;">
-      <div style="font-weight:700; font-size:15px;">Deviz lucrări</div>
-      <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
-      ${santier?.contract ? `<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>` : ''}${santier?.actAditional ? `<div style="font-size:11px; margin-top:1mm;">Act adițional Nr. ${esc(santier.actAditional)}</div>` : ''}
-    </div>
-
-    <div style="font-size:11px; line-height:1.9; margin:4mm 0; padding-bottom:3mm; border-bottom:1px solid #ccc;">
-      <div><b>Obiectiv:</b> ${esc(santier?.obiectiv || '')}</div>
-      <div><b>Adresa:</b> ${esc(santier?.adresaDeviz || santier?.adresa || '')}</div>
-      <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
-    </div>
-
-    <table class="pp-table"><thead><tr><th>Nr. crt</th><th>Data</th>${includeLucrari ? '<th style="text-align:left">Lucrări efectuate</th>' : ''}<th>Nr. persoane</th><th>Ore / pers.</th><th>Total ore</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="${includeLucrari ? 8 : 7}">Niciun raport în perioada selectată.</td></tr>`}</tbody>
-      <tfoot><tr><td colspan="${includeLucrari ? 5 : 4}"></td><td style="font-weight:700">${totalOreGeneral.toFixed(2)}</td><td></td><td style="font-weight:700">${esc(money(subtotal))}</td></tr></tfoot>
-    </table>
-
-    <div class="pp-totals">
+    </div>`;
+}
+function totaluriDevizHtml({ subtotal, tva, tvaVal, total }) {
+    return `<div class="pp-totals">
       <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
       <div class="pp-totals-row"><span>TVA ${tva}%</span><span>${esc(money(tvaVal))}</span></div>
       <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
-    </div>
-
-    <div class="pp-signatures">
+    </div>`;
+}
+function semnaturiDevizHtml({ santier, company }) {
+    return `<div class="pp-signatures">
       <div class="pp-sign-col">
         <div class="pp-sign-label">Executant</div>
         <div>${esc(company?.nume) || ''}</div>
@@ -11238,16 +11220,94 @@ function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, nr, da
         <div>${esc(santier?.benefNume) || ''}</div>
         ${santier?.benefSemnatar ? `<div>${esc(santier.benefSemnatar)}</div>` : ''}
       </div>
-    </div>
+    </div>`;
+}
+function descriereZiDeviz(r, structura) {
+    const parti = [];
+    const cu = (den, cant, um) => String(den || '').trim() + ((Number(cant) || 0) > 0 ? ` ${cant} ${um || ''}`.trimEnd() : '');
+    (r.tipuriLucrari || []).forEach((t) => { if (String(t.denumire || '').trim())
+        parti.push(cu(t.denumire, t.cantitate, t.um)); });
+    (r.pozitiiExecutate || []).forEach((p) => { if (String(p.denumire || '').trim())
+        parti.push(cu(p.denumire, p.cantitate, p.um)); });
+    (r.lucrariApartamente || []).forEach((l) => {
+        const et = (structura || []).find((e) => e.id === l.etajId);
+        const ap = (l.apartamenteIds || []).map((id) => (et && et.apartamente || []).find((a) => a.id === id)?.nume).filter(Boolean).join(', ');
+        const unde = [et?.nume, ap].filter(Boolean).join(' ');
+        lucrariDinRand(l).forEach((w) => {
+            if (!String(w.denumire || '').trim())
+                return;
+            parti.push((unde ? unde + ': ' : '') + cu(w.denumire, w.cantitate, w.um));
+        });
+    });
+    const vazute = new Set();
+    const out = [];
+    parti.forEach((p) => { const k = p.toLowerCase(); if (p && !vazute.has(k)) {
+        vazute.add(k);
+        out.push(p);
+    } });
+    return out.join(' · ');
+}
+function devizOrarDetaliu({ santier, rapoarte, toateRapoartele, structura, includeLucrari }) {
+    const tarif = Number(santier?.tarifOrar) || 75;
+    const tva = 21;
+    const zile = unificaRapoarte(rapoarte || [])
+        .filter((r) => (r.persoane || []).some((p) => p.nume && String(p.nume).trim()))
+        .slice().sort((a, b) => (a.data < b.data ? -1 : 1));
+    let totalOre = 0;
+    const randuri = [];
+    zile.forEach((r) => {
+        const pv = r.persoane.filter((p) => p.nume && String(p.nume).trim());
+        const lucrariZi = descriereZiDeviz(r, structura);
+        const grupe = {};
+        pv.forEach((p) => {
+            const k = (minuteFacturabile(toateRapoartele || rapoarte, r, p) / 60).toFixed(2);
+            (grupe[k] = grupe[k] || []).push(String(p.nume).trim());
+        });
+        let prima = true;
+        Object.keys(grupe).sort((a, b) => Number(b) - Number(a)).forEach((k) => {
+            const ore = Number(k);
+            const oameni = grupe[k].filter((x, i, a) => a.indexOf(x) === i);
+            const oreRand = oameni.length * ore;
+            totalOre += oreRand;
+            randuri.push({ data: r.data, lucrari: prima ? lucrariZi : '', oameni, nrPers: oameni.length,
+                ore, totalOre: oreRand, pret: tarif, valoare: oreRand * tarif });
+            prima = false;
+        });
+    });
+    const subtotal = totalOre * tarif;
+    const tvaVal = subtotal * tva / 100;
+    return { tip: 'orar', tarif, tva, includeLucrari: !!includeLucrari, randuri, totalOre, subtotal, tvaVal, total: subtotal + tvaVal };
+}
+function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, structura, nr, data, includeLucrari, detaliu }) {
+    const d = detaliu || devizOrarDetaliu({ santier, rapoarte, toateRapoartele, structura, includeLucrari });
+    const { tva, randuri, totalOre: totalOreGeneral, subtotal, tvaVal, total } = d;
+    const areLucrari = randuri.some((x) => String(x.lucrari || '').trim());
+    const rows = randuri.map((x, i) => {
+        const lucrariCell = areLucrari ? `<td style="text-align:left">${esc(x.lucrari || '')}</td>` : '';
+        const nume = (x.oameni || []).join(', ');
+        const celulaOameni = `<td>${x.nrPers}${nume ? `<div style="font-size:8.5px; line-height:1.35; color:#66717b; margin-top:.6mm;">${esc(nume)}</div>` : ''}</td>`;
+        return `<tr><td>${i + 1}</td><td>${esc(dataDoc(x.data))}</td>${lucrariCell}${celulaOameni}<td>${Number(x.ore).toFixed(2)}</td><td>${Number(x.totalOre).toFixed(2)}</td><td>${esc(money(x.pret))}</td><td>${esc(money(x.valoare))}</td></tr>`;
+    }).join('');
+    const nrCol = areLucrari ? 8 : 7;
+    return `<div class="print-page">
+    ${antetDevizHtml({ titlu: 'DEVIZ LUCRĂRI', santier, company, nr, data, perioada: d.perioada })}
+
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th>Data</th>${areLucrari ? '<th style="text-align:left">Lucrări efectuate</th>' : ''}<th>Oameni</th><th>Ore / pers.</th><th>Total ore</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="${nrCol}">Niciun raport în perioada selectată.</td></tr>`}</tbody>
+      <tfoot><tr><td colspan="${nrCol - 3}" style="text-align:right; font-weight:700">Total ore</td><td style="font-weight:700">${Number(totalOreGeneral).toFixed(2)}</td><td></td><td style="font-weight:700">${esc(money(subtotal))}</td></tr></tfoot>
+    </table>
+
+    ${totaluriDevizHtml({ subtotal, tva, tvaVal, total })}
+    ${semnaturiDevizHtml({ santier, company })}
   </div>`;
 }
-function openDevizOrar({ santier, company, rapoarte, toateRapoartele, nr, data, includeLucrari }) {
-    const validPers = (rapoarte || []).some((r) => (r.persoane || []).some((p) => p.nume && String(p.nume).trim()));
-    if (!validPers) {
+function openDevizOrar({ santier, company, rapoarte, toateRapoartele, structura, nr, data, includeLucrari, detaliu }) {
+    const d = detaliu || devizOrarDetaliu({ santier, rapoarte, toateRapoartele, structura, includeLucrari });
+    if (!d.randuri.length) {
         window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.');
         return;
     }
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, nr, data, includeLucrari })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizOrarPageHtml({ santier, company, nr, data, detaliu: d })}</body></html>`;
     const w = window.open('', '_blank');
     if (!w) {
         window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.');
@@ -11258,7 +11318,7 @@ function openDevizOrar({ santier, company, rapoarte, toateRapoartele, nr, data, 
     w.document.close();
     w.focus();
 }
-function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data }) {
+function devizPozDetaliu({ rapoarte, pozitii, dinLucrari }) {
     const tva = 21;
     const normP = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
     const exec = {};
@@ -11286,8 +11346,8 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr,
             });
         });
     }
-    const rowsArr = [];
-    let idx = 0, subtotal = 0;
+    const randuri = [];
+    let subtotal = 0;
     (pozitii || []).forEach((p) => {
         const q = exec[p.id] || 0;
         if (q <= 0)
@@ -11295,83 +11355,33 @@ function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr,
         const pret = Number(p.pretUnitar) || 0;
         const val = q * pret;
         subtotal += val;
-        idx++;
-        rowsArr.push(`<tr><td>${idx}</td><td style="text-align:left">${esc(p.denumire)}</td><td>${esc(p.um)}</td><td>${q}</td><td>${esc(money(pret))}</td><td>${esc(money(val))}</td></tr>`);
+        randuri.push({ denumire: p.denumire, um: p.um, cantitate: q, pret, valoare: val });
     });
-    const rows = rowsArr.join('');
     const tvaVal = subtotal * tva / 100;
-    const total = subtotal + tvaVal;
-    ULTIMUL_DEVIZ_SANTIER = { tip: 'pozitie', subtotal, tva, total };
-    const benefLines = String(santier?.benefInfo || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `<div>${esc(l)}</div>`).join('');
-    const dataDot = String(data).replace(/\//g, '.');
-    const execCuiReg = [company?.cui ? `C.U.I ${esc(company.cui)}` : '', company?.regCom ? esc(company.regCom) : ''].filter(Boolean).join('&nbsp;&nbsp;&nbsp;&nbsp;');
+    return { tip: 'pozitie', tva, randuri, subtotal, tvaVal, total: subtotal + tvaVal };
+}
+function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data, detaliu }) {
+    const d = detaliu || devizPozDetaliu({ rapoarte, pozitii, dinLucrari });
+    const { tva, randuri, subtotal, tvaVal, total } = d;
+    const rows = randuri.map((x, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(x.denumire)}</td><td>${esc(x.um)}</td><td>${x.cantitate}</td><td>${esc(money(x.pret))}</td><td>${esc(money(x.valoare))}</td></tr>`).join('');
     return `<div class="print-page">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:6mm; margin-bottom:2mm;">
-      <div style="flex:1; font-size:10px; line-height:1.55;">
-        <div style="font-weight:700;">EXECUTANT:</div>
-        <div style="font-weight:700;">${esc(company?.nume) || '(completează datele firmei în „Firma mea")'}</div>
-        ${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}
-        ${execCuiReg ? `<div>${execCuiReg}</div>` : ''}
-        ${company?.email ? `<div>e-mail: ${esc(company.email)}</div>` : ''}
-        ${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}
-      </div>
-      <div style="flex:0 0 auto; text-align:center; padding:0 2mm;">
-        <img src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" style="height:80px; width:auto;" />
-      </div>
-      <div style="flex:1; font-size:10px; line-height:1.55; text-align:right;">
-        <div style="font-weight:700;">BENEFICIAR:</div>
-        <div style="font-weight:700;">${esc(santier?.benefNume) || '—'}</div>
-        ${benefLines}
-      </div>
-    </div>
-
-    <div style="text-align:center; margin:5mm 0 2mm;">
-      <div style="font-weight:700; font-size:15px;">Deviz manoperă</div>
-      <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
-      ${santier?.contract ? `<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>` : ''}${santier?.actAditional ? `<div style="font-size:11px; margin-top:1mm;">Act adițional Nr. ${esc(santier.actAditional)}</div>` : ''}
-    </div>
-
-    <div style="font-size:11px; line-height:1.9; margin:4mm 0; padding-bottom:3mm; border-bottom:1px solid #ccc;">
-      <div><b>Obiectiv:</b> ${esc(santier?.obiectiv || '')}</div>
-      <div><b>Adresa:</b> ${esc(santier?.adresaDeviz || santier?.adresa || '')}</div>
-      <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
-    </div>
+    ${antetDevizHtml({ titlu: 'DEVIZ MANOPERĂ', santier, company, nr, data, perioada: d.perioada })}
 
     <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire poziție (manoperă)</th><th>U.M.</th><th>Cantitate</th><th>Preț unitar</th><th>Valoare</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="6">Nicio poziție executată în perioada selectată.</td></tr>'}</tbody>
     </table>
 
-    <div class="pp-totals">
-      <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
-      <div class="pp-totals-row"><span>TVA ${tva}%</span><span>${esc(money(tvaVal))}</span></div>
-      <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
-    </div>
-
-    <div class="pp-signatures">
-      <div class="pp-sign-col">
-        <div class="pp-sign-label">Executant</div>
-        <div>${esc(company?.nume) || ''}</div>
-        ${company?.administrator ? `<div>${esc(company.administrator)}</div>` : ''}
-        <img src="${company?.stampila || STAMPILA_EXECUTANT}" alt="" style="height:26mm; width:auto; display:block; margin:1mm 0 0;" />
-      </div>
-      <div class="pp-sign-col" style="text-align:right;">
-        <div class="pp-sign-label">Beneficiar</div>
-        <div>${esc(santier?.benefNume) || ''}</div>
-        ${santier?.benefSemnatar ? `<div>${esc(santier.benefSemnatar)}</div>` : ''}
-      </div>
-    </div>
+    ${totaluriDevizHtml({ subtotal, tva, tvaVal, total })}
+    ${semnaturiDevizHtml({ santier, company })}
   </div>`;
 }
-function openDevizPoz({ santier, company, rapoarte, pozitii, dinLucrari, nr, data }) {
-    const normP = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
-    const exista = dinLucrari
-        ? (rapoarte || []).some((r) => (r.lucrariApartamente || []).some((l) => lucrariDinRand(l).some((w) => (Number(w.cantitate) || 0) > 0 && (pozitii || []).some((p) => normP(p.denumire) === normP(w.denumire)))))
-        : (rapoarte || []).some((r) => (r.pozitiiExecutate || []).some((pe) => pe.pozitieId && (Number(pe.cantitate) || 0) > 0));
-    if (!exista) {
+function openDevizPoz({ santier, company, rapoarte, pozitii, dinLucrari, nr, data, detaliu }) {
+    const d = detaliu || devizPozDetaliu({ rapoarte, pozitii, dinLucrari });
+    if (!d.randuri.length) {
         window.alert(dinLucrari ? 'Nu există cantități pe poziții în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de poziții.' : 'Nu există poziții executate raportate în perioada selectată pentru acest șantier.');
         return;
     }
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Deviz ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizPozPageHtml({ santier, company, nr, data, detaliu: d })}</body></html>`;
     const w = window.open('', '_blank');
     if (!w) {
         window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.');
@@ -11382,7 +11392,7 @@ function openDevizPoz({ santier, company, rapoarte, pozitii, dinLucrari, nr, dat
     w.document.close();
     w.focus();
 }
-function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data }) {
+function devizMatDetaliu({ rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari }) {
     const tva = 21;
     const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
     const grup = {};
@@ -11428,76 +11438,38 @@ function devizMatPageHtml({ santier, company, rapoarte, materialeLista, material
             g.pret = Number(fromList?.pretUnitar) || Number(fromCentral?.pret) || 0;
         });
     }
-    const items = Object.values(grup).filter((g) => g.cantitate > 0);
     let subtotal = 0;
-    const rows = items.map((g, i) => { const val = g.cantitate * g.pret; subtotal += val; return `<tr><td>${i + 1}</td><td style="text-align:left">${esc(g.denumire)}</td><td>${esc(g.um)}</td><td>${g.cantitate}</td><td>${esc(money(g.pret))}</td><td>${esc(money(val))}</td></tr>`; }).join('');
-    const tvaVal = subtotal * tva / 100, total = subtotal + tvaVal;
-    ULTIMUL_DEVIZ_SANTIER = { tip: 'materiale', subtotal, tva, total };
-    const benefLines = String(santier?.benefInfo || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `<div>${esc(l)}</div>`).join('');
-    const dataDot = String(data).replace(/\//g, '.');
-    const execCuiReg = [company?.cui ? `C.U.I ${esc(company.cui)}` : '', company?.regCom ? esc(company.regCom) : ''].filter(Boolean).join('&nbsp;&nbsp;&nbsp;&nbsp;');
+    const randuri = Object.values(grup).filter((g) => g.cantitate > 0).map((g) => {
+        const valoare = g.cantitate * g.pret;
+        subtotal += valoare;
+        return { denumire: g.denumire, um: g.um, cantitate: g.cantitate, pret: g.pret, valoare };
+    });
+    const tvaVal = subtotal * tva / 100;
+    return { tip: 'materiale', tva, realExecutat: !!realExecutat, randuri, subtotal, tvaVal, total: subtotal + tvaVal };
+}
+function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data, detaliu }) {
+    const d = detaliu || devizMatDetaliu({ rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari });
+    const { tva, randuri, subtotal, tvaVal, total } = d;
+    const real = detaliu ? !!d.realExecutat : !!realExecutat;
+    const rows = randuri.map((g, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(g.denumire)}</td><td>${esc(g.um)}</td><td>${g.cantitate}</td><td>${esc(money(g.pret))}</td><td>${esc(money(g.valoare))}</td></tr>`).join('');
     return `<div class="print-page">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:6mm; margin-bottom:2mm;">
-      <div style="flex:1; font-size:10px; line-height:1.55;">
-        <div style="font-weight:700;">EXECUTANT:</div>
-        <div style="font-weight:700;">${esc(company?.nume) || '(completează datele firmei în „Firma mea")'}</div>
-        ${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}
-        ${execCuiReg ? `<div>${execCuiReg}</div>` : ''}
-        ${company?.email ? `<div>e-mail: ${esc(company.email)}</div>` : ''}
-        ${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}
-      </div>
-      <div style="flex:0 0 auto; text-align:center; padding:0 2mm;">
-        <img src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" style="height:80px; width:auto;" />
-      </div>
-      <div style="flex:1; font-size:10px; line-height:1.55; text-align:right;">
-        <div style="font-weight:700;">BENEFICIAR:</div>
-        <div style="font-weight:700;">${esc(santier?.benefNume) || '—'}</div>
-        ${benefLines}
-      </div>
-    </div>
-    <div style="text-align:center; margin:5mm 0 2mm;">
-      <div style="font-weight:700; font-size:15px;">${realExecutat ? 'Deviz real executat' : 'Deviz materiale'}</div>
-      <div style="font-size:12px; margin-top:1mm;">Nr. ${esc(nr)}/${esc(dataDot)}</div>
-      ${santier?.contract ? `<div style="font-size:11px; margin-top:1mm;">Contract Nr. ${esc(santier.contract)}</div>` : ''}${santier?.actAditional ? `<div style="font-size:11px; margin-top:1mm;">Act adițional Nr. ${esc(santier.actAditional)}</div>` : ''}
-    </div>
-    <div style="font-size:11px; line-height:1.9; margin:4mm 0; padding-bottom:3mm; border-bottom:1px solid #ccc;">
-      <div><b>Obiectiv:</b> ${esc(santier?.obiectiv || '')}</div>
-      <div><b>Adresa:</b> ${esc(santier?.adresaDeviz || santier?.adresa || '')}</div>
-      <div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>
-    </div>
-    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">${realExecutat ? 'Denumire (operațiune / material)' : 'Denumire material'}</th><th>U.M.</th><th>Cantitate</th><th>${realExecutat ? 'Preț manoperă' : 'Preț unitar'}</th><th>Valoare</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="6">${realExecutat ? 'Nicio cantitate raportată în perioada selectată.' : 'Niciun material folosit raportat în perioada selectată.'}</td></tr>`}</tbody>
+    ${antetDevizHtml({ titlu: real ? 'DEVIZ REAL EXECUTAT' : 'DEVIZ MATERIALE', santier, company, nr, data, perioada: d.perioada })}
+
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">${real ? 'Denumire (operațiune / material)' : 'Denumire material'}</th><th>U.M.</th><th>Cantitate</th><th>${real ? 'Preț manoperă' : 'Preț unitar'}</th><th>Valoare</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="6">${real ? 'Nicio cantitate raportată în perioada selectată.' : 'Niciun material folosit raportat în perioada selectată.'}</td></tr>`}</tbody>
     </table>
-    <div class="pp-totals">
-      <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
-      <div class="pp-totals-row"><span>TVA ${tva}%</span><span>${esc(money(tvaVal))}</span></div>
-      <div class="pp-totals-row pp-totals-final"><span>Total cu TVA</span><span>${esc(money(total))}</span></div>
-    </div>
-    <div class="pp-signatures">
-      <div class="pp-sign-col">
-        <div class="pp-sign-label">Executant</div>
-        <div>${esc(company?.nume) || ''}</div>
-        ${company?.administrator ? `<div>${esc(company.administrator)}</div>` : ''}
-        <img src="${company?.stampila || STAMPILA_EXECUTANT}" alt="" style="height:26mm; width:auto; display:block; margin:1mm 0 0;" />
-      </div>
-      <div class="pp-sign-col" style="text-align:right;">
-        <div class="pp-sign-label">Beneficiar</div>
-        <div>${esc(santier?.benefNume) || ''}</div>
-        ${santier?.benefSemnatar ? `<div>${esc(santier.benefSemnatar)}</div>` : ''}
-      </div>
-    </div>
+
+    ${totaluriDevizHtml({ subtotal, tva, tvaVal, total })}
+    ${semnaturiDevizHtml({ santier, company })}
   </div>`;
 }
-function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data }) {
-    const norm = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
-    const exista = dinLucrari
-        ? (rapoarte || []).some((r) => (r.lucrariApartamente || []).some((l) => lucrariDinRand(l).some((w) => (Number(w.cantitate) || 0) > 0 && (materialeLista || []).some((x) => norm(x.denumire) === norm(w.denumire)))))
-        : (rapoarte || []).some((r) => (r.materialeFolosite || []).some((m) => m.denumire && String(m.denumire).trim()));
-    if (!exista) {
+function openDevizMateriale({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data, detaliu }) {
+    const d = detaliu || devizMatDetaliu({ rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari });
+    if (!d.randuri.length) {
         window.alert(dinLucrari ? 'Nu există cantități de materiale în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de materiale importată.' : (realExecutat ? 'Nu există cantități raportate în perioada selectată pentru acest șantier.' : 'Nu există materiale folosite raportate în perioada selectată pentru acest șantier.'));
         return;
     }
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data })}<div class="pp-pagefoot">Pagina 1 din 1</div></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${realExecutat ? 'Deviz real executat' : 'Deviz materiale'} ${esc(nr)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${devizMatPageHtml({ santier, company, nr, data, detaliu: d })}</body></html>`;
     const w = window.open('', '_blank');
     if (!w) {
         window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.');
@@ -11507,6 +11479,28 @@ function openDevizMateriale({ santier, company, rapoarte, materialeLista, materi
     w.document.write(html);
     w.document.close();
     w.focus();
+}
+function instantaneuSantier(s) {
+    if (!s)
+        return {};
+    return { nume: s.nume || '', benefNume: s.benefNume || '', benefInfo: s.benefInfo || '',
+        benefSemnatar: s.benefSemnatar || '', contract: s.contract || '', actAditional: s.actAditional || '',
+        obiectiv: s.obiectiv || '', adresaDeviz: s.adresaDeviz || '', adresa: s.adresa || '',
+        lucrare: s.lucrare || '', tarifOrar: Number(s.tarifOrar) || 0 };
+}
+function devizArhivaPageHtml({ doc, client, company, detaliu, santierSnap }) {
+    const d = detaliu || (doc && doc.detaliu);
+    if (!d || !Array.isArray(d.randuri) || !d.randuri.length)
+        return devizPageHtml({ doc, client, company });
+    const args = { santier: santierSnap || (doc && doc.santierSnap) || {}, company,
+        nr: (doc && doc.numar) || '—', data: fmtData(doc && doc.data), detaliu: d };
+    if (d.tip === 'orar')
+        return devizOrarPageHtml(args);
+    if (d.tip === 'pozitie')
+        return devizPozPageHtml(args);
+    if (d.tip === 'materiale')
+        return devizMatPageHtml(args);
+    return devizPageHtml({ doc, client, company });
 }
 function App() {
     const [tab, setTab] = useState(null);
@@ -12175,9 +12169,46 @@ function App() {
         return data;
     };
     const printAll = (docs, kind) => openPrintWindow(docs.map((doc) => ({ doc, kind, client: clients.find((c) => c.id === doc.clientId), company })));
-    const printDevizOne = (doc) => openPrintWindow([{ doc, isDeviz: true, client: clients.find((c) => c.id === doc.clientId), company }]);
-    const pdfDevizBlob = (doc) => documentPdfBlob([{ doc, isDeviz: true, client: clients.find((c) => c.id === doc.clientId), company }]);
-    const printDevizAll = (docs) => openPrintWindow(docs.map((doc) => ({ doc, isDeviz: true, client: clients.find((c) => c.id === doc.clientId), company })));
+    const refaDetaliuDeviz = (doc) => {
+        if (!doc || doc.detaliu || !doc.dinSantier || !doc.santierId)
+            return null;
+        const sx = (santiere || []).find((s) => s.id === doc.santierId);
+        if (!sx)
+            return null;
+        const de = doc.perioada && doc.perioada.de, la = doc.perioada && doc.perioada.la;
+        const rapS = (rapoarte || []).filter((r) => r.santierId === sx.id && (!de || r.data >= de) && (!la || r.data <= la));
+        if (!rapS.length)
+            return null;
+        const structura = (structuraSantier || []).filter((e) => e.santierId === sx.id);
+        const areStructura = structura.length > 0;
+        const pozS = (pozitiiSantier || []).filter((p) => p.santierId === sx.id);
+        const matS = (materialeListaSantier || []).filter((m) => m.santierId === sx.id);
+        const modS = sx.modFacturare || (sx.tipFacturare === 'pozitie' ? 'pozitie_propriu' : 'orar');
+        let det = null;
+        try {
+            if (doc.tipDeviz === 'pozitie')
+                det = devizPozDetaliu({ rapoarte: rapS, pozitii: pozS, dinLucrari: areStructura });
+            else if (doc.tipDeviz === 'materiale')
+                det = devizMatDetaliu({ rapoarte: rapS, materialeLista: matS, materials, materialClient: false, realExecutat: modS === 'real_executat', dinLucrari: areStructura });
+            else
+                det = devizOrarDetaliu({ santier: sx, rapoarte: rapS, structura, includeLucrari: modS === 'orar_lucrari' });
+        }
+        catch (_) {
+            return null;
+        }
+        if (!det || !det.randuri.length)
+            return null;
+        det.perioada = { de, la };
+        return { detaliu: det, santierSnap: instantaneuSantier(sx) };
+    };
+    const itemDeviz = (doc) => {
+        const refacut = refaDetaliuDeviz(doc) || {};
+        return { doc, isDeviz: true, client: clients.find((c) => c.id === doc.clientId), company,
+            detaliu: refacut.detaliu, santierSnap: refacut.santierSnap };
+    };
+    const printDevizOne = (doc) => openPrintWindow([itemDeviz(doc)]);
+    const pdfDevizBlob = (doc) => documentPdfBlob([itemDeviz(doc)]);
+    const printDevizAll = (docs) => openPrintWindow(docs.map(itemDeviz));
     const deductStock = (items, refLabel) => {
         const unmatched = [];
         let nextMaterials = materials;
