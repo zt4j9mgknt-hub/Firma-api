@@ -1091,7 +1091,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.44-cotareauto';
+const APP_VERSION = 'v01.45-legenda';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -11688,6 +11688,130 @@ function cautaSimboluri(im, sab, optiuni) {
     });
     return suprimaVecini(gasite);
 }
+const NUMERE_TABLOU = /^(TE|TD|TG|TS|TAB|T)\s*[-–._]?\s*(\d{1,3})$/i;
+const NUMERE_CIRCUIT = /^(?:C|CIRC|CIRCUIT)\s*[-–._]?\s*(\d{1,3})$/i;
+const INALTIME_M = /^(?:H\s*[=:]?\s*)?\+?(\d(?:[.,]\d{1,2})?)\s*m?$/i;
+const INALTIME_CM = /^(?:H\s*[=:]?\s*)?\+?(\d{2,3})\s*cm$/i;
+function randuriDinTexte(texte, cutie) {
+    const c = cutie || { x: 0, y: 0, w: 1e9, h: 1e9 };
+    const inauntru = (texte || []).filter((t) => String(t.text || '').trim()
+        && t.x >= c.x && t.y >= c.y && t.x + t.w <= c.x + c.w + 1e-9 && t.y + t.h <= c.y + c.h + 1e-9);
+    const randuri = [];
+    inauntru.slice().sort((a, b) => (a.y - b.y) || (a.x - b.x)).forEach((t) => {
+        const cy = t.y + t.h / 2;
+        const r = randuri.find((x) => Math.abs((x.y + x.h / 2) - cy) < Math.max(t.h, x.h) * 0.6);
+        if (r) {
+            r.parti.push(t);
+            r.x = Math.min(r.x, t.x);
+            r.y = Math.min(r.y, t.y);
+            r.h = Math.max(r.h, t.h);
+            r.x2 = Math.max(r.x2, t.x + t.w);
+        }
+        else
+            randuri.push({ parti: [t], x: t.x, y: t.y, h: t.h, x2: t.x + t.w });
+    });
+    return randuri.map((r) => ({
+        text: r.parti.slice().sort((a, b) => a.x - b.x).map((p) => String(p.text).trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(),
+        x: r.x, y: r.y, h: r.h, x2: r.x2,
+    })).filter((r) => r.text.length >= 2).sort((a, b) => a.y - b.y);
+}
+function eRandDeLegenda(text) {
+    const t = String(text || '').trim();
+    if (t.length < 3)
+        return false;
+    if (/^legend[ăa]?\b/i.test(t))
+        return false;
+    if (/^(nr\.?\s*crt|crt\.?|simbol|semn|denumire|descriere|u\.?\s*m\.?|cant\.?|observa)/i.test(t))
+        return false;
+    if (/^[\d\s.,:;/-]+$/.test(t))
+        return false;
+    return true;
+}
+function strangeCutia(im, x0, y0, w, h, prag) {
+    const p = prag || PRAG_INCHIS;
+    const xa = Math.max(0, Math.round(x0)), ya = Math.max(0, Math.round(y0));
+    const xb = Math.min(im.lat, Math.round(x0 + w)), yb = Math.min(im.inalt, Math.round(y0 + h));
+    let minX = 1e9, minY = 1e9, maxX = -1, maxY = -1, cati = 0;
+    for (let y = ya; y < yb; y++)
+        for (let x = xa; x < xb; x++) {
+            if (im.g[y * im.lat + x] < p) {
+                cati++;
+                if (x < minX)
+                    minX = x;
+                if (x > maxX)
+                    maxX = x;
+                if (y < minY)
+                    minY = y;
+                if (y > maxY)
+                    maxY = y;
+            }
+        }
+    if (cati < 6 || maxX - minX < 3 || maxY - minY < 3)
+        return null;
+    const pad = 2;
+    const rx = Math.max(0, minX - pad), ry = Math.max(0, minY - pad);
+    return { x: rx, y: ry, w: Math.min(im.lat, maxX + pad + 1) - rx, h: Math.min(im.inalt, maxY + pad + 1) - ry };
+}
+function cutieSimbolLegenda(im, latPagina, cutie, rand, prag) {
+    const px = (v) => v * latPagina;
+    const y0 = px(rand.y - rand.h * 0.9), y1 = px(rand.y + rand.h * 1.9);
+    const gol = rand.h * 0.25;
+    const stanga = [px(cutie.x), px(rand.x - gol)];
+    const dreapta = [px(rand.x2 + gol), px(cutie.x + cutie.w)];
+    for (const [a, b] of [stanga, dreapta]) {
+        if (b - a < 4)
+            continue;
+        const c = strangeCutia(im, a, y0, b - a, y1 - y0, prag);
+        if (c && c.w < (b - a) * 0.95 && c.w >= 4 && c.h >= 4)
+            return c;
+    }
+    return null;
+}
+function citesteLegenda(im, texte, cutie, optiuni) {
+    const o = optiuni || {};
+    const latPagina = Number(o.latPagina) || im.lat;
+    const out = [];
+    randuriDinTexte(texte, cutie).forEach((r) => {
+        if (!eRandDeLegenda(r.text))
+            return;
+        const c = cutieSimbolLegenda(im, latPagina, cutie, r, o.prag);
+        if (!c)
+            return;
+        out.push({ nume: r.text, sablon: { x: c.x / latPagina, y: c.y / latPagina, w: c.w / latPagina, h: c.h / latPagina } });
+    });
+    return out;
+}
+function etichetaLangaPin(texte, p, raza) {
+    const r = Number(raza) || 0.02;
+    const aproape = (texte || []).map((t) => ({ t, d: Math.hypot(t.x + t.w / 2 - p.x, t.y + t.h / 2 - p.y) }))
+        .filter((x) => x.d <= r).sort((a, b) => a.d - b.d);
+    const et = {};
+    aproape.forEach(({ t }) => {
+        const s = String(t.text || '').trim();
+        if (!s)
+            return;
+        let m;
+        if (!et.tablou && (m = s.match(NUMERE_TABLOU))) {
+            et.tablou = (m[1] + m[2]).toUpperCase();
+            return;
+        }
+        if (!et.circuit && (m = s.match(NUMERE_CIRCUIT))) {
+            et.circuit = 'C' + m[1];
+            return;
+        }
+        if (!et.inaltime && (m = s.match(INALTIME_CM))) {
+            et.inaltime = Number(m[1]);
+            return;
+        }
+        if (!et.inaltime && (m = s.match(INALTIME_M))) {
+            const v = Number(String(m[1]).replace(',', '.'));
+            if (v > 0 && v <= 4)
+                et.inaltime = Math.round(v * 100);
+        }
+    });
+    return (et.tablou || et.circuit || et.inaltime) ? et : null;
+}
+const textEticheta = (e) => !e ? '' : [e.tablou || '', e.circuit || '', e.inaltime ? 'h=' + e.inaltime + ' cm' : ''].filter(Boolean).join(' · ');
 const PRAG_INCHIS = 150;
 const DIRECTII_PERETE = [{ id: 'sus', dx: 0, dy: -1 }, { id: 'jos', dx: 0, dy: 1 },
     { id: 'stanga', dx: -1, dy: 0 }, { id: 'dreapta', dx: 1, dy: 0 }];
@@ -11935,6 +12059,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const refCanvas = useRef(null);
     const refPagina = useRef(null);
     const refGri = useRef(null);
+    const refTexte = useRef([]);
     const refCadru = useRef(null);
     const gest = useRef({ activ: false, tip: '', start: null, ultim: null, distanta: 0, zoom0: 1, mutat: false });
     const [stare, setStare] = useState('Se deschide planșa…');
@@ -11947,6 +12072,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const [foaie, setFoaie] = useState(null);
     const [scaraGasita, setScaraGasita] = useState(0);
     const [numitor, setNumitor] = useState(Number(ante.scaraNumitor) || 0);
+    const [areText, setAreText] = useState(true);
     const [cautare, setCautare] = useState(null);
     const [panou, setPanou] = useState(true);
     const [mesaj, setMesaj] = useState('');
@@ -11957,6 +12083,86 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const zone = (ante.zone || []).filter((z) => (z.pagina || 1) === pagina);
     const cote = (ante.cote || []).filter((c) => (c.pagina || 1) === pagina);
     const culoareArt = (id) => (articole.find((a) => a.id === id) || {}).culoare || '#2E8BD1';
+    const [pragLegenda, setPragLegenda] = useState(0.78);
+    const [rotLegenda, setRotLegenda] = useState(false);
+    const [numaraBusy, setNumaraBusy] = useState(false);
+    const invataLegenda = (cutie) => {
+        if (!refGri.current || !refPagina.current)
+            return;
+        if (!refTexte.current.length) {
+            setMesaj('Planșa asta n-are strat de text (e o poză scanată), așa că nu pot citi legenda. Folosește „🔍 Caută simbol" și scrie tu numele.');
+            return;
+        }
+        const gasite = citesteLegenda(refGri.current, refTexte.current, cutie, { latPagina: refPagina.current.width });
+        if (!gasite.length) {
+            setMesaj('N-am găsit rânduri de legendă în dreptunghiul ăsta. Cuprinde și semnele, și textul de lângă ele.');
+            return;
+        }
+        const nou = articole.slice();
+        let adaugate = 0, actualizate = 0;
+        gasite.forEach((g, i) => {
+            const sablon = { pagina, ...g.sablon };
+            const idx = nou.findIndex((a) => cautNorm(a.nume) === cautNorm(g.nume));
+            if (idx >= 0) {
+                nou[idx] = { ...nou[idx], sablon };
+                actualizate++;
+            }
+            else {
+                nou.push({ id: uid(), nume: g.nume, um: 'buc', pretUnitar: 0, culoare: CULORI_ARTICOL[(nou.length + i) % CULORI_ARTICOL.length], sablon });
+                adaugate++;
+            }
+        });
+        onSchimb({ articole: nou, legendaCutie: { pagina, ...cutie } });
+        setMod('naviga');
+        setMesaj('Am învățat ' + gasite.length + ' semne din legendă (' + adaugate + ' articole noi, ' + actualizate + ' completate). Acum apasă „Numără tot din legendă".');
+    };
+    const numaraDinLegenda = () => {
+        if (!refGri.current || !refPagina.current)
+            return;
+        const cuSemn = articole.filter((a) => a.sablon && a.sablon.w > 0);
+        if (!cuSemn.length) {
+            setMesaj('Niciun articol n-are semnul învățat. Arată-mi întâi legenda cu unealta 📖.');
+            return;
+        }
+        if (pini.length && !window.confirm('Pe pagina asta sunt deja ' + pini.length + ' aparate numărate. Le înlocuiesc cu numărătoarea nouă?'))
+            return;
+        setNumaraBusy(true);
+        setTimeout(() => {
+            try {
+                const im = refGri.current, lat = refPagina.current.width;
+                const excl = ante.legendaCutie && (ante.legendaCutie.pagina || 1) === pagina ? ante.legendaCutie : null;
+                const toate = [];
+                cuSemn.forEach((a) => {
+                    const s = a.sablon;
+                    const sab = decupeazaImagine(im, s.x * lat, s.y * lat, s.w * lat, s.h * lat);
+                    cautaSimboluri(im, sab, { prag: pragLegenda, rotatii: rotLegenda }).forEach((g) => {
+                        const cx = (g.x + g.lat / 2) / lat, cy = (g.y + g.inalt / 2) / lat;
+                        if (excl && cx >= excl.x - 0.005 && cx <= excl.x + excl.w + 0.005 && cy >= excl.y - 0.005 && cy <= excl.y + excl.h + 0.005)
+                            return;
+                        toate.push({ articolId: a.id, x: cx, y: cy, scor: g.scor, r: Math.max(g.lat, g.inalt) / lat });
+                    });
+                });
+                toate.sort((a, b) => b.scor - a.scor);
+                const pastrate = [];
+                toate.forEach((t) => {
+                    if (!pastrate.some((q) => Math.hypot(q.x - t.x, q.y - t.y) < Math.max(q.r, t.r) * 0.6))
+                        pastrate.push(t);
+                });
+                const noi = pastrate.map((t) => {
+                    const et = etichetaLangaPin(refTexte.current, { x: t.x, y: t.y }, 0.018);
+                    return { id: uid(), pagina, articolId: t.articolId, x: t.x, y: t.y, ...(et ? { eticheta: et } : {}) };
+                });
+                const cuEt = noi.filter((p) => p.eticheta).length;
+                onSchimb({ pini: [...(ante.pini || []).filter((p) => (p.pagina || 1) !== pagina), ...noi] });
+                setMesaj('Am numărat ' + noi.length + ' aparate, din ' + cuSemn.length + ' semne'
+                    + (cuEt ? '. La ' + cuEt + ' am citit și circuitul sau înălțimea de montaj de pe planșă.' : '.'));
+            }
+            catch (e) {
+                setMesaj((e && e.message) || 'Numărătoarea nu a mers.');
+            }
+            setNumaraBusy(false);
+        }, 30);
+    };
     const [coteazaBusy, setCoteazaBusy] = useState(false);
     const coteazaTot = () => {
         if (!refGri.current || !refPagina.current)
@@ -12067,6 +12273,15 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 x.strokeStyle = '#fff';
                 x.lineWidth = 2;
                 x.stroke();
+                const et = textEticheta(p.eticheta);
+                if (et) {
+                    x.font = 'bold 12px sans-serif';
+                    const w = x.measureText(et).width + 8;
+                    x.fillStyle = '#ffffffdd';
+                    x.fillRect(e.x + 10, e.y - 8, w, 16);
+                    x.fillStyle = '#123049';
+                    x.fillText(et, e.x + 14, e.y + 4);
+                }
             });
             cote.forEach((c) => {
                 const a = laP(c.ax, c.ay);
@@ -12172,17 +12387,6 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 const baza = pg.getViewport({ scale: 1 });
                 const f = formatFoaie(mmDinPuncte(baza.width), mmDinPuncte(baza.height));
                 setFoaie(f);
-                try {
-                    const txt = await pg.getTextContent();
-                    const tot = (txt.items || []).map((it) => it.str).join(' ');
-                    const d = scaraDinText(tot);
-                    setScaraGasita(d);
-                    if (d && !Number(ante.scaraNumitor))
-                        setNumitor(d);
-                }
-                catch (_) {
-                    setScaraGasita(0);
-                }
                 let sc = Math.min(4, Math.max(1, 2000 / baza.width));
                 if (baza.width * sc * baza.height * sc > 4200000)
                     sc = Math.sqrt(4200000 / (baza.width * baza.height));
@@ -12195,6 +12399,26 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                     return;
                 refPagina.current = cv;
                 refGri.current = griDinImageData(cv.getContext('2d').getImageData(0, 0, cv.width, cv.height));
+                try {
+                    const txt = await pg.getTextContent();
+                    const it = txt.items || [];
+                    refTexte.current = it.map((x) => {
+                        const tr = lib.Util.transform(vp.transform, x.transform);
+                        const h = Math.hypot(tr[2], tr[3]) || (Number(x.height) || 10) * sc;
+                        const w = (Number(x.width) || 0) * sc;
+                        return { text: x.str, x: tr[4] / cv.width, y: (tr[5] - h) / cv.width, w: w / cv.width, h: h / cv.width };
+                    }).filter((t) => String(t.text || '').trim());
+                    const d = scaraDinText(it.map((x) => x.str).join(' '));
+                    setScaraGasita(d);
+                    if (d && !Number(ante.scaraNumitor))
+                        setNumitor(d);
+                    setAreText(refTexte.current.length > 0);
+                }
+                catch (_) {
+                    refTexte.current = [];
+                    setScaraGasita(0);
+                    setAreText(false);
+                }
                 setStare('');
                 potriveste(cv);
             }
@@ -12303,6 +12527,18 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             ctx.fillStyle = '#8a1f1f';
             ctx.fillText(et, mx - w / 2 + 4, my - 5);
         });
+        if (ante.legendaCutie && (ante.legendaCutie.pagina || 1) === pagina) {
+            const z = ante.legendaCutie;
+            const a = laEcran(z.x, z.y), b = laEcran(z.x + z.w, z.y + z.h);
+            ctx.strokeStyle = '#C08CE0';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([3, 3]);
+            ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#C08CE0';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.fillText('legendă', a.x + 4, a.y - 4);
+        }
         pini.forEach((p) => {
             const e = laEcran(p.x, p.y);
             ctx.beginPath();
@@ -12312,6 +12548,15 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 1.5;
             ctx.stroke();
+            const et = textEticheta(p.eticheta);
+            if (et && vedere.zoom > 0.5) {
+                ctx.font = 'bold 10px sans-serif';
+                ctx.fillStyle = '#0c0f13cc';
+                const w = ctx.measureText(et).width + 6;
+                ctx.fillRect(e.x + 8, e.y - 6, w, 13);
+                ctx.fillStyle = '#9ad';
+                ctx.fillText(et, e.x + 11, e.y + 4);
+            }
         });
         if (temp && temp.tip === 'dreptunghi') {
             const a = laEcran(temp.a.x, temp.a.y), b = laEcran(temp.b.x, temp.b.y);
@@ -12382,7 +12627,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         }
         const s = pozitie(e), pl = laPlansa(s.x, s.y);
         gest.current = { activ: true, tip: mod === 'naviga' ? 'pan' : mod, start: pl, ultim: s, mutat: false };
-        if (mod === 'sablon' || mod === 'zona')
+        if (mod === 'sablon' || mod === 'zona' || mod === 'legenda')
             setTemp({ tip: 'dreptunghi', a: pl, b: pl });
     };
     const misca = (e) => {
@@ -12402,7 +12647,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             setVedere((v) => ({ ...v, ox: v.ox - dx, oy: v.oy - dy }));
             g.ultim = s;
         }
-        else if (g.tip === 'sablon' || g.tip === 'zona') {
+        else if (g.tip === 'sablon' || g.tip === 'zona' || g.tip === 'legenda') {
             setTemp((t) => t && t.tip === 'dreptunghi' ? { ...t, b: laPlansa(s.x, s.y) } : t);
         }
     };
@@ -12438,6 +12683,10 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             inchideZona();
             return;
         }
+        if (g.tip === 'legenda') {
+            inchideLegenda();
+            return;
+        }
         if (g.tip === 'sablon') {
             porneste();
             return;
@@ -12455,6 +12704,19 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             }
             const sablon = decupeazaImagine(refGri.current, x0, y0, w, h);
             ruleazaCautarea(sablon, 0.75, false);
+        }
+        function inchideLegenda() {
+            const t = temp;
+            setTemp(null);
+            if (!t || t.tip !== 'dreptunghi')
+                return;
+            const x = Math.min(t.a.x, t.b.x), y = Math.min(t.a.y, t.b.y);
+            const w = Math.abs(t.b.x - t.a.x), h = Math.abs(t.b.y - t.a.y);
+            if (w < 0.02 || h < 0.02) {
+                setMesaj('Cuprinde toată legenda în dreptunghi: și semnele, și textul de lângă ele.');
+                return;
+            }
+            invataLegenda({ x, y, w, h });
         }
         function inchideZona() {
             const t = temp;
@@ -12578,6 +12840,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const cantPentru = (id) => (cantitati.find((c) => c.articol.id === id) || {}).total || 0;
     const MODURI = [
         ['naviga', '🖐', 'Mută'],
+        ['legenda', '📖', 'Legenda'],
         ['sablon', '🔍', 'Caută simbol'],
         ['pin', '📍', 'Punct'],
         ['traseu', '〰', 'Traseu'],
@@ -12585,7 +12848,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         ['calibrare', '📏', 'Scara'],
         ['cota', '📐', 'Cote'],
     ];
-    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : id === 'cota' ? 'Atinge o cotă ca s-o măsoare din partea cealaltă.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : id === 'cota' ? 'Atinge o cotă ca s-o măsoare din partea cealaltă.' : id === 'legenda' ? 'Trage un dreptunghi peste toată legenda — și semnele, și textul.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
         icon,
         " ",
         eticheta));
@@ -12683,6 +12946,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 articole.length === 0 && React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Niciun articol \u00EEnc\u0103. Adaug\u0103 unul \u0219i apoi caut\u0103-i simbolul pe plan\u0219\u0103."),
                 articole.map((a) => (React.createElement("div", { key: a.id, onClick: () => setArticolSel(a.id), className: "flex items-center gap-2 px-2 py-1.5 rounded", style: { background: articolSel === a.id ? 'var(--panel2)' : 'transparent', border: '1px solid ' + (articolSel === a.id ? a.culoare + '88' : 'transparent'), cursor: 'pointer' } },
                     React.createElement("span", { style: { width: 10, height: 10, borderRadius: 5, background: a.culoare, flexShrink: 0 } }),
+                    a.sablon && React.createElement("span", { title: "Semnul e \u00EEnv\u0103\u021Bat din legend\u0103", className: "shrink-0 text-[10px]", style: { color: 'var(--acc2)' } }, "\uD83D\uDCD6"),
                     React.createElement("input", { value: a.nume, onChange: (e) => schimbaArticol(a.id, 'nume', e.target.value), onClick: (e) => e.stopPropagation(), className: "min-w-0 flex-1 bg-transparent text-xs outline-none", style: { color: 'var(--text)' } }),
                     React.createElement("span", { className: "text-xs font-semibold shrink-0", style: { color: 'var(--acc2)', fontFamily: "'JetBrains Mono', monospace" } },
                         cantPentru(a.id),
@@ -12690,6 +12954,20 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                         a.um),
                     React.createElement("input", { value: a.pretUnitar || '', onChange: (e) => schimbaArticol(a.id, 'pretUnitar', e.target.value), onClick: (e) => e.stopPropagation(), placeholder: "pre\u021B", inputMode: "decimal", className: "w-14 shrink-0 rounded px-1.5 py-1 text-[11px] outline-none text-right", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
                     React.createElement("button", { onClick: (e) => { e.stopPropagation(); stergeArticol(a); }, className: "shrink-0 px-1", style: { color: 'var(--acc4)' } }, "\u2715")))),
+                React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1.5", style: { borderTop: '1px solid var(--border)' } },
+                    React.createElement("button", { onClick: numaraDinLegenda, disabled: numaraBusy, className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, numaraBusy ? 'Număr toată planșa…' : '📖 Numără tot din legendă'),
+                    React.createElement("span", { className: "text-[11px] self-center", style: { color: 'var(--muted2)' } },
+                        articole.filter((a) => a.sablon).length,
+                        " semne \u00EEnv\u0103\u021Bate"),
+                    React.createElement("div", { className: "flex items-center gap-1.5 w-full" },
+                        React.createElement("span", { className: "text-[11px] shrink-0", style: { color: 'var(--muted2)' } }, "Exigen\u021B\u0103"),
+                        React.createElement("input", { type: "range", min: "55", max: "95", value: Math.round(pragLegenda * 100), onChange: (e) => setPragLegenda(Number(e.target.value) / 100), className: "flex-1" }),
+                        React.createElement("span", { className: "text-[11px] shrink-0", style: { color: 'var(--muted2)' } },
+                            Math.round(pragLegenda * 100),
+                            "%"),
+                        React.createElement("label", { className: "flex items-center gap-1 text-[11px] shrink-0", style: { color: 'var(--muted2)' } },
+                            React.createElement("input", { type: "checkbox", checked: rotLegenda, onChange: (e) => setRotLegenda(e.target.checked) }),
+                            " \u00EEntoarse"))),
                 React.createElement("div", { className: "flex gap-1.5 pt-1" },
                     React.createElement("button", { onClick: adaugaArticol, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)' } }, "+ Articol"),
                     zone.length > 0 && React.createElement("span", { className: "text-[11px] self-center", style: { color: 'var(--muted2)' } },
