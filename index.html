@@ -1062,7 +1062,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.25-interval';
+const APP_VERSION = 'v01.26-compact';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -4849,85 +4849,81 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const lista = timpi || [];
     const numePersoane = (persoane || []).map((p) => String(p?.nume || '').trim()).filter(Boolean);
+    const [cat, setCat] = useState(CATEGORII_TIMP[0].id);
+    const [min, setMin] = useState(30);
+    const [deschis, setDeschis] = useState(null);
     const update = (id, camp, val) => setTimpi(lista.map((t) => t.id === id ? { ...t, [camp]: val } : t));
     const sterge = (id) => setTimpi(lista.filter((t) => t.id !== id));
-    const adauga = (cat) => setTimpi([...lista, { id: uid(), categorie: cat, minute: 30, persoane: numePersoane.slice(), nota: '' }]);
+    const adauga = () => {
+        const t = { id: uid(), categorie: cat, minute: Number(min) || 0, persoane: numePersoane.slice(), intervale: {}, nota: '' };
+        setTimpi([...lista, t]);
+        setDeschis(t.id);
+    };
     const comutaOm = (t, nume) => {
         const cur = Array.isArray(t.persoane) ? t.persoane : [];
         update(t.id, 'persoane', cur.includes(nume) ? cur.filter((n) => n !== nume) : [...cur, nume]);
     };
-    const setInterval_ = (t, nume, capat, val) => {
+    const puneInterval = (t, nume, de, la) => update(t.id, 'intervale', { ...(t.intervale || {}), [nume]: { de, la } });
+    const setCapat = (t, nume, capat, val) => {
         const iv = { ...((t.intervale || {})[nume] || {}) };
         iv[capat] = val;
         update(t.id, 'intervale', { ...(t.intervale || {}), [nume]: iv });
     };
-    const puneInterval = (t, nume, de, la) => update(t.id, 'intervale', { ...(t.intervale || {}), [nume]: { de, la } });
-    const stergeInterval = (t, nume) => {
-        const toate = { ...(t.intervale || {}) };
-        delete toate[nume];
-        update(t.id, 'intervale', toate);
-    };
-    const totalMin = lista.reduce((s, t) => s + minutePierduteRand(t), 0);
+    const stergeInterval = (t, nume) => { const toate = { ...(t.intervale || {}) }; delete toate[nume]; update(t.id, 'intervale', toate); };
     const hm = (m) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, '0')}`;
     return (React.createElement("div", null,
-        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)', lineHeight: 1.55 } },
-            "Aici se trece timpul care ",
-            React.createElement("b", null, "nu"),
-            " s-a dus \u00EEn lucrare: drumuri, aprovizionat, a\u0219teptat frontul, discu\u021Bii pe \u0219antier, \u00EEntors dup\u0103 o scul\u0103. Nu e repro\u0219 pentru nimeni \u2014 e felul \u00EEn care vedem unde se duce ziua \u0219i ce putem organiza altfel. Alegi categoria, adaugi oamenii care au stat, iar pentru fiecare po\u021Bi pune ",
-            React.createElement("b", null, "ora exact\u0103"),
-            " (de la \u2026 p\u00E2n\u0103 la \u2026) dac\u0103 n-au stat la fel de mult. Cine n-are or\u0103 trecut\u0103 ia minutele scrise pe r\u00E2nd. 30 de minute pierdute de trei oameni \u00EEnseamn\u0103 o or\u0103 \u0219i jum\u0103tate de manoper\u0103, nu 30 de minute."),
-        lista.length > 0 && (React.createElement("div", { className: "space-y-1.5 mb-2" },
-            lista.map((t) => (React.createElement("div", { key: t.id, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
-                React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
-                    React.createElement("span", { className: "text-xs font-medium", style: { color: 'var(--text)' } },
-                        iconCategorieTimp(t.categorie),
-                        " ",
-                        numeCategorieTimp(t.categorie)),
-                    React.createElement("span", { className: "flex items-center gap-1 text-[11px]", style: { color: 'var(--muted)' } },
-                        React.createElement("input", { type: "number", inputMode: "numeric", min: "0", step: "5", value: t.minute, onChange: (e) => update(t.id, 'minute', e.target.value), className: "w-16 rounded-lg px-1.5 py-1 text-xs outline-none text-center", style: inputStyle }),
-                        " min / om"),
-                    React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } },
-                        "= ",
-                        hm(minutePierduteRand(t)),
-                        " manoper\u0103"),
-                    React.createElement("button", { onClick: () => sterge(t.id), className: "ml-auto opacity-60", style: { color: 'var(--acc4)' } },
-                        React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1"))),
-                numePersoane.length > 0 && (React.createElement("div", { className: "mt-1.5 space-y-1" },
-                    React.createElement("div", { className: "flex flex-wrap gap-1" }, numePersoane.filter((n) => !(t.persoane || []).includes(n)).map((n) => (React.createElement("button", { key: n, onClick: () => comutaOm(t, n), className: "text-[11px] px-2 py-0.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } },
-                        "+ ",
-                        n)))),
-                    (t.persoane || []).filter((n) => numePersoane.includes(n) || true).map((n) => {
+        React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap mb-2" },
+            React.createElement("select", { value: cat, onChange: (e) => setCat(e.target.value), className: "rounded-lg px-2 py-1.5 text-xs outline-none flex-1 min-w-0", style: inputStyle }, CATEGORII_TIMP.map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } },
+                c.icon,
+                " ",
+                c.nume))),
+            React.createElement("input", { type: "number", inputMode: "numeric", min: "0", step: "5", value: min, onChange: (e) => setMin(e.target.value), className: "w-14 rounded-lg px-1.5 py-1.5 text-xs outline-none text-center", style: inputStyle }),
+            React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "min/om"),
+            React.createElement("button", { onClick: adauga, className: "text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "+ Adaug\u0103")),
+        lista.length === 0 ? (React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Drumuri, aprovizionat, a\u0219teptat frontul, discu\u021Bii pe \u0219antier, \u00EEntors dup\u0103 o scul\u0103. Nu e repro\u0219 \u2014 e harta locurilor unde se poate organiza altfel. Apas\u0103 pe r\u00E2nd ca s\u0103 pui ora exact\u0103 pentru fiecare om.")) : (React.createElement("div", { className: "space-y-1" }, lista.map((t) => {
+            const pers = (t.persoane || []).filter(Boolean);
+            const desch = deschis === t.id;
+            return (React.createElement("div", { key: t.id, className: "rounded-lg", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                React.createElement("div", { className: "flex items-center gap-1.5 px-2 py-1.5" },
+                    React.createElement("button", { onClick: () => setDeschis(desch ? null : t.id), className: "min-w-0 flex-1 text-left flex items-center gap-1.5" },
+                        React.createElement("span", { style: { fontSize: 9, color: 'var(--muted2)', transform: desch ? 'rotate(90deg)' : 'none', display: 'inline-block' } }, "\u25B6"),
+                        React.createElement("span", { className: "text-[11px] min-w-0 truncate", style: { color: 'var(--text)' } },
+                            iconCategorieTimp(t.categorie),
+                            " ",
+                            numeCategorieTimp(t.categorie),
+                            React.createElement("span", { style: { color: 'var(--muted2)' } },
+                                " \u00B7 ",
+                                pers.length ? (pers.length > 2 ? `${pers.length} oameni` : pers.map((n) => n.split(' ')[0]).join(', ')) : 'nimeni bifat',
+                                t.nota ? ' · ' + t.nota : ''))),
+                    React.createElement("span", { className: "text-[11px] shrink-0", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } }, hm(minutePierduteRand(t))),
+                    React.createElement("button", { onClick: () => sterge(t.id), className: "shrink-0 opacity-50", style: { color: 'var(--acc4)' } },
+                        React.createElement(Icon, { size: 12 }, "\uD83D\uDDD1"))),
+                desch && (React.createElement("div", { className: "px-2 pb-2 space-y-1.5", style: { borderTop: '1px solid var(--border)' } },
+                    React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap pt-1.5" },
+                        React.createElement("select", { value: t.categorie, onChange: (e) => update(t.id, 'categorie', e.target.value), className: "rounded-lg px-2 py-1 text-[11px] outline-none flex-1 min-w-0", style: inputStyle }, CATEGORII_TIMP.map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } },
+                            c.icon,
+                            " ",
+                            c.nume))),
+                        React.createElement("input", { type: "number", inputMode: "numeric", min: "0", step: "5", value: t.minute, onChange: (e) => update(t.id, 'minute', e.target.value), className: "w-14 rounded-lg px-1.5 py-1 text-[11px] outline-none text-center", style: inputStyle }),
+                        React.createElement("span", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, "min/om")),
+                    React.createElement("div", { className: "flex flex-wrap gap-1" }, numePersoane.map((n) => {
+                        const on = pers.includes(n);
                         const iv = (t.intervale || {})[n] || {};
                         const areIv = !!(iv.de && iv.la);
-                        const minN = minutePersoanaTimp(t, n);
-                        return (React.createElement("div", { key: n, className: "flex items-center gap-1.5 flex-wrap rounded-lg px-2 py-1", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-                            React.createElement("button", { onClick: () => { comutaOm(t, n); stergeInterval(t, n); }, className: "text-[11px] px-1.5 py-0.5 rounded", style: { color: '#14181C', background: 'var(--acc3)', fontWeight: 700 } },
-                                "\u2713 ",
-                                n),
-                            areIv ? (React.createElement(React.Fragment, null,
-                                React.createElement("span", { className: "text-[11px] flex items-center gap-1", style: { color: 'var(--muted)' } },
-                                    "de la ",
-                                    React.createElement(RoTimePicker, { value: iv.de, onChange: (v) => setInterval_(t, n, 'de', v) })),
-                                React.createElement("span", { className: "text-[11px] flex items-center gap-1", style: { color: 'var(--muted)' } },
-                                    "p\u00E2n\u0103 la ",
-                                    React.createElement(RoTimePicker, { value: iv.la, onChange: (v) => setInterval_(t, n, 'la', v) })),
-                                React.createElement("button", { onClick: () => stergeInterval(t, n), className: "text-[10px] px-1.5 py-0.5 rounded", style: { color: 'var(--muted2)' } }, "f\u0103r\u0103 interval"))) : (React.createElement("button", { onClick: () => puneInterval(t, n, '10:00', '10:30'), className: "text-[10px] px-1.5 py-0.5 rounded", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ pune ora exact\u0103")),
-                            React.createElement("span", { className: "text-[11px] ml-auto", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } },
-                                minN,
-                                " min")));
-                    }),
-                    (t.persoane || []).length === 0 && React.createElement("div", { className: "text-[11px]", style: { color: 'var(--acc4)' } }, "Nu ai bifat pe nimeni \u2014 se num\u0103r\u0103 o singur\u0103 dat\u0103."))),
-                React.createElement("input", { value: t.nota || '', onChange: (e) => update(t.id, 'nota', e.target.value), placeholder: "Ce anume? (ex: am a\u0219teptat zidarii la etajul 4)", className: "w-full mt-1.5 rounded-lg px-2 py-1.5 text-[11px] outline-none", style: inputStyle })))),
-            React.createElement("div", { className: "text-[11px]", style: { color: 'var(--acc3)' } },
-                "Total pierdut azi pe \u0219antierul \u0103sta: ",
-                React.createElement("b", null,
-                    hm(totalMin),
-                    " h"),
-                " de manoper\u0103."))),
-        React.createElement("div", { className: "flex flex-wrap gap-1.5" }, CATEGORII_TIMP.map((c) => (React.createElement("button", { key: c.id, onClick: () => adauga(c.id), title: c.ajutor, className: "text-[11px] px-2.5 py-1.5 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel)', border: '1px solid var(--border)' } },
-            c.icon,
-            " ",
-            c.nume))))));
+                        return (React.createElement("span", { key: n, className: "inline-flex items-center rounded-lg", style: { background: on ? 'var(--acc3)' : 'var(--panel)', border: '1px solid var(--border)' } },
+                            React.createElement("button", { onClick: () => { comutaOm(t, n); if (on)
+                                    stergeInterval(t, n); }, className: "text-[11px] px-2 py-0.5", style: { color: on ? '#14181C' : 'var(--muted)', fontWeight: on ? 700 : 400 } },
+                                on ? '✓ ' : '+ ',
+                                n.split(' ')[0]),
+                            on && !areIv && (React.createElement("button", { onClick: () => puneInterval(t, n, '10:00', '10:30'), className: "text-[10px] pr-1.5", style: { color: '#14181C', opacity: 0.75 }, title: "Pune ora exact\u0103 pentru el" }, "\uD83D\uDD50")),
+                            on && areIv && (React.createElement("span", { className: "inline-flex items-center gap-0.5 pr-1" },
+                                React.createElement(RoTimePicker, { value: iv.de, onChange: (v) => setCapat(t, n, 'de', v) }),
+                                React.createElement(RoTimePicker, { value: iv.la, onChange: (v) => setCapat(t, n, 'la', v) }),
+                                React.createElement("button", { onClick: () => stergeInterval(t, n), className: "text-[10px]", style: { color: '#14181C', opacity: 0.7 }, title: "Renun\u021B la ora exact\u0103" }, "\u2715")))));
+                    })),
+                    React.createElement("input", { value: t.nota || '', onChange: (e) => update(t.id, 'nota', e.target.value), placeholder: "Ce anume? (ex: am a\u0219teptat zidarii la etajul 4)", className: "w-full rounded-lg px-2 py-1 text-[11px] outline-none", style: inputStyle }),
+                    React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, "\uD83D\uDD50 pune ora exact\u0103 pentru cine n-a stat c\u00E2t ceilal\u021Bi. F\u0103r\u0103 or\u0103, fiecare ia minutele de sus.")))));
+        })))));
 }
 function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, concedii, rapoarte, santiere, onMergiLaSantier, onCancel, onSave }) {
     const modR = mod || 'orar';
@@ -4946,6 +4942,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
     const [tipuriLucrari, setTipuriLucrari] = useState(initial?.tipuriLucrari || []);
     const [lucrariApartamente, setLucrariApartamente] = useState(() => normalizeLucrariApart(initial?.lucrariApartamente || []));
     const [timpNeproductiv, setTimpNeproductiv] = useState(initial?.timpNeproductiv || []);
+    const [timpDeschis, setTimpDeschis] = useState((initial?.timpNeproductiv || []).length > 0);
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const totalOreMin = persoane.reduce((s, p) => s + minuteLucrate(p), 0);
     const ultimulRaport = useMemo(() => {
@@ -5095,9 +5092,16 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
                     etape.map((e) => React.createElement("option", { key: e.id, value: e.id, style: { background: 'var(--panel)' } }, e.nume)))))),
         React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)' } }, "Orele implicite se aplic\u0103 persoanelor noi ad\u0103ugate; fiecare persoan\u0103 \u00EE\u0219i poate ajusta apoi propriul interval."),
         React.createElement(PersonHoursEditor, { persoane: persoane, setPersoane: setPersoane, defaultInceput: oraInceput, defaultSfarsit: oraSfarsit, echipaPermisa: echipaPermisa, concedii: concedii, rapoarte: rapoarte, data: data, raportIds: initial ? (initial._idUnite && initial._idUnite.length ? initial._idUnite : [initial.id]) : [], santiere: santiere, santierId: santierId, onMergiLaSantier: onMergiLaSantier }),
-        React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
-            React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "\u23F3 Timp care nu s-a dus \u00EEn lucrare"),
-            React.createElement(TimpNeproductivEditor, { timpi: timpNeproductiv, setTimpi: setTimpNeproductiv, persoane: persoane })),
+        React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } }, (() => {
+            const totalT = (timpNeproductiv || []).reduce((s2, t) => s2 + minutePierduteRand(t), 0);
+            return (React.createElement(React.Fragment, null,
+                React.createElement("button", { onClick: () => setTimpDeschis((x) => !x), className: "w-full flex items-center gap-2 text-left" },
+                    React.createElement("span", { style: { fontSize: 10, color: 'var(--muted)', transform: timpDeschis ? 'rotate(90deg)' : 'none', display: 'inline-block' } }, "\u25B6"),
+                    React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\u23F3 Timp care nu s-a dus \u00EEn lucrare"),
+                    React.createElement("span", { className: "ml-auto text-xs shrink-0", style: { color: totalT ? 'var(--acc3)' : 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } }, totalT ? `${Math.floor(totalT / 60)}:${String(totalT % 60).padStart(2, '0')} h` : '—')),
+                timpDeschis && (React.createElement("div", { className: "mt-2" },
+                    React.createElement(TimpNeproductivEditor, { timpi: timpNeproductiv, setTimpi: setTimpNeproductiv, persoane: persoane })))));
+        })()),
         ((arePozitii && pozitii && pozitii.length > 0) || pozitiiExecutate.length > 0) && !areStructura && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
             React.createElement(PozitiiExecutateEditor, { pozitiiExecutate: pozitiiExecutate, setPozitiiExecutate: setPozitiiExecutate, pozitii: pozitii }))),
         (areMateriale || materialeFolosite.length > 0) && !areStructura && (React.createElement("div", { className: "mt-4 pt-3", style: { borderTop: '1px solid var(--border)' } },
