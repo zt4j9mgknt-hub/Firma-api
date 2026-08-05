@@ -1091,7 +1091,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.46-legenda2';
+const APP_VERSION = 'v01.47-semnlaatingere';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -11874,6 +11874,75 @@ function citesteLegenda(im, texte, cutie, optiuni) {
     });
     return { articole: articole.filter((a) => a.nume.length >= 2), randuri: randuri.length, intrari: intrari.length, faraSemn };
 }
+function petePeDesen(im, px, py, optiuni) {
+    const o = optiuni || {};
+    const prag = o.prag || PRAG_INCHIS;
+    const latMax = o.latMax || 90, inaltMax = o.inaltMax || 90;
+    const salt = o.salt == null ? 2 : o.salt;
+    const cauta = o.raza == null ? 14 : o.raza;
+    let sx = -1, sy = -1, dmin = 1e9;
+    for (let y = Math.max(0, py - cauta); y <= Math.min(im.inalt - 1, py + cauta); y++) {
+        for (let x = Math.max(0, px - cauta); x <= Math.min(im.lat - 1, px + cauta); x++) {
+            if (im.g[y * im.lat + x] >= prag)
+                continue;
+            const d = (x - px) * (x - px) + (y - py) * (y - py);
+            if (d < dmin) {
+                dmin = d;
+                sx = x;
+                sy = y;
+            }
+        }
+    }
+    if (sx < 0)
+        return null;
+    const vazut = new Set();
+    const coada = [[sx, sy]];
+    vazut.add(sy * im.lat + sx);
+    let minX = sx, maxX = sx, minY = sy, maxY = sy, cati = 0;
+    while (coada.length && cati < (o.maxPixeli || 20000)) {
+        const [x, y] = coada.pop();
+        cati++;
+        if (x < minX)
+            minX = x;
+        if (x > maxX)
+            maxX = x;
+        if (y < minY)
+            minY = y;
+        if (y > maxY)
+            maxY = y;
+        for (let dy = -salt; dy <= salt; dy++)
+            for (let dx = -salt; dx <= salt; dx++) {
+                if (!dx && !dy)
+                    continue;
+                const nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= im.lat || ny >= im.inalt)
+                    continue;
+                if (nx < sx - latMax || nx > sx + latMax || ny < sy - inaltMax || ny > sy + inaltMax)
+                    continue;
+                const k = ny * im.lat + nx;
+                if (vazut.has(k))
+                    continue;
+                if (im.g[k] >= prag)
+                    continue;
+                vazut.add(k);
+                coada.push([nx, ny]);
+            }
+    }
+    if (cati < 6 || Math.max(maxX - minX, maxY - minY) < 4)
+        return null;
+    const pad = 2;
+    const rx = Math.max(0, minX - pad), ry = Math.max(0, minY - pad);
+    return { x: rx, y: ry, w: Math.min(im.lat, maxX + pad + 1) - rx, h: Math.min(im.inalt, maxY + pad + 1) - ry, pixeli: cati };
+}
+function numeLangaSemn(texte, cutie, latPagina) {
+    const y = cutie.y + cutie.h / 2, dr = cutie.x + cutie.w;
+    const potrivite = (texte || []).filter((t) => {
+        const cy = t.y + (t.h || 0) / 2;
+        return t.x >= dr - cutie.h * 0.5 && Math.abs(cy - y) < Math.max(cutie.h, (t.h || 0) * 2) * 0.8;
+    }).sort((a, b) => a.x - b.x);
+    const txt = potrivite.map((t) => String(t.text).trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    return txt ? scurteazaDescrierea(txt) : '';
+}
 function etichetaLangaPin(texte, p, raza) {
     const r = Number(raza) || 0.02;
     const aproape = (texte || []).map((t) => ({ t, d: Math.hypot(t.x + t.w / 2 - p.x, t.y + t.h / 2 - p.y) }))
@@ -12188,11 +12257,15 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         }
         const rez = citesteLegenda(refGri.current, refTexte.current, cutie, { latPagina: refPagina.current.width });
         if (!rez.randuri) {
-            setMesaj('În dreptunghiul ăsta n-am găsit niciun rând de text. Cuprinde și semnele, și explicațiile de lângă ele — sau planșa e o poză scanată și n-are text de citit.');
+            const t = refTexte.current;
+            const mx = (f) => Math.round(Math.min.apply(null, t.map(f)) * 100) / 100;
+            const Mx = (f) => Math.round(Math.max.apply(null, t.map(f)) * 100) / 100;
+            const r2 = (v) => Math.round(v * 100) / 100;
+            setMesaj('Legenda asta n-are text adevărat — literele ei sunt desenate cu linii, cum face AutoCAD-ul cu fonturile de CAD. (Pe restul planșei am ' + t.length + ' bucăți de text, între x ' + mx((z) => z.x) + '–' + Mx((z) => z.x) + ' și y ' + mx((z) => z.y) + '–' + Mx((z) => z.y) + '; tu ai ales x ' + r2(cutie.x) + '–' + r2(cutie.x + cutie.w) + ', y ' + r2(cutie.y) + '–' + r2(cutie.y + cutie.h) + '.) Nu-i nimic: ATINGE pe rând fiecare semn din legendă, tot cu unealta 📖. Îi iau conturul de pe desen și îi pui tu numele în listă.');
             return;
         }
         if (!rez.articole.length) {
-            setMesaj('Am citit ' + rez.randuri + ' rânduri de text, dar n-am putut face din ele niciun aparat. Trimite-mi o poză cu legenda ca s-o potrivesc.');
+            setMesaj('Am citit ' + rez.randuri + ' rânduri de text, dar n-am putut lega niciun semn de ele. Atinge pe rând semnele din legendă, tot cu unealta 📖 — merge sigur.');
             return;
         }
         const nou = articole.slice();
@@ -12214,6 +12287,22 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         setMesaj('Am citit ' + rez.randuri + ' rânduri și am scos ' + rez.articole.length + ' aparate (' + adaugate + ' noi, ' + actualizate + ' completate).'
             + (rez.faraSemn ? ' La ' + rez.faraSemn + ' n-am găsit semn desenat în față — alea sunt de obicei racorduri sau note; le poți șterge.' : '')
             + ' Acum apasă „Numără tot din legendă".');
+    };
+    const invataUnSemn = (pl) => {
+        if (!refGri.current || !refPagina.current)
+            return;
+        const lat = refPagina.current.width;
+        const pata = petePeDesen(refGri.current, Math.round(pl.x * lat), Math.round(pl.y * lat), {});
+        if (!pata) {
+            setMesaj('N-am găsit niciun desen sub deget. Atinge chiar pe semn, sau mărește planșa cu două degete.');
+            return;
+        }
+        const sablon = { pagina, x: pata.x / lat, y: pata.y / lat, w: pata.w / lat, h: pata.h / lat };
+        const nume = numeLangaSemn(refTexte.current, sablon, lat) || ('Semn ' + (articole.filter((a) => a.sablon).length + 1));
+        const id = uid();
+        onSchimb({ articole: [...articole, { id, nume, um: 'buc', pretUnitar: 0, culoare: CULORI_ARTICOL[articole.length % CULORI_ARTICOL.length], sablon }] });
+        setArticolSel(id);
+        setMesaj('Am învățat semnul „' + nume + '" (' + Math.round(pata.w) + '×' + Math.round(pata.h) + ' px). Atinge și celelalte semne din legendă, apoi apasă „Numără tot din legendă". Numele îl poți schimba în listă.');
     };
     const numaraDinLegenda = () => {
         if (!refGri.current || !refPagina.current)
@@ -12501,12 +12590,26 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 try {
                     const txt = await pg.getTextContent();
                     const it = txt.items || [];
+                    const inaltPg = cv.height;
+                    const laDesen = (x) => {
+                        let tr = null;
+                        try {
+                            if (lib.Util && lib.Util.transform)
+                                tr = lib.Util.transform(vp.transform, x.transform);
+                        }
+                        catch (_) { }
+                        if (!tr || !isFinite(tr[4]) || !isFinite(tr[5])) {
+                            const m = x.transform || [1, 0, 0, 1, 0, 0];
+                            tr = [m[0] * sc, m[1] * sc, m[2] * sc, m[3] * sc, m[4] * sc, inaltPg - m[5] * sc];
+                        }
+                        return tr;
+                    };
                     refTexte.current = it.map((x) => {
-                        const tr = lib.Util.transform(vp.transform, x.transform);
-                        const h = Math.hypot(tr[2], tr[3]) || (Number(x.height) || 10) * sc;
+                        const tr = laDesen(x);
+                        const h = Math.hypot(tr[2], tr[3]) || (Number(x.height) || 10) * sc || 10;
                         const w = (Number(x.width) || 0) * sc;
                         return { text: x.str, x: tr[4] / cv.width, y: (tr[5] - h) / cv.width, w: w / cv.width, h: h / cv.width };
-                    }).filter((t) => String(t.text || '').trim());
+                    }).filter((t) => String(t.text || '').trim() && isFinite(t.x) && isFinite(t.y) && isFinite(t.h));
                     const d = scaraDinText(it.map((x) => x.str).join(' '));
                     setScaraGasita(d);
                     if (d && !Number(ante.scaraNumitor))
@@ -12626,6 +12729,16 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             ctx.fillStyle = '#8a1f1f';
             ctx.fillText(et, mx - w / 2 + 4, my - 5);
         });
+        if (mod === 'legenda' && refTexte.current && refTexte.current.length) {
+            ctx.strokeStyle = '#2E8BD166';
+            ctx.lineWidth = 1;
+            refTexte.current.forEach((t) => {
+                const a = laEcran(t.x, t.y), b = laEcran(t.x + (t.w || 0), t.y + (t.h || 0));
+                if (b.x < -20 || a.x > c.width + 20 || b.y < -20 || a.y > c.height + 20)
+                    return;
+                ctx.strokeRect(a.x, a.y, Math.max(2, b.x - a.x), Math.max(2, b.y - a.y));
+            });
+        }
         if (ante.legendaCutie && (ante.legendaCutie.pagina || 1) === pagina) {
             const z = ante.legendaCutie;
             const a = laEcran(z.x, z.y), b = laEcran(z.x + z.w, z.y + z.h);
@@ -12783,7 +12896,11 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             return;
         }
         if (g.tip === 'legenda') {
-            inchideLegenda();
+            if (g.mutat)
+                inchideLegenda();
+            else
+                invataUnSemn(g.start);
+            setTemp(null);
             return;
         }
         if (g.tip === 'sablon') {
@@ -12947,7 +13064,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         ['calibrare', '📏', 'Scara'],
         ['cota', '📐', 'Cote'],
     ];
-    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : id === 'cota' ? 'Atinge o cotă ca s-o măsoare din partea cealaltă.' : id === 'legenda' ? 'Trage un dreptunghi peste toată legenda — și semnele, și textul.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : id === 'cota' ? 'Atinge o cotă ca s-o măsoare din partea cealaltă.' : id === 'legenda' ? 'Atinge pe rând fiecare semn din legendă. Sau trage un dreptunghi peste toată legenda, dacă planșa are text adevărat.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
         icon,
         " ",
         eticheta));
