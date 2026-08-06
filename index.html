@@ -1097,7 +1097,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.55-timp-pierdut';
+const APP_VERSION = 'v01.56-timp-cu-ceas';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -4930,6 +4930,11 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
     const [sel, setSel] = useState([]);
     const [notaNoua, setNotaNoua] = useState('');
     const [deschis, setDeschis] = useState(null);
+    const [cuCeas, setCuCeas] = useState(false);
+    const [ceasDe, setCeasDe] = useState('10:00');
+    const [ceasLa, setCeasLa] = useState('10:30');
+    const minuteDinCeas = cuCeas ? (calcOreDinInterval(ceasDe, ceasLa) || 0) : 0;
+    const minuteAlese = cuCeas ? minuteDinCeas : (Number(minute) || 0);
     const totiBifati = numePersoane.length > 0 && sel.length === numePersoane.length;
     const comutaSel = (n) => setSel((s) => s.includes(n) ? s.filter((x) => x !== n) : [...s, n]);
     const update = (id, camp, val) => setTimpi(lista.map((t) => t.id === id ? { ...t, [camp]: val } : t));
@@ -4937,11 +4942,13 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
     const adauga = () => {
         if (!sel.length)
             return;
-        setTimpi([...lista, { id: uid(), categorie: cat, minute: Number(minute) || 0, persoane: sel.slice(), intervale: {}, nota: notaNoua.trim() }]);
+        const intervale = cuCeas && minuteDinCeas > 0 ? Object.fromEntries(sel.map((n) => [n, { de: ceasDe, la: ceasLa }])) : {};
+        setTimpi([...lista, { id: uid(), categorie: cat, minute: minuteAlese, persoane: sel.slice(), intervale, nota: notaNoua.trim() }]);
         setSel([]);
         setNotaNoua('');
         setMinute(30);
         setCat(CATEGORII_TIMP[0].id);
+        setCuCeas(false);
     };
     const comutaOm = (t, nume) => {
         const cur = Array.isArray(t.persoane) ? t.persoane : [];
@@ -4978,9 +4985,21 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
                     n.split(' ')[0]))),
                 numePersoane.length > 1 && (React.createElement("button", { type: "button", onClick: () => setSel(totiBifati ? [] : numePersoane.slice()), className: "text-xs px-3 py-2 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px dashed var(--acc1)' } }, totiBifati ? 'Niciunul' : '👥 Toată echipa'))),
             React.createElement("div", { className: "text-[11px] font-semibold", style: { color: 'var(--muted)' } }, "3 \u00B7 C\u00E2t a durat, de om?"),
-            pastileDurata(minute, setMinute),
+            React.createElement("div", { className: "flex items-center gap-1.5" },
+                React.createElement("button", { type: "button", onClick: () => setCuCeas(false), className: "text-xs px-3 py-2 rounded-lg font-semibold", style: { color: !cuCeas ? '#14181C' : 'var(--muted)', background: !cuCeas ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid ' + (!cuCeas ? 'var(--acc1)' : 'var(--border)') } }, "\u23F1 C\u00E2t a durat"),
+                React.createElement("button", { type: "button", onClick: () => setCuCeas(true), className: "text-xs px-3 py-2 rounded-lg font-semibold", style: { color: cuCeas ? '#14181C' : 'var(--muted)', background: cuCeas ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid ' + (cuCeas ? 'var(--acc1)' : 'var(--border)') } }, "\uD83D\uDD50 De la \u2014 p\u00E2n\u0103 la")),
+            !cuCeas ? pastileDurata(minute, setMinute) : (React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" },
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "De la"),
+                React.createElement(RoTimePicker, { value: ceasDe, onChange: setCeasDe }),
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "p\u00E2n\u0103 la"),
+                React.createElement(RoTimePicker, { value: ceasLa, onChange: setCeasLa }),
+                React.createElement("span", { className: "text-[11px] font-semibold", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } },
+                    "= ",
+                    hm(minuteDinCeas),
+                    " h de om"))),
             React.createElement("input", { value: notaNoua, onChange: (e) => setNotaNoua(e.target.value), placeholder: "Ce anume? (ex: am a\u0219teptat zidarii la etajul 4)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
-            React.createElement("button", { type: "button", onClick: adauga, disabled: !sel.length, className: "w-full text-sm px-3 py-2.5 rounded-lg font-bold disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc3)' } }, sel.length ? `+ Trece ${hm((Number(minute) || 0) * sel.length)} h pierdute (${sel.length} ${sel.length === 1 ? 'om' : 'oameni'} × ${minute} min)` : '+ Adaugă — întâi bifează cine')),
+            React.createElement("button", { type: "button", onClick: adauga, disabled: !sel.length || minuteAlese <= 0, className: "w-full text-sm px-3 py-2.5 rounded-lg font-bold disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc3)' } }, !sel.length ? '+ Adaugă — întâi bifează cine'
+                : `+ Trece ${hm(minuteAlese * sel.length)} h pierdute (${sel.length} ${sel.length === 1 ? 'om' : 'oameni'} ${cuCeas ? `· ${ceasDe}–${ceasLa}` : `× ${minute} min`})`)),
         lista.length === 0 ? (React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Drumuri, aprovizionat, a\u0219teptat frontul, discu\u021Bii, \u00EEntors dup\u0103 o scul\u0103. Nu e repro\u0219 \u2014 e harta locurilor unde se poate organiza altfel.")) : (React.createElement("div", { className: "space-y-1" }, lista.map((t) => {
             const pers = (t.persoane || []).filter(Boolean);
             const desch = deschis === t.id;
