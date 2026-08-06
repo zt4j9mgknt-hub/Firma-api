@@ -40,12 +40,13 @@
   /* ===== Temă Zi/Noapte prin variabile. Noapte = implicit; Zi = body[data-theme="zi"]. ===== */
   :root {
     --appbg:#0B1F33; --panel:#1B2127; --panel2:#171C21; --panelA:#20272e; --border:#2A323B;
-    --text:#E9E7E2; --muted:#8B93A0; --muted2:#5C6570; --muted1:#B8BFC9;
+    /* muted2 ridicat de la #5C6570: pe schelă, în soare, textele mici dispăreau. */
+    --text:#E9E7E2; --muted:#8B93A0; --muted2:#7A8494; --muted1:#B8BFC9;
     --acc1:#2E8BD1; --acc2:#4CAF7D; --acc3:#E9A23B; --acc4:#E05252;
   }
   body[data-theme="zi"] {
     --appbg:#E9EFF6; --panel:#FFFFFF; --panel2:#F1F4FA; --panelA:#E6EDF8; --border:#DCE3EE;
-    --text:#1A2230; --muted:#5B6675; --muted2:#8A94A2; --muted1:#3A4655;
+    --text:#1A2230; --muted:#5B6675; --muted2:#6E7A8A; --muted1:#3A4655;
     --acc1:#2578B8; --acc2:#35986A; --acc3:#B87714; --acc4:#CC3F3A;
   }
   body { margin:0; background:var(--appbg); font-family:'Inter', sans-serif; transition:background .45s ease; }
@@ -53,14 +54,17 @@
      minim 40px înălțime — standardul pentru degete. Pe laptop nimic nu se schimbă.
      O singură regulă, în loc de vânat sute de butoane py-0.5 prin toată aplicația. */
   @media (pointer: coarse) {
-    button { min-height: 40px; min-width: 34px; }
+    button:not(.btnMic) { min-height: 40px; min-width: 34px; }
+    /* .btnMic = butoane care TREBUIE să rămână mici: celulele calendarului, pastile
+       de filtru, bifele pătrate — altfel regula de degete le deformează căsuțele. */
   }
   input::placeholder { color:var(--muted2); }
   select { color-scheme: dark; }
   body[data-theme="zi"] select { color-scheme: light; }
   /* ===== Raportul zilnic pe pagină proprie: mai mult aer, câmpuri mai mari ===== */
   .raportPagina { max-width:640px; margin:0 auto; padding-bottom:48px; }
-  .raportPagina input, .raportPagina select, .raportPagina textarea { min-height:44px; font-size:15px; }
+  /* 16px, nu 15: sub 16px, iPhone-ul face zoom singur la fiecare atingere de câmp. */
+  .raportPagina input, .raportPagina select, .raportPagina textarea { min-height:44px; font-size:16px; }
   .raportPagina textarea { min-height:96px; line-height:1.6; }
   /* ===== ELEMENTELE DIN MACHETĂ =====
      Etichete de secțiune, pastile de stare, iconițe în pătrat, pastilă plutitoare. */
@@ -1091,13 +1095,40 @@ if (typeof window !== 'undefined') {
     setInterval(() => { if (navigator.onLine && getPending().length)
         syncQueue(); }, 15000);
     setTimeout(() => { syncQueue(); }, 3000);
+    setTimeout(() => {
+        try {
+            const aziC = new Date();
+            const p2 = (x) => String(x).padStart(2, '0');
+            const aziStr = aziC.getFullYear() + '-' + p2(aziC.getMonth() + 1) + '-' + p2(aziC.getDate());
+            const prag = Date.now() - 14 * 24 * 3600 * 1000;
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+                const k = localStorage.key(i);
+                if (!k)
+                    continue;
+                if (k.startsWith('ciornaRaport_')) {
+                    try {
+                        const c = JSON.parse(localStorage.getItem(k) || 'null');
+                        if (!c || !c.cand || c.cand < prag)
+                            localStorage.removeItem(k);
+                    }
+                    catch (_) {
+                        localStorage.removeItem(k);
+                    }
+                }
+                else if (k.startsWith('restanteAnunt_') && !k.endsWith(aziStr)) {
+                    localStorage.removeItem(k);
+                }
+            }
+        }
+        catch (_) { }
+    }, 5000);
 }
 const ROLES = [
     { id: 'Manager', icon: '👔' },
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.56-timp-cu-ceas';
+const APP_VERSION = 'v01.57-reparatii';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -1540,14 +1571,14 @@ function RoCalendarPicker({ value, onChange }) {
             React.createElement("div", { onClick: () => setOpen(false), style: { position: 'fixed', inset: 0, zIndex: 40 } }),
             React.createElement("div", { style: { position: 'absolute', top: '110%', left: 0, zIndex: 50, width: 230, background: 'var(--panel)', border: '1px solid var(--border)' }, className: "rounded-xl p-3" },
                 React.createElement("div", { className: "flex items-center justify-between mb-2" },
-                    React.createElement("button", { onClick: prevMonth, style: { color: 'var(--muted)' } }, "\u2039"),
+                    React.createElement("button", { onClick: prevMonth, className: "btnMic px-2 py-1", style: { color: 'var(--muted)' } }, "\u2039"),
                     React.createElement("span", { className: "text-sm", style: { color: 'var(--text)' } },
                         LUNI_RO[viewMonth],
                         " ",
                         viewYear),
-                    React.createElement("button", { onClick: nextMonth, style: { color: 'var(--muted)' } }, "\u203A")),
+                    React.createElement("button", { onClick: nextMonth, className: "btnMic px-2 py-1", style: { color: 'var(--muted)' } }, "\u203A")),
                 React.createElement("div", { className: "grid grid-cols-7 gap-1 mb-1" }, ZILE_RO.map((z) => React.createElement("div", { key: z, className: "text-center text-[10px]", style: { color: 'var(--muted2)' } }, z))),
-                React.createElement("div", { className: "grid grid-cols-7 gap-1" }, cells.map((d, i) => d ? (React.createElement("button", { key: i, onClick: () => selectDay(d), className: "text-xs rounded py-1", style: {
+                React.createElement("div", { className: "grid grid-cols-7 gap-1" }, cells.map((d, i) => d ? (React.createElement("button", { key: i, onClick: () => selectDay(d), className: "btnMic text-xs rounded py-1", style: {
                         color: value === cellDate(d) ? '#14181C' : 'var(--text)',
                         background: value === cellDate(d) ? 'var(--acc1)' : 'transparent',
                         border: todayStr === cellDate(d) ? '1px solid #2E8BD1' : '1px solid transparent',
@@ -2113,6 +2144,7 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
             React.createElement("div", { className: "flex justify-end gap-2 mt-4" },
                 React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"),
                 React.createElement("button", { onClick: () => onSave({
+                        ...(initial || {}),
                         id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0, 10),
                         clientId, items, tva: Number(tva), status: initial?.status || 'Ciornă',
                         nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, santierId, santierNume,
@@ -3415,7 +3447,7 @@ function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklis
     const Bar = ({ p, col }) => (React.createElement("div", { style: barStyle(p) },
         React.createElement("div", { style: { height: '100%', width: `${p}%`, background: col, transition: 'width .2s' } })));
     const ItemRow = ({ it }) => (React.createElement("div", { className: "flex items-start gap-2 px-2.5 py-2 rounded-lg", style: { background: 'var(--panel2)' } },
-        React.createElement("button", { onClick: () => toggleBifat(it.id), className: "shrink-0 mt-0.5", style: { width: 20, height: 20, borderRadius: 6, border: '1px solid ' + (it.bifat ? 'var(--acc2)' : '#3A424C'), background: it.bifat ? 'var(--acc2)' : 'transparent', color: '#14181C', fontSize: 13, fontWeight: 800, lineHeight: '18px', textAlign: 'center' } }, it.bifat ? '✓' : ''),
+        React.createElement("button", { onClick: () => toggleBifat(it.id), className: "btnMic shrink-0 mt-0.5", style: { width: 20, height: 20, borderRadius: 6, border: '1px solid ' + (it.bifat ? 'var(--acc2)' : '#3A424C'), background: it.bifat ? 'var(--acc2)' : 'transparent', color: '#14181C', fontSize: 13, fontWeight: 800, lineHeight: '18px', textAlign: 'center' } }, it.bifat ? '✓' : ''),
         React.createElement("div", { className: "flex-1 min-w-0" },
             React.createElement("div", { className: "text-xs", style: { color: it.bifat ? 'var(--muted)' : 'var(--text)', textDecoration: it.bifat ? 'line-through' : 'none' } },
                 it.text,
@@ -3584,6 +3616,8 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     const [cerereShowAll, setCerereShowAll] = useState(false);
     const normalizeSearchLocal = (s) => String(s || '').toLowerCase().replace(/[\s,.\-]/g, '');
     const cereriAici = cereriSantier.filter((c) => c.santierId === santierId);
+    const refCereri = useRef(cereriSantier);
+    refCereri.current = cereriSantier;
     const adaugaInLista = async () => {
         if (!cerereForm.denumire.trim())
             return;
@@ -3614,7 +3648,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
                 setCerereDraft((prev) => prev.map((x) => x.key === inDraft.key ? { ...x, cantitate: (Number(x.cantitate) || 0) + cant } : x));
             }
             else {
-                const next = cereriSantier.map((c) => c.id === inTrimise.id ? { ...c, cantitate: (Number(c.cantitate) || 0) + cant } : c);
+                const next = refCereri.current.map((c) => c.id === inTrimise.id ? { ...c, cantitate: (Number(c.cantitate) || 0) + cant } : c);
                 setCereriSantier(next);
                 persist('cereriSantier', next);
             }
@@ -3658,7 +3692,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         const grupId = uid();
         const data = new Date().toISOString().slice(0, 10);
         const noi = lista.map((d) => ({ id: uid(), grupId, santierId, denumire: d.denumire, cantitate: d.cantitate, um: d.um, data, status: 'Cerută', cerutDe: currentUser?.nume || '', cerutId: currentUser?.id || '' }));
-        const next = [...cereriSantier, ...noi];
+        const next = [...refCereri.current, ...noi];
         setCereriSantier(next);
         persist('cereriSantier', next);
         setCerereDraft([]);
@@ -3670,8 +3704,19 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
             : `${noi.length} materiale: ` + noi.slice(0, 3).map((x) => `${x.denumire} (${x.cantitate} ${x.um})`).join(', ') + (noi.length > 3 ? ` +${noi.length - 3}` : '');
         notifica('manageri', { title: noi.length === 1 ? 'Cerere de material' : 'Cerere de materiale', body: `${rezumat} — ${santierNume || 'șantier'} (${currentUser?.nume || ''}).`, tag: 'cerere-' + grupId }, currentUser?.id);
     };
-    const delCerere = (id) => { if (!window.confirm('Ștergi definitiv această cerere de materiale?'))
-        return; const next = cereriSantier.filter((c) => c.id !== id); setCereriSantier(next); persist('cereriSantier', next); };
+    const delCerere = (id) => {
+        const c = cereriSantier.find((x) => x.id === id);
+        const esteMgr = currentUser?.rol === 'Manager';
+        if (c && !esteMgr && c.cerutId && c.cerutId !== currentUser?.id) {
+            window.alert('Cererea asta e a lui ' + (c.cerutDe || 'alt coleg') + ' — doar el sau managerul o poate șterge.');
+            return;
+        }
+        if (!window.confirm('Ștergi definitiv această cerere de materiale?'))
+            return;
+        const next = refCereri.current.filter((x) => x.id !== id);
+        setCereriSantier(next);
+        persist('cereriSantier', next);
+    };
     const setCerereStatus = (id, status) => {
         const c = cereriSantier.find((x) => x.id === id);
         const next = cereriSantier.map((x) => x.id === id ? { ...x, status } : x);
@@ -3831,7 +3876,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     const cereriFiltrate = cereriAici.filter((c) => {
         if (cerereDataFiltru && c.data !== cerereDataFiltru)
             return false;
-        if (cerereFilter.trim() && !seCauta(`${c.denumire || ''} ${c.cantitate || ''} ${c.um || ''} ${c.status || ''} ${c.cerutNume || ''} ${c.data || ''}`, cerereFilter))
+        if (cerereFilter.trim() && !seCauta(`${c.denumire || ''} ${c.cantitate || ''} ${c.um || ''} ${c.status || ''} ${c.cerutDe || ''} ${c.data || ''}`, cerereFilter))
             return false;
         return true;
     });
@@ -5003,8 +5048,11 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
         lista.length === 0 ? (React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Drumuri, aprovizionat, a\u0219teptat frontul, discu\u021Bii, \u00EEntors dup\u0103 o scul\u0103. Nu e repro\u0219 \u2014 e harta locurilor unde se poate organiza altfel.")) : (React.createElement("div", { className: "space-y-1" }, lista.map((t) => {
             const pers = (t.persoane || []).filter(Boolean);
             const desch = deschis === t.id;
-            const ivComun = pers.length ? ((t.intervale || {})[pers[0]] || {}) : {};
-            const areOra = !!(ivComun.de && ivComun.la);
+            const ivuri = pers.map((n) => ({ n, iv: (t.intervale || {})[n] })).filter((x) => x.iv && x.iv.de && x.iv.la);
+            const ivComun = ivuri.length ? ivuri[0].iv : {};
+            const toateLaFel = ivuri.length > 0 && ivuri.length === pers.length && ivuri.every((x) => x.iv.de === ivComun.de && x.iv.la === ivComun.la);
+            const oreDiferite = ivuri.length > 0 && !toateLaFel;
+            const areOra = toateLaFel;
             return (React.createElement("div", { key: t.id, className: "rounded-lg", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
                 React.createElement("div", { className: "flex items-center gap-1.5 px-2 py-1.5" },
                     React.createElement("button", { onClick: () => setDeschis(desch ? null : t.id), className: "min-w-0 flex-1 text-left flex items-center gap-1.5" },
@@ -5031,8 +5079,12 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
                             on ? '✓ ' : '+ ',
                             n.split(' ')[0]));
                     })),
-                    !areOra && pastileDurata(t.minute, (v) => update(t.id, 'minute', v)),
-                    React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, !areOra ? (React.createElement("button", { type: "button", onClick: () => oraTuturor(t, '10:00', '10:30'), className: "text-[11px] px-2.5 py-2 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDD50 \u0218tiu \u0219i ora exact\u0103 (de la \u2014 p\u00E2n\u0103 la)")) : (React.createElement(React.Fragment, null,
+                    !areOra && !oreDiferite && pastileDurata(t.minute, (v) => update(t.id, 'minute', v)),
+                    oreDiferite && (React.createElement("div", { className: "text-[11px] rounded-lg px-2 py-1.5", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--muted)' } },
+                        "\uD83D\uDD50 R\u00E2ndul \u0103sta are ore diferite pe om: ",
+                        ivuri.map((x) => `${x.n.split(' ')[0]} ${x.iv.de}–${x.iv.la}`).join(' · '),
+                        React.createElement("button", { type: "button", onClick: () => faraOra(t), className: "ml-2 px-2 py-1 rounded", style: { color: 'var(--acc4)' } }, "\u2715 \u0218terge orele"))),
+                    React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, oreDiferite ? null : !areOra ? (React.createElement("button", { type: "button", onClick: () => oraTuturor(t, '10:00', '10:30'), className: "text-[11px] px-2.5 py-2 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDD50 \u0218tiu \u0219i ora exact\u0103 (de la \u2014 p\u00E2n\u0103 la)")) : (React.createElement(React.Fragment, null,
                         React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "\uD83D\uDD50 De la"),
                         React.createElement(RoTimePicker, { value: ivComun.de, onChange: (v) => oraTuturor(t, v, ivComun.la) }),
                         React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "p\u00E2n\u0103 la"),
@@ -5063,50 +5115,71 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane }) {
                     " h"))))));
 }
 const stivaInapoi = [];
-let inapoiFacutDeCod = false;
-if (typeof window !== 'undefined')
+let inZbor = 0;
+const dupaZbor = [];
+function inscrieInapoi(inchide) {
+    const intrare = { inchide, scoasa: false };
+    stivaInapoi.push(intrare);
+    const pune = () => { try {
+        history.pushState({ pagina: stivaInapoi.length }, '');
+    }
+    catch (_) { } };
+    if (inZbor === 0)
+        pune();
+    else
+        dupaZbor.push(pune);
+    return () => {
+        const i = stivaInapoi.indexOf(intrare);
+        if (i >= 0)
+            stivaInapoi.splice(i, 1);
+        if (!intrare.scoasa) {
+            inZbor++;
+            try {
+                history.back();
+            }
+            catch (_) { }
+        }
+    };
+}
+if (typeof window !== 'undefined') {
     window.addEventListener('popstate', () => {
-        if (inapoiFacutDeCod) {
-            inapoiFacutDeCod = false;
+        if (inZbor > 0) {
+            inZbor--;
+            if (inZbor === 0)
+                while (dupaZbor.length)
+                    dupaZbor.shift()();
             return;
         }
         const sus = stivaInapoi[stivaInapoi.length - 1];
         if (!sus)
             return;
+        sus.scoasa = true;
         const inchis = sus.inchide();
         if (inchis === false) {
-            try {
+            sus.scoasa = false;
+            const pune = () => { try {
                 history.pushState({ pagina: stivaInapoi.length }, '');
             }
-            catch (_) { }
+            catch (_) { } };
+            if (inZbor === 0)
+                pune();
+            else
+                dupaZbor.push(pune);
         }
-        else
-            sus.scoasa = true;
     });
+    try {
+        if (history.state && history.state.pagina)
+            history.replaceState(null, '');
+    }
+    catch (_) { }
+}
 function useInapoiTelefon(activ, laInchidere) {
     const ref = useRef(laInchidere);
     ref.current = laInchidere;
     useEffect(() => {
         if (!activ)
             return;
-        const intrare = { inchide: () => (ref.current ? ref.current() : true), scoasa: false };
-        stivaInapoi.push(intrare);
-        try {
-            history.pushState({ pagina: stivaInapoi.length }, '');
-        }
-        catch (_) { }
-        return () => {
-            const i = stivaInapoi.indexOf(intrare);
-            if (i >= 0)
-                stivaInapoi.splice(i, 1);
-            if (!intrare.scoasa) {
-                inapoiFacutDeCod = true;
-                try {
-                    history.back();
-                }
-                catch (_) { }
-            }
-        };
+        return inscrieInapoi(() => (ref.current ? ref.current() : true));
     }, [activ]);
 }
 function arataSalvat(text) {
@@ -5123,10 +5196,13 @@ function arataSalvat(text) {
 function alege({ titlu, text, variante }) {
     return new Promise((rezolva) => {
         const fundal = document.createElement('div');
-        fundal.style.cssText = 'position:fixed;inset:0;z-index:9997;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px';
+        fundal.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px';
         const cutie = document.createElement('div');
         cutie.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:340px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.7)';
-        const inchide = (val) => { fundal.remove(); rezolva(val); };
+        let scoate = null;
+        const inchide = (val) => { fundal.remove(); if (scoate)
+            scoate(); rezolva(val); };
+        scoate = inscrieInapoi(() => { inchide(null); return true; });
         const h = document.createElement('div');
         h.textContent = titlu || 'Alege';
         h.style.cssText = 'color:var(--text);font:700 15px Inter,sans-serif;margin-bottom:6px';
@@ -5160,13 +5236,16 @@ function alege({ titlu, text, variante }) {
         document.body.appendChild(fundal);
     });
 }
-function cereText({ titlu, text, valoare, tipNumar, buton, exemplu }) {
+function cereText({ titlu, text, valoare, tipNumar, buton, exemplu, multiline }) {
     return new Promise((rezolva) => {
         const fundal = document.createElement('div');
-        fundal.style.cssText = 'position:fixed;inset:0;z-index:9997;background:rgba(0,0,0,.72);display:flex;align-items:flex-start;justify-content:center;padding:12vh 20px 20px';
+        fundal.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.72);display:flex;align-items:flex-start;justify-content:center;padding:12vh 20px 20px';
         const cutie = document.createElement('div');
         cutie.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;max-width:340px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.7)';
-        const inchide = (val) => { fundal.remove(); rezolva(val); };
+        let scoate = null;
+        const inchide = (val) => { fundal.remove(); if (scoate)
+            scoate(); rezolva(val); };
+        scoate = inscrieInapoi(() => { inchide(null); return true; });
         const h = document.createElement('div');
         h.textContent = titlu || '';
         h.style.cssText = 'color:var(--text);font:700 15px Inter,sans-serif;margin-bottom:6px';
@@ -5177,13 +5256,15 @@ function cereText({ titlu, text, valoare, tipNumar, buton, exemplu }) {
             p.style.cssText = 'color:var(--muted);font:400 13px Inter,sans-serif;line-height:1.55;margin-bottom:12px;white-space:pre-wrap';
             cutie.appendChild(p);
         }
-        const inp = document.createElement('input');
+        const inp = document.createElement(multiline ? 'textarea' : 'input');
         inp.value = valoare || '';
         if (exemplu)
             inp.placeholder = exemplu;
         if (tipNumar)
             inp.inputMode = 'decimal';
-        inp.style.cssText = 'width:100%;box-sizing:border-box;min-height:48px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font:500 16px Inter,sans-serif;outline:none;margin-bottom:12px';
+        if (multiline)
+            inp.rows = 6;
+        inp.style.cssText = 'width:100%;box-sizing:border-box;min-height:48px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font:500 16px Inter,sans-serif;outline:none;margin-bottom:12px' + (multiline ? ';resize:vertical;line-height:1.5' : '');
         cutie.appendChild(inp);
         const ok = document.createElement('button');
         ok.textContent = buton || '✓ Gata';
@@ -5242,7 +5323,13 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
     const [lucrariApartamente, setLucrariApartamente] = useState(() => normalizeLucrariApart(initial?.lucrariApartamente || []));
     const [timpNeproductiv, setTimpNeproductiv] = useState(initial?.timpNeproductiv || []);
     const [sectiuneFocus, setSectiuneFocus] = useState(null);
-    const cheiaCiorna = 'ciornaRaport_' + (santierId || '') + '_' + (initial?.id || 'nou');
+    const userCiorna = (() => { try {
+        return JSON.parse(localStorage.getItem('currentUser') || '{}').id || '';
+    }
+    catch (_) {
+        return '';
+    } })();
+    const cheiaCiorna = 'ciornaRaport_' + userCiorna + '_' + (santierId || '') + '_' + (initial?.id || 'nou');
     const [ciorna, setCiorna] = useState(() => {
         try {
             const c = JSON.parse(localStorage.getItem(cheiaCiorna) || 'null');
@@ -5258,6 +5345,8 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
         refPozaStart.current = JSON.stringify(stareRaport());
     const eModificat = () => JSON.stringify(stareRaport()) !== refPozaStart.current;
     useEffect(() => {
+        if (ciorna)
+            return;
         const t = setTimeout(() => {
             try {
                 if (eModificat())
@@ -5266,12 +5355,14 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
             catch (_) { }
         }, 700);
         return () => clearTimeout(t);
-    }, [data, oraInceput, oraSfarsit, etapaId, persoane, explicatii, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, timpNeproductiv]);
+    }, [data, oraInceput, oraSfarsit, etapaId, persoane, explicatii, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, timpNeproductiv, ciorna]);
     const stergeCiorna = () => { try {
         localStorage.removeItem(cheiaCiorna);
     }
     catch (_) { } };
     const continuaCiorna = () => {
+        if (eModificat() && !window.confirm('Pui ciorna în locul a ce ai scris acum în raport?'))
+            return;
         const s = (ciorna && ciorna.stare) || {};
         if (s.data)
             setData(s.data);
@@ -5421,7 +5512,7 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
     };
     return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement(AIRaportPanel, { echipaNume: echipaNume, materialeSugestii: (materials || []).map((m) => m.denumire).filter(Boolean), structura: structura, onAplica: aplicaAI }),
-        ciorna && !eModificat() && (React.createElement("div", { className: "flex items-center gap-2 mb-3 rounded-xl px-3 py-2.5 flex-wrap", style: { background: '#E9A23B15', border: '1px solid #E9A23B66' } },
+        ciorna && (React.createElement("div", { className: "flex items-center gap-2 mb-3 rounded-xl px-3 py-2.5 flex-wrap", style: { background: '#E9A23B15', border: '1px solid #E9A23B66' } },
             React.createElement("span", { className: "text-xs flex-1 min-w-0", style: { color: 'var(--text)' } },
                 React.createElement("b", null, "\uD83D\uDCDD Ai un raport \u00EEnceput"),
                 ciorna.cand ? ' (' + new Date(ciorna.cand).toLocaleDateString('ro-RO') + ', ' + new Date(ciorna.cand).toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' }) + ')' : '',
@@ -5581,6 +5672,8 @@ function RaportForm({ initial, etape, echipaPermisa, echipaNume, materials, mate
                     }, className: "px-4 py-2.5 rounded-xl text-base font-bold shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCBE Salveaz\u0103 raportul")))));
 }
 function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack, rapoarte, materials, materialeLista }) {
+    const refStructura = useRef(structuraSantier);
+    refStructura.current = structuraSantier;
     const normM = (s) => String(s == null ? '' : s).toLowerCase().replace(/\s+/g, ' ').trim();
     const optiuniMat = (() => {
         const seen = new Set(), out = [];
@@ -5692,7 +5785,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
         const nume = await cereText({ titlu: 'Redenumește etajul', valoare: numeVechi, buton: '✓ Redenumește' });
         if (nume === null || !nume.trim())
             return;
-        save(structuraSantier.map((e) => e.id === id ? { ...e, nume: nume.trim() } : e));
+        save(refStructura.current.map((e) => e.id === id ? { ...e, nume: nume.trim() } : e));
     };
     const addApart = (etajId) => {
         const nume = (apartNou[etajId] || '').trim();
@@ -5707,7 +5800,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
         const nume = await cereText({ titlu: 'Redenumește apartamentul', valoare: numeVechi, buton: '✓ Redenumește' });
         if (nume === null || !nume.trim())
             return;
-        save(structuraSantier.map((e) => e.id === etajId ? { ...e, apartamente: (e.apartamente || []).map((a) => a.id === apId ? { ...a, nume: nume.trim() } : a) } : e));
+        save(refStructura.current.map((e) => e.id === etajId ? { ...e, apartamente: (e.apartamente || []).map((a) => a.id === apId ? { ...a, nume: nume.trim() } : a) } : e));
     };
     const addMat = (etajId, apId) => {
         const f = getForm(apId);
@@ -7193,7 +7286,7 @@ function NormativTab({ normativPdf, setNormativPdf, normativIndexFile, setNormat
     if (viewPage != null && arePdf) {
         return (React.createElement("div", { ref: fsRef, style: { position: 'fixed', inset: 0, zIndex: 200, background: '#0c0f13', display: 'flex', flexDirection: 'column' } }, React.createElement(NormativViewer, { pdfUrl: blobViewUrl(normativPdf.pathname), downloadUrl: normativPdf.url || blobViewUrl(normativPdf.pathname), startPage: viewPage, titlu: 'Normativ I7 — pag. ' + viewPage, onClose: () => setViewPage(null), onFull: () => toggleFullscreen(fsRef.current) })));
     }
-    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDCD8 Normativ I7"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Normativ I7-2011 pentru instala\u021Bii electrice, cu Modific\u0103rile \u0219i complet\u0103rile din 2023 incluse la final (paginile 475\u2013491, marcate cu \u26A0 2023). Scrii ce cau\u021Bi, \u00EE\u021Bi arat\u0103 paginile potrivite \u0219i le deschizi direct."), !arePdf && (React.createElement("div", { className: "rounded-xl px-3 py-3 mb-3", style: { background: isManager ? '#2E8BD115' : '#E9A23B15', border: '1px solid ' + (isManager ? '#2E8BD140' : '#E9A23B40'), color: 'var(--text)' } }, isManager ? (React.createElement("div", null, React.createElement("div", { className: "text-sm font-semibold mb-1" }, "\uD83D\uDCE4 \u00CEncarc\u0103 normativul (o singur\u0103 dat\u0103)"), React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted)', lineHeight: 1.6 } }, "Alege fi\u0219ierul ", React.createElement("b", null, "normativ-i7.pdf"), " pe care \u021Bi l-am trimis (~11MB). Se salveaz\u0103 \u00EEn aplica\u021Bie \u0219i \u00EEl vor vedea to\u021Bi angaja\u021Bii. C\u0103utarea merge deja \u2014 asta e doar ca s\u0103 se poat\u0103 \u0219i deschide pagina."), React.createElement("input", { ref: fileRef, type: "file", accept: "application/pdf,.pdf", onChange: onPick, style: { display: 'none' } }), React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), disabled: uploading, className: "px-4 py-2 rounded-lg text-sm font-semibold", style: { background: uploading ? '#2a3038' : 'var(--acc1)', color: '#fff' } }, uploading ? 'Se încarcă…' : '📄 Alege PDF-ul normativului'))) : (React.createElement("div", { className: "text-xs", style: { lineHeight: 1.6 } }, "C\u0103utarea \u00EEn normativ merge. Ca s\u0103 se poat\u0103 \u0219i ", React.createElement("b", null, "deschide"), " pagina, managerul trebuie s\u0103 \u00EEncarce o dat\u0103 fi\u0219ierul PDF (din meniul lui). P\u00E2n\u0103 atunci vezi mai jos unde apare fiecare cuv\u00E2nt (pagina \u0219i textul).")), upErr && React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--acc4)' } }, upErr))), React.createElement("div", { className: "flex gap-2 mb-2" }, React.createElement("input", { value: q, onChange: (e) => setQ(e.target.value), placeholder: "\uD83D\uDD0D Caut\u0103 un cuv\u00E2nt sau un num\u0103r de pagin\u0103 (ex: tablou, priz\u0103, 478...)", className: "flex-1 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), arePdf && React.createElement("button", { onClick: () => setViewPage(1), className: "px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap", style: { background: 'var(--acc1)', color: '#fff' } }, "\uD83D\uDCD6 Deschide")), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" }, chips.map((c) => (React.createElement("button", { key: c, onClick: () => setQ(c), className: "text-[11px] px-2.5 py-1 rounded-full", style: { background: 'var(--panel2)', color: 'var(--muted)', border: '1px solid var(--border)' } }, c)))), idxStare === 'load' && React.createElement("div", { className: "text-xs text-center py-6", style: { color: 'var(--muted2)' } }, "Se verific\u0103 c\u0103utarea\u2026"), idxStare === 'build' && (React.createElement("div", { className: "rounded-lg px-3 py-3", style: { background: '#2E8BD115', border: '1px solid #2E8BD140', color: 'var(--text)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1" }, "\uD83D\uDD0D Se preg\u0103te\u0219te c\u0103utarea\u2026 ", progres, "%"), React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted)' } }, "Citesc normativul pagin\u0103 cu pagin\u0103. Dureaz\u0103 un minut, o singur\u0103 dat\u0103 pe telefonul \u0103sta. Nu \u00EEnchide pagina."), React.createElement("div", { style: { height: 6, borderRadius: 6, background: 'var(--panel2)', overflow: 'hidden' } }, React.createElement("div", { style: { width: progres + '%', height: '100%', background: 'linear-gradient(90deg,#2E8BD1,#4CAF7D)', transition: 'width .3s' } })))), idxStare === 'lipsa' && (React.createElement("div", { className: "rounded-lg px-3 py-3", style: { background: '#2E8BD115', border: '1px solid #2E8BD140', color: 'var(--text)', lineHeight: 1.6 } }, React.createElement("div", { className: "text-sm font-semibold mb-1" }, "\uD83D\uDD0D Porne\u0219te c\u0103utarea (o singur\u0103 dat\u0103)"), React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted)' } }, arePdf
+    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDCD8 Normativ I7"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Normativ I7-2011 pentru instala\u021Bii electrice, cu Modific\u0103rile \u0219i complet\u0103rile din 2023 incluse la final (paginile 475\u2013491, marcate cu \u26A0 2023). Scrii ce cau\u021Bi, \u00EE\u021Bi arat\u0103 paginile potrivite \u0219i le deschizi direct."), !arePdf && (React.createElement("div", { className: "rounded-xl px-3 py-3 mb-3", style: { background: isManager ? '#2E8BD115' : '#E9A23B15', border: '1px solid ' + (isManager ? '#2E8BD140' : '#E9A23B40'), color: 'var(--text)' } }, isManager ? (React.createElement("div", null, React.createElement("div", { className: "text-sm font-semibold mb-1" }, "\uD83D\uDCE4 \u00CEncarc\u0103 normativul (o singur\u0103 dat\u0103)"), React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted)', lineHeight: 1.6 } }, "Alege fi\u0219ierul ", React.createElement("b", null, "normativ-i7.pdf"), " pe care \u021Bi l-am trimis (~11MB). Se salveaz\u0103 \u00EEn aplica\u021Bie \u0219i \u00EEl vor vedea to\u021Bi angaja\u021Bii. C\u0103utarea merge deja \u2014 asta e doar ca s\u0103 se poat\u0103 \u0219i deschide pagina."), React.createElement("input", { ref: fileRef, type: "file", accept: "application/pdf,.pdf", onChange: onPick, style: { display: 'none' } }), React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), disabled: uploading, className: "px-4 py-2 rounded-lg text-sm font-semibold", style: { background: uploading ? '#2a3038' : 'var(--acc1)', color: '#fff' } }, uploading ? 'Se încarcă…' : '📄 Alege PDF-ul normativului'))) : (React.createElement("div", { className: "text-xs", style: { lineHeight: 1.6 } }, "C\u0103utarea \u00EEn normativ merge. Ca s\u0103 se poat\u0103 \u0219i ", React.createElement("b", null, "deschide"), " pagina, managerul trebuie s\u0103 \u00EEncarce o dat\u0103 fi\u0219ierul PDF (din meniul lui). P\u00E2n\u0103 atunci vezi mai jos unde apare fiecare cuv\u00E2nt (pagina \u0219i textul).")), upErr && React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--acc4)' } }, upErr))), React.createElement("div", { className: "flex gap-2 mb-2" }, React.createElement("input", { value: q, onChange: (e) => setQ(e.target.value), placeholder: "\uD83D\uDD0D Caut\u0103 un cuv\u00E2nt sau un num\u0103r de pagin\u0103 (ex: tablou, priz\u0103, 478...)", className: "flex-1 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), arePdf && React.createElement("button", { onClick: () => setViewPage(1), className: "px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap", style: { background: 'var(--acc1)', color: '#fff' } }, "\uD83D\uDCD6 Deschide")), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" }, chips.map((c) => (React.createElement("button", { key: c, onClick: () => setQ(c), className: "btnMic text-[11px] px-2.5 py-1 rounded-full", style: { background: 'var(--panel2)', color: 'var(--muted)', border: '1px solid var(--border)' } }, c)))), idxStare === 'load' && React.createElement("div", { className: "text-xs text-center py-6", style: { color: 'var(--muted2)' } }, "Se verific\u0103 c\u0103utarea\u2026"), idxStare === 'build' && (React.createElement("div", { className: "rounded-lg px-3 py-3", style: { background: '#2E8BD115', border: '1px solid #2E8BD140', color: 'var(--text)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1" }, "\uD83D\uDD0D Se preg\u0103te\u0219te c\u0103utarea\u2026 ", progres, "%"), React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted)' } }, "Citesc normativul pagin\u0103 cu pagin\u0103. Dureaz\u0103 un minut, o singur\u0103 dat\u0103 pe telefonul \u0103sta. Nu \u00EEnchide pagina."), React.createElement("div", { style: { height: 6, borderRadius: 6, background: 'var(--panel2)', overflow: 'hidden' } }, React.createElement("div", { style: { width: progres + '%', height: '100%', background: 'linear-gradient(90deg,#2E8BD1,#4CAF7D)', transition: 'width .3s' } })))), idxStare === 'lipsa' && (React.createElement("div", { className: "rounded-lg px-3 py-3", style: { background: '#2E8BD115', border: '1px solid #2E8BD140', color: 'var(--text)', lineHeight: 1.6 } }, React.createElement("div", { className: "text-sm font-semibold mb-1" }, "\uD83D\uDD0D Porne\u0219te c\u0103utarea (o singur\u0103 dat\u0103)"), React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted)' } }, arePdf
         ? 'Aplicația citește singură normativul încărcat și își face căutarea. Durează cam un minut, o singură dată pe telefonul ăsta. După aceea cauți instant orice cuvânt.'
         : 'Întâi trebuie încărcat PDF-ul normativului (butonul de mai sus), apoi pornești căutarea de aici.'), React.createElement("button", { onClick: pregatesteCautarea, disabled: !arePdf, className: "px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40", style: { background: 'var(--acc1)', color: '#fff' } }, "\uD83D\uDD0D Preg\u0103te\u0219te c\u0103utarea"))), pagCautata && (arePdf ? (React.createElement("button", { onClick: () => deschide(pagCautata), className: "w-full text-left rounded-xl px-3 py-2.5 mb-2 flex items-center justify-between gap-2", style: { background: '#2E8BD115', border: '1px solid #2E8BD166' } }, React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--acc1)' } }, "\uD83D\uDCD6 Mergi direct la pagina ", pagCautata), React.createElement("span", { style: { color: 'var(--acc1)' } }, "\u2192"))) : (React.createElement("div", { className: "text-[11px] rounded-lg px-3 py-2 mb-2", style: { background: '#E9A23B15', border: '1px solid #E9A23B40', color: 'var(--text)' } }, "Pagina ", pagCautata, ": ca s-o po\u021Bi deschide, managerul trebuie s\u0103 \u00EEncarce o dat\u0103 PDF-ul normativului."))), idx && termeni.length > 0 && (React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, rezultate.length === 0 ? 'Niciun rezultat.' : (rezultate.length >= 80 ? 'Peste 80 de pagini' : rezultate.length + (rezultate.length === 1 ? ' pagină' : ' pagini')) + (arePdf ? ' — apeși ca să deschizi.' : ' — apar mai jos.'))), React.createElement("div", { className: "space-y-2" }, rezultate.map((r) => (React.createElement("button", { key: r.p, onClick: () => deschide(r.p), className: "w-full text-left rounded-xl px-3 py-2.5", style: { background: 'var(--panel)', border: '1px solid var(--border)', cursor: arePdf ? 'pointer' : 'default' } }, React.createElement("div", { className: "flex items-center gap-2 mb-1" }, React.createElement("span", { className: "text-xs font-semibold", style: { color: 'var(--acc1)' } }, "\uD83D\uDCC4 Pagina ", r.p), r.s === 2023 && React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded", style: { background: 'var(--acc3)', color: '#14181C', fontWeight: 700 } }, "\u26A0 Modificare 2023")), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted)', lineHeight: 1.5 } }, evidentiaza(r.snip)))))), idx && termeni.length === 0 && (React.createElement("div", { className: "text-xs text-center py-6", style: { color: 'var(--muted2)' } }, "Scrie un cuv\u00E2nt sus sau apas\u0103 pe o etichet\u0103 ca s\u0103 cau\u021Bi \u00EEn normativ.")), arePdf && isManager && (React.createElement("div", { className: "mt-4 text-center" }, React.createElement("input", { ref: fileRef, type: "file", accept: "application/pdf,.pdf", onChange: onPick, style: { display: 'none' } }), React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), disabled: uploading, className: "text-[11px]", style: { color: 'var(--muted2)' } }, uploading ? 'Se încarcă…' : '↻ Înlocuiește PDF-ul normativului'), upErr && React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--acc4)' } }, upErr)))));
 }
@@ -8843,8 +8936,10 @@ function UsersTab({ currentUser }) {
     const [loading, setLoading] = useState(true);
     const [form, setForm] = useState(null);
     const [formStatus, setFormStatus] = useState({ loading: false, error: '' });
+    const [eroareLista, setEroareLista] = useState('');
     const loadUsers = async () => {
         setLoading(true);
+        setEroareLista('');
         try {
             const res = await authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list' }) });
             const data = await res.json();
@@ -8852,6 +8947,7 @@ function UsersTab({ currentUser }) {
         }
         catch {
             setUsers([]);
+            setEroareLista('📴 Nu am putut aduce lista de utilizatori — verifică netul și apasă „Reîncearcă". Conturile sunt la locul lor.');
         }
         setLoading(false);
     };
@@ -8895,7 +8991,7 @@ function UsersTab({ currentUser }) {
     const iconFor = (rol) => ROLES.find((r) => r.id === rol)?.icon || '👤';
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const ZILE_SCURT = ['', 'ian', 'feb', 'mar', 'apr', 'mai', 'iun', 'iul', 'aug', 'sep', 'oct', 'noi', 'dec'];
-    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-1" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Utilizatori"), !form && React.createElement("button", { onClick: () => { setForm({ nume: '', username: '', password: '', rol: 'Electrician', telefon: '', cnp: '' }); setFormStatus({ loading: false, error: '' }); }, className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Adaug\u0103 utilizator")), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Conturile care pot intra \u00EEn aplica\u021Bie."), form && (React.createElement("div", { className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("input", { placeholder: "Nume complet", value: form.nume, onChange: (e) => setForm({ ...form, nume: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { placeholder: "Username", value: form.username, onChange: (e) => setForm({ ...form, username: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex gap-2" }, React.createElement("input", { type: parolaVizibila ? 'text' : 'password', autoComplete: "new-password", placeholder: form.id ? 'Parolă nouă (lasă gol ca să nu o schimbi)' : 'Parolă standard', value: form.password, onChange: (e) => setForm({ ...form, password: e.target.value }), className: "flex-1 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("button", { onClick: () => setParolaVizibila(!parolaVizibila), className: "px-3 py-2 rounded-lg text-sm shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Arat\u0103 sau ascunde parola" }, parolaVizibila ? '🙈' : '👁')), React.createElement("input", { placeholder: "Telefon (op\u021Bional)", value: form.telefon, onChange: (e) => setForm({ ...form, telefon: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { placeholder: "CNP (op\u021Bional, 13 cifre \u2014 pentru ziua de na\u0219tere)", value: form.cnp, onChange: (e) => setForm({ ...form, cnp: e.target.value.replace(/\D/g, '').slice(0, 13) }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { ...inputStyle, fontFamily: "'JetBrains Mono', monospace" } }), React.createElement("div", { className: "flex gap-2" }, ROLES.map((r) => (React.createElement("button", { key: r.id, onClick: () => setForm({ ...form, rol: r.id }), className: "flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5", style: { color: form.rol === r.id ? '#14181C' : 'var(--muted)', background: form.rol === r.id ? 'var(--acc1)' : 'var(--panel2)' } }, React.createElement("span", null, r.icon), " ", r.id)))), formStatus.error && React.createElement("p", { className: "text-xs", style: { color: 'var(--acc4)' } }, formStatus.error), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: saveUser, disabled: formStatus.loading, className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc1)' } }, formStatus.loading ? '...' : (form.id ? 'Salvează modificările' : 'Creează cont'))))), loading ? (React.createElement("div", { className: "text-sm", style: { color: 'var(--muted)' } }, "Se \u00EEncarc\u0103...")) : users.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun utilizator \u00EEnc\u0103.")) : (React.createElement("div", { className: "space-y-2" }, users.map((u) => {
+    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-1" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Utilizatori"), !form && React.createElement("button", { onClick: () => { setForm({ nume: '', username: '', password: '', rol: 'Electrician', telefon: '', cnp: '' }); setFormStatus({ loading: false, error: '' }); }, className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Adaug\u0103 utilizator")), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Conturile care pot intra \u00EEn aplica\u021Bie."), form && (React.createElement("div", { className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("input", { placeholder: "Nume complet", value: form.nume, onChange: (e) => setForm({ ...form, nume: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { placeholder: "Username", value: form.username, onChange: (e) => setForm({ ...form, username: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex gap-2" }, React.createElement("input", { type: parolaVizibila ? 'text' : 'password', autoComplete: "new-password", placeholder: form.id ? 'Parolă nouă (lasă gol ca să nu o schimbi)' : 'Parolă standard', value: form.password, onChange: (e) => setForm({ ...form, password: e.target.value }), className: "flex-1 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("button", { onClick: () => setParolaVizibila(!parolaVizibila), className: "px-3 py-2 rounded-lg text-sm shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Arat\u0103 sau ascunde parola" }, parolaVizibila ? '🙈' : '👁')), React.createElement("input", { placeholder: "Telefon (op\u021Bional)", value: form.telefon, onChange: (e) => setForm({ ...form, telefon: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { placeholder: "CNP (op\u021Bional, 13 cifre \u2014 pentru ziua de na\u0219tere)", value: form.cnp, onChange: (e) => setForm({ ...form, cnp: e.target.value.replace(/\D/g, '').slice(0, 13) }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { ...inputStyle, fontFamily: "'JetBrains Mono', monospace" } }), React.createElement("div", { className: "flex gap-2" }, ROLES.map((r) => (React.createElement("button", { key: r.id, onClick: () => setForm({ ...form, rol: r.id }), className: "flex-1 text-sm px-3 py-2 rounded-lg font-medium flex items-center justify-center gap-1.5", style: { color: form.rol === r.id ? '#14181C' : 'var(--muted)', background: form.rol === r.id ? 'var(--acc1)' : 'var(--panel2)' } }, React.createElement("span", null, r.icon), " ", r.id)))), formStatus.error && React.createElement("p", { className: "text-xs", style: { color: 'var(--acc4)' } }, formStatus.error), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: saveUser, disabled: formStatus.loading, className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc1)' } }, formStatus.loading ? '...' : (form.id ? 'Salvează modificările' : 'Creează cont'))))), loading ? (React.createElement("div", { className: "text-sm", style: { color: 'var(--muted)' } }, "Se \u00EEncarc\u0103...")) : eroareLista ? (React.createElement("div", { className: "text-center py-10 text-sm space-y-3", style: { color: 'var(--acc3)' } }, React.createElement("div", null, eroareLista), React.createElement("button", { onClick: loadUsers, className: "text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u21BB Re\u00EEncearc\u0103"))) : users.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun utilizator \u00EEnc\u0103.")) : (React.createElement("div", { className: "space-y-2" }, users.map((u) => {
         const nastere = nasterePeDinCnp(u.cnp);
         return (React.createElement("div", { key: u.id, className: "rounded-xl px-4 py-3 flex items-center justify-between", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center gap-2" }, React.createElement("span", null, iconFor(u.rol)), React.createElement("div", null, React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } }, u.nume, u.id === currentUser.id && React.createElement("span", { className: "text-xs ml-1", style: { color: 'var(--muted2)' } }, "(tu)")), React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, "@", u.username, " \u00B7 ", u.rol, u.telefon && ` · 📞 ${u.telefon}`, nastere && ` · 🎂 ${nastere.zi} ${ZILE_SCURT[nastere.luna]}`))), React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, React.createElement("button", { onClick: () => { setForm({ id: u.id, nume: u.nume, username: u.username, password: '', rol: u.rol, telefon: u.telefon || '', cnp: u.cnp || '' }); setFormStatus({ loading: false, error: '' }); }, className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"), React.createElement("button", { onClick: () => delUser(u.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1")))));
     })))));
@@ -8909,6 +9005,10 @@ const MEMENTO_TIPURI = [
 ];
 const memTip = (id) => MEMENTO_TIPURI.find((t) => t.id === id) || MEMENTO_TIPURI[4];
 const memMoment = (m) => `${m.data || ''}T${m.ora || '09:00'}`;
+function dataLocala(d) {
+    const p = (x) => String(x).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
 function memUrmatoarea(m) {
     try {
         const d = new Date(m.data + 'T00:00:00');
@@ -8920,7 +9020,7 @@ function memUrmatoarea(m) {
             d.setMonth(d.getMonth() + 1);
         else
             return null;
-        return d.toISOString().slice(0, 10);
+        return dataLocala(d);
     }
     catch (_) {
         return null;
@@ -8941,8 +9041,8 @@ function MementoTab({ mementouri, setMementouri, persist, clients, santiere, cur
             catch { }
         }
     }, [form && form.id]);
-    const azi = new Date().toISOString().slice(0, 10);
-    const maine = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+    const azi = dataLocala(new Date());
+    const maine = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return dataLocala(d); })();
     const acum = new Date();
     const formNou = (preset) => ({
         id: uid(), titlu: '', tip: 'intalnire', data: preset || azi, ora: '09:00', detalii: '',
@@ -8981,7 +9081,7 @@ function MementoTab({ mementouri, setMementouri, persist, clients, santiere, cur
         const programat = new Date(memMoment(m)).getTime();
         const d = new Date(Math.max(Date.now(), programat));
         d.setHours(d.getHours() + ore);
-        const next = lista.map((x) => x.id === m.id ? { ...x, data: d.toISOString().slice(0, 10), ora: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, anuntat: false, gata: false } : x);
+        const next = lista.map((x) => x.id === m.id ? { ...x, data: dataLocala(d), ora: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, anuntat: false, gata: false } : x);
         setMementouri(next);
         persist('mementouri', next);
     };
@@ -9002,7 +9102,7 @@ function MementoTab({ mementouri, setMementouri, persist, clients, santiere, cur
         return (React.createElement("div", { key: m.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: `4px solid ${eRestant ? 'var(--acc4)' : t.culoare}`, opacity: m.gata ? 0.6 : 1 } }, React.createElement("div", { className: "flex items-start justify-between gap-2" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)', textDecoration: m.gata ? 'line-through' : 'none' } }, m.titlu), React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: eRestant ? 'var(--acc4)' : 'var(--muted2)' } }, React.createElement("span", { style: { color: eRestant ? 'var(--acc4)' : t.culoare } }, t.label), " \u00B7 \uD83D\uDD50 ", fmtData(m.data), " ", m.ora, eRestant && ' · a trecut', m.repeta && m.repeta !== 'nu' && ` · 🔁 ${m.repeta}`, cl && ` · 👥 ${cl}`, st && ` · 🏗 ${st}`, pentruAltul && ` · pentru ${numeUser(m.pentruUserId)}`), m.detalii && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)', whiteSpace: 'pre-line', lineHeight: 1.5 } }, m.detalii)), React.createElement("div", { className: "flex items-center gap-1 shrink-0" }, React.createElement("button", { onClick: () => bifeaza(m), title: m.gata ? 'Pune înapoi' : 'Gata', className: "px-2 py-1 rounded-lg text-xs font-semibold", style: { color: m.gata ? 'var(--muted)' : '#14181C', background: m.gata ? 'var(--panel2)' : 'var(--acc2)' } }, m.gata ? '↩' : '✓'), React.createElement("button", { onClick: () => setForm({ ...m }), className: "text-[11px] px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"), React.createElement("button", { onClick: () => sterge(m.id), style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))), !m.gata && (React.createElement("div", { className: "flex gap-1.5 mt-2 flex-wrap" }, React.createElement("button", { onClick: () => amanaOra(m, 1), className: "text-[10px] px-2 py-0.5 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "+1 or\u0103"), React.createElement("button", { onClick: () => amanaOra(m, 24), className: "text-[10px] px-2 py-0.5 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "M\u00E2ine"), React.createElement("button", { onClick: () => amanaOra(m, 24 * 7), className: "text-[10px] px-2 py-0.5 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Peste o s\u0103pt\u0103m\u00E2n\u0103")))));
     };
     const sectiune = (titlu, arr, culoare) => arr.length === 0 ? null : (React.createElement("div", { className: "mb-4" }, React.createElement("div", { className: "text-[11px] uppercase tracking-wider mb-1.5", style: { color: culoare || 'var(--muted2)' } }, titlu, " (", arr.length, ")"), React.createElement("div", { className: "space-y-2" }, arr.map(randMemento))));
-    return (React.createElement("div", { className: "max-w-2xl" }, React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDD14 Memento"), !form && React.createElement("button", { onClick: () => setForm(formNou()), className: "text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u2795 Memento nou")), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Aplica\u021Bia \u00EE\u021Bi aduce aminte: ai \u00EEnt\u00E2lnire cu cineva, ai de sunat, de comandat, de pl\u0103tit. Prime\u0219ti notificare pe telefon la ora pus\u0103."), !form && (React.createElement("div", { className: "flex gap-1.5 flex-wrap mb-3" }, React.createElement("button", { onClick: () => setForm(formNou(azi)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Azi"), React.createElement("button", { onClick: () => setForm(formNou(maine)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ M\u00E2ine"), React.createElement("button", { onClick: () => { const d = new Date(); d.setDate(d.getDate() + 7); setForm(formNou(d.toISOString().slice(0, 10))); }, className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Peste o s\u0103pt\u0103m\u00E2n\u0103"))), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, lista.some((m) => m.id === form.id) ? '✏️ Editează memento' : '➕ Memento nou'), React.createElement("input", { placeholder: "Ce trebuie s\u0103 faci? (ex: \u00CEnt\u00E2lnire cu dl. Popescu la birou)", value: form.titlu, onChange: (e) => setForm({ ...form, titlu: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5" }, MEMENTO_TIPURI.map((t) => (React.createElement("button", { key: t.id, onClick: () => setForm({ ...form, tip: t.id }), className: "text-[11px] px-2.5 py-1 rounded-full", style: { color: form.tip === t.id ? '#14181C' : 'var(--muted)', background: form.tip === t.id ? t.culoare : 'var(--panel2)', border: '1px solid var(--border)', fontWeight: form.tip === t.id ? 700 : 400 } }, t.label)))), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "C\u00E2nd:"), React.createElement(RoCalendarPicker, { value: form.data, onChange: (v) => setForm({ ...form, data: v }) }), React.createElement(RoTimePicker, { value: form.ora, onChange: (v) => setForm({ ...form, ora: v }) })), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Se repet\u0103:"), [['nu', 'O singură dată'], ['zilnic', 'Zilnic'], ['saptamanal', 'Săptămânal'], ['lunar', 'Lunar']].map(([v, l]) => (React.createElement("button", { key: v, onClick: () => setForm({ ...form, repeta: v }), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: form.repeta === v ? '#14181C' : 'var(--muted)', background: form.repeta === v ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, l)))), React.createElement("textarea", { placeholder: "Detalii (op\u021Bional) \u2014 ce ai de discutat, ce s\u0103 nu ui\u021Bi...", value: form.detalii, onChange: (e) => setForm({ ...form, detalii: e.target.value }), rows: 3, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "grid grid-cols-2 gap-2" }, React.createElement("select", { value: form.clientId, onChange: (e) => setForm({ ...form, clientId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 client (op\u021Bional) \u2014"), (clients || []).map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("select", { value: form.santierId, onChange: (e) => setForm({ ...form, santierId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 \u0219antier (op\u021Bional) \u2014"), (santiere || []).map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, s.nume)))), isManager && (colegi || []).length > 0 && (React.createElement("div", null, React.createElement("div", { className: "text-[11px] mb-0.5", style: { color: 'var(--muted)' } }, "Pentru cine e memento-ul"), React.createElement("select", { value: form.pentruUserId, onChange: (e) => setForm({ ...form, pentruUserId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: currentUser?.id, style: { background: 'var(--panel)' } }, "Pentru mine"), (colegi || []).filter((u) => u.id !== currentUser?.id).map((u) => React.createElement("option", { key: u.id, value: u.id, style: { background: 'var(--panel)' } }, u.nume))))), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: salveaza, disabled: !String(form.titlu).trim(), className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))), active.length === 0 && gata.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun memento. Apas\u0103 \u201E\u2795 Memento nou\".")) : (React.createElement(React.Fragment, null, sectiune('⛔ Au trecut', restante, 'var(--acc4)'), sectiune('📅 Astăzi', deAzi, 'var(--acc1)'), sectiune('📅 Mâine', deMaine, 'var(--acc3)'), sectiune('📆 Următoarele', urmeaza), gata.length > 0 && (React.createElement("div", null, React.createElement("button", { onClick: () => setAratGata(!aratGata), className: "text-[11px] px-2.5 py-1 rounded-lg mb-2", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, aratGata ? 'Ascunde rezolvate ▲' : `Arată rezolvate (${gata.length}) ▼`), aratGata && React.createElement("div", { className: "space-y-2" }, gata.map(randMemento))))))));
+    return (React.createElement("div", { className: "max-w-2xl" }, React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDD14 Memento"), !form && React.createElement("button", { onClick: () => setForm(formNou()), className: "text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u2795 Memento nou")), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Aplica\u021Bia \u00EE\u021Bi aduce aminte: ai \u00EEnt\u00E2lnire cu cineva, ai de sunat, de comandat, de pl\u0103tit. Prime\u0219ti notificare pe telefon la ora pus\u0103."), !form && (React.createElement("div", { className: "flex gap-1.5 flex-wrap mb-3" }, React.createElement("button", { onClick: () => setForm(formNou(azi)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Azi"), React.createElement("button", { onClick: () => setForm(formNou(maine)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ M\u00E2ine"), React.createElement("button", { onClick: () => { const d = new Date(); d.setDate(d.getDate() + 7); setForm(formNou(d.toISOString().slice(0, 10))); }, className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Peste o s\u0103pt\u0103m\u00E2n\u0103"))), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, lista.some((m) => m.id === form.id) ? '✏️ Editează memento' : '➕ Memento nou'), React.createElement("input", { placeholder: "Ce trebuie s\u0103 faci? (ex: \u00CEnt\u00E2lnire cu dl. Popescu la birou)", value: form.titlu, onChange: (e) => setForm({ ...form, titlu: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5" }, MEMENTO_TIPURI.map((t) => (React.createElement("button", { key: t.id, onClick: () => setForm({ ...form, tip: t.id }), className: "btnMic text-[11px] px-2.5 py-1 rounded-full", style: { color: form.tip === t.id ? '#14181C' : 'var(--muted)', background: form.tip === t.id ? t.culoare : 'var(--panel2)', border: '1px solid var(--border)', fontWeight: form.tip === t.id ? 700 : 400 } }, t.label)))), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "C\u00E2nd:"), React.createElement(RoCalendarPicker, { value: form.data, onChange: (v) => setForm({ ...form, data: v }) }), React.createElement(RoTimePicker, { value: form.ora, onChange: (v) => setForm({ ...form, ora: v }) })), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Se repet\u0103:"), [['nu', 'O singură dată'], ['zilnic', 'Zilnic'], ['saptamanal', 'Săptămânal'], ['lunar', 'Lunar']].map(([v, l]) => (React.createElement("button", { key: v, onClick: () => setForm({ ...form, repeta: v }), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: form.repeta === v ? '#14181C' : 'var(--muted)', background: form.repeta === v ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, l)))), React.createElement("textarea", { placeholder: "Detalii (op\u021Bional) \u2014 ce ai de discutat, ce s\u0103 nu ui\u021Bi...", value: form.detalii, onChange: (e) => setForm({ ...form, detalii: e.target.value }), rows: 3, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "grid grid-cols-2 gap-2" }, React.createElement("select", { value: form.clientId, onChange: (e) => setForm({ ...form, clientId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 client (op\u021Bional) \u2014"), (clients || []).map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("select", { value: form.santierId, onChange: (e) => setForm({ ...form, santierId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 \u0219antier (op\u021Bional) \u2014"), (santiere || []).map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, s.nume)))), isManager && (colegi || []).length > 0 && (React.createElement("div", null, React.createElement("div", { className: "text-[11px] mb-0.5", style: { color: 'var(--muted)' } }, "Pentru cine e memento-ul"), React.createElement("select", { value: form.pentruUserId, onChange: (e) => setForm({ ...form, pentruUserId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: currentUser?.id, style: { background: 'var(--panel)' } }, "Pentru mine"), (colegi || []).filter((u) => u.id !== currentUser?.id).map((u) => React.createElement("option", { key: u.id, value: u.id, style: { background: 'var(--panel)' } }, u.nume))))), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: salveaza, disabled: !String(form.titlu).trim(), className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))), active.length === 0 && gata.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun memento. Apas\u0103 \u201E\u2795 Memento nou\".")) : (React.createElement(React.Fragment, null, sectiune('⛔ Au trecut', restante, 'var(--acc4)'), sectiune('📅 Astăzi', deAzi, 'var(--acc1)'), sectiune('📅 Mâine', deMaine, 'var(--acc3)'), sectiune('📆 Următoarele', urmeaza), gata.length > 0 && (React.createElement("div", null, React.createElement("button", { onClick: () => setAratGata(!aratGata), className: "text-[11px] px-2.5 py-1 rounded-lg mb-2", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, aratGata ? 'Ascunde rezolvate ▲' : `Arată rezolvate (${gata.length}) ▼`), aratGata && React.createElement("div", { className: "space-y-2" }, gata.map(randMemento))))))));
 }
 const NOTE_CATEGORII = [
     { id: 'intalnire', label: '🤝 Întâlnire client', culoare: 'var(--acc1)' },
@@ -9065,7 +9165,7 @@ function NotiteTab({ notite, setNotite, persist, clients, santiere, currentUser,
         Promise.resolve()
             .then(() => navigator.clipboard.writeText(txt))
             .then(() => arataSalvat('✅ Notița e copiată — o poți lipi în WhatsApp'))
-            .catch(() => cereText({ titlu: 'Copiaz-o de aici', text: 'Telefonul n-a lăsat copierea automată. Ține apăsat pe text și alege Copiază.', valoare: txt, buton: '✓ Gata' }));
+            .catch(() => cereText({ titlu: 'Copiaz-o de aici', text: 'Telefonul n-a lăsat copierea automată. Ține apăsat pe text și alege Copiază.', valoare: txt, multiline: true, buton: '✓ Gata' }));
     };
     const addMat = () => setForm({ ...form, materiale: [...(form.materiale || []), { id: uid(), denumire: '', cantitate: '', um: 'buc' }] });
     const updMat = (id, f, v) => setForm({ ...form, materiale: (form.materiale || []).map((m) => m.id === id ? { ...m, [f]: v } : m) });
@@ -9085,7 +9185,7 @@ function NotiteTab({ notite, setNotite, persist, clients, santiere, currentUser,
             return b.fixat ? 1 : -1;
         return String(b.data || '').localeCompare(String(a.data || ''));
     });
-    return (React.createElement("div", { className: "max-w-2xl" }, React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDCDD Noti\u021Be"), !form && React.createElement("button", { onClick: () => setForm(formNou()), className: "text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u2795 Noti\u021B\u0103 nou\u0103")), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Tot ce afli la \u00EEnt\u00E2lniri, ce materiale trebuie comandate, idei de pre\u021B. Le vezi doar tu. Dintr-o noti\u021B\u0103 cu materiale po\u021Bi face direct o ofert\u0103."), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, lista.some((n) => n.id === form.id) ? '✏️ Editează notița' : '➕ Notiță nouă'), React.createElement("input", { placeholder: "Titlu (ex: \u00CEnt\u00E2lnire Popescu \u2014 bloc Aurel Vlaicu)", value: form.titlu, onChange: (e) => setForm({ ...form, titlu: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5" }, NOTE_CATEGORII.map((c) => (React.createElement("button", { key: c.id, onClick: () => setForm({ ...form, categorie: c.id }), className: "text-[11px] px-2.5 py-1 rounded-full", style: { color: form.categorie === c.id ? '#14181C' : 'var(--muted)', background: form.categorie === c.id ? c.culoare : 'var(--panel2)', border: '1px solid var(--border)', fontWeight: form.categorie === c.id ? 700 : 400 } }, c.label)))), React.createElement("div", { className: "grid grid-cols-2 gap-2" }, React.createElement("select", { value: form.clientId, onChange: (e) => setForm({ ...form, clientId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 client (op\u021Bional) \u2014"), (clients || []).map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("select", { value: form.santierId, onChange: (e) => setForm({ ...form, santierId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 \u0219antier (op\u021Bional) \u2014"), (santiere || []).map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, s.nume)))), React.createElement("textarea", { placeholder: "Ce s-a discutat, ce a cerut clientul, ce ai de f\u0103cut...", value: form.text, onChange: (e) => setForm({ ...form, text: e.target.value }), rows: 5, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "rounded-lg p-2.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-[11px] mb-1.5", style: { color: 'var(--muted)' } }, "\uD83D\uDCE6 Materiale de care e nevoie (op\u021Bional \u2014 din ele po\u021Bi face oferta)"), (form.materiale || []).map((m) => (React.createElement("div", { key: m.id, className: "flex items-center gap-1.5 mb-1.5" }, React.createElement("input", { placeholder: "Denumire", value: m.denumire, onChange: (e) => updMat(m.id, 'denumire', e.target.value), className: "flex-1 min-w-0 rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle }), React.createElement("input", { placeholder: "Cant.", value: m.cantitate, onChange: (e) => updMat(m.id, 'cantitate', e.target.value), className: "w-16 rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle }), React.createElement("input", { placeholder: "buc", value: m.um, onChange: (e) => updMat(m.id, 'um', e.target.value), className: "w-14 rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle }), React.createElement("button", { onClick: () => delMat(m.id), style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1")))), React.createElement("button", { onClick: addMat, className: "text-[11px] px-2 py-1 rounded", style: { color: 'var(--acc1)' } }, "\u2795 Adaug\u0103 material")), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: salveaza, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))), React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "\uD83D\uDD0D Caut\u0103 \u00EEn noti\u021Be...", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mb-2", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" }, React.createElement("button", { onClick: () => setFiltru(''), className: "text-[11px] px-2.5 py-1 rounded-full", style: { color: !filtru ? '#14181C' : 'var(--muted)', background: !filtru ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, "Toate"), NOTE_CATEGORII.map((c) => (React.createElement("button", { key: c.id, onClick: () => setFiltru(filtru === c.id ? '' : c.id), className: "text-[11px] px-2.5 py-1 rounded-full", style: { color: filtru === c.id ? '#14181C' : 'var(--muted)', background: filtru === c.id ? c.culoare : 'var(--panel2)', border: '1px solid var(--border)' } }, c.label)))), vizibile.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, lista.length === 0 ? 'Nicio notiță încă. Apasă „➕ Notiță nouă".' : 'Nicio notiță găsită.')) : (React.createElement("div", { className: "space-y-2" }, vizibile.map((n) => {
+    return (React.createElement("div", { className: "max-w-2xl" }, React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDCDD Noti\u021Be"), !form && React.createElement("button", { onClick: () => setForm(formNou()), className: "text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u2795 Noti\u021B\u0103 nou\u0103")), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Tot ce afli la \u00EEnt\u00E2lniri, ce materiale trebuie comandate, idei de pre\u021B. Le vezi doar tu. Dintr-o noti\u021B\u0103 cu materiale po\u021Bi face direct o ofert\u0103."), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, lista.some((n) => n.id === form.id) ? '✏️ Editează notița' : '➕ Notiță nouă'), React.createElement("input", { placeholder: "Titlu (ex: \u00CEnt\u00E2lnire Popescu \u2014 bloc Aurel Vlaicu)", value: form.titlu, onChange: (e) => setForm({ ...form, titlu: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5" }, NOTE_CATEGORII.map((c) => (React.createElement("button", { key: c.id, onClick: () => setForm({ ...form, categorie: c.id }), className: "btnMic text-[11px] px-2.5 py-1 rounded-full", style: { color: form.categorie === c.id ? '#14181C' : 'var(--muted)', background: form.categorie === c.id ? c.culoare : 'var(--panel2)', border: '1px solid var(--border)', fontWeight: form.categorie === c.id ? 700 : 400 } }, c.label)))), React.createElement("div", { className: "grid grid-cols-2 gap-2" }, React.createElement("select", { value: form.clientId, onChange: (e) => setForm({ ...form, clientId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 client (op\u021Bional) \u2014"), (clients || []).map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("select", { value: form.santierId, onChange: (e) => setForm({ ...form, santierId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 \u0219antier (op\u021Bional) \u2014"), (santiere || []).map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, s.nume)))), React.createElement("textarea", { placeholder: "Ce s-a discutat, ce a cerut clientul, ce ai de f\u0103cut...", value: form.text, onChange: (e) => setForm({ ...form, text: e.target.value }), rows: 5, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "rounded-lg p-2.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-[11px] mb-1.5", style: { color: 'var(--muted)' } }, "\uD83D\uDCE6 Materiale de care e nevoie (op\u021Bional \u2014 din ele po\u021Bi face oferta)"), (form.materiale || []).map((m) => (React.createElement("div", { key: m.id, className: "flex items-center gap-1.5 mb-1.5" }, React.createElement("input", { placeholder: "Denumire", value: m.denumire, onChange: (e) => updMat(m.id, 'denumire', e.target.value), className: "flex-1 min-w-0 rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle }), React.createElement("input", { placeholder: "Cant.", value: m.cantitate, onChange: (e) => updMat(m.id, 'cantitate', e.target.value), className: "w-16 rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle }), React.createElement("input", { placeholder: "buc", value: m.um, onChange: (e) => updMat(m.id, 'um', e.target.value), className: "w-14 rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle }), React.createElement("button", { onClick: () => delMat(m.id), style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1")))), React.createElement("button", { onClick: addMat, className: "text-[11px] px-2 py-1 rounded", style: { color: 'var(--acc1)' } }, "\u2795 Adaug\u0103 material")), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: salveaza, className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))), React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "\uD83D\uDD0D Caut\u0103 \u00EEn noti\u021Be...", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mb-2", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" }, React.createElement("button", { onClick: () => setFiltru(''), className: "btnMic text-[11px] px-2.5 py-1 rounded-full", style: { color: !filtru ? '#14181C' : 'var(--muted)', background: !filtru ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, "Toate"), NOTE_CATEGORII.map((c) => (React.createElement("button", { key: c.id, onClick: () => setFiltru(filtru === c.id ? '' : c.id), className: "btnMic text-[11px] px-2.5 py-1 rounded-full", style: { color: filtru === c.id ? '#14181C' : 'var(--muted)', background: filtru === c.id ? c.culoare : 'var(--panel2)', border: '1px solid var(--border)' } }, c.label)))), vizibile.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, lista.length === 0 ? 'Nicio notiță încă. Apasă „➕ Notiță nouă".' : 'Nicio notiță găsită.')) : (React.createElement("div", { className: "space-y-2" }, vizibile.map((n) => {
         const cat = noteCat(n.categorie);
         const cl = numeClient(n.clientId), st = numeSantier(n.santierId);
         return (React.createElement("div", { key: n.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: `4px solid ${cat.culoare}` } }, React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, n.fixat && '📌 ', n.titlu || '(fără titlu)'), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, React.createElement("span", { style: { color: cat.culoare } }, cat.label), " \u00B7 ", fmtData(n.data), cl && ` · 👥 ${cl}`, st && ` · 🏗 ${st}`)), React.createElement("div", { className: "flex items-center gap-1 shrink-0" }, React.createElement("button", { onClick: () => fixeaza(n.id), title: n.fixat ? 'Scoate din fixate' : 'Fixează sus', className: "px-1.5 py-0.5 rounded text-xs", style: { color: n.fixat ? 'var(--acc3)' : 'var(--muted2)' } }, "\uD83D\uDCCC"), React.createElement("button", { onClick: () => copiaza(n), title: "Copiaz\u0103 noti\u021Ba", className: "px-1.5 py-0.5 rounded text-xs", style: { color: 'var(--muted2)' } }, "\uD83D\uDCCB"), React.createElement("button", { onClick: () => setForm({ ...n, materiale: n.materiale || [] }), className: "text-[11px] px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"), React.createElement("button", { onClick: () => sterge(n.id), style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))), n.text && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)', lineHeight: 1.6, whiteSpace: 'pre-line' } }, n.text), (n.materiale || []).length > 0 && (React.createElement("div", { className: "mt-2 rounded-lg p-2", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: 'var(--muted2)' } }, "\uD83D\uDCE6 Materiale"), (n.materiale || []).map((m) => (React.createElement("div", { key: m.id, className: "text-[11px]", style: { color: 'var(--text)' } }, "\u2022 ", m.denumire, " ", m.cantitate ? `— ${m.cantitate} ${m.um || ''}` : ''))), onOfertaDinNota && (React.createElement("button", { onClick: () => onOfertaDinNota(n), className: "text-[11px] px-2 py-1 rounded mt-1.5 font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCB0 F\u0103 ofert\u0103 din lista asta"))))));
@@ -12598,6 +12698,14 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     });
     const refDialogDeschis = useRef(null);
     const articole = ante.articole || [];
+    const refAnte = useRef(ante);
+    refAnte.current = ante;
+    const refInteg = useRef(null);
+    const iaIntegrale = () => {
+        if (!refInteg.current && refGri.current)
+            refInteg.current = sumeIntegrale(refGri.current);
+        return refInteg.current;
+    };
     const artCurent = articole.find((a) => a.id === articolSel) || articole[0] || null;
     const pini = (ante.pini || []).filter((p) => (p.pagina || 1) === pagina);
     const trasee = (ante.trasee || []).filter((t) => (t.pagina || 1) === pagina);
@@ -12697,7 +12805,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 cuSemn.forEach((a) => {
                     const s = a.sablon;
                     const sab = decupeazaImagine(im, s.x * lat, s.y * lat, s.w * lat, s.h * lat);
-                    cautaSimboluri(im, sab, { prag: pragLegenda, rotatii: rotLegenda }).forEach((g) => {
+                    cautaSimboluri(im, sab, { prag: pragLegenda, rotatii: rotLegenda, integrale: iaIntegrale() }).forEach((g) => {
                         const cx = (g.x + g.lat / 2) / lat, cy = (g.y + g.inalt / 2) / lat;
                         if (excl && cx >= excl.x - 0.005 && cx <= excl.x + excl.w + 0.005 && cy >= excl.y - 0.005 && cy <= excl.y + excl.h + 0.005)
                             return;
@@ -12963,6 +13071,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                     return;
                 refPagina.current = cv;
                 refGri.current = griDinImageData(cv.getContext('2d').getImageData(0, 0, cv.width, cv.height));
+                refInteg.current = null;
                 try {
                     const txt = await pg.getTextContent();
                     const it = txt.items || [];
@@ -13372,7 +13481,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             const nume = await cereText({ titlu: 'Cum se numește zona?', exemplu: 'ex: Ap. 410, Etaj 4, Tronson B', buton: '✓ Pune zona' });
             if (nume == null || !nume.trim())
                 return;
-            onSchimb({ zone: [...(ante.zone || []), { id: uid(), pagina, nume: nume.trim(), x, y, w, h }] });
+            onSchimb({ zone: [...(refAnte.current.zone || []), { id: uid(), pagina, nume: nume.trim(), x, y, w, h }] });
         }
     };
     const puneSauScoatePin = (pl) => {
@@ -13436,7 +13545,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         setCautare({ sablon: sab, prag, rotatii, gasite: null, lucreaza: true });
         setTimeout(() => {
             try {
-                const gasite = cautaSimboluri(refGri.current, sab, { prag, rotatii });
+                const gasite = cautaSimboluri(refGri.current, sab, { prag, rotatii, integrale: iaIntegrale() });
                 setCautare({ sablon: sab, prag, rotatii, gasite, lucreaza: false });
             }
             catch (e) {
@@ -13474,7 +13583,8 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         if (um == null)
             return;
         const id = uid();
-        onSchimb({ articole: [...articole, { id, nume: nume.trim(), um, pretUnitar: 0, culoare: CULORI_ARTICOL[articole.length % CULORI_ARTICOL.length] }] });
+        const arti = refAnte.current.articole || [];
+        onSchimb({ articole: [...arti, { id, nume: nume.trim(), um, pretUnitar: 0, culoare: CULORI_ARTICOL[arti.length % CULORI_ARTICOL.length] }] });
         setArticolSel(id);
     };
     const schimbaArticol = (id, camp, val) => onSchimb({ articole: articole.map((a) => a.id === id ? { ...a, [camp]: val } : a) });
@@ -13675,7 +13785,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                         z.nume),
                     React.createElement("span", { className: "min-w-0 truncate flex-1", style: { color: 'var(--muted2)' } }, cantitati.map((c) => c.peZona[z.id] ? `${c.articol.nume}: ${c.peZona[z.id]} ${c.articol.um}` : null).filter(Boolean).join(' · ') || 'nimic numărat înăuntru'),
                     React.createElement("button", { onClick: () => onSchimb({ zone: (ante.zone || []).filter((x) => x.id !== z.id) }), className: "shrink-0 px-1", style: { color: 'var(--acc4)' } }, "\u2715"))))))))),
-        dialogSemn && (React.createElement("div", { style: { position: 'absolute', inset: 0, zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.72)' } },
+        dialogSemn && (React.createElement("div", { style: { position: 'absolute', inset: 0, zIndex: 500, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '7vh', overflowY: 'auto', background: 'rgba(0,0,0,0.72)' } },
             React.createElement("div", { style: { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, width: 290, maxWidth: '92vw', boxShadow: '0 8px 40px rgba(0,0,0,.7)' } },
                 React.createElement("div", { style: { color: 'var(--text)', fontWeight: 700, fontSize: 14, marginBottom: 4 } }, "Ce e semnul \u0103sta?"),
                 React.createElement("div", { style: { color: 'var(--muted)', fontSize: 11, marginBottom: 14 } }, "Scrie cum se nume\u0219te \u2014 exact cum vrei s\u0103 apar\u0103 \u00EEn ofert\u0103."),
@@ -14863,7 +14973,7 @@ function App() {
                                 " ",
                                 currentUser.nume),
                             React.createElement("button", { onClick: logout, style: { color: 'var(--acc4)' } }, "Ie\u0219i")),
-                        React.createElement("div", { className: "px-3 pb-1 text-[10px]", style: { color: '#3d4650' } }, APP_VERSION))),
+                        React.createElement("div", { className: "px-3 pb-1 text-[10px]", style: { color: 'var(--muted2)' } }, APP_VERSION))),
                 React.createElement("main", { className: "flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0" },
                     !loading && (potInapoi || potInainte) && (React.createElement("div", { className: "barnav flex items-center gap-2 mb-3" },
                         React.createElement("button", { onClick: mergiInapoi, disabled: !potInapoi, className: "btn3d text-xs font-semibold px-3 py-2", style: { color: 'var(--acc1)' } },
