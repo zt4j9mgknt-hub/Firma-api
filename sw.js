@@ -3,7 +3,7 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v87';
+const CACHE = 'firma-cache-v88';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
@@ -12,7 +12,9 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    // 'firma-badge' NU se șterge: acolo stă contorul bulinei de pe iconiță —
+    // altfel fiecare versiune nouă i-ar reseta omului notificările necitite.
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== 'firma-badge').map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -27,13 +29,24 @@ self.addEventListener('fetch', (e) => {
   const isHTML = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
 
   if (isHTML) {
-    e.respondWith(
-      fetch(req).then((res) => {
+    // Rețea întâi, dar cu RĂBDARE LIMITATĂ: pe semnalul slab de șantier (2 liniuțe,
+    // nu offline), fetch-ul poate atârna zeci de secunde — aplicația părea că nu
+    // pornește. După 3,5s servim din cache; rețeaua continuă în fundal și pune
+    // versiunea proaspătă în cache pentru pornirea următoare.
+    e.respondWith((async () => {
+      const dinRetea = fetch(req).then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy).catch(() => {}));
         return res;
-      }).catch(() => caches.match(req).then((c) => c || caches.match('/index.html')))
-    );
+      });
+      const dinCache = () => caches.match(req).then((c) => c || caches.match('/index.html'));
+      const pauza = new Promise((r) => setTimeout(() => r('lent'), 3500));
+      const primul = await Promise.race([dinRetea.catch(() => 'picat'), pauza]);
+      if (primul !== 'lent' && primul !== 'picat') return primul;
+      const cache = await dinCache();
+      if (cache) { dinRetea.catch(() => {}); return cache; }
+      return dinRetea.catch(() => new Response('Fără net și fără versiune salvată.', { status: 503 }));
+    })());
   } else {
     e.respondWith(
       caches.match(req).then((cached) => {
