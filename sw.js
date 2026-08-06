@@ -3,11 +3,28 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v88';
+const CACHE = 'firma-cache-v89';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE).catch(() => {})).then(() => self.skipWaiting()));
+  // Copie CURATĂ în cache, nu addAll: dacă hostingul răspunde printr-un redirect,
+  // addAll ar stoca un răspuns „redirected" pe care browserul îl REFUZĂ la navigare
+  // → offline mort, cu eșecul înghițit pe tăcute. Așa punem mereu un 200 curat.
+  e.waitUntil((async () => {
+    try {
+      const c = await caches.open(CACHE);
+      for (const u of CORE) {
+        try {
+          const r = await fetch(u);
+          if (r && r.ok) {
+            const corp = await r.blob();
+            await c.put(u, new Response(corp, { status: 200, headers: { 'content-type': r.headers.get('content-type') || 'text/html' } }));
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {
@@ -35,8 +52,12 @@ self.addEventListener('fetch', (e) => {
     // versiunea proaspătă în cache pentru pornirea următoare.
     e.respondWith((async () => {
       const dinRetea = fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(req, copy).catch(() => {}));
+        // DOAR răspunsurile bune intră în memorie: o pagină de eroare 500 de la o
+        // mentenanță ar SUPRASCRIE aplicația bună din cache și ar lăsa-o „moartă" offline.
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy).catch(() => {}));
+        }
         return res;
       });
       const dinCache = () => caches.match(req).then((c) => c || caches.match('/index.html'));
