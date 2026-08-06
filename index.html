@@ -1091,7 +1091,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.51-alegeri-clare';
+const APP_VERSION = 'v01.52-pasi-planse';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -12489,6 +12489,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const [cautare, setCautare] = useState(null);
     const [panou, setPanou] = useState(true);
     const [mesaj, setMesaj] = useState('');
+    const [ghidAscuns, setGhidAscuns] = useState(false);
     useInapoiTelefon(true, () => {
         if (refDialogDeschis.current) {
             refDialogDeschis.current();
@@ -12617,8 +12618,10 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 });
                 const cuEt = noi.filter((p) => p.eticheta).length;
                 onSchimb({ pini: [...(ante.pini || []).filter((p) => (p.pagina || 1) !== pagina), ...noi] });
-                setMesaj('Am numărat ' + noi.length + ' aparate, din ' + cuSemn.length + ' semne'
-                    + (cuEt ? '. La ' + cuEt + ' am citit și circuitul sau înălțimea de montaj de pe planșă.' : '.'));
+                setMesaj(noi.length === 0
+                    ? 'N-am găsit niciun aparat pe planșă. Coboară „Exigența" (bara de sub listă) la vreo 65% și apasă din nou „Numără tot din legendă" — sau bifează „întoarse" dacă semnele apar și rotite.'
+                    : 'Am numărat ' + noi.length + ' aparate, din ' + cuSemn.length + ' semne'
+                        + (cuEt ? '. La ' + cuEt + ' am citit și circuitul sau înălțimea de montaj de pe planșă.' : '.'));
             }
             catch (e) {
                 setMesaj((e && e.message) || 'Numărătoarea nu a mers.');
@@ -13137,15 +13140,24 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         const t = e.touches && e.touches[0] ? e.touches[0] : e;
         return { x: t.clientX - r.left, y: t.clientY - r.top };
     };
+    const mijloc = (e) => {
+        const r = refCanvas.current.getBoundingClientRect();
+        return { x: (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left,
+            y: (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top };
+    };
     const jos = (e) => {
         if (!refPagina.current)
             return;
         if (e.touches && e.touches.length === 2) {
-            gest.current = { activ: true, tip: 'pinch', distanta: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), zoom0: vedere.zoom, mutat: true };
+            const m = mijloc(e);
+            gest.current = { activ: true, tip: 'pinch', mutat: true,
+                distanta: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY),
+                zoom0: vedere.zoom,
+                fix: { x: m.x / vedere.zoom + vedere.ox, y: m.y / vedere.zoom + vedere.oy } };
             return;
         }
         const s = pozitie(e), pl = laPlansa(s.x, s.y);
-        gest.current = { activ: true, tip: mod === 'naviga' ? 'pan' : mod, start: pl, ultim: s, mutat: false };
+        gest.current = { activ: true, tip: mod === 'naviga' ? 'pan' : mod, start: pl, startEcran: s, ultim: s, mutat: false };
         if (mod === 'sablon' || mod === 'zona' || mod === 'legenda')
             setTemp({ tip: 'dreptunghi', a: pl, b: pl });
     };
@@ -13155,11 +13167,13 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             return;
         if (g.tip === 'pinch' && e.touches && e.touches.length === 2) {
             const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-            setVedere((v) => ({ ...v, zoom: Math.max(0.05, Math.min(20, g.zoom0 * (d / (g.distanta || d)))) }));
+            const z = Math.max(0.05, Math.min(20, g.zoom0 * (d / (g.distanta || d))));
+            const m = mijloc(e);
+            setVedere((v) => ({ ...v, zoom: z, ox: g.fix.x - m.x / z, oy: g.fix.y - m.y / z }));
             return;
         }
         const s = pozitie(e);
-        if (Math.abs(s.x - (g.ultim?.x || s.x)) + Math.abs(s.y - (g.ultim?.y || s.y)) > 2)
+        if (Math.abs(s.x - (g.startEcran?.x ?? s.x)) + Math.abs(s.y - (g.startEcran?.y ?? s.y)) > 8)
             g.mutat = true;
         if (g.tip === 'pan') {
             const dx = (s.x - g.ultim.x) / vedere.zoom, dy = (s.y - g.ultim.y) / vedere.zoom;
@@ -13168,6 +13182,13 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         }
         else if (g.tip === 'sablon' || g.tip === 'zona' || g.tip === 'legenda') {
             setTemp((t) => t && t.tip === 'dreptunghi' ? { ...t, b: laPlansa(s.x, s.y) } : t);
+        }
+        else if (g.tip === 'pin' || g.tip === 'traseu' || g.tip === 'calibrare' || g.tip === 'cota') {
+            if (g.mutat) {
+                const dx = (s.x - g.ultim.x) / vedere.zoom, dy = (s.y - g.ultim.y) / vedere.zoom;
+                setVedere((v) => ({ ...v, ox: v.ox - dx, oy: v.oy - dy }));
+            }
+            g.ultim = s;
         }
     };
     const sus = (e) => {
@@ -13396,13 +13417,48 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 React.createElement("button", { onClick: () => setPagina((p) => Math.min(nrPagini, p + 1)), className: "text-xs px-2 py-1 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u203A"))),
             React.createElement("button", { onClick: () => potriveste(), title: "\u00CEncadreaz\u0103 plan\u0219a pe ecran", className: "text-xs px-2 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u2922")),
         React.createElement("div", { className: "flex gap-1.5 px-2 py-1.5 shrink-0 overflow-x-auto", style: { borderBottom: '1px solid var(--border)' } }, MODURI.map(([id, ic, et]) => btnMod(id, ic, et))),
-        !ante.metriPeLatime ? (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: '#E9A23B15', color: 'var(--acc3)', borderBottom: '1px solid #E9A23B44' } }, "\uD83D\uDCCF Scara nu e pus\u0103 \u2014 traseele nu dau metri. Atinge aici: \u00EE\u021Bi spun singur pe ce foaie e plan\u0219a \u0219i ce scar\u0103 scrie pe ea.")) : (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: 'var(--panel2)', color: 'var(--muted2)', borderBottom: '1px solid var(--border)' } },
+        (() => {
+            const p1 = Number(ante.metriPeLatime) > 0;
+            const p2 = articole.some((a) => a.sablon && a.sablon.w > 0);
+            const p3 = (ante.pini || []).length > 0 || (ante.trasee || []).length > 0;
+            if (ghidAscuns)
+                return null;
+            const pasi = [
+                { gata: p1, icon: '📏', nume: 'Scara', fa: () => setMod('calibrare') },
+                { gata: p2, icon: '📖', nume: 'Semnele', fa: () => { setMod('legenda'); setMesaj('Atinge pe rând fiecare simbol din legendă — apare un dialog unde îi dai numele.'); } },
+                { gata: p3, icon: '🔢', nume: 'Numără', fa: numaraDinLegenda },
+                { gata: false, icon: '📋', nume: 'Oferta', fa: onOferta },
+            ];
+            const curent = pasi.findIndex((p) => !p.gata);
+            const explicatii = [
+                'Pasul 1 — pune scara. Atinge aici: de obicei o citesc singur din foaia PDF și din cartuș.',
+                'Pasul 2 — arată-mi semnele. Atinge fiecare simbol din legendă cu unealta 📖 și dă-i numele.',
+                'Pasul 3 — las-o pe seama mea. Apasă „Numără tot din legendă" și pun eu punctele pe planșă.',
+                'Pasul 4 — totul e numărat. Verifică lista de jos și apasă „→ Fă oferta".',
+            ];
+            return (React.createElement("div", { className: "px-2.5 py-2 shrink-0", style: { background: 'var(--panel)', borderBottom: '1px solid var(--border)' } },
+                React.createElement("div", { className: "flex items-center gap-1.5" },
+                    pasi.map((p, i) => (React.createElement("button", { key: p.nume, onClick: p.fa, className: "flex-1 min-w-0 text-[11px] px-1 py-2 rounded-lg font-semibold", style: {
+                            color: p.gata ? '#14181C' : i === curent ? '#14181C' : 'var(--muted2)',
+                            background: p.gata ? 'var(--acc2)' : i === curent ? 'var(--acc1)' : 'var(--panel2)',
+                            border: '1px solid ' + (p.gata ? 'var(--acc2)' : i === curent ? 'var(--acc1)' : 'var(--border)'),
+                        } },
+                        p.gata ? '✓' : (i + 1) + '.',
+                        " ",
+                        p.icon,
+                        " ",
+                        p.nume))),
+                    React.createElement("button", { onClick: () => setGhidAscuns(true), title: "Ascunde pa\u0219ii", className: "shrink-0 px-1.5 py-2 text-xs", style: { color: 'var(--muted2)' } }, "\u2715")),
+                React.createElement("div", { className: "text-[11px] mt-1.5", style: { color: 'var(--muted)' } }, explicatii[curent === -1 ? 3 : curent])));
+        })(),
+        Number(ante.metriPeLatime) > 0 && (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: 'var(--panel2)', color: 'var(--muted2)', borderBottom: '1px solid var(--border)' } },
             "\uD83D\uDCCF ",
             ante.scaraNumitor ? '1:' + ante.scaraNumitor + (ante.foaieMm && ante.foaieMm.format ? ' pe ' + ante.foaieMm.format : '') : 'măsurată pe o cotă',
             " \u00B7 ",
             rotunjeste2(ante.metriPeLatime).toFixed(2),
             " m pe l\u0103\u021Bimea foii",
             ante.scaraSursa === 'cartus' ? ' · luată din cartuș' : ante.scaraSursa === 'masurata' ? ' · măsurată de tine' : '')),
+        !ante.metriPeLatime && ghidAscuns && (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: '#E9A23B15', color: 'var(--acc3)', borderBottom: '1px solid #E9A23B44' } }, "\uD83D\uDCCF Scara nu e pus\u0103 \u2014 traseele nu dau metri. Atinge aici: \u00EE\u021Bi spun singur pe ce foaie e plan\u0219a \u0219i ce scar\u0103 scrie pe ea.")),
         mesaj && (React.createElement("div", { onClick: () => setMesaj(''), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: 'var(--panel2)', color: 'var(--muted)', borderBottom: '1px solid var(--border)' } },
             mesaj,
             " ",
@@ -13452,6 +13508,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 "Am g\u0103sit ",
                 cautare.gasite.length,
                 " simboluri la fel"),
+            cautare.gasite.length === 0 && (React.createElement("div", { className: "text-[11px] rounded px-2 py-1.5", style: { background: '#E9A23B15', color: 'var(--acc3)', border: '1px solid #E9A23B44' } }, "Niciunul? Trage \u201EExigen\u021Ba\" de mai jos spre st\u00E2nga \u2014 caut din nou singur, mai \u00EEng\u0103duitor. Dac\u0103 simbolul apare pe plan\u0219\u0103 \u0219i rotit, bifeaz\u0103 \u201E\u00EEntoarse\".")),
             React.createElement("div", { className: "flex items-center gap-2" },
                 React.createElement("span", { className: "text-[11px] shrink-0", style: { color: 'var(--muted2)' } }, "Exigen\u021B\u0103"),
                 React.createElement("input", { type: "range", min: "50", max: "95", value: Math.round(cautare.prag * 100), onChange: (e) => ruleazaCautarea(null, Number(e.target.value) / 100, cautare.rotatii), className: "flex-1" }),
