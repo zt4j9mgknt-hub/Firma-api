@@ -3,7 +3,7 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v90';
+const CACHE = 'firma-cache-v91';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
@@ -51,19 +51,31 @@ self.addEventListener('fetch', (e) => {
     // pornește. După 3,5s servim din cache; rețeaua continuă în fundal și pune
     // versiunea proaspătă în cache pentru pornirea următoare.
     e.respondWith((async () => {
-      const dinRetea = fetch(req).then((res) => {
-        // DOAR răspunsurile bune intră în memorie: o pagină de eroare 500 de la o
-        // mentenanță ar SUPRASCRIE aplicația bună din cache și ar lăsa-o „moartă" offline.
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy).catch(() => {}));
+      const dinRetea = fetch(req).then(async (res) => {
+        // DOAR răspunsurile bune, NE-redirecționate, intră în memorie — și ca o copie
+        // CURATĂ (Response nou): un răspuns „redirected" pus brut în cache e refuzat de
+        // browser la navigare offline, iar o pagină de eroare 500 ar suprascrie aplicația bună.
+        if (res && res.ok && !res.redirected) {
+          try {
+            const corp = await res.clone().blob();
+            const c = await caches.open(CACHE);
+            await c.put(req, new Response(corp, { status: 200, headers: { 'content-type': res.headers.get('content-type') || 'text/html' } }));
+          } catch (_) {}
         }
         return res;
       });
-      const dinCache = () => caches.match(req).then((c) => c || caches.match('/index.html'));
+      // Fallback-ul încearcă AMBELE chei ('/', '/index.html') — oricum a apucat să se salveze.
+      const dinCache = () => caches.match(req).then((c) => c || caches.match('/index.html')).then((c) => c || caches.match('/'));
       const pauza = new Promise((r) => setTimeout(() => r('lent'), 3500));
       const primul = await Promise.race([dinRetea.catch(() => 'picat'), pauza]);
-      if (primul !== 'lent' && primul !== 'picat') return primul;
+      if (primul !== 'lent' && primul !== 'picat') {
+        // Serverul a răspuns repede, dar cu EROARE (500 la mentenanță)? Servim aplicația
+        // bună din memorie, nu pagina de eroare.
+        if (primul.ok) return primul;
+        const cacheBun = await dinCache();
+        if (cacheBun) return cacheBun;
+        return primul;
+      }
       const cache = await dinCache();
       if (cache) { dinRetea.catch(() => {}); return cache; }
       return dinRetea.catch(() => new Response('Fără net și fără versiune salvată.', { status: 503 }));
