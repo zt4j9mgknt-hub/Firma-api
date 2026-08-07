@@ -836,6 +836,10 @@ function noteazaSterse(key, vechi, nou) {
             console.warn('[sync] ' + disparute.length + ' înregistrări lipsesc la „' + key + '" — NU le marchez ca șterse.');
         }
         catch (_) { }
+        try {
+            arataSalvat('⚠ ' + disparute.length + ' înregistrări NU au fost șterse — protecție contra pierderii de date. Șterge-le în grupuri mai mici.');
+        }
+        catch (_) { }
     }
     const limita = acum - 60 * 24 * 3600 * 1000;
     Object.keys(o).forEach((k) => {
@@ -912,7 +916,13 @@ async function loadKey(key, fallback) {
         return faraSterse(key, pending !== undefined ? pending.value : fallback);
     }
 }
-async function saveKey(key, value) {
+const lantSalvari = {};
+function saveKey(key, value) {
+    const p = (lantSalvari[key] || Promise.resolve()).then(() => saveKeyIntern(key, value));
+    lantSalvari[key] = p.catch(() => { });
+    return p;
+}
+async function saveKeyIntern(key, value) {
     noteazaSterse(key, cacheGet(key), value);
     cacheSet(key, value);
     let deTrimis = value;
@@ -1140,7 +1150,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.59-tot-restul';
+const APP_VERSION = 'v01.60-slefuit';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -1881,8 +1891,16 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
                     'Stoc inițial': '', 'Intrări': '', 'Ieșiri': '', 'Stoc final': '',
                     'Sold inițial': '', 'Valoare intrări': '', 'Valoare ieșiri': '', 'Sold final': '',
                 }];
-        const fmtRo = (d) => { if (!d)
-            return ''; const [y, m, day] = d.split('-'); return `${day}/${m}/${y}`; };
+        const fmtRo = (d) => {
+            if (typeof XLSX === 'undefined') {
+                window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+                return;
+            }
+            if (!d)
+                return '';
+            const [y, m, day] = d.split('-');
+            return `${day}/${m}/${y}`;
+        };
         const gestiuniLabel = exportGestiuni.size === 0 ? 'Toate' : [...exportGestiuni].join(', ');
         const azi = new Date();
         const extrasLa = `${String(azi.getDate()).padStart(2, '0')}/${String(azi.getMonth() + 1).padStart(2, '0')}/${azi.getFullYear()}`;
@@ -2173,7 +2191,19 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
         }
     }, [prefill]);
     const nextNumber = (list) => urmatorulNumar('DEV', list);
+    const refSalvareDeviz = useRef(false);
     const save = async (d) => {
+        if (refSalvareDeviz.current)
+            return;
+        refSalvareDeviz.current = true;
+        try {
+            await saveIntern(d);
+        }
+        finally {
+            refSalvareDeviz.current = false;
+        }
+    };
+    const saveIntern = async (d) => {
         let listaNr = devize;
         if (!d.numar && typeof navigator !== 'undefined' && navigator.onLine) {
             try {
@@ -2184,7 +2214,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
         const withNumber = { ...d, numar: d.numar || nextNumber(listaNr) };
         const original = devize.find((x) => x.id === d.id);
         let finalDoc = withNumber;
-        if (original && original.stocDedus) {
+        if (original && original.stocDedus && !original.stocDinSantier) {
             onReverse(original);
             const unmatched = onEmis(withNumber);
             finalDoc = { ...withNumber, stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
@@ -2208,9 +2238,11 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
     const setStatus = (id, status) => {
         const doc = devize.find((d) => d.id === id);
         let extra = {};
-        if (status === 'Emis' && doc && !doc.stocDedus) {
+        if (status === 'Emis' && doc && !doc.stocDedus && !doc.stocDinSantier) {
             const unmatched = onEmis(doc);
-            extra = { stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+            if (unmatched.length < (doc.items || []).length) {
+                extra = { stocDedus: true, stocMesaj: unmatched.length ? `Nepotrivite în stoc: ${unmatched.join(', ')}` : 'Stoc actualizat automat.' };
+            }
         }
         else if (status === 'Ciornă' && doc && doc.stocDedus) {
             onReverse(doc);
@@ -3784,6 +3816,10 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
     const azi = new Date();
     const extrasLa = `${String(azi.getDate()).padStart(2, '0')}/${String(azi.getMonth() + 1).padStart(2, '0')}/${azi.getFullYear()}`;
     const exportCereriExcel = () => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+            return;
+        }
         const rows = (cerereSearching ? cereriFiltrate : cereriAici).map((c) => ({ 'Data': fmtData(c.data), 'Material': c.denumire, 'Cantitate': c.cantitate, 'U.M.': c.um, 'Status': c.status }));
         const sheetRows = rows.length ? rows : [{ 'Data': '', 'Material': 'Nicio cerere înregistrată.', 'Cantitate': '', 'U.M.': '', 'Status': '' }];
         const headerRows = [
@@ -6191,6 +6227,10 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
     const save = (nextAll) => { setLista(nextAll); persist(cheie, nextAll); };
     const totalVal = items.reduce((s, x) => s + ((Number(x.cantitate) || 0) * (Number(x.pretUnitar) || 0)), 0);
     const importaFoaia = (wb, sheetName) => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+            return;
+        }
         try {
             const ws = wb.Sheets[sheetName];
             const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -6216,6 +6256,10 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
         }
     };
     const importExcel = (file) => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+            return;
+        }
         if (!file)
             return;
         const reader = new FileReader();
@@ -6705,6 +6749,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             ? [...rows, totalRow]
             : [{ 'Data': '', 'Etapă': '', 'Ora început': '', 'Ora sfârșit': '', 'Nr. persoane': '', 'Persoane': '', 'Total ore': '', 'Ce s-a făcut': 'Niciun raport în perioada selectată.' }];
         const fmtRo = (d) => {
+            if (typeof XLSX === 'undefined') {
+                window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+                return;
+            }
             if (!d)
                 return '';
             const [y, m, day] = d.split('-');
@@ -8500,22 +8548,23 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
                 return;
             if (!isManager && numeCheie(p.nume) !== cheiaUserului)
                 return;
-            if (!perPersoana[p.nume])
-                perPersoana[p.nume] = { nume: p.nume, totalMin: 0, peSantier: {}, pauzeMin: 0 };
+            const cheie = numeCheie(p.nume);
+            if (!perPersoana[cheie])
+                perPersoana[cheie] = { nume: p.nume, totalMin: 0, peSantier: {}, pauzeMin: 0 };
             const lucrat = minuteLucrate(p);
-            perPersoana[p.nume].totalMin += lucrat;
-            perPersoana[p.nume].pauzeMin += Math.max(0, personMinutes(p) - lucrat);
-            perPersoana[p.nume].peSantier[santierNume] = (perPersoana[p.nume].peSantier[santierNume] || 0) + lucrat;
+            perPersoana[cheie].totalMin += lucrat;
+            perPersoana[cheie].pauzeMin += Math.max(0, personMinutes(p) - lucrat);
+            perPersoana[cheie].peSantier[santierNume] = (perPersoana[cheie].peSantier[santierNume] || 0) + lucrat;
         });
     });
     if (isManager) {
         allUsersPontaj.filter((u) => u.rol === 'Electrician').forEach((u) => {
-            if (!perPersoana[u.nume])
-                perPersoana[u.nume] = { nume: u.nume, totalMin: 0, peSantier: {} };
+            if (!perPersoana[numeCheie(u.nume)])
+                perPersoana[numeCheie(u.nume)] = { nume: u.nume, totalMin: 0, peSantier: {} };
         });
     }
     const corectiiLuna = (pontajCorectii || []).filter((c) => c.luna === luna);
-    const corectiePersoana = (nume) => corectiiLuna.filter((c) => c.nume === nume).reduce((s, c) => s + c.minuteAjustare, 0);
+    const corectiePersoana = (nume) => corectiiLuna.filter((c) => numeCheie(c.nume) === numeCheie(nume)).reduce((s, c) => s + c.minuteAjustare, 0);
     const lista = Object.values(perPersoana)
         .map((p) => ({ ...p, corectieMin: corectiePersoana(p.nume), totalFinal: p.totalMin + corectiePersoana(p.nume), zileLibere: zileLibereLuna(p.nume) }))
         .sort((a, b) => b.totalFinal - a.totalFinal);
@@ -8592,6 +8641,10 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     };
     const santierFiltruNume = santiere.find((s) => s.id === santierFiltru)?.nume;
     const exportPontajExcel = () => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+            return;
+        }
         const totalZileLibere = lista.reduce((s, p) => s + (p.zileLibere || 0), 0);
         const rows = lista.map((p) => ({
             'Nume': p.nume,
@@ -8655,6 +8708,10 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         w.focus();
     };
     const exportFoaiePrezentaExcel = () => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+            return;
+        }
         if (santiereExport.length === 0)
             return;
         const wb = XLSX.utils.book_new();
@@ -10003,6 +10060,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             const totalDinMunca = totalManopera + totalMaterialeR;
             const faraTarif = dinRapoarte.filter((x) => x.ore > 0 && !x.tarif);
             const exportaIncasat = () => {
+                if (typeof XLSX === 'undefined') {
+                    window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+                    return;
+                }
                 try {
                     const azF = new Date();
                     const stamp = `${String(azF.getDate()).padStart(2, '0')}/${String(azF.getMonth() + 1).padStart(2, '0')}/${azF.getFullYear()}`;
@@ -14902,6 +14963,17 @@ function App() {
         setTab('devize');
     };
     const saveOffer = async (o) => {
+        if (refSalvareDoc.current)
+            return;
+        refSalvareDoc.current = true;
+        try {
+            await saveOfferIntern(o);
+        }
+        finally {
+            refSalvareDoc.current = false;
+        }
+    };
+    const saveOfferIntern = async (o) => {
         let listaNr = offers;
         if (!o.numar && typeof navigator !== 'undefined' && navigator.onLine) {
             try {
@@ -14939,7 +15011,7 @@ function App() {
         });
         const sX = (santiere || []).find((x) => x.nume === santierNume);
         setTab('devize');
-        setDevizPrefill({ clientId: sX?.benefClientId || clients[0]?.id || '', items: itemsWithPrice, tva: TVA_IMPLICIT,
+        setDevizPrefill({ stocDinSantier: true, clientId: sX?.benefClientId || clients[0]?.id || '', items: itemsWithPrice, tva: TVA_IMPLICIT,
             santierId: sX?.id || '', santierNume: santierNume || '', adresaLucrare: sX?.adresa || '',
             lucrare: santierNume ? `Materiale consumate — ${santierNume}` : '' });
     };
@@ -14963,7 +15035,7 @@ function App() {
         });
         const sY = (santiere || []).find((x) => x.nume === santierNume);
         setTab('devize');
-        setDevizPrefill({ clientId: sY?.benefClientId || clients[0]?.id || '', items, tva: TVA_IMPLICIT,
+        setDevizPrefill({ stocDinSantier: true, clientId: sY?.benefClientId || clients[0]?.id || '', items, tva: TVA_IMPLICIT,
             santierId: sY?.id || '', santierNume: santierNume || '', adresaLucrare: sY?.adresa || '',
             lucrare: santierNume ? `Materiale folosite — ${santierNume}` : '' });
     };
@@ -15008,7 +15080,19 @@ function App() {
         const move = { id: uid(), materialId: mat.id, tip: 'iesire', cantitate: Number(cantitate) || 0, nota: `Livrat la șantier: ${santierNume}`, data: new Date().toISOString().slice(0, 10) };
         scrieStoc(nextMaterials, [move, ...refStocMov.current]);
     };
+    const refSalvareDoc = useRef(false);
     const saveInvoice = async (inv) => {
+        if (refSalvareDoc.current)
+            return;
+        refSalvareDoc.current = true;
+        try {
+            await saveInvoiceIntern(inv);
+        }
+        finally {
+            refSalvareDoc.current = false;
+        }
+    };
+    const saveInvoiceIntern = async (inv) => {
         const isNew = !invoices.some((x) => x.id === inv.id);
         let listaNr = invoices;
         if (!inv.numar && typeof navigator !== 'undefined' && navigator.onLine) {
@@ -15020,6 +15104,12 @@ function App() {
         const withNumber = { ...inv, numar: inv.numar || nextNumber('FA', listaNr) };
         let finalDoc = withNumber;
         const dinDeviz = (inv.devizeIds || []).length > 0;
+        const originalInv = !isNew ? invoices.find((x) => x.id === inv.id) : null;
+        if (originalInv && originalInv.stocDedus && !dinDeviz) {
+            reverseStock(originalInv.items, `Corecție factură ${withNumber.numar}`);
+            const unmatched2 = deductStock(inv.items, `Factură ${withNumber.numar} (corectată)`);
+            finalDoc = { ...withNumber, stocDedus: true, stocMesaj: unmatched2.length ? `Nepotrivite în stoc: ${unmatched2.join(', ')}` : 'Stoc actualizat automat.' };
+        }
         if (isNew && !dinDeviz) {
             const unmatched = deductStock(inv.items, `Factură ${withNumber.numar}`);
             if (unmatched.length < (inv.items || []).length) {
@@ -15190,7 +15280,7 @@ function App() {
                                 React.createElement("div", { className: "flex items-center gap-2" },
                                     offers.length > 0 && React.createElement("button", { onClick: () => printAll(offers, 'Ofertă'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
                                     !offerForm && React.createElement("button", { onClick: () => setOfferForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 ofert\u0103"))),
-                            offerForm && React.createElement(PaginaFormular, { titlu: offerForm.id ? '✏️ Modifici oferta ' + (offerForm.numar || '') : '📄 Ofertă nouă', onInchide: () => setOfferForm(null) },
+                            offerForm && React.createElement(PaginaFormular, { titlu: offerForm.id && offerForm.numar ? '✏️ Modifici oferta ' + offerForm.numar : '📄 Ofertă nouă', onInchide: () => setOfferForm(null) },
                                 React.createElement(DocForm, { kind: "Ofert\u0103", clients: clients, materials: materials, initial: (offerForm.id || offerForm.items) ? offerForm : null, onCancel: () => setOfferForm(null), onSave: saveOffer })),
                             React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: devizDinOferta, onPrint: printOne('Ofertă'), onDuplica: duplicaDoc('Ofertă') }))),
                         tab === 'facturi' && (React.createElement("div", null,
@@ -15199,7 +15289,7 @@ function App() {
                                 React.createElement("div", { className: "flex items-center gap-2" },
                                     invoices.length > 0 && React.createElement("button", { onClick: () => printAll(invoices, 'Factură'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
                                     !invoiceForm && React.createElement("button", { onClick: () => setInvoiceForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 factur\u0103"))),
-                            invoiceForm && React.createElement(PaginaFormular, { titlu: invoiceForm.id ? '✏️ Modifici factura ' + (invoiceForm.numar || '') : '🧾 Factură nouă', onInchide: () => setInvoiceForm(null) },
+                            invoiceForm && React.createElement(PaginaFormular, { titlu: invoiceForm.id && invoiceForm.numar ? '✏️ Modifici factura ' + invoiceForm.numar : '🧾 Factură nouă', onInchide: () => setInvoiceForm(null) },
                                 React.createElement(DocForm, { kind: "Factur\u0103", clients: clients, materials: materials, initial: invoiceForm.id ? invoiceForm : null, onCancel: () => setInvoiceForm(null), onSave: saveInvoice })),
                             React.createElement(DocTable, { kind: "Factur\u0103", docs: invoices, clients: clients, statuses: INVOICE_STATUSES, onEdit: setInvoiceForm, onDelete: deleteInvoice, onStatusChange: invoiceStatus, onPrint: printOne('Factură'), onSmartBill: sendInvoiceToSmartBill, onDuplica: duplicaDoc('Factură') }))),
                         tab === 'clienti' && React.createElement(ClientsTab, { clients: clients, setClients: setClients, persist: persist }),
