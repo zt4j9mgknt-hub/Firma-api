@@ -3,7 +3,7 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v97';
+const CACHE = 'firma-cache-v98';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
@@ -42,6 +42,10 @@ self.addEventListener('fetch', (e) => {
   let url;
   try { url = new URL(req.url); } catch (_) { return; }
   if (url.pathname.startsWith('/api/')) return; // API-ul merge direct la rețea; offline îl tratează aplicația
+  // Verificarea de versiune cere fișierul cu alt „?v=<timp>" de fiecare dată. Îl lăsăm să
+  // meargă direct la rețea, FĂRĂ să-l salvăm: altfel se strângeau sute de copii de ~1,3 MB
+  // sub chei mereu noi, până umpleau memoria telefonului și mureau datele offline.
+  if (url.searchParams.has('v')) return;
 
   const isHTML = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
 
