@@ -1193,7 +1193,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.68-numar-smartbill';
+const APP_VERSION = 'v01.69-numarat-rapid';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -13138,6 +13138,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const refCautGen = useRef(0);
     const [panou, setPanou] = useState(true);
     const [mesaj, setMesaj] = useState('');
+    const refUltimPin = useRef(null);
     const [ghidAscuns, setGhidAscuns] = useState(false);
     useInapoiTelefon(true, () => {
         if (refDialogDeschis.current) {
@@ -14050,16 +14051,32 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     };
     const puneSauScoatePin = (pl) => {
         if (!artCurent) {
-            setMesaj('Alege întâi un articol din listă.');
+            setMesaj('Alege întâi un tip din bara colorată de sus.');
             return;
         }
         const pg = refPagina.current;
         const aproape = pini.find((p) => Math.hypot(p.x - pl.x, p.y - pl.y) < Math.max(0.006, 10 / pg.width / vedere.zoom));
         if (aproape) {
+            if (refUltimPin.current === aproape.id)
+                refUltimPin.current = null;
             onSchimb({ pini: (ante.pini || []).filter((p) => p.id !== aproape.id) });
             return;
         }
-        onSchimb({ pini: [...(ante.pini || []), { id: uid(), pagina, articolId: artCurent.id, x: pl.x, y: pl.y }] });
+        const id = uid();
+        refUltimPin.current = id;
+        onSchimb({ pini: [...(ante.pini || []), { id, pagina, articolId: artCurent.id, x: pl.x, y: pl.y }] });
+    };
+    const stergeUltimulPin = () => {
+        const id = refUltimPin.current;
+        const lista = ante.pini || [];
+        const tinta = id ? lista.find((p) => p.id === id) : null;
+        const dePin = tinta || [...lista].reverse().find((p) => (p.pagina || 1) === pagina && artCurent && p.articolId === artCurent.id);
+        if (!dePin) {
+            setMesaj('Nu mai e niciun punct de scos.');
+            return;
+        }
+        refUltimPin.current = null;
+        onSchimb({ pini: lista.filter((p) => p.id !== dePin.id) });
     };
     const adaugaPunctTraseu = (pl) => {
         if (!artCurent) {
@@ -14205,7 +14222,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         ['calibrare', '📏', 'Scara'],
         ['cota', '📐', 'Cote'],
     ];
-    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : id === 'cota' ? 'Atinge o cotă ca s-o măsoare din partea cealaltă.' : id === 'legenda' ? 'Atinge pe rând fiecare simbol din legendă — apare imediat un dialog unde îi dai numele. Sau trage un dreptunghi peste toată legenda dacă planșa are text PDF real.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+    const btnMod = (id, icon, eticheta) => (React.createElement("button", { key: id, onClick: () => { setMod(id); setTemp(null); setCautare(null); setMesaj(id === 'sablon' ? 'Trage un dreptunghi în jurul unui singur simbol.' : id === 'calibrare' ? 'Atinge două capete ale unei cote pe care o știi.' : id === 'traseu' ? 'Atinge pe rând colțurile traseului, apoi „Gata".' : id === 'zona' ? 'Trage un dreptunghi peste apartament sau etaj.' : id === 'cota' ? 'Atinge o cotă ca s-o măsoare din partea cealaltă.' : id === 'pin' ? 'Alege tipul din bara colorată, apoi atinge fiecare bucată — contorul crește singur. Atingi un punct pus ca să-l scoți.' : id === 'legenda' ? 'Atinge pe rând fiecare simbol din legendă — apare imediat un dialog unde îi dai numele. Sau trage un dreptunghi peste toată legenda dacă planșa are text PDF real.' : ''); }, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold shrink-0", style: { color: mod === id ? '#14181C' : 'var(--muted)', background: mod === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
         icon,
         " ",
         eticheta));
@@ -14223,6 +14240,16 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             potAnula && (React.createElement("button", { onClick: anuleaza, title: "Anuleaz\u0103 ultima opera\u021Bie mare (num\u0103rat, cotat, \u0219ters)", className: "text-xs px-2 py-1.5 rounded-lg shrink-0 font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u21BA Anuleaz\u0103")),
             React.createElement("button", { onClick: () => potriveste(), title: "\u00CEncadreaz\u0103 plan\u0219a pe ecran", className: "text-xs px-2 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u2922")),
         React.createElement("div", { className: "flex gap-1.5 px-2 py-1.5 shrink-0 overflow-x-auto", style: { borderBottom: '1px solid var(--border)' } }, MODURI.map(([id, ic, et]) => btnMod(id, ic, et))),
+        mod === 'pin' && (React.createElement("div", { className: "flex items-center gap-1.5 px-2 py-1.5 shrink-0 overflow-x-auto", style: { borderBottom: '1px solid var(--border)', background: 'var(--panel)' } },
+            articole.length === 0 && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Adaug\u0103 \u00EEnt\u00E2i un tip (+ Articol, \u00EEn panoul de jos)."),
+            articole.map((a) => {
+                const activ = articolSel === a.id;
+                return (React.createElement("button", { key: a.id, onClick: () => setArticolSel(a.id), className: "flex items-center gap-1.5 px-2.5 py-2 rounded-lg shrink-0 font-semibold text-xs", style: { background: activ ? a.culoare : 'var(--panel2)', color: activ ? '#14181C' : 'var(--text)', border: '1px solid ' + (activ ? a.culoare : 'var(--border)') } },
+                    React.createElement("span", { style: { width: 9, height: 9, borderRadius: 5, background: activ ? '#14181C' : a.culoare, flexShrink: 0 } }),
+                    a.nume,
+                    React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, minWidth: 14, textAlign: 'right' } }, cantPentru(a.id))));
+            }),
+            articole.length > 0 && (React.createElement("button", { onClick: stergeUltimulPin, title: "Scoate ultima bucat\u0103 pus\u0103", className: "shrink-0 text-xs px-2.5 py-2 rounded-lg font-semibold", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "\u21B6 Ultimul")))),
         (() => {
             const p1 = Number(ante.metriPeLatime) > 0;
             const p2 = articole.some((a) => a.sablon && a.sablon.w > 0);
