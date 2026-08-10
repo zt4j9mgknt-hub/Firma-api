@@ -33,6 +33,18 @@ function authenticate(req) {
   return verifyToken(token);
 }
 
+// Chei care NU au voie prin magazinul general de date: sunt administrate DOAR de /api/auth.
+// „users" ține parolele (hash-uri) și rolurile. Fără blocajul ăsta, orice angajat logat
+// putea: (a) să CITEASCĂ hash-urile de parolă ale tuturor (GET ?key=users), (b) să
+// SUPRASCRIE lista de utilizatori (POST key=users) punându-se pe el Manager, apoi să se
+// relogheze cu rol de Manager. Aici e adevărata gaură — o închidem.
+const CHEI_INTERZISE = new Set(['users']);
+
+// (OPȚIONAL) Chei pe care doar Managerul are voie să le SCRIE. Lăsat gol ca să nu stric
+// niciun flux existent. Dacă vrei ca electricienii să nu poată modifica firma/facturile,
+// adaugă aici, de ex.: new Set(['company', 'invoices']). Citirea rămâne permisă.
+const CHEI_DOAR_MANAGER_SCRIE = new Set([]);
+
 let pusher = null;
 function getPusher() {
   if (pusher) return pusher;
@@ -54,7 +66,8 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  if (!authenticate(req)) return res.status(401).json({ error: 'Sesiune invalida sau expirata - te rog reloghează-te.' });
+  const auth = authenticate(req);
+  if (!auth) return res.status(401).json({ error: 'Sesiune invalida sau expirata - te rog reloghează-te.' });
 
   const base = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
@@ -66,6 +79,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const key = req.query.key;
       if (!key) return res.status(400).json({ error: 'Lipseste parametrul key.' });
+      if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
 
       const r = await fetch(`${base}/get/firma:${encodeURIComponent(key)}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -78,6 +92,8 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const { key, value } = req.body || {};
       if (!key) return res.status(400).json({ error: 'Lipseste key in body.' });
+      if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
+      if (CHEI_DOAR_MANAGER_SCRIE.has(key) && auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate modifica asta.' });
 
       const r = await fetch(`${base}/set/firma:${encodeURIComponent(key)}`, {
         method: 'POST',
