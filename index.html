@@ -1211,7 +1211,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.77-restante-pornit';
+const APP_VERSION = 'v01.78-restante-drepturi';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -3172,11 +3172,12 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
     const [veziStats, setVeziStats] = useState(false);
     const isManager = currentUser?.rol === 'Manager';
     const aici = (restante || []).filter((r) => r.santierId === santierId);
+    const vizibile = aici.filter((r) => !r.sters);
     const setPersist = (next) => { setRestante(next); persist('restante', next); };
     const keyOf = (it) => it.apId ? ('ap:' + it.apId) : (it.etajId ? ('et:' + it.etajId) : (it.locNume ? ('tx:' + it.locNume) : ''));
     const grupuri = (() => {
         const m = new Map();
-        aici.forEach((it) => { const k = keyOf(it); if (!m.has(k))
+        vizibile.forEach((it) => { const k = keyOf(it); if (!m.has(k))
             m.set(k, { key: k, loc: it.locNume || '', sample: it, items: [] }); m.get(k).items.push(it); });
         const arr = Array.from(m.values()).map((g) => { const deschise = g.items.filter((x) => !x.rezolvat).length; return { ...g, deschise, rezolvate: g.items.length - deschise }; });
         arr.sort((a, b) => { if ((a.deschise > 0) !== (b.deschise > 0))
@@ -3216,9 +3217,23 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
             notifica(it.creatId, { title: 'Restanță rezolvată ✅', body: `${it.locNume ? ('[' + it.locNume + '] ') : ''}„${it.text}" — rezolvată de ${currentUser?.nume || 'un coleg'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
     };
     const editeazaTimp = async (it) => { const timp = await cereTimp(it.text, it.timpLucratMin); setPersist((restante || []).map((r) => r.id === it.id ? { ...r, timpLucratMin: timp } : r)); };
+    const editeazaText = async (it) => {
+        const v = await cereText({ titlu: '✏️ Modifică restanța', valoare: it.text || '', buton: '✓ Salvează' });
+        if (v == null)
+            return;
+        const t = String(v).trim();
+        if (!t)
+            return;
+        setPersist((restante || []).map((r) => r.id === it.id ? { ...r, text: t } : r));
+    };
     const redeschide = (it) => setPersist((restante || []).map((r) => r.id === it.id ? { ...r, rezolvat: false, rezolvatDe: null, rezolvatId: null, rezolvatLa: null, rezolvatTs: null } : r));
-    const sterge = (it) => { if (!window.confirm('Ștergi „' + it.text + '" din listă?'))
-        return; setPersist((restante || []).filter((r) => r.id !== it.id)); };
+    const sterge = (it) => {
+        if (!isManager)
+            return;
+        if (!window.confirm('Ștergi „' + it.text + '" din listă? (rămâne în statistici)'))
+            return;
+        setPersist((restante || []).map((r) => r.id === it.id ? { ...r, sters: true, stersDe: currentUser?.nume || '', stersLa: dataLocala(new Date()) } : r));
+    };
     const stats = (() => {
         const total = aici.length, rezolvate = aici.filter((x) => x.rezolvat).length;
         const durate = aici.filter((x) => x.rezolvat).map(durataMsRestanta).filter((x) => x != null);
@@ -3227,7 +3242,8 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
         const medieLucru = lucru.length ? Math.round(lucru.reduce((a, b) => a + b, 0) / lucru.length) : null;
         const totalLucru = lucru.reduce((a, b) => a + b, 0);
         const top = grupuri.slice().sort((a, b) => b.items.length - a.items.length).filter((g) => g.loc).slice(0, 5);
-        return { total, rezolvate, deschise: total - rezolvate, medie, medieLucru, totalLucru, top };
+        const deschise = vizibile.filter((x) => !x.rezolvat).length;
+        return { total, rezolvate, deschise, medie, medieLucru, totalLucru, top };
     })();
     const printPredare = () => {
         const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -3279,7 +3295,8 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
                         it.creatDe ? 'pus de ' + it.creatDe : '',
                         it.data ? ' · ' + fmtData(it.data) : '')),
                 rez && (React.createElement("button", { onClick: () => editeazaTimp(it), className: "mt-1 text-[10px] px-2 py-0.5 rounded-full", style: { color: '#14181C', background: it.timpLucratMin ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)', fontWeight: 700 } }, it.timpLucratMin ? '⏱ lucru efectiv: ' + minText(it.timpLucratMin) : '⏱ + adaugă timp de lucru'))),
-            React.createElement("button", { onClick: () => sterge(it), className: "shrink-0 px-1", style: { color: 'var(--muted2)' } }, "\uD83D\uDDD1")));
+            React.createElement("button", { onClick: () => editeazaText(it), title: "Modific\u0103 textul", className: "shrink-0 px-1", style: { color: 'var(--muted2)' } }, "\u270F\uFE0F"),
+            isManager && React.createElement("button", { onClick: () => sterge(it), title: "\u0218terge (doar Manager)", className: "shrink-0 px-1", style: { color: 'var(--muted2)' } }, "\uD83D\uDDD1")));
     };
     if (deschisKey !== null) {
         const g = grupuri.find((x) => x.key === deschisKey);
@@ -6079,7 +6096,7 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
                 React.createElement("div", { className: "text-[11px] mb-2 px-1", style: { color: 'var(--acc3)' } }, "\u26A0 Asta NU e raportul zilei. Aici doar construie\u0219ti cl\u0103direa \u2014 etaje, apartamente \u0219i lista de materiale prev\u0103zute la fiecare. Ce ai lucrat azi se trece sus."),
                 React.createElement(SiteStructuraTab, { santierId: santierId, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, materials: materials, materialeLista: materialeLista }))))),
         setRestanteSantier && santierId && (!RESTANTE_DOAR_MANAGER || isManager) && (() => {
-            const deschise = (restanteSantier || []).filter((r) => r.santierId === santierId && !r.rezolvat).slice().reverse();
+            const deschise = (restanteSantier || []).filter((r) => r.santierId === santierId && !r.rezolvat && !r.sters).slice().reverse();
             const areStruct = structura && structura.length > 0;
             const adauga = () => {
                 const t = restText.trim();
@@ -10980,7 +10997,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
             const numeSant = {};
             santiere.forEach((s) => { numeSant[s.id] = s.nume; });
             const idActiveMele = new Set(santiere.filter((s) => s.status === 'Activ' && inEchipa(s.echipa, currentUser?.id)).map((s) => s.id));
-            const lista = (restanteSantier || []).filter((r) => !r.rezolvat).filter((r) => isManager ? true : idActiveMele.has(r.santierId));
+            const lista = (restanteSantier || []).filter((r) => !r.rezolvat && !r.sters).filter((r) => isManager ? true : idActiveMele.has(r.santierId));
             if (!lista.length)
                 return null;
             const rezolva = (it) => { const next = (restanteSantier || []).map((r) => r.id === it.id ? { ...r, rezolvat: true, rezolvatDe: currentUser?.nume || '', rezolvatId: currentUser?.id || '', rezolvatLa: dataLocala(new Date()), rezolvatTs: Date.now() } : r); setRestanteSantier(next); persist('restante', next); };
@@ -15438,11 +15455,11 @@ function App() {
         const acumLocal = (() => { const d = new Date(); return dataLocala(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); })();
         n += (mementouri || []).filter((m) => !m.gata && (m.pentruUserId ? m.pentruUserId === u.id : m.creatId === u.id) && `${m.data}T${m.ora || '09:00'}` <= acumLocal).length;
         if (u.rol === 'Manager') {
-            n += (restanteSantier || []).filter((r) => !r.rezolvat).length;
+            n += (restanteSantier || []).filter((r) => !r.rezolvat && !r.sters).length;
         }
         else if (!RESTANTE_DOAR_MANAGER) {
             const idSant = new Set(santiere.filter((s) => s.status === 'Activ' && inEchipa(s.echipa, u.id)).map((s) => s.id));
-            n += (restanteSantier || []).filter((r) => !r.rezolvat && idSant.has(r.santierId)).length;
+            n += (restanteSantier || []).filter((r) => !r.rezolvat && !r.sters && idSant.has(r.santierId)).length;
         }
         return n;
     }, [currentUser, cereriSantier, concedii, santiere, rapoarte, mementouri, restanteSantier]);
