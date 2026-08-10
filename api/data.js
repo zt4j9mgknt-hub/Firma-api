@@ -61,7 +61,11 @@ function getPusher() {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Cu APP_ORIGIN setat pe Vercel (ex: https://smart-electroconect.vercel.app), doar site-ul
+  // tău poate chema API-ul din browser. Fără el, rămâne „*" (ca înainte) — nu strică nimic,
+  // dar e mai bine să-l pui. (Aplicația ta e pe aceeași adresă cu API-ul, deci nu se afectează.)
+  res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
