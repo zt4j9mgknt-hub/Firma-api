@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- Nu trimitem adresa paginii (care conține cheia de acces la fișiere) către alte site-uri:
+     așa cheia nu se scurge prin antetul „Referer" când se încarcă poze/PDF-uri. -->
+<meta name="referrer" content="no-referrer" />
 <title>Panou intern — Oferte &amp; Facturi</title>
 <link rel="icon" href="/logo-icon.png" type="image/png" />
 <link rel="apple-touch-icon" href="/logo-icon.png" />
@@ -429,14 +432,14 @@ const ziuaUrmatoare = (zi) => {
         return '';
     const d = new Date(String(zi) + 'T00:00:00');
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+    return dataLocala(d);
 };
 const NORMA_ZI_MIN = 8 * 60;
 function zileCareNuIesLaNorma(rapoarte, concedii, panaLa, zile) {
-    const azi = String(panaLa || new Date().toISOString().slice(0, 10));
+    const azi = String(panaLa || dataLocala(new Date()));
     const d0 = new Date(azi + 'T00:00:00');
     d0.setDate(d0.getDate() - (zile === undefined || zile === null || zile === '' ? 14 : (Number(zile) || 0)));
-    const deLa = d0.toISOString().slice(0, 10);
+    const deLa = dataLocala(d0);
     const peOmZi = {};
     const unificate = unificaRapoarte(rapoarte);
     unificate.forEach((r) => {
@@ -643,7 +646,7 @@ function raportStartPentru(s) {
         try {
             const d = new Date(s.dataCreare + 'T00:00:00');
             d.setDate(d.getDate() + 1);
-            return d.toISOString().slice(0, 10);
+            return dataLocala(d);
         }
         catch (_) {
             return null;
@@ -716,7 +719,14 @@ function authFetch(url, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (AUTH_TOKEN)
         headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
-    return fetch(url, { ...options, headers });
+    if (options.signal || typeof AbortController === 'undefined')
+        return fetch(url, { ...options, headers });
+    const ac = new AbortController();
+    const t = setTimeout(() => { try {
+        ac.abort();
+    }
+    catch (_) { } }, options.timeoutMs || 12000);
+    return fetch(url, { ...options, headers, signal: ac.signal }).finally(() => clearTimeout(t));
 }
 const bufToB64u = (buf) => { const b = new Uint8Array(buf); let s = ''; for (let i = 0; i < b.length; i++)
     s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
@@ -790,10 +800,16 @@ function cacheGet(key) { try {
 catch {
     return undefined;
 } }
+function semnaleazaMemoriePlina() { try {
+    window.dispatchEvent(new CustomEvent('memorie-plina'));
+}
+catch { } }
 function cacheSet(key, val) { try {
     localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(val));
 }
-catch { } }
+catch {
+    semnaleazaMemoriePlina();
+} }
 const PENDING_KEY = 'pendingWrites';
 function getPending() { try {
     return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]');
@@ -801,13 +817,16 @@ function getPending() { try {
 catch {
     return [];
 } }
-function setPending(q) { try {
+function setPending(q) { let plina = false; try {
     localStorage.setItem(PENDING_KEY, JSON.stringify(q));
 }
-catch { } try {
+catch {
+    plina = true;
+} try {
     window.dispatchEvent(new CustomEvent('offline-queue-change'));
 }
-catch { } }
+catch { } if (plina)
+    semnaleazaMemoriePlina(); }
 function enqueueWrite(key, value) { const q = getPending().filter((x) => x.key !== key); q.push({ key, value }); setPending(q); }
 function dequeueWrite(key) { const q = getPending(); const q2 = q.filter((x) => x.key !== key); if (q2.length !== q.length)
     setPending(q2); }
@@ -950,8 +969,10 @@ async function saveKeyIntern(key, value) {
         data = await res.json();
     }
     catch { }
-    if (!data.ok)
-        throw new Error(data.error || 'Salvarea a eșuat.');
+    if (!res.ok || !data.ok) {
+        enqueueWrite(key, value);
+        throw new Error(data.error || ('Salvarea a eșuat (server ' + res.status + '). Am pus-o la reîncercat.'));
+    }
     if (deTrimis !== value)
         cacheSet(key, deTrimis);
     dequeueWrite(key);
@@ -1104,8 +1125,21 @@ async function syncQueue() {
                 dd = await rr.json();
             }
             catch { }
-            if (!dd.ok)
-                break;
+            if (!rr.ok || !dd.ok) {
+                const q = getPending();
+                const it = q.find((x) => x.key === item.key);
+                if (it) {
+                    it._try = (it._try || 0) + 1;
+                    setPending(q);
+                    if (it._try >= 5) {
+                        try {
+                            window.dispatchEvent(new CustomEvent('sync-blocat', { detail: item.key }));
+                        }
+                        catch { }
+                    }
+                }
+                continue;
+            }
             cacheSet(item.key, toPost);
             setPending(getPending().filter((x) => x.key !== item.key));
         }
@@ -1152,7 +1186,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.66-fara-delogari';
+const APP_VERSION = 'v01.67-cautare-si-siguranta';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -1240,12 +1274,12 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
     const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
     const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire: '', um: 'buc', cantitate: 1, pretUnitar: 0, adaos: 0 }]);
     const [tva, setTva] = useState(initial?.tva ?? TVA_IMPLICIT);
-    const _dataDoc = initial?.data || new Date().toISOString().slice(0, 10);
+    const _dataDoc = initial?.data || dataLocala(new Date());
     const [dataDoc, setDataDoc] = useState(_dataDoc);
     const _scadentaImplicita = (() => { try {
         const d = new Date(_dataDoc + 'T00:00:00');
         d.setDate(d.getDate() + 30);
-        return d.toISOString().slice(0, 10);
+        return dataLocala(d);
     }
     catch (_) {
         return '';
@@ -1563,7 +1597,7 @@ function RoCalendarPicker({ value, onChange }) {
     const base = value ? new Date(value + 'T00:00:00') : new Date();
     const [viewYear, setViewYear] = useState(base.getFullYear());
     const [viewMonth, setViewMonth] = useState(base.getMonth());
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = dataLocala(new Date());
     const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
     const firstDayIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
     const cells = [];
@@ -1811,7 +1845,7 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
         }
         setMaterials(nextMaterials);
         persist('materials', nextMaterials);
-        const move = { id: uid(), materialId: material.id, tip, cantitate, nota, pret: tip === 'intrare' ? pret : undefined, data: new Date().toISOString().slice(0, 10), userNume: currentUser?.nume || '' };
+        const move = { id: uid(), materialId: material.id, tip, cantitate, nota, pret: tip === 'intrare' ? pret : undefined, data: dataLocala(new Date()), userNume: currentUser?.nume || '' };
         const nextMoves = [move, ...stockMoves];
         setStockMoves(nextMoves);
         persist('stockMoves', nextMoves);
@@ -2179,7 +2213,7 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
                 React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"),
                 React.createElement("button", { onClick: () => onSave({
                         ...(initial || {}),
-                        id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || new Date().toISOString().slice(0, 10),
+                        id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || dataLocala(new Date()),
                         clientId, items, tva: Number(tva), status: initial?.status || 'Ciornă',
                         nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, santierId, santierNume,
                     }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103"))))));
@@ -2302,7 +2336,7 @@ function SiteAlertsPanel({ santierId, categorie, categorieLabel, alerte, setAler
     const addAlerta = () => {
         if (!denumire.trim() || !descriere.trim())
             return;
-        const next = [...alerte, { id: uid(), santierId, categorie, denumire: denumire.trim(), descriere: descriere.trim(), data: new Date().toISOString().slice(0, 10), status: 'Nouă' }];
+        const next = [...alerte, { id: uid(), santierId, categorie, denumire: denumire.trim(), descriere: descriere.trim(), data: dataLocala(new Date()), status: 'Nouă' }];
         setAlerte(next);
         persist('alerteSantier', next);
         setDenumire('');
@@ -2850,7 +2884,7 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
         try {
             for (const file of files) {
                 const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/planse`);
-                const acc = [...refPlanse.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, data: new Date().toISOString().slice(0, 10), incarcatDe: currentUser?.nume || '' }];
+                const acc = [...refPlanse.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, data: dataLocala(new Date()), incarcatDe: currentUser?.nume || '' }];
                 refPlanse.current = acc;
                 setPlanseSantier(acc);
                 persist('planseSantier', acc);
@@ -2867,14 +2901,17 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
     const remove = async (p) => {
         if (!window.confirm(`Ștergi definitiv „${p.nume}"?`))
             return;
+        const next = refPlanse.current.filter((x) => x.id !== p.id);
+        refPlanse.current = next;
+        setPlanseSantier(next);
+        try {
+            await persist('planseSantier', next);
+        }
+        catch (_) { }
         try {
             await authFetch('/api/files', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', url: p.url }) });
         }
         catch { }
-        const next = refPlanse.current.filter((x) => x.id !== p.id);
-        refPlanse.current = next;
-        setPlanseSantier(next);
-        persist('planseSantier', next);
         if (viewing?.id === p.id)
             setViewing(null);
     };
@@ -2928,7 +2965,7 @@ function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, p
         try {
             for (const file of files) {
                 const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/media`);
-                const acc = [...refMedia.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, tip: file.type.startsWith('video/') ? 'video' : 'foto', data: new Date().toISOString().slice(0, 10), incarcatDe: currentUser?.nume || '' }];
+                const acc = [...refMedia.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, tip: file.type.startsWith('video/') ? 'video' : 'foto', data: dataLocala(new Date()), incarcatDe: currentUser?.nume || '' }];
                 refMedia.current = acc;
                 setMediaSantier(acc);
                 persist('mediaSantier', acc);
@@ -2945,14 +2982,17 @@ function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, p
     const remove = async (m) => {
         if (!window.confirm(`Ștergi definitiv „${m.nume}"?`))
             return;
+        const next = refMedia.current.filter((x) => x.id !== m.id);
+        refMedia.current = next;
+        setMediaSantier(next);
+        try {
+            await persist('mediaSantier', next);
+        }
+        catch (_) { }
         try {
             await authFetch('/api/files', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', url: m.url }) });
         }
         catch { }
-        const next = refMedia.current.filter((x) => x.id !== m.id);
-        refMedia.current = next;
-        setMediaSantier(next);
-        persist('mediaSantier', next);
         if (viewing?.id === m.id)
             setViewing(null);
     };
@@ -2990,7 +3030,7 @@ function SiteToolsTab({ santierId, santierNume, sculeSantier, setSculeSantier, p
         if (!sculaNoua.trim())
             return;
         const den = sculaNoua.trim();
-        const next = [...sculeSantier, { id: uid(), santierId, denumire: den, adusaDe: sculaAdusaDe.trim(), data: new Date().toISOString().slice(0, 10) }];
+        const next = [...sculeSantier, { id: uid(), santierId, denumire: den, adusaDe: sculaAdusaDe.trim(), data: dataLocala(new Date()) }];
         setSculeSantier(next);
         persist('sculeSantier', next);
         setSculaNoua('');
@@ -3051,7 +3091,7 @@ function SiteProblemeTab({ santierId, santierNume, echipaIds, problemeSantier, s
     const adaugaIntrebare = () => {
         if (!intrebareNoua.trim())
             return;
-        const q = { id: uid(), santierId, intrebare: intrebareNoua.trim(), raspunsuri: [], status: 'deschis', creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: new Date().toISOString().slice(0, 10) };
+        const q = { id: uid(), santierId, intrebare: intrebareNoua.trim(), raspunsuri: [], status: 'deschis', creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: dataLocala(new Date()) };
         setPersist([...problemeSantier, q]);
         setIntrebareNoua('');
         notifica('manageri', { title: 'Întrebare / problemă nouă', body: `${currentUser?.nume || 'Un coleg'}: „${q.intrebare}" — ${santierNume || 'șantier'}.`, tag: 'qa-' + santierId, url: '/?qa=' + q.id }, currentUser?.id);
@@ -3063,7 +3103,7 @@ function SiteProblemeTab({ santierId, santierNume, echipaIds, problemeSantier, s
         const t = String(text || '').trim();
         if (!t)
             return;
-        const r = { id: uid(), text: t, autorNume: currentUser?.nume || '', autorId: currentUser?.id || '', data: new Date().toISOString().slice(0, 10), corect: !!corect };
+        const r = { id: uid(), text: t, autorNume: currentUser?.nume || '', autorId: currentUser?.id || '', data: dataLocala(new Date()), corect: !!corect };
         const next = problemeSantier.map((p) => p.id === q.id ? { ...p, raspunsuri: corect ? [...raspunsuriQA(p).map((x) => ({ ...x, corect: false })), r] : [...raspunsuriQA(p), r], status: (corect || raspunsCorectQA(p)) ? 'rezolvat' : 'raspuns' } : p);
         setPersist(next);
         setRaspunsForm((f) => { const c = { ...f }; delete c[q.id]; return c; });
@@ -3083,7 +3123,8 @@ function SiteProblemeTab({ santierId, santierNume, echipaIds, problemeSantier, s
             notifica(q.creatId, { title: 'Răspuns confirmat ✅', body: `„${q.intrebare}" → ${r.text}`, tag: 'qa-raspuns', url: '/?qa=' + q.id }, currentUser?.id);
     };
     const anuleazaCorect = (q) => setPersist(problemeSantier.map((p) => p.id === q.id ? { ...p, raspunsuri: raspunsuriQA(p).map((x) => ({ ...x, corect: false })), status: 'raspuns' } : p));
-    const stergeRaspuns = (q, raspunsId) => setPersist(problemeSantier.map((p) => p.id === q.id ? { ...p, raspunsuri: raspunsuriQA(p).filter((x) => x.id !== raspunsId) } : p));
+    const stergeRaspuns = (q, raspunsId) => { if (!window.confirm('Ștergi acest răspuns?'))
+        return; setPersist(problemeSantier.map((p) => p.id === q.id ? { ...p, raspunsuri: raspunsuriQA(p).filter((x) => x.id !== raspunsId) } : p)); };
     const stergeQ = (id) => { if (!window.confirm('Ștergi această întrebare?'))
         return; setPersist(problemeSantier.filter((p) => p.id !== id)); };
     const renderRaspuns = (q, r) => {
@@ -3195,8 +3236,8 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
         if (!aiRasp || !q.trim())
             return;
         const item = { id: uid(), santierId: '', intrebare: q.trim(), creatDe: currentUser?.nume || '', creatId: currentUser?.id,
-            data: new Date().toISOString().slice(0, 10),
-            raspunsuri: [{ id: uid(), text: aiRasp.text, autor: (currentUser?.nume || 'Manager') + ' (via AI)', corect: true, data: new Date().toISOString().slice(0, 10) }] };
+            data: dataLocala(new Date()),
+            raspunsuri: [{ id: uid(), text: aiRasp.text, autor: (currentUser?.nume || 'Manager') + ' (via AI)', corect: true, data: dataLocala(new Date()) }] };
         const next = [item, ...(problemeSantier || [])];
         setProblemeSantier(next);
         persist('problemeSantier', next);
@@ -3217,7 +3258,7 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
     const intreaba = () => {
         if (!q.trim())
             return;
-        const item = { id: uid(), santierId: '', intrebare: q.trim(), raspunsuri: [], status: 'deschis', creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: new Date().toISOString().slice(0, 10) };
+        const item = { id: uid(), santierId: '', intrebare: q.trim(), raspunsuri: [], status: 'deschis', creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: dataLocala(new Date()) };
         const next = [...problemeSantier, item];
         setProblemeSantier(next);
         persist('problemeSantier', next);
@@ -3262,7 +3303,7 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
         const t = String(text || '').trim();
         if (!t)
             return;
-        const r = { id: uid(), text: t, autorNume: currentUser?.nume || '', autorId: currentUser?.id || '', data: new Date().toISOString().slice(0, 10), corect: !!corect };
+        const r = { id: uid(), text: t, autorNume: currentUser?.nume || '', autorId: currentUser?.id || '', data: dataLocala(new Date()), corect: !!corect };
         const next = problemeSantier.map((p) => p.id === item.id ? { ...p, raspunsuri: corect ? [...raspunsuriQA(p).map((x) => ({ ...x, corect: false })), r] : [...raspunsuriQA(p), r], status: (corect || raspunsCorectQA(p)) ? 'rezolvat' : 'raspuns' } : p);
         setPersist(next);
         setRaspunsForm((f) => { const c = { ...f }; delete c[item.id]; return c; });
@@ -3277,7 +3318,8 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
         if (item.creatId && item.creatId !== currentUser?.id && r)
             notifica(item.creatId, { title: 'Răspuns confirmat ✅', body: `„${item.intrebare}" → ${r.text}`, tag: 'qa-raspuns', url: '/?qa=' + item.id }, currentUser?.id);
     };
-    const stergeRaspuns = (item, raspunsId) => setPersist(problemeSantier.map((p) => p.id === item.id ? { ...p, raspunsuri: raspunsuriQA(p).filter((x) => x.id !== raspunsId) } : p));
+    const stergeRaspuns = (item, raspunsId) => { if (!window.confirm('Ștergi acest răspuns?'))
+        return; setPersist(problemeSantier.map((p) => p.id === item.id ? { ...p, raspunsuri: raspunsuriQA(p).filter((x) => x.id !== raspunsId) } : p)); };
     return (React.createElement("div", null,
         React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83E\uDD16 Asistentul cu r\u0103spunsuri"),
         React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "\u00CEntreab\u0103 orice \u2014 r\u0103spunde din tot ce s-a \u00EEntrebat \u0219i rezolvat pe toate \u0219antierele."),
@@ -3392,7 +3434,7 @@ const CHECKLIST_SABLON_DEFAULT = {
 function ChecklistTab({ santier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, materialeLista, pozitii, cereri, materials, sculeSantier, rapoarte, allUsers, currentUser, isManager, persist, onFinalizeSantier }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const santierId = santier?.id;
-    const azi = () => new Date().toISOString().slice(0, 10);
+    const azi = () => dataLocala(new Date());
     const sablon = checklistSablon || CHECKLIST_SABLON_DEFAULT;
     const [sablonOpen, setSablonOpen] = useState(false);
     const [openStart, setOpenStart] = useState(false);
@@ -3689,7 +3731,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         const den = cerereForm.denumire.trim();
         const cant = Number(cerereForm.cantitate) || 0;
         const um = (cerereForm.um || 'buc').trim();
-        const aziL = new Date().toISOString().slice(0, 10);
+        const aziL = dataLocala(new Date());
         const laFel = (a, b) => normalizeSearchLocal(a) === normalizeSearchLocal(b);
         const inDraft = cerereDraft.find((x) => laFel(x.denumire, den) && (x.um || '') === um);
         const inTrimise = !inDraft ? cereriAici.find((c) => c.status === 'Cerută' && laFel(c.denumire, den) && (c.um || '') === um) : null;
@@ -3755,7 +3797,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         if (!lista.length)
             return;
         const grupId = uid();
-        const data = new Date().toISOString().slice(0, 10);
+        const data = dataLocala(new Date());
         const noi = lista.map((d) => ({ id: uid(), grupId, santierId, denumire: d.denumire, cantitate: d.cantitate, um: d.um, data, status: 'Cerută', stocLaLivrare: true, cerutDe: currentUser?.nume || '', cerutId: currentUser?.id || '' }));
         const next = [...refCereri.current, ...noi];
         setCereriSantier(next);
@@ -3808,7 +3850,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         const next = refCereri.current.map((c) => c.id === cerere.id ? { ...c, status: 'Livrată' } : c);
         setCereriSantier(next);
         persist('cereriSantier', next);
-        const miscare = { id: uid(), santierId, denumire: cerere.denumire, um: cerere.um, tip: 'intrare', cantitate: cerere.cantitate, data: new Date().toISOString().slice(0, 10), nota: 'Din cerere livrată' };
+        const miscare = { id: uid(), santierId, denumire: cerere.denumire, um: cerere.um, tip: 'intrare', cantitate: cerere.cantitate, data: dataLocala(new Date()), nota: 'Din cerere livrată' };
         const nextMiscari = [miscare, ...miscariSantier];
         setMiscariSantier(nextMiscari);
         persist('miscariSantier', nextMiscari);
@@ -3903,13 +3945,13 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         setEditStocState(null);
         if (diff === 0)
             return;
-        const miscare = { id: uid(), santierId, denumire: m.denumire, um: m.um, tip: diff > 0 ? 'intrare' : 'iesire', cantitate: Math.abs(diff), data: new Date().toISOString().slice(0, 10), nota: 'Corecție manuală' };
+        const miscare = { id: uid(), santierId, denumire: m.denumire, um: m.um, tip: diff > 0 ? 'intrare' : 'iesire', cantitate: Math.abs(diff), data: dataLocala(new Date()), nota: 'Corecție manuală' };
         const next = [miscare, ...miscariSantier];
         setMiscariSantier(next);
         persist('miscariSantier', next);
     };
     const confirmConsum = (denumire, um, cantitate) => {
-        const miscare = { id: uid(), santierId, denumire, um, tip: 'iesire', cantitate: Number(cantitate) || 0, data: new Date().toISOString().slice(0, 10), nota: 'Consum șantier' };
+        const miscare = { id: uid(), santierId, denumire, um, tip: 'iesire', cantitate: Number(cantitate) || 0, data: dataLocala(new Date()), nota: 'Consum șantier' };
         const next = [miscare, ...miscariSantier];
         setMiscariSantier(next);
         persist('miscariSantier', next);
@@ -3924,7 +3966,7 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
             setReturnMatState(null);
             return;
         }
-        const miscare = { id: uid(), santierId, denumire: m.denumire, um: m.um, tip: 'iesire', cantitate: cant, data: new Date().toISOString().slice(0, 10), nota: `Trimis la ${dest}` };
+        const miscare = { id: uid(), santierId, denumire: m.denumire, um: m.um, tip: 'iesire', cantitate: cant, data: dataLocala(new Date()), nota: `Trimis la ${dest}` };
         const next = [miscare, ...miscariSantier];
         setMiscariSantier(next);
         persist('miscariSantier', next);
@@ -4082,8 +4124,8 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
                     React.createElement("button", { onClick: () => setReturnMatState(null), className: "px-2 py-1", style: { color: 'var(--muted)' } }, "Anuleaz\u0103")))))))))));
 }
 function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, setStructuraSantier, persist }) {
-    const _maine = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
-    const _azi = new Date().toISOString().slice(0, 10);
+    const _maine = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return dataLocala(d); })();
+    const _azi = dataLocala(new Date());
     const [form, setForm] = useState(initial || { id: uid(), nume: '', adresa: '', status: 'Activ', echipa: [], modFacturare: 'orar', tipFacturare: 'orar', tarifOrar: 75, materialeSursa: 'noastre', benefNume: '', benefInfo: '', benefSemnatar: '', contract: '', obiectiv: '', lucrare: 'Instalații electrice interioare', descriereLucrari: '', dataCreare: _azi, raportDeLa: _maine });
     const setMod = (m) => {
         const patch = { modFacturare: m };
@@ -4112,7 +4154,7 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
         setForm({ ...form, echipa: next });
     };
     const setEchipaStatus = (userId, status) => {
-        const next = echipa.map((e) => e.userId === userId ? { ...e, status, dataModificare: new Date().toISOString().slice(0, 10) } : e);
+        const next = echipa.map((e) => e.userId === userId ? { ...e, status, dataModificare: dataLocala(new Date()) } : e);
         setForm({ ...form, echipa: next });
     };
     return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
@@ -4120,7 +4162,7 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
             React.createElement("div", { className: "space-y-2" },
                 React.createElement("input", { placeholder: "Denumire \u0219antier (ex: Bloc Flore\u0219ti, Str. Traian)", value: form.nume, onChange: (e) => setForm({ ...form, nume: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
                 React.createElement("input", { placeholder: "Adres\u0103 (op\u021Bional)", value: form.adresa, onChange: (e) => setForm({ ...form, adresa: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
-                React.createElement("div", { className: "flex gap-2" }, SANTIER_STATUSES.map((s) => (React.createElement("button", { key: s, onClick: () => setForm({ ...form, status: s, statusSchimbatLa: new Date().toISOString().slice(0, 10) }), className: "text-xs px-2.5 py-1.5 rounded-lg", style: { color: form.status === s ? '#14181C' : 'var(--muted)', background: form.status === s ? 'var(--acc1)' : 'var(--panel2)' } }, s)))),
+                React.createElement("div", { className: "flex gap-2" }, SANTIER_STATUSES.map((s) => (React.createElement("button", { key: s, onClick: () => setForm({ ...form, status: s, statusSchimbatLa: dataLocala(new Date()) }), className: "text-xs px-2.5 py-1.5 rounded-lg", style: { color: form.status === s ? '#14181C' : 'var(--muted)', background: form.status === s ? 'var(--acc1)' : 'var(--panel2)' } }, s)))),
                 React.createElement("div", { className: "rounded-lg p-2.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
                     React.createElement("div", { className: "text-xs mb-1.5", style: { color: 'var(--muted)' } }, "\uD83D\uDCCB Raport zilnic cerut \u00EEncep\u00E2nd de:"),
                     React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
@@ -5400,7 +5442,7 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
     const areMateriale = modR === 'pozitie_propriu' || modR === 'real_executat';
     const areStructura = !!(structura && structura.length > 0);
     const [showStructEdit, setShowStructEdit] = useState(false);
-    const [data, setData] = useState(initial?.data || dataInitiala || new Date().toISOString().slice(0, 10));
+    const [data, setData] = useState(initial?.data || dataInitiala || dataLocala(new Date()));
     const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
     const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
     const [etapaId, setEtapaId] = useState(initial?.etapaId || '');
@@ -6506,10 +6548,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         persist('santiere', next);
         setDevizNrAtins(false);
     };
-    const [devizData, setDevizData] = useState(new Date().toISOString().slice(0, 10));
+    const [devizData, setDevizData] = useState(dataLocala(new Date()));
     const _aziD = new Date();
-    const [devizFrom, setDevizFrom] = useState(new Date(_aziD.getFullYear(), _aziD.getMonth(), 1).toISOString().slice(0, 10));
-    const [devizTo, setDevizTo] = useState(new Date(_aziD.getFullYear(), _aziD.getMonth() + 1, 0).toISOString().slice(0, 10));
+    const [devizFrom, setDevizFrom] = useState(dataLocala(new Date(_aziD.getFullYear(), _aziD.getMonth(), 1)));
+    const [devizTo, setDevizTo] = useState(dataLocala(new Date(_aziD.getFullYear(), _aziD.getMonth() + 1, 0)));
     useEffect(() => {
         if (!selected)
             return;
@@ -6580,7 +6622,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
     };
     const setEchipaMemberStatus = (santierId, userId, status) => {
         const s = santiere.find((x) => x.id === santierId);
-        updateEchipa(santierId, echipaNormalizata(s.echipa).map((e) => e.userId === userId ? { ...e, status, dataModificare: new Date().toISOString().slice(0, 10) } : e));
+        updateEchipa(santierId, echipaNormalizata(s.echipa).map((e) => e.userId === userId ? { ...e, status, dataModificare: dataLocala(new Date()) } : e));
     };
     const saveSantier = (s) => {
         const s2 = { ...s, necesitaCompletare: false };
@@ -6593,7 +6635,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         const nume = String(quickForm?.nume || '').trim();
         if (!nume)
             return;
-        const azi = new Date().toISOString().slice(0, 10);
+        const azi = dataLocala(new Date());
         const s = {
             id: uid(), nume, adresa: String(quickForm?.adresa || '').trim(),
             status: 'Activ', echipa: [{ userId: currentUser.id, status: 'activ', dataModificare: azi }],
@@ -6617,7 +6659,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             return;
         if ((cereriAlocare || []).some((c) => c.santierId === santierId && c.userId === currentUser.id && c.status === 'Cerut'))
             return;
-        const c = { id: uid(), santierId, userId: currentUser.id, nume: currentUser.nume, data: new Date().toISOString().slice(0, 10), status: 'Cerut' };
+        const c = { id: uid(), santierId, userId: currentUser.id, nume: currentUser.nume, data: dataLocala(new Date()), status: 'Cerut' };
         const next = [c, ...(cereriAlocare || [])];
         setCereriAlocare(next);
         persist('cereriAlocare', next);
@@ -6628,7 +6670,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         if (s) {
             const echipa = echipaNormalizata(s.echipa);
             if (!echipa.some((e) => e.userId === cerere.userId)) {
-                const azi = new Date().toISOString().slice(0, 10);
+                const azi = dataLocala(new Date());
                 const nextS = santiere.map((x) => x.id === cerere.santierId ? { ...x, echipa: [...echipa, { userId: cerere.userId, status: 'activ', dataModificare: azi }] } : x);
                 setSantiere(nextS);
                 persist('santiere', nextS);
@@ -6722,6 +6764,9 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         setEtapaNoua('');
     };
     const delEtapa = (id) => {
+        const et = etape.find((e) => e.id === id);
+        if (!window.confirm('Ștergi etapa „' + ((et && et.nume) || '') + '"? Rapoartele legate de ea rămân, dar fără etapă.'))
+            return;
         const next = etape.filter((e) => e.id !== id);
         setEtape(next);
         persist('etape', next);
@@ -6924,7 +6969,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                 return termeni.every((w) => t.includes(w) || c.includes(w.replace(/\s/g, '')));
             };
             const gasite = cauta ? rapoarteSantier.filter(potrivit) : rapoarteSantier;
-            const aziStr = new Date().toISOString().slice(0, 10);
+            const aziStr = dataLocala(new Date());
             const LUNI_N = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'];
             const numeLuna = (cheie) => { const [an, l] = cheie.split('-'); return `${LUNI_N[Number(l) - 1]} ${an}`; };
             const randRaport = (r, deschis, onToggle) => {
@@ -7006,10 +7051,10 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
             }))));
         })())), accHeader('materiale', '📦', 'Materiale', (miscariSantier.filter((m) => m.santierId === selected).length || null)), siteView === 'materiale' && React.createElement(HelpNote, { text: HELP.materiale, isManager: currentUser?.rol === 'Manager' }), siteView === 'materiale' && (React.createElement(SiteMaterialsTab, { santierId: selected, santierNume: santier?.nume || '', company: company, materials: materials, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, persist: persist, onExportToDeviz: onExportToDeviz, onCerereMaterial: onCerereMaterial, currentUser: currentUser })), accHeader('scule', '🔧', 'Scule', (sculeSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'scule' && React.createElement(HelpNote, { text: HELP.scule, isManager: currentUser?.rol === 'Manager' }), siteView === 'scule' && (React.createElement(SiteToolsTab, { santierId: selected, santierNume: santier?.nume || '', sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, persist: persist, currentUser: currentUser })), accHeader('planse', '📐', 'Planșe', (planseSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'planse' && React.createElement(HelpNote, { text: HELP.planse, isManager: currentUser?.rol === 'Manager' }), siteView === 'planse' && (React.createElement(SitePlanseTab, { santierId: selected, santierNume: santier?.nume || '', planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, persist: persist, currentUser: currentUser })), accHeader('media', '📸', 'Foto / Video', (mediaSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'media' && React.createElement(HelpNote, { text: HELP.media, isManager: currentUser?.rol === 'Manager' }), siteView === 'media' && (React.createElement(SiteMediaTab, { santierId: selected, santierNume: santier?.nume || '', mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, persist: persist, currentUser: currentUser })), accHeader('checklist', '✅', 'Checklist', (checklistSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'checklist' && React.createElement(HelpNote, { text: HELP.checklist, isManager: currentUser?.rol === 'Manager' }), siteView === 'checklist' && (React.createElement(ChecklistTab, { santier: santier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected), pozitii: pozitiiSantier.filter((p) => p.santierId === selected), cereri: cereriSantier.filter((c) => c.santierId === selected), materials: materials, sculeSantier: sculeSantier, rapoarte: rapoarte, allUsers: allUsers, currentUser: currentUser, isManager: currentUser?.rol === 'Manager', persist: persist, onFinalizeSantier: finalizeSantier })), accHeader('probleme', '❓', 'Întrebări și probleme', (problemeSantier.filter((p) => p.santierId === selected && (currentUser?.rol === 'Manager' ? !raspunsCorectQA(p) : raspunsuriQA(p).length === 0)).length || null)), siteView === 'probleme' && React.createElement(HelpNote, { text: HELP.probleme, isManager: currentUser?.rol === 'Manager' }), siteView === 'probleme' && (React.createElement(SiteProblemeTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, persist: persist, currentUser: currentUser })), accHeader('echipa', '👥', 'Echipă', echipaNormalizata(santier?.echipa).length), siteView === 'echipa' && React.createElement(HelpNote, { text: HELP.echipa, isManager: currentUser?.rol === 'Manager' }), siteView === 'echipa' && (currentUser?.rol === 'Manager' ? (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-2" }, React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "Echip\u0103 asignat\u0103"), React.createElement("button", { onClick: () => setTeamPickerOpen(!teamPickerOpen), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, teamPickerOpen ? 'Închide' : '+ Asignează')), React.createElement("div", { className: "space-y-1 mb-2" }, echipaNormalizata(santier?.echipa).length === 0 && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun electrician asignat."), echipaNormalizata(santier?.echipa).map((e) => {
             const u = allUsers.find((x) => x.id === e.userId);
-            return (React.createElement("div", { key: e.userId, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, "\uD83D\uDC77 ", u?.nume || '(cont șters)'), React.createElement("div", { className: "flex items-center gap-1" }, concediuActiv(concedii, { userId: e.userId, nume: u?.nume }, new Date().toISOString().slice(0, 10)) && React.createElement("span", { className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: '#C08CE0', fontWeight: 700 } }, "\uD83C\uDFD6 Concediu"), u?.telefon && React.createElement("a", { href: `tel:${String(u.telefon).replace(/\s/g, '')}`, title: u.telefon, className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCDE"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'activ'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'activ' ? '#14181C' : 'var(--muted)', background: e.status === 'activ' ? 'var(--acc2)' : 'var(--panel)' } }, "Activ"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'pauza'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'pauza' ? '#14181C' : 'var(--muted)', background: e.status === 'pauza' ? 'var(--acc3)' : 'var(--panel)' } }, "Pauz\u0103"), React.createElement("button", { onClick: () => removeFromEchipa(santier.id, e.userId), style: { color: 'var(--acc4)', opacity: 0.8 } }, "\u2715"))));
+            return (React.createElement("div", { key: e.userId, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, "\uD83D\uDC77 ", u?.nume || '(cont șters)'), React.createElement("div", { className: "flex items-center gap-1" }, concediuActiv(concedii, { userId: e.userId, nume: u?.nume }, dataLocala(new Date())) && React.createElement("span", { className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: '#C08CE0', fontWeight: 700 } }, "\uD83C\uDFD6 Concediu"), u?.telefon && React.createElement("a", { href: `tel:${String(u.telefon).replace(/\s/g, '')}`, title: u.telefon, className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCDE"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'activ'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'activ' ? '#14181C' : 'var(--muted)', background: e.status === 'activ' ? 'var(--acc2)' : 'var(--panel)' } }, "Activ"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'pauza'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'pauza' ? '#14181C' : 'var(--muted)', background: e.status === 'pauza' ? 'var(--acc3)' : 'var(--panel)' } }, "Pauz\u0103"), React.createElement("button", { onClick: () => removeFromEchipa(santier.id, e.userId), style: { color: 'var(--acc4)', opacity: 0.8 } }, "\u2715"))));
         })), teamPickerOpen && (React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-2", style: { borderTop: '1px solid var(--border)' } }, allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "To\u021Bi electricienii sunt deja asigna\u021Bi (sau nu exist\u0103 niciunul \u00EEnregistrat).")) : allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).map((u) => (React.createElement("button", { key: u.id, onClick: () => addToEchipa(santier.id, u.id), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "+ \uD83D\uDC77 ", u.nume))))))) : (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "Colegi asigna\u021Bi la acest \u0219antier"), React.createElement("div", { className: "space-y-1" }, echipaNormalizata(santier?.echipa).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun coleg asignat.")) : echipaNormalizata(santier?.echipa).map((e) => {
             const u = allUsers.find((x) => x.id === e.userId);
-            return (React.createElement("div", { key: e.userId, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, "\uD83D\uDC77 ", u?.nume || '(cont șters)', e.userId === currentUser?.id && React.createElement("span", { style: { color: 'var(--muted2)' } }, " (tu)")), React.createElement("div", { className: "flex items-center gap-2" }, u?.telefon && e.userId !== currentUser?.id && React.createElement("a", { href: `tel:${String(u.telefon).replace(/\s/g, '')}`, className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCDE ", u.telefon), (() => { const cc = concediuActiv(concedii, { userId: e.userId, nume: u?.nume }, new Date().toISOString().slice(0, 10)); return React.createElement("span", { className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: cc ? '#C08CE0' : (e.status === 'pauza' ? 'var(--acc3)' : 'var(--acc2)') } }, cc ? '🏖 Concediu' : (e.status === 'pauza' ? 'Pauză' : 'Activ')); })())));
+            return (React.createElement("div", { key: e.userId, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, "\uD83D\uDC77 ", u?.nume || '(cont șters)', e.userId === currentUser?.id && React.createElement("span", { style: { color: 'var(--muted2)' } }, " (tu)")), React.createElement("div", { className: "flex items-center gap-2" }, u?.telefon && e.userId !== currentUser?.id && React.createElement("a", { href: `tel:${String(u.telefon).replace(/\s/g, '')}`, className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCDE ", u.telefon), (() => { const cc = concediuActiv(concedii, { userId: e.userId, nume: u?.nume }, dataLocala(new Date())); return React.createElement("span", { className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: cc ? '#C08CE0' : (e.status === 'pauza' ? 'var(--acc3)' : 'var(--acc2)') } }, cc ? '🏖 Concediu' : (e.status === 'pauza' ? 'Pauză' : 'Activ')); })())));
         }))))), accHeader('structura', '🏢', 'Structură — etaje', (structuraSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'structura' && (React.createElement(SiteStructuraTab, { santierId: selected, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, rapoarte: rapoarte, materials: materials, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected) })), accHeader('devizpoz', '📋', 'Poziții / Materiale', ((pozitiiSantier.filter((x) => x.santierId === selected).length + materialeListaSantier.filter((x) => x.santierId === selected).length) || null)), siteView === 'devizpoz' && (React.createElement(SiteDevizPozTab, { santierId: selected, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, persist: persist, isManager: currentUser?.rol === 'Manager' })))));
     }
     return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-4 gap-3" }, React.createElement("h2", { className: "text-lg shrink-0", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\u0218antiere"), React.createElement("input", { placeholder: "Caut\u0103 \u0219antier...", value: siteSearch, onChange: (e) => setSiteSearch(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), !form && currentUser?.rol === 'Manager' && React.createElement("button", { onClick: () => setForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Adaug\u0103 \u0219antier"), !quickForm && currentUser?.rol !== 'Manager' && React.createElement("button", { onClick: () => setQuickForm({ nume: '', adresa: '' }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " \u0218antier nou")), form && React.createElement(SantierForm, { initial: form.id ? form : null, clients: clients, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, onCancel: () => setForm(null), onSave: saveSantier }), quickForm && (React.createElement("div", { className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\u2795 \u0218antier nou (rapid)"), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Pui doar numele \u0219i adresa. Restul (beneficiar, facturare) le completeaz\u0103 managerul. Tu e\u0219ti pus automat pe el \u0219i po\u021Bi lucra/raporta imediat."), React.createElement("input", { placeholder: "Nume \u0219antier", value: quickForm.nume, onChange: (e) => setQuickForm({ ...quickForm, nume: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), React.createElement("input", { placeholder: "Adres\u0103", value: quickForm.adresa, onChange: (e) => setQuickForm({ ...quickForm, adresa: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setQuickForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: creeazaSantierRapid, disabled: !String(quickForm.nume).trim(), className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, "Creeaz\u0103 \u0219i m\u0103 alochez")))), currentUser?.rol === 'Manager' && (cereriAlocare || []).some((c) => c.status === 'Cerut') && (React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: '#E9A23B14', border: '1px solid #E9A23B66', borderLeft: '4px solid #E9A23B' } }, React.createElement("div", { className: "text-sm font-semibold mb-2", style: { color: 'var(--acc3)' } }, "\u23F3 Cereri de alocare pe \u0219antier"), React.createElement("div", { className: "space-y-1.5" }, (cereriAlocare || []).filter((c) => c.status === 'Cerut').map((c) => {
@@ -8430,6 +8475,11 @@ class Prinde extends React.Component {
         catch (_) { }
     }
     render() {
+        if (this.state.er && this.props.full)
+            return (React.createElement("div", { style: { position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '24px', textAlign: 'center', background: '#0c0f13' } }, React.createElement("div", { style: { fontSize: '40px' } }, "\u26A0\uFE0F"), React.createElement("div", { className: "text-base font-semibold", style: { color: '#fff' } }, "Aplica\u021Bia a \u00EEnt\u00E2mpinat o eroare"), React.createElement("div", { className: "text-xs", style: { color: '#9aa4ad', wordBreak: 'break-word', maxWidth: '320px' } }, String((this.state.er && this.state.er.message) || this.state.er)), React.createElement("button", { onClick: () => { try {
+                    location.reload();
+                }
+                catch (_) { } }, className: "text-sm font-semibold px-4 py-2 rounded-lg", style: { color: '#14181C', background: '#4CAF7D' } }, "\uD83D\uDD04 Re\u00EEncarc\u0103 aplica\u021Bia"), React.createElement("div", { className: "text-[11px]", style: { color: '#6b7580' } }, "Datele tale sunt salvate \u2014 nu se pierde nimic.")));
         if (this.state.er)
             return (React.createElement("div", { className: "rounded-xl p-4 my-2", style: { background: 'var(--panel)', border: '1px solid var(--acc4)' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--acc4)' } }, "\u26A0 Partea asta nu s-a putut afi\u0219a"), React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)', wordBreak: 'break-word' } }, String((this.state.er && this.state.er.message) || this.state.er)), React.createElement("button", { onClick: () => this.setState({ er: null }), className: "btn3d text-xs font-semibold px-3 py-2 mt-3", style: { color: 'var(--text)' } }, "\u00CEncearc\u0103 din nou")));
         return this.props.children;
@@ -8525,7 +8575,7 @@ function bugetCORamas(nume, dataStr, rapoarte, concedii) {
 const ACHIZITIE_STATUSES = ['De comandat', 'Comandat', 'Primit'];
 function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajCorectii, persist, company, concedii }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
-    const [luna, setLuna] = useState(new Date().toISOString().slice(0, 7));
+    const [luna, setLuna] = useState(lunaLocala(new Date()));
     const isManager = currentUser?.rol === 'Manager';
     const [editState, setEditState] = useState(null);
     const [editValue, setEditValue] = useState('');
@@ -8548,7 +8598,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
             let d = new Date(c.dataInceput);
             const end = new Date(c.dataSfarsit);
             while (d <= end) {
-                const ds = d.toISOString().slice(0, 10);
+                const ds = dataLocala(d);
                 const zi = d.getDay();
                 const eSarbatoare = (SARBATORI_LEGALE[d.getFullYear()] || []).includes(ds);
                 if (ds.startsWith(luna) && zi !== 0 && zi !== 6 && !eSarbatoare)
@@ -8598,7 +8648,7 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         setEditState(null);
         if (!delta)
             return;
-        const c = { id: uid(), nume: p.nume, luna, minuteAjustare: delta, nota: 'Corecție manuală', data: new Date().toISOString().slice(0, 10) };
+        const c = { id: uid(), nume: p.nume, luna, minuteAjustare: delta, nota: 'Corecție manuală', data: dataLocala(new Date()) };
         const next = [...(pontajCorectii || []), c];
         setPontajCorectii(next);
         persist('pontajCorectii', next);
@@ -8927,7 +8977,7 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, co
         setConcedii(next);
         persist('concedii', next);
     };
-    const azi = new Date().toISOString().slice(0, 10);
+    const azi = dataLocala(new Date());
     const anCurent = azi.slice(0, 4);
     const lunaCurenta = azi.slice(0, 7);
     const numeDeUrmarit = isManager
@@ -9057,7 +9107,7 @@ function AchizitiiTab({ achizitii, setAchizitii, persist, materials, onReceptie 
     return (React.createElement("div", null,
         React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2 flex-wrap" },
             React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDED2 Achizi\u021Bii"),
-            !form && React.createElement("button", { onClick: () => setForm({ id: uid(), data: new Date().toISOString().slice(0, 10), furnizor: '', descriere: '', suma: 0, status: ACHIZITIE_STATUSES[0], randuri: [] }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } },
+            !form && React.createElement("button", { onClick: () => setForm({ id: uid(), data: dataLocala(new Date()), furnizor: '', descriere: '', suma: 0, status: ACHIZITIE_STATUSES[0], randuri: [] }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } },
                 React.createElement(Icon, null, "+"),
                 " Achizi\u021Bie nou\u0103")),
         React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Comenzile firmei. Treci materialele pe r\u00E2nduri, iar la primire le pui \u00EEn gestiune cu un buton \u2014 nu le mai introduci a doua oar\u0103."),
@@ -9212,6 +9262,9 @@ function dataLocala(d) {
     const p = (x) => String(x).padStart(2, '0');
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 }
+function lunaLocala(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
 function memUrmatoarea(m) {
     try {
         const d = new Date(m.data + 'T00:00:00');
@@ -9329,7 +9382,7 @@ function MementoTab({ mementouri, setMementouri, persist, clients, santiere, cur
         return (React.createElement("div", { key: m.id, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: `4px solid ${eRestant ? 'var(--acc4)' : t.culoare}`, opacity: m.gata ? 0.6 : 1 } }, React.createElement("div", { className: "flex items-start justify-between gap-2" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)', textDecoration: m.gata ? 'line-through' : 'none' } }, m.titlu), React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: eRestant ? 'var(--acc4)' : 'var(--muted2)' } }, React.createElement("span", { style: { color: eRestant ? 'var(--acc4)' : t.culoare } }, t.label), " \u00B7 \uD83D\uDD50 ", fmtData(m.data), " ", m.ora, eRestant && ' · a trecut', m.repeta && m.repeta !== 'nu' && ` · 🔁 ${m.repeta}`, cl && ` · 👥 ${cl}`, st && ` · 🏗 ${st}`, pentruAltul && ` · pentru ${numeUser(m.pentruUserId)}`), m.detalii && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)', whiteSpace: 'pre-line', lineHeight: 1.5 } }, m.detalii)), React.createElement("div", { className: "flex items-center gap-1 shrink-0" }, React.createElement("button", { onClick: () => bifeaza(m), title: m.gata ? 'Pune înapoi' : 'Gata', className: "px-2 py-1 rounded-lg text-xs font-semibold", style: { color: m.gata ? 'var(--muted)' : '#14181C', background: m.gata ? 'var(--panel2)' : 'var(--acc2)' } }, m.gata ? '↩' : '✓'), React.createElement("button", { onClick: () => setForm({ ...m }), className: "text-[11px] px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"), React.createElement("button", { onClick: () => sterge(m.id), style: { color: 'var(--acc4)' } }, "\uD83D\uDDD1"))), !m.gata && (React.createElement("div", { className: "flex gap-1.5 mt-2 flex-wrap" }, React.createElement("button", { onClick: () => amanaOra(m, 1), className: "text-[10px] px-2 py-0.5 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "+1 or\u0103"), React.createElement("button", { onClick: () => amanaOra(m, 24), className: "text-[10px] px-2 py-0.5 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "M\u00E2ine"), React.createElement("button", { onClick: () => amanaOra(m, 24 * 7), className: "text-[10px] px-2 py-0.5 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Peste o s\u0103pt\u0103m\u00E2n\u0103")))));
     };
     const sectiune = (titlu, arr, culoare) => arr.length === 0 ? null : (React.createElement("div", { className: "mb-4" }, React.createElement("div", { className: "text-[11px] uppercase tracking-wider mb-1.5", style: { color: culoare || 'var(--muted2)' } }, titlu, " (", arr.length, ")"), React.createElement("div", { className: "space-y-2" }, arr.map(randMemento))));
-    return (React.createElement("div", { className: "max-w-2xl" }, React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDD14 Memento"), !form && React.createElement("button", { onClick: () => setForm(formNou()), className: "text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u2795 Memento nou")), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Aplica\u021Bia \u00EE\u021Bi aduce aminte: ai \u00EEnt\u00E2lnire cu cineva, ai de sunat, de comandat, de pl\u0103tit. Prime\u0219ti notificare pe telefon la ora pus\u0103."), !form && (React.createElement("div", { className: "flex gap-1.5 flex-wrap mb-3" }, React.createElement("button", { onClick: () => setForm(formNou(azi)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Azi"), React.createElement("button", { onClick: () => setForm(formNou(maine)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ M\u00E2ine"), React.createElement("button", { onClick: () => { const d = new Date(); d.setDate(d.getDate() + 7); setForm(formNou(d.toISOString().slice(0, 10))); }, className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Peste o s\u0103pt\u0103m\u00E2n\u0103"))), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, lista.some((m) => m.id === form.id) ? '✏️ Editează memento' : '➕ Memento nou'), React.createElement("input", { placeholder: "Ce trebuie s\u0103 faci? (ex: \u00CEnt\u00E2lnire cu dl. Popescu la birou)", value: form.titlu, onChange: (e) => setForm({ ...form, titlu: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5" }, MEMENTO_TIPURI.map((t) => (React.createElement("button", { key: t.id, onClick: () => setForm({ ...form, tip: t.id }), className: "btnMic text-[11px] px-2.5 py-1 rounded-full", style: { color: form.tip === t.id ? '#14181C' : 'var(--muted)', background: form.tip === t.id ? t.culoare : 'var(--panel2)', border: '1px solid var(--border)', fontWeight: form.tip === t.id ? 700 : 400 } }, t.label)))), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "C\u00E2nd:"), React.createElement(RoCalendarPicker, { value: form.data, onChange: (v) => setForm({ ...form, data: v }) }), React.createElement(RoTimePicker, { value: form.ora, onChange: (v) => setForm({ ...form, ora: v }) })), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Se repet\u0103:"), [['nu', 'O singură dată'], ['zilnic', 'Zilnic'], ['saptamanal', 'Săptămânal'], ['lunar', 'Lunar']].map(([v, l]) => (React.createElement("button", { key: v, onClick: () => setForm({ ...form, repeta: v }), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: form.repeta === v ? '#14181C' : 'var(--muted)', background: form.repeta === v ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, l)))), React.createElement("textarea", { placeholder: "Detalii (op\u021Bional) \u2014 ce ai de discutat, ce s\u0103 nu ui\u021Bi...", value: form.detalii, onChange: (e) => setForm({ ...form, detalii: e.target.value }), rows: 3, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "grid grid-cols-2 gap-2" }, React.createElement("select", { value: form.clientId, onChange: (e) => setForm({ ...form, clientId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 client (op\u021Bional) \u2014"), (clients || []).map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("select", { value: form.santierId, onChange: (e) => setForm({ ...form, santierId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 \u0219antier (op\u021Bional) \u2014"), (santiere || []).map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, s.nume)))), isManager && (colegi || []).length > 0 && (React.createElement("div", null, React.createElement("div", { className: "text-[11px] mb-0.5", style: { color: 'var(--muted)' } }, "Pentru cine e memento-ul"), React.createElement("select", { value: form.pentruUserId, onChange: (e) => setForm({ ...form, pentruUserId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: currentUser?.id, style: { background: 'var(--panel)' } }, "Pentru mine"), (colegi || []).filter((u) => u.id !== currentUser?.id).map((u) => React.createElement("option", { key: u.id, value: u.id, style: { background: 'var(--panel)' } }, u.nume))))), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: salveaza, disabled: !String(form.titlu).trim(), className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))), active.length === 0 && gata.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun memento. Apas\u0103 \u201E\u2795 Memento nou\".")) : (React.createElement(React.Fragment, null, sectiune('⛔ Au trecut', restante, 'var(--acc4)'), sectiune('📅 Astăzi', deAzi, 'var(--acc1)'), sectiune('📅 Mâine', deMaine, 'var(--acc3)'), sectiune('📆 Următoarele', urmeaza), gata.length > 0 && (React.createElement("div", null, React.createElement("button", { onClick: () => setAratGata(!aratGata), className: "text-[11px] px-2.5 py-1 rounded-lg mb-2", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, aratGata ? 'Ascunde rezolvate ▲' : `Arată rezolvate (${gata.length}) ▼`), aratGata && React.createElement("div", { className: "space-y-2" }, gata.map(randMemento))))))));
+    return (React.createElement("div", { className: "max-w-2xl" }, React.createElement("div", { className: "flex justify-between items-center mb-1 gap-2" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDD14 Memento"), !form && React.createElement("button", { onClick: () => setForm(formNou()), className: "text-sm px-3 py-1.5 rounded-lg font-semibold whitespace-nowrap", style: { color: '#14181C', background: 'var(--acc1)' } }, "\u2795 Memento nou")), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, "Aplica\u021Bia \u00EE\u021Bi aduce aminte: ai \u00EEnt\u00E2lnire cu cineva, ai de sunat, de comandat, de pl\u0103tit. Prime\u0219ti notificare pe telefon la ora pus\u0103."), !form && (React.createElement("div", { className: "flex gap-1.5 flex-wrap mb-3" }, React.createElement("button", { onClick: () => setForm(formNou(azi)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Azi"), React.createElement("button", { onClick: () => setForm(formNou(maine)), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ M\u00E2ine"), React.createElement("button", { onClick: () => { const d = new Date(); d.setDate(d.getDate() + 7); setForm(formNou(dataLocala(d))); }, className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "+ Peste o s\u0103pt\u0103m\u00E2n\u0103"))), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, lista.some((m) => m.id === form.id) ? '✏️ Editează memento' : '➕ Memento nou'), React.createElement("input", { placeholder: "Ce trebuie s\u0103 faci? (ex: \u00CEnt\u00E2lnire cu dl. Popescu la birou)", value: form.titlu, onChange: (e) => setForm({ ...form, titlu: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex flex-wrap gap-1.5" }, MEMENTO_TIPURI.map((t) => (React.createElement("button", { key: t.id, onClick: () => setForm({ ...form, tip: t.id }), className: "btnMic text-[11px] px-2.5 py-1 rounded-full", style: { color: form.tip === t.id ? '#14181C' : 'var(--muted)', background: form.tip === t.id ? t.culoare : 'var(--panel2)', border: '1px solid var(--border)', fontWeight: form.tip === t.id ? 700 : 400 } }, t.label)))), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "C\u00E2nd:"), React.createElement(RoCalendarPicker, { value: form.data, onChange: (v) => setForm({ ...form, data: v }) }), React.createElement(RoTimePicker, { value: form.ora, onChange: (v) => setForm({ ...form, ora: v }) })), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Se repet\u0103:"), [['nu', 'O singură dată'], ['zilnic', 'Zilnic'], ['saptamanal', 'Săptămânal'], ['lunar', 'Lunar']].map(([v, l]) => (React.createElement("button", { key: v, onClick: () => setForm({ ...form, repeta: v }), className: "text-[11px] px-2.5 py-1 rounded-lg", style: { color: form.repeta === v ? '#14181C' : 'var(--muted)', background: form.repeta === v ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, l)))), React.createElement("textarea", { placeholder: "Detalii (op\u021Bional) \u2014 ce ai de discutat, ce s\u0103 nu ui\u021Bi...", value: form.detalii, onChange: (e) => setForm({ ...form, detalii: e.target.value }), rows: 3, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "grid grid-cols-2 gap-2" }, React.createElement("select", { value: form.clientId, onChange: (e) => setForm({ ...form, clientId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 client (op\u021Bional) \u2014"), (clients || []).map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("select", { value: form.santierId, onChange: (e) => setForm({ ...form, santierId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 \u0219antier (op\u021Bional) \u2014"), (santiere || []).map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, s.nume)))), isManager && (colegi || []).length > 0 && (React.createElement("div", null, React.createElement("div", { className: "text-[11px] mb-0.5", style: { color: 'var(--muted)' } }, "Pentru cine e memento-ul"), React.createElement("select", { value: form.pentruUserId, onChange: (e) => setForm({ ...form, pentruUserId: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: currentUser?.id, style: { background: 'var(--panel)' } }, "Pentru mine"), (colegi || []).filter((u) => u.id !== currentUser?.id).map((u) => React.createElement("option", { key: u.id, value: u.id, style: { background: 'var(--panel)' } }, u.nume))))), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: salveaza, disabled: !String(form.titlu).trim(), className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103")))), active.length === 0 && gata.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun memento. Apas\u0103 \u201E\u2795 Memento nou\".")) : (React.createElement(React.Fragment, null, sectiune('⛔ Au trecut', restante, 'var(--acc4)'), sectiune('📅 Astăzi', deAzi, 'var(--acc1)'), sectiune('📅 Mâine', deMaine, 'var(--acc3)'), sectiune('📆 Următoarele', urmeaza), gata.length > 0 && (React.createElement("div", null, React.createElement("button", { onClick: () => setAratGata(!aratGata), className: "text-[11px] px-2.5 py-1 rounded-lg mb-2", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, aratGata ? 'Ascunde rezolvate ▲' : `Arată rezolvate (${gata.length}) ▼`), aratGata && React.createElement("div", { className: "space-y-2" }, gata.map(randMemento))))))));
 }
 const NOTE_CATEGORII = [
     { id: 'intalnire', label: '🤝 Întâlnire client', culoare: 'var(--acc1)' },
@@ -9355,7 +9408,7 @@ function NotiteTab({ notite, setNotite, persist, clients, santiere, currentUser,
             catch { }
         }
     }, [form && form.id]);
-    const formNou = () => ({ id: uid(), titlu: '', categorie: 'intalnire', clientId: '', santierId: '', text: '', materiale: [], fixat: false, data: new Date().toISOString().slice(0, 10), autor: currentUser?.nume || '' });
+    const formNou = () => ({ id: uid(), titlu: '', categorie: 'intalnire', clientId: '', santierId: '', text: '', materiale: [], fixat: false, data: dataLocala(new Date()), autor: currentUser?.nume || '' });
     const salveaza = () => {
         if (!String(form.titlu).trim() && !String(form.text).trim())
             return;
@@ -9455,7 +9508,7 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers
         try {
             const res = await uploadFileToBlob(f, 'proiecte');
             const rec = { id: uid(), scopeType: t.scopeType, scopeId: t.scopeId, nume: f.name, pathname: res.pathname, url: res.url,
-                data: new Date().toISOString().slice(0, 10), adaugatDe: currentUser?.nume || '' };
+                data: dataLocala(new Date()), adaugatDe: currentUser?.nume || '' };
             const next = [rec, ...refFisiere.current];
             refFisiere.current = next;
             setProiecteFisiere(next);
@@ -9478,7 +9531,7 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers
             const f = new File([blob], nume, { type: 'application/pdf' });
             const res = await uploadFileToBlob(f, 'proiecte');
             const rec = { id: uid(), scopeType, scopeId, nume, pathname: res.pathname, url: res.url,
-                data: new Date().toISOString().slice(0, 10), adaugatDe: currentUser?.nume || '' };
+                data: dataLocala(new Date()), adaugatDe: currentUser?.nume || '' };
             const next = [rec, ...refFisiere.current];
             refFisiere.current = next;
             setProiecteFisiere(next);
@@ -9893,7 +9946,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     const facturiDeIncasat = invoices.filter((i) => !eIncasata(i));
     const sumaDeIncasat = facturiDeIncasat.reduce((s, i) => s + calcSubtotal(i.items) * (1 + (Number(i.tva) || 0) / 100), 0);
     const santiereActive = santiere.filter((s) => s.status === 'Activ').length;
-    const azi = new Date().toISOString().slice(0, 10);
+    const azi = dataLocala(new Date());
     const isManager = currentUser?.rol === 'Manager';
     const dupa17 = (new Date().getHours() * 60 + new Date().getMinutes()) >= (17 * 60 + 1);
     let totalDeFacut = 0;
@@ -9930,7 +9983,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         '2026-12-25': '🎄 Crăciun fericit! Din partea Smart Electroconect, vă dorim sărbători pline de liniște și bucurie!',
     };
     const aziDate = new Date();
-    const aziISO = aziDate.toISOString().slice(0, 10);
+    const aziISO = dataLocala(aziDate);
     const mesajSarbatoare = ZILE_FELICITARE[aziISO];
     const sarbatoriiZi = colegiUsers.filter((u) => {
         const n = nasterePeDinCnp(u.cnp);
@@ -10349,7 +10402,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
         acc[c.santierId].count += 1;
         return acc;
     }, {}));
-    const azi = new Date().toISOString().slice(0, 10);
+    const azi = dataLocala(new Date());
     const oraAcum = new Date().getHours();
     const dupa17 = (new Date().getHours() * 60 + new Date().getMinutes()) >= (17 * 60 + 1);
     const concediiInAsteptare = concedii ? concedii.filter((c) => c.status === 'Cerut') : [];
@@ -10403,7 +10456,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
         '2026-12-25': '🎄 Crăciun fericit! Din partea Smart Electroconect, vă dorim sărbători pline de liniște și bucurie!',
     };
     const aziDate = new Date();
-    const mesajSarbatoare = ZILE_FELICITARE[aziDate.toISOString().slice(0, 10)];
+    const mesajSarbatoare = ZILE_FELICITARE[dataLocala(aziDate)];
     const sarbatoriiZi = colegiUsers.filter((u) => { const n = nasterePeDinCnp(u.cnp); return n && n.zi === aziDate.getDate() && n.luna === aziDate.getMonth() + 1; });
     const santiereMele = santiere.filter((s) => inEchipa(s.echipa, currentUser?.id));
     const santiereFaraRaportAzi = dupa17 ? santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
@@ -10415,7 +10468,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
             const zi = d.getDay();
             if (zi === 0 || zi === 6)
                 continue;
-            const ds = d.toISOString().slice(0, 10);
+            const ds = dataLocala(d);
             if ((SARBATORI_LEGALE[d.getFullYear()] || []).includes(ds))
                 continue;
             santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, ds) && !rapoarte.some((r) => r.santierId === s.id && r.data === ds))
@@ -10429,7 +10482,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     const qaRelevante = (isManager
         ? qaSite.filter((p) => !raspunsCorectQA(p))
         : qaSite.filter((p) => raspunsuriQA(p).length === 0 && (p.creatId === currentUser?.id || santiereMele.some((s) => s.id === p.santierId)))).slice().reverse();
-    const azi10 = new Date().toISOString().slice(0, 10);
+    const azi10 = dataLocala(new Date());
     const eConfirmata = (nume, data) => (pontajCorectii || []).some((c) => c && c.tip === 'zi_confirmata' && c.nume === nume && c.data === data);
     const zileNeincheiate = isManager
         ? zileCareNuIesLaNorma(rapoarte, concedii, azi10, 14).filter((z) => !eConfirmata(z.nume, z.data))
@@ -10501,7 +10554,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                     zileNeincheiate.length - 20,
                     ". Rezolv\u0103-le pe r\u00E2nd.")))),
         isManager && (() => {
-            const aziR = new Date().toISOString().slice(0, 10);
+            const aziR = dataLocala(new Date());
             const rapAzi = (rapoarte || []).filter((r) => r.data === aziR);
             if (rapAzi.length === 0)
                 return null;
@@ -10560,7 +10613,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
         })(),
         (() => {
             const acumA = new Date();
-            const aziA = acumA.toISOString().slice(0, 10);
+            const aziA = dataLocala(acumA);
             const meleA = (mementouri || []).filter((m) => !m.gata && (m.pentruUserId ? m.pentruUserId === currentUser?.id : m.creatId === currentUser?.id));
             const deArata = meleA.filter((m) => m.data <= aziA).sort((a, b) => `${a.data}T${a.ora || '09:00'}`.localeCompare(`${b.data}T${b.ora || '09:00'}`));
             if (deArata.length === 0)
@@ -10958,8 +11011,8 @@ function randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSan
     }).sort((a, b) => b.marja - a.marja);
 }
 function analizaConsilier({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, azi }) {
-    const A = String(azi || new Date().toISOString().slice(0, 10));
-    const zileInUrma = (n) => { const d = new Date(A + 'T00:00:00'); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+    const A = String(azi || dataLocala(new Date()));
+    const zileInUrma = (n) => { const d = new Date(A + 'T00:00:00'); d.setDate(d.getDate() - n); return dataLocala(d); };
     const lei = (v) => Math.round(Number(v) || 0).toLocaleString('ro-RO') + ' lei';
     const out = [];
     const costOra = Number(company?.costOraMediu) || 0;
@@ -11086,8 +11139,8 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
     const [busyAI, setBusyAI] = useState(false);
     const [errAI, setErrAI] = useState('');
     const [fara, setFara] = useState({ semnale: {}, oameni: {} });
-    const azi = new Date().toISOString().slice(0, 10);
-    const de = (() => { const d = new Date(azi + 'T00:00:00'); d.setMonth(d.getMonth() - luni); return d.toISOString().slice(0, 10); })();
+    const azi = dataLocala(new Date());
+    const de = (() => { const d = new Date(azi + 'T00:00:00'); d.setMonth(d.getMonth() - luni); return dataLocala(d); })();
     const lei = (v) => Math.round(Number(v) || 0).toLocaleString('ro-RO') + ' lei';
     const costOra = Number(company?.costOraMediu) || 0;
     const zonaParere = useRef(null);
@@ -11707,7 +11760,7 @@ function openPrintWindow(items) {
 }
 function printCerereConcediu(c, company) {
     const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const azi = fmtData(new Date().toISOString().slice(0, 10));
+    const azi = fmtData(dataLocala(new Date()));
     let zile = 0, reluare = '';
     try {
         let d = new Date(c.dataInceput + 'T00:00:00');
@@ -11722,7 +11775,7 @@ function printCerereConcediu(c, company) {
         do {
             r.setDate(r.getDate() + 1);
         } while (r.getDay() === 0 || r.getDay() === 6);
-        reluare = fmtData(r.toISOString().slice(0, 10));
+        reluare = fmtData(dataLocala(r));
     }
     catch (_) { }
     const eAprobat = c.status === 'Aprobat';
@@ -11787,7 +11840,7 @@ function printCerereConcediu(c, company) {
 }
 function printAdeverinta(a, company) {
     const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const azi = fmtData(new Date().toISOString().slice(0, 10));
+    const azi = fmtData(dataLocala(new Date()));
     const firma = company?.nume || '(numele firmei — completează în „Firma mea")';
     const admin = company?.administrator || '';
     const stamp = company?.stampila || STAMPILA_EXECUTANT;
@@ -12202,6 +12255,70 @@ function griDinImageData(img) {
         g[i] = d[j] * 0.299 + d[j + 1] * 0.587 + d[j + 2] * 0.114;
     return { lat: img.width, inalt: img.height, g };
 }
+function pragOtsu(g) {
+    const n = g.length;
+    if (!n)
+        return 150;
+    const h = new Float64Array(256);
+    for (let i = 0; i < n; i++) {
+        let v = g[i] | 0;
+        if (v < 0)
+            v = 0;
+        else if (v > 255)
+            v = 255;
+        h[v]++;
+    }
+    let sum = 0;
+    for (let i = 0; i < 256; i++)
+        sum += i * h[i];
+    let sumB = 0, wB = 0, best = -1, lo = 150, hi = 150;
+    for (let i = 0; i < 256; i++) {
+        wB += h[i];
+        if (!wB)
+            continue;
+        const wF = n - wB;
+        if (wF <= 0)
+            break;
+        sumB += i * h[i];
+        const mB = sumB / wB, mF = (sum - sumB) / wF;
+        const intre = wB * wF * (mB - mF) * (mB - mF);
+        if (intre > best) {
+            best = intre;
+            lo = i;
+            hi = i;
+        }
+        else if (intre === best) {
+            hi = i;
+        }
+    }
+    return Math.round((lo + hi) / 2);
+}
+function redimensioneaza(im, latTinta, inaltTinta) {
+    const tw = Math.max(1, Math.round(latTinta)), th = Math.max(1, Math.round(inaltTinta));
+    if (tw === im.lat && th === im.inalt)
+        return im;
+    const g = new Float32Array(tw * th);
+    const sx = im.lat / tw, sy = im.inalt / th;
+    for (let y = 0; y < th; y++) {
+        let fy = (y + 0.5) * sy - 0.5;
+        if (fy < 0)
+            fy = 0;
+        else if (fy > im.inalt - 1)
+            fy = im.inalt - 1;
+        const y0 = Math.floor(fy), y1 = Math.min(im.inalt - 1, y0 + 1), wy = fy - y0;
+        for (let x = 0; x < tw; x++) {
+            let fx = (x + 0.5) * sx - 0.5;
+            if (fx < 0)
+                fx = 0;
+            else if (fx > im.lat - 1)
+                fx = im.lat - 1;
+            const x0 = Math.floor(fx), x1 = Math.min(im.lat - 1, x0 + 1), wx = fx - x0;
+            const a = im.g[y0 * im.lat + x0], b = im.g[y0 * im.lat + x1], c = im.g[y1 * im.lat + x0], d2 = im.g[y1 * im.lat + x1];
+            g[y * tw + x] = a * (1 - wx) * (1 - wy) + b * wx * (1 - wy) + c * (1 - wx) * wy + d2 * wx * wy;
+        }
+    }
+    return { lat: tw, inalt: th, g };
+}
 function decupeazaImagine(im, x0, y0, lat, inalt) {
     const x = Math.max(0, Math.min(im.lat - 1, Math.round(x0)));
     const y = Math.max(0, Math.min(im.inalt - 1, Math.round(y0)));
@@ -12286,13 +12403,19 @@ function pregatesteSablon(sab) {
         suma += sab.g[i];
     const medie = suma / n;
     const t = new Float32Array(n);
-    let v = 0;
+    const raw = new Float32Array(n);
+    let v = 0, ink = 0;
+    const pInk = pragInchisAuto;
     for (let i = 0; i < n; i++) {
-        const d = sab.g[i] - medie;
+        const val = sab.g[i];
+        raw[i] = val;
+        const d = val - medie;
         t[i] = d;
         v += d * d;
+        if (val < pInk)
+            ink++;
     }
-    return { t, norma: Math.sqrt(v), n, lat: sab.lat, inalt: sab.inalt };
+    return { t, raw, norma: Math.sqrt(v), n, lat: sab.lat, inalt: sab.inalt, ink };
 }
 function scorPotrivire(im, integ, tpl, x, y) {
     if (x < 0 || y < 0 || x + tpl.lat > im.lat || y + tpl.inalt > im.inalt)
@@ -12310,6 +12433,57 @@ function scorPotrivire(im, integ, tpl, x, y) {
     }
     return produs / (Math.sqrt(varianta) * tpl.norma);
 }
+function scorFin(im, tpl, x, y, pInk) {
+    if (x < 0 || y < 0 || x + tpl.lat > im.lat || y + tpl.inalt > im.inalt)
+        return -1;
+    const raw = tpl.raw, W = tpl.lat, H = tpl.inalt;
+    let su = 0, st = 0, cnt = 0, inkT = 0, inkPrezent = 0;
+    const L = im.lat, N = im.g.length;
+    for (let j = 0; j < H; j++) {
+        const rI = (y + j) * L + x, rT = j * W;
+        for (let i = 0; i < W; i++) {
+            const tv = raw[rT + i], pv = im.g[rI + i];
+            if (tv < pInk) {
+                inkT++;
+                const c = rI + i;
+                let prez = pv < pInk;
+                if (!prez) {
+                    const sus = c - L, jos = c + L;
+                    if ((c > 0 && im.g[c - 1] < pInk) || (c + 1 < N && im.g[c + 1] < pInk) || (sus >= 0 && im.g[sus] < pInk) || (jos < N && im.g[jos] < pInk))
+                        prez = true;
+                }
+                if (prez)
+                    inkPrezent++;
+            }
+            if (tv >= pInk && pv < pInk)
+                continue;
+            su += pv;
+            st += tv;
+            cnt++;
+        }
+    }
+    if (inkT >= 8 && inkPrezent / inkT < 0.4)
+        return -1;
+    if (cnt < 8)
+        return -1;
+    const mu = su / cnt, mt = st / cnt;
+    let prod = 0, vp = 0, vt = 0;
+    for (let j = 0; j < H; j++) {
+        const rI = (y + j) * im.lat + x, rT = j * W;
+        for (let i = 0; i < W; i++) {
+            const tv = raw[rT + i], pv = im.g[rI + i];
+            if (tv >= pInk && pv < pInk)
+                continue;
+            const dp = pv - mu, dt = tv - mt;
+            prod += dp * dt;
+            vp += dp * dp;
+            vt += dt * dt;
+        }
+    }
+    if (!(vp > 1e-6) || !(vt > 1e-6))
+        return -1;
+    return prod / Math.sqrt(vp * vt);
+}
 function cautaGrosier(im, tpl, prag, integrale) {
     const integ = integrale || sumeIntegrale(im);
     const out = [];
@@ -12325,9 +12499,14 @@ function cautaGrosier(im, tpl, prag, integrale) {
 function suprimaVecini(lista) {
     const s = lista.slice().sort((a, b) => b.scor - a.scor);
     const pastrate = [];
+    const cx = (o) => o.x + (o.lat || 10) / 2, cy = (o) => o.y + (o.inalt || 10) / 2;
     for (const c of s) {
-        const dx = Math.max(3, (c.lat || 10) * 0.55), dy = Math.max(3, (c.inalt || 10) * 0.55);
-        if (!pastrate.some((p) => Math.abs(p.x - c.x) < dx && Math.abs(p.y - c.y) < dy))
+        const ccx = cx(c), ccy = cy(c);
+        const dublura = pastrate.some((p) => {
+            const prag = Math.max(4, 0.55 * Math.max(p.lat || 10, p.inalt || 10, c.lat || 10, c.inalt || 10));
+            return Math.hypot(cx(p) - ccx, cy(p) - ccy) < prag;
+        });
+        if (!dublura)
             pastrate.push(c);
     }
     return pastrate;
@@ -12336,41 +12515,54 @@ function cautaSimboluri(im, sab, optiuni) {
     const o = optiuni || {};
     const prag = typeof o.prag === 'number' ? o.prag : 0.72;
     const rotatii = o.rotatii ? [0, 90, 180, 270] : [0];
+    const pInk = pragInchisAuto;
     const gasite = [];
     const integPlin = o.integrale || sumeIntegrale(im);
     const micsorate = {};
+    let scari = o.scari || [0.6, 0.72, 0.85, 1.0, 1.18, 1.4, 1.65, 1.95];
+    const minLat = Math.min(sab.lat, sab.inalt);
+    scari = Array.from(new Set(scari)).filter((s) => minLat * s >= 8 && sab.lat * s <= im.lat * 0.98 && sab.inalt * s <= im.inalt * 0.98);
+    if (!scari.length)
+        scari = [1.0];
+    const pragGrosier = Math.max(0.30, prag - 0.28);
     rotatii.forEach((gr) => {
         const sabR = rotesteImagine(sab, gr);
-        const tplPlin = pregatesteSablon(sabR);
-        if (!(tplPlin.norma > 0))
-            return;
-        const f = o.factor || (Math.min(sabR.lat, sabR.inalt) >= 24 ? 3 : Math.min(sabR.lat, sabR.inalt) >= 12 ? 2 : 1);
-        let candidati;
-        if (f > 1) {
-            if (!micsorate[f]) {
-                const imM = micsoreazaImagine(im, f);
-                micsorate[f] = { im: imM, integ: sumeIntegrale(imM) };
-            }
-            const sabM = micsoreazaImagine(sabR, f);
-            if (sabM.lat < 3 || sabM.inalt < 3)
-                candidati = cautaGrosier(im, tplPlin, prag, integPlin).map((c) => ({ x: c.x, y: c.y }));
-            else
-                candidati = cautaGrosier(micsorate[f].im, pregatesteSablon(sabM), Math.max(0.35, prag - 0.15), micsorate[f].integ).map((c) => ({ x: c.x * f, y: c.y * f }));
-        }
-        else {
-            candidati = cautaGrosier(im, tplPlin, prag, integPlin).map((c) => ({ x: c.x, y: c.y }));
-        }
-        const raza = f > 1 ? f : 0;
-        candidati.forEach((c) => {
-            let bun = null;
-            for (let dy = -raza; dy <= raza; dy++)
-                for (let dx = -raza; dx <= raza; dx++) {
-                    const sc = scorPotrivire(im, integPlin, tplPlin, c.x + dx, c.y + dy);
-                    if (sc >= 0 && (!bun || sc > bun.scor))
-                        bun = { x: c.x + dx, y: c.y + dy, scor: sc };
+        scari.forEach((s) => {
+            const sabS = s === 1 ? sabR : redimensioneaza(sabR, sabR.lat * s, sabR.inalt * s);
+            const tpl = pregatesteSablon(sabS);
+            if (!(tpl.norma > 0) || tpl.ink < 6)
+                return;
+            const mm = Math.min(sabS.lat, sabS.inalt);
+            const f = mm >= 24 ? 3 : mm >= 12 ? 2 : 1;
+            let candidati;
+            if (f > 1) {
+                if (!micsorate[f]) {
+                    const imM = micsoreazaImagine(im, f);
+                    micsorate[f] = { im: imM, integ: sumeIntegrale(imM) };
                 }
-            if (bun && bun.scor >= prag)
-                gasite.push({ ...bun, lat: sabR.lat, inalt: sabR.inalt, rot: gr });
+                const sabM = micsoreazaImagine(sabS, f);
+                if (sabM.lat < 3 || sabM.inalt < 3)
+                    candidati = cautaGrosier(im, tpl, pragGrosier, integPlin);
+                else
+                    candidati = cautaGrosier(micsorate[f].im, pregatesteSablon(sabM), Math.max(0.28, pragGrosier - 0.05), micsorate[f].integ).map((c) => ({ x: c.x * f, y: c.y * f, scor: c.scor }));
+            }
+            else {
+                candidati = cautaGrosier(im, tpl, pragGrosier, integPlin);
+            }
+            if (candidati.length > 5000)
+                candidati = candidati.sort((a, b) => b.scor - a.scor).slice(0, 5000);
+            const raza = f > 1 ? f : 1;
+            candidati.forEach((c) => {
+                let bun = null;
+                for (let dy = -raza; dy <= raza; dy++)
+                    for (let dx = -raza; dx <= raza; dx++) {
+                        const sc = scorFin(im, tpl, c.x + dx, c.y + dy, pInk);
+                        if (sc >= 0 && (!bun || sc > bun.scor))
+                            bun = { x: c.x + dx, y: c.y + dy, scor: sc };
+                    }
+                if (bun && bun.scor >= prag)
+                    gasite.push({ ...bun, lat: sabS.lat, inalt: sabS.inalt, rot: gr, scara: s });
+            });
         });
     });
     return suprimaVecini(gasite);
@@ -12422,7 +12614,7 @@ const scurteazaDescrierea = (t) => {
     return taiat.length > 70 ? taiat.slice(0, 68).trim() + '…' : taiat;
 };
 function strangeCutia(im, x0, y0, w, h, prag, zoneText) {
-    const p = prag || PRAG_INCHIS;
+    const p = prag || pragInchisAuto;
     const xa = Math.max(0, Math.round(x0)), ya = Math.max(0, Math.round(y0));
     const xb = Math.min(im.lat, Math.round(x0 + w)), yb = Math.min(im.inalt, Math.round(y0 + h));
     const zone = zoneText || [];
@@ -12573,7 +12765,7 @@ function citesteLegenda(im, texte, cutie, optiuni) {
 }
 function petePeDesen(im, px, py, optiuni) {
     const o = optiuni || {};
-    const prag = o.prag || PRAG_INCHIS;
+    const prag = o.prag || pragInchisAuto;
     const latMax = o.latMax || 90, inaltMax = o.inaltMax || 90;
     const salt = o.salt == null ? 2 : o.salt;
     const cauta = o.raza == null ? 14 : o.raza;
@@ -12672,12 +12864,13 @@ function etichetaLangaPin(texte, p, raza) {
 }
 const textEticheta = (e) => !e ? '' : [e.tablou || '', e.circuit || '', e.inaltime ? 'h=' + e.inaltime + ' cm' : ''].filter(Boolean).join(' · ');
 const PRAG_INCHIS = 150;
+let pragInchisAuto = 150;
 const DIRECTII_PERETE = [{ id: 'sus', dx: 0, dy: -1 }, { id: 'jos', dx: 0, dy: 1 },
     { id: 'stanga', dx: -1, dy: 0 }, { id: 'dreapta', dx: 1, dy: 0 }];
 function pixelInchis(im, x, y, prag) {
     if (x < 0 || y < 0 || x >= im.lat || y >= im.inalt)
         return false;
-    return im.g[y * im.lat + x] < (prag || PRAG_INCHIS);
+    return im.g[y * im.lat + x] < (prag || pragInchisAuto);
 }
 function pixelInchisTol(im, x, y, orizontala, prag, tol) {
     const t = tol == null ? 2 : tol;
@@ -12702,7 +12895,7 @@ function eLinieAcolo(im, x, y, orizontala, prag, jumatate) {
 }
 function cautaPerete(im, px, py, dir, optiuni) {
     const o = optiuni || {};
-    const prag = o.prag || PRAG_INCHIS;
+    const prag = o.prag || pragInchisAuto;
     const maxim = o.maxim || 500, start = o.start == null ? 8 : o.start;
     const orizontala = dir.dy !== 0;
     for (let t = start; t <= maxim; t++) {
@@ -12716,7 +12909,7 @@ function cautaPerete(im, px, py, dir, optiuni) {
 }
 function mergePePerete(im, x, y, orizontala, sens, optiuni) {
     const o = optiuni || {};
-    const prag = o.prag || PRAG_INCHIS;
+    const prag = o.prag || pragInchisAuto;
     const maxim = o.maxim || 2000;
     const golMic = o.golMic == null ? 3 : o.golMic;
     const golMax = o.golMax == null ? 400 : o.golMax;
@@ -12934,6 +13127,8 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const [numitor, setNumitor] = useState(Number(ante.scaraNumitor) || 0);
     const [areText, setAreText] = useState(true);
     const [cautare, setCautare] = useState(null);
+    const refCautTimer = useRef(null);
+    const refCautGen = useRef(0);
     const [panou, setPanou] = useState(true);
     const [mesaj, setMesaj] = useState('');
     const [ghidAscuns, setGhidAscuns] = useState(false);
@@ -12952,6 +13147,27 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const refOnSchimb = useRef(onSchimb);
     refOnSchimb.current = onSchimb;
     const refInteg = useRef(null);
+    const refUndo = useRef([]);
+    const [potAnula, setPotAnula] = useState(false);
+    const instantaneu = () => {
+        const a = refAnte.current;
+        refUndo.current.push({ pini: a.pini || [], trasee: a.trasee || [], cote: a.cote || [],
+            articole: a.articole || [], zone: a.zone || [], legendaCutie: a.legendaCutie || null });
+        if (refUndo.current.length > 12)
+            refUndo.current.shift();
+        setPotAnula(true);
+    };
+    const anuleaza = () => {
+        const snap = refUndo.current.pop();
+        if (!snap) {
+            setPotAnula(false);
+            return;
+        }
+        refOnSchimb.current(snap);
+        setPotAnula(refUndo.current.length > 0);
+        setCautare(null);
+        setMesaj('↺ Am dat înapoi ultima operație.');
+    };
     const iaIntegrale = () => {
         if (!refInteg.current && refGri.current)
             refInteg.current = sumeIntegrale(refGri.current);
@@ -13047,6 +13263,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         }
         if (pini.length && !window.confirm('Pe pagina asta sunt deja ' + pini.length + ' aparate numărate. Le înlocuiesc cu numărătoarea nouă?'))
             return;
+        instantaneu();
         setNumaraBusy(true);
         setTimeout(() => {
             try {
@@ -13056,7 +13273,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 cuSemn.forEach((a) => {
                     const s = a.sablon;
                     const sab = decupeazaImagine(im, s.x * lat, s.y * lat, s.w * lat, s.h * lat);
-                    cautaSimboluri(im, sab, { prag: pragLegenda, rotatii: rotLegenda, integrale: iaIntegrale() }).forEach((g) => {
+                    cautaSimboluri(im, sab, { prag: pragLegenda, rotatii: rotLegenda, integrale: iaIntegrale(), scari: [0.7, 0.85, 1.0, 1.2, 1.45, 1.75] }).forEach((g) => {
                         const cx = (g.x + g.lat / 2) / lat, cy = (g.y + g.inalt / 2) / lat;
                         if (excl && cx >= excl.x - 0.005 && cx <= excl.x + excl.w + 0.005 && cy >= excl.y - 0.005 && cy <= excl.y + excl.h + 0.005)
                             return;
@@ -13099,6 +13316,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             setMesaj('Nu e niciun aparat pus pe planșă. Caută întâi simbolurile.');
             return;
         }
+        instantaneu();
         setCoteazaBusy(true);
         setTimeout(() => {
             try {
@@ -13286,6 +13504,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const stergeCotele = () => {
         if (!cote.length || !window.confirm('Ștergi toate cotele de pe pagina asta?'))
             return;
+        instantaneu();
         onSchimb({ cote: (ante.cote || []).filter((c) => (c.pagina || 1) !== pagina) });
     };
     useEffect(() => {
@@ -13322,6 +13541,23 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                     return;
                 refPagina.current = cv;
                 refGri.current = griDinImageData(cv.getContext('2d').getImageData(0, 0, cv.width, cv.height));
+                try {
+                    const gg = refGri.current.g;
+                    let t = pragOtsu(gg);
+                    let sub = 0;
+                    for (let i = 0; i < gg.length; i++)
+                        if (gg[i] < t)
+                            sub++;
+                    if (sub > gg.length * 0.5) {
+                        for (let i = 0; i < gg.length; i++)
+                            gg[i] = 255 - gg[i];
+                        t = 255 - t;
+                    }
+                    pragInchisAuto = Math.max(90, Math.min(205, t + 8));
+                }
+                catch (_) {
+                    pragInchisAuto = PRAG_INCHIS;
+                }
                 refInteg.current = null;
                 try {
                     const txt = await pg.getTextContent();
@@ -13578,7 +13814,19 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         };
         potrivesteMarime();
         window.addEventListener('resize', potrivesteMarime);
-        return () => window.removeEventListener('resize', potrivesteMarime);
+        let ro = null;
+        try {
+            if (window.ResizeObserver && refCadru.current) {
+                ro = new ResizeObserver(() => potrivesteMarime());
+                ro.observe(refCadru.current);
+            }
+        }
+        catch (_) { }
+        return () => { window.removeEventListener('resize', potrivesteMarime); if (ro)
+            try {
+                ro.disconnect();
+            }
+            catch (_) { } };
     }, []);
     useEffect(() => {
         const c = refCanvas.current;
@@ -13759,7 +14007,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                 setMesaj('Apropie întâi planșa (rotița pe laptop, două degete pe telefon), apoi încercuiește simbolul.');
                 return;
             }
-            const stransa = strangeCutia(refGri.current, x0, y0, w, h, PRAG_INCHIS, null);
+            const stransa = strangeCutia(refGri.current, x0, y0, w, h, pragInchisAuto, null);
             const sablon = stransa
                 ? decupeazaImagine(refGri.current, stransa.x, stransa.y, stransa.w, stransa.h)
                 : decupeazaImagine(refGri.current, x0, y0, w, h);
@@ -13875,16 +14123,24 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         if (!sab || !refGri.current)
             return;
         setCautare({ sablon: sab, prag, rotatii, gasite: null, lucreaza: true });
-        setTimeout(() => {
+        const gen = ++refCautGen.current;
+        if (refCautTimer.current)
+            clearTimeout(refCautTimer.current);
+        refCautTimer.current = setTimeout(() => {
+            if (gen !== refCautGen.current)
+                return;
             try {
                 const gasite = cautaSimboluri(refGri.current, sab, { prag, rotatii, integrale: iaIntegrale() });
-                setCautare({ sablon: sab, prag, rotatii, gasite, lucreaza: false });
+                if (gen === refCautGen.current)
+                    setCautare({ sablon: sab, prag, rotatii, gasite, lucreaza: false });
             }
             catch (e) {
-                setCautare(null);
-                setMesaj((e && e.message) || 'Căutarea nu a mers.');
+                if (gen === refCautGen.current) {
+                    setCautare(null);
+                    setMesaj((e && e.message) || 'Căutarea nu a mers.');
+                }
             }
-        }, 30);
+        }, 280);
     };
     const acceptaCautarea = () => {
         if (!cautare || !cautare.gasite || !artCurent) {
@@ -13895,7 +14151,8 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         const noi = cautare.gasite.map((g) => ({ id: uid(), pagina, articolId: artCurent.id,
             x: (g.x + g.lat / 2) / pg.width, y: (g.y + g.inalt / 2) / pg.width }));
         const vechi = ante.pini || [];
-        const pastrate = noi.filter((p) => !vechi.some((v) => (v.pagina || 1) === pagina && Math.hypot(v.x - p.x, v.y - p.y) < 0.004));
+        const pastrate = noi.filter((p) => !vechi.some((v) => (v.pagina || 1) === pagina && v.articolId === artCurent.id && Math.hypot(v.x - p.x, v.y - p.y) < 0.004));
+        instantaneu();
         onSchimb({ pini: [...vechi, ...pastrate] });
         setCautare(null);
         setMod('naviga');
@@ -13924,6 +14181,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         const cate = (ante.pini || []).filter((p) => p.articolId === a.id).length + (ante.trasee || []).filter((t) => t.articolId === a.id).length;
         if (cate && !window.confirm('„' + a.nume + '" are ' + cate + ' însemnări pe planșă. Le ștergi odată cu articolul?'))
             return;
+        instantaneu();
         onSchimb({ articole: articole.filter((x) => x.id !== a.id),
             pini: (ante.pini || []).filter((p) => p.articolId !== a.id),
             trasee: (ante.trasee || []).filter((t) => t.articolId !== a.id) });
@@ -13955,6 +14213,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                     "/",
                     nrPagini),
                 React.createElement("button", { onClick: () => setPagina((p) => Math.min(nrPagini, p + 1)), className: "text-xs px-2 py-1 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u203A"))),
+            potAnula && (React.createElement("button", { onClick: anuleaza, title: "Anuleaz\u0103 ultima opera\u021Bie mare (num\u0103rat, cotat, \u0219ters)", className: "text-xs px-2 py-1.5 rounded-lg shrink-0 font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u21BA Anuleaz\u0103")),
             React.createElement("button", { onClick: () => potriveste(), title: "\u00CEncadreaz\u0103 plan\u0219a pe ecran", className: "text-xs px-2 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u2922")),
         React.createElement("div", { className: "flex gap-1.5 px-2 py-1.5 shrink-0 overflow-x-auto", style: { borderBottom: '1px solid var(--border)' } }, MODURI.map(([id, ic, et]) => btnMod(id, ic, et))),
         (() => {
@@ -14162,7 +14421,7 @@ function AntemasuratoareTab({ antemasuratori, setAntemasuratori, clients, santie
             const nou = { id: uid(), nume: file.name.replace(/\.pdf$/i, ''), pathname: up.pathname, url: up.url,
                 clientId: '', santierId: '', pagina: 1, metriPeLatime: 0, rezervaImplicita: 10,
                 articole, zone: [], pini: [], trasee: [],
-                data: new Date().toISOString().slice(0, 10), creatDe: currentUser?.nume || '' };
+                data: dataLocala(new Date()), creatDe: currentUser?.nume || '' };
             await salveaza([nou, ...(refAnteLista.current || [])]);
             setDeschisId(nou.id);
         }
@@ -14648,11 +14907,25 @@ function App() {
             if (oprit || !navigator.onLine || document.visibilityState !== 'visible')
                 return;
             try {
-                const r = await fetch('/index.html?v=' + Date.now(), { cache: 'no-store' });
-                const t = await r.text();
-                const m = t.match(/APP_VERSION\s*=\s*'([^']+)'/);
-                if (m && m[1] && m[1] !== APP_VERSION && !oprit)
-                    setVersiuneNoua(m[1]);
+                let ver = null;
+                try {
+                    const rv = await fetch('/version.txt?v=' + Date.now(), { cache: 'no-store' });
+                    if (rv.ok) {
+                        const t = (await rv.text()).trim();
+                        if (t && t.length < 80 && !t.includes('<'))
+                            ver = t;
+                    }
+                }
+                catch (_) { }
+                if (!ver) {
+                    const r = await fetch('/index.html?v=' + Date.now(), { cache: 'no-store' });
+                    const t = await r.text();
+                    const m = t.match(/APP_VERSION\s*=\s*'([^']+)'/);
+                    if (m && m[1])
+                        ver = m[1];
+                }
+                if (ver && ver !== APP_VERSION && !oprit)
+                    setVersiuneNoua(ver);
             }
             catch (_) { }
         };
@@ -14677,10 +14950,16 @@ function App() {
     };
     const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const [pendingCount, setPendingCount] = useState((typeof getPending === 'function') ? getPending().length : 0);
+    const [memoriePlina, setMemoriePlina] = useState(false);
+    const [syncBlocat, setSyncBlocat] = useState(false);
     useEffect(() => {
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js').catch(() => { });
         }
+        const onMemPlina = () => setMemoriePlina(true);
+        const onSyncBlocat = () => setSyncBlocat(true);
+        window.addEventListener('memorie-plina', onMemPlina);
+        window.addEventListener('sync-blocat', onSyncBlocat);
         const onVis = () => { if (document.visibilityState === 'visible' && navigator.onLine) {
             loadAllData(false);
             pushQueueFlush();
@@ -14696,7 +14975,7 @@ function App() {
         window.addEventListener('offline', upOnline);
         window.addEventListener('offline-queue-change', upPending);
         const iv = setInterval(upPending, 4000);
-        return () => { window.removeEventListener('online', upOnline); window.removeEventListener('offline', upOnline); window.removeEventListener('offline-queue-change', upPending); document.removeEventListener('visibilitychange', onVis); clearInterval(iv); };
+        return () => { window.removeEventListener('online', upOnline); window.removeEventListener('offline', upOnline); window.removeEventListener('offline-queue-change', upPending); window.removeEventListener('memorie-plina', onMemPlina); window.removeEventListener('sync-blocat', onSyncBlocat); document.removeEventListener('visibilitychange', onVis); clearInterval(iv); };
     }, []);
     useEffect(() => {
         if (!currentUser)
@@ -14750,7 +15029,7 @@ function App() {
         const u = currentUser;
         if (!u)
             return 0;
-        const aziB = new Date().toISOString().slice(0, 10);
+        const aziB = dataLocala(new Date());
         const dupa17B = (new Date().getHours() * 60 + new Date().getMinutes()) >= (17 * 60 + 1);
         let n = 0;
         if (u.rol === 'Manager') {
@@ -14763,7 +15042,8 @@ function App() {
             if (dupa17B)
                 n += santiere.filter((s) => s.status === 'Activ' && inEchipa(s.echipa, u.id) && seCereRaport(s, aziB) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziB)).length;
         }
-        n += (mementouri || []).filter((m) => !m.gata && (m.pentruUserId ? m.pentruUserId === u.id : m.creatId === u.id) && `${m.data}T${m.ora || '09:00'}` <= new Date().toISOString().slice(0, 16)).length;
+        const acumLocal = (() => { const d = new Date(); return dataLocala(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); })();
+        n += (mementouri || []).filter((m) => !m.gata && (m.pentruUserId ? m.pentruUserId === u.id : m.creatId === u.id) && `${m.data}T${m.ora || '09:00'}` <= acumLocal).length;
         return n;
     }, [currentUser, cereriSantier, concedii, santiere, rapoarte, mementouri]);
     useEffect(() => {
@@ -14789,7 +15069,7 @@ function App() {
             return;
         if ((acum.getHours() * 60 + acum.getMinutes()) < (17 * 60 + 1))
             return;
-        const aziR = acum.toISOString().slice(0, 10);
+        const aziR = dataLocala(acum);
         const activeFaraRaport = santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, aziR) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziR));
         if (currentUser.rol === 'Manager') {
             if (!activeFaraRaport.length)
@@ -14824,6 +15104,20 @@ function App() {
             return;
         const pusherClient = new Pusher('fca0c2f943634978aa7a', { cluster: 'eu' });
         const channel = pusherClient.subscribe('firma-updates');
+        let primaConectare = true;
+        try {
+            pusherClient.connection.bind('connected', () => {
+                if (primaConectare) {
+                    primaConectare = false;
+                    return;
+                }
+                try {
+                    loadAllData(false);
+                }
+                catch (_) { }
+            });
+        }
+        catch (_) { }
         const setters = {
             clients: (v) => setClients(v ?? []),
             offers: (v) => setOffers(v ?? []),
@@ -14904,8 +15198,8 @@ function App() {
         const den = String(nume || '').trim();
         if (!den)
             return null;
-        const azi2 = new Date().toISOString().slice(0, 10);
-        const maine2 = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); })();
+        const azi2 = dataLocala(new Date());
+        const maine2 = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return dataLocala(d); })();
         const cl = (clients || []).find((c) => c.id === clientId);
         const s = {
             id: uid(), nume: den, adresa: String(adresa || '').trim(), status: 'Activ', echipa: [],
@@ -15002,7 +15296,7 @@ function App() {
                 return;
             }
             nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) - cant } : m);
-            moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'iesire', cantitate: cant, nota: refLabel, data: new Date().toISOString().slice(0, 10) });
+            moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'iesire', cantitate: cant, nota: refLabel, data: dataLocala(new Date()) });
         });
         if (moves.length > 0)
             scrieStoc(nextMaterials, [...moves, ...refStocMov.current]);
@@ -15017,14 +15311,14 @@ function App() {
             if (idx === -1 || !cant)
                 return;
             nextMaterials = nextMaterials.map((m, i) => i === idx ? { ...m, stoc: (Number(m.stoc) || 0) + cant } : m);
-            moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'intrare', cantitate: cant, nota: refLabel, data: new Date().toISOString().slice(0, 10) });
+            moves.push({ id: uid(), materialId: nextMaterials[idx].id, tip: 'intrare', cantitate: cant, nota: refLabel, data: dataLocala(new Date()) });
         });
         if (moves.length > 0)
             scrieStoc(nextMaterials, [...moves, ...refStocMov.current]);
     };
     const nextNumber = (prefix, list) => urmatorulNumar(prefix, list);
     const duplicaDoc = (kind) => (d) => {
-        const copie = { ...d, id: uid(), numar: undefined, data: new Date().toISOString().slice(0, 10),
+        const copie = { ...d, id: uid(), numar: undefined, data: dataLocala(new Date()),
             status: kind === 'Ofertă' ? 'Ciornă' : 'De încasat', devizeIds: undefined, stocDedus: undefined, stocMesaj: undefined, scadenta: undefined,
             items: (d.items || []).map((it) => ({ ...it, id: uid() })) };
         if (kind === 'Ofertă')
@@ -15048,7 +15342,7 @@ function App() {
         const baza = {
             id: uid(), clientId: (santier && santier.benefClientId) || (client && client.id) || '',
             items: [{ id: uid(), denumire: '', um: 'buc', cantitate: 1, pretUnitar: 0, adaos: 0 }],
-            tva: TVA_IMPLICIT, data: new Date().toISOString().slice(0, 10),
+            tva: TVA_IMPLICIT, data: dataLocala(new Date()),
             santierId: santier ? santier.id : '', santierNume: santier ? santier.nume : '',
             adresaLucrare: santier ? (santier.adresaDeviz || santier.adresa || '') : '',
             lucrare: santier ? (santier.lucrare || '') : '',
@@ -15107,7 +15401,7 @@ function App() {
         const sx = (santiere || []).find((x) => x.id === a.santierId);
         setOfferForm({
             id: uid(), clientId: a.clientId || (sx && sx.benefClientId) || '', tva: TVA_IMPLICIT,
-            data: new Date().toISOString().slice(0, 10), status: 'Ciornă',
+            data: dataLocala(new Date()), status: 'Ciornă',
             santierId: a.santierId || '', santierNume: sx ? sx.nume : '',
             adresaLucrare: sx ? (sx.adresaDeviz || sx.adresa || '') : '',
             lucrare: sx ? (sx.lucrare || '') : ('Cantități din planșa ' + (a.nume || '')),
@@ -15123,7 +15417,7 @@ function App() {
         setInvoiceForm({
             id: uid(), clientId: d.clientId,
             items: [{ id: uid(), denumire: randDinDeviz(d), um: 'buc', cantitate: 1, pretUnitar: valoare, adaos: 0 }],
-            tva: d.tva, status: 'De încasat', data: new Date().toISOString().slice(0, 10),
+            tva: d.tva, status: 'De încasat', data: dataLocala(new Date()),
             santierId: d.santierId, santierNume: d.santierNume, adresaLucrare: d.adresaLucrare, lucrare: d.lucrare,
             nrContract: d.nrContract, dataContract: d.dataContract, actAditional: d.actAditional, dataActAditional: d.dataActAditional,
             devizeIds: [d.id],
@@ -15220,7 +15514,7 @@ function App() {
     const receptioneazaAchizitie = (randuri, nota) => {
         let nextMaterials = refStocMat.current.slice();
         const miscariNoi = [];
-        const azi2 = new Date().toISOString().slice(0, 10);
+        const azi2 = dataLocala(new Date());
         (randuri || []).forEach((r) => {
             const den = String(r.denumire || '').trim();
             const cant = Number(r.cantitate) || 0;
@@ -15255,7 +15549,7 @@ function App() {
             nextMaterials = refStocMat.current.slice();
         }
         nextMaterials = nextMaterials.map((m) => m.id === mat.id ? { ...m, stoc: (Number(m.stoc) || 0) - (Number(cantitate) || 0) } : m);
-        const move = { id: uid(), materialId: mat.id, tip: 'iesire', cantitate: Number(cantitate) || 0, nota: `Livrat la șantier: ${santierNume}`, data: new Date().toISOString().slice(0, 10) };
+        const move = { id: uid(), materialId: mat.id, tip: 'iesire', cantitate: Number(cantitate) || 0, nota: `Livrat la șantier: ${santierNume}`, data: dataLocala(new Date()) };
         scrieStoc(nextMaterials, [move, ...refStocMov.current]);
     };
     const refSalvareDoc = useRef(false);
@@ -15332,6 +15626,12 @@ function App() {
             React.createElement(FundalTematic, { tab: tab, sectiune: siteSectiune })),
         React.createElement("div", { className: "min-h-screen w-full", style: { background: 'transparent', position: 'relative', zIndex: 1, fontFamily: "'Inter', sans-serif" } },
             bannerVersiune,
+            memoriePlina && (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9998, textAlign: 'center' } },
+                React.createElement("span", { style: { display: 'inline-block', padding: '10px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
+                        background: '#4a1f1f', color: '#ffb3b3', border: '1px solid #E0525288', boxShadow: '0 4px 14px rgba(0,0,0,.5)' } }, "\u26A0\uFE0F Memoria telefonului e plin\u0103 \u2014 NU \u00EEnchide aplica\u021Bia p\u00E2n\u0103 nu revii pe net \u0219i se sincronizeaz\u0103. Apoi \u0219terge poze/plan\u0219e vechi din telefon."))),
+            syncBlocat && (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9997, textAlign: 'center' } },
+                React.createElement("span", { style: { display: 'inline-block', padding: '10px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
+                        background: '#4a1f1f', color: '#ffb3b3', border: '1px solid #E0525288', boxShadow: '0 4px 14px rgba(0,0,0,.5)' } }, "\u26A0\uFE0F Unele date nu pot fi trimise pe server (pot fi prea mari sau sesiunea a expirat). Ie\u0219i \u0219i intr\u0103 din nou; dac\u0103 r\u0103m\u00E2ne, spune administratorului."))),
             (!online || pendingCount > 0) && (React.createElement("div", { style: { position: 'fixed', bottom: '12px', left: '12px', right: '12px', zIndex: 9998, textAlign: 'center' } },
                 React.createElement("span", { style: { display: 'inline-block', padding: '8px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 600,
                         background: online ? '#1d3a52' : '#3a2a14', color: online ? '#9ad' : 'var(--acc3)', border: '1px solid ' + (online ? '#2E8BD166' : '#E9A23B66'), boxShadow: '0 4px 14px rgba(0,0,0,.4)' } }, !online ? '📴 Fără net — lucrezi offline, se salvează local.' : `🔄 Se sincronizează… (${pendingCount} în așteptare)`))),
@@ -15497,7 +15797,8 @@ function App() {
                         tab === 'ghid' && React.createElement(GhidTab, { isManager: effectiveUser.rol === 'Manager' }),
                         tab === 'utilizatori' && effectiveUser.rol === 'Manager' && React.createElement(UsersTab, { currentUser: effectiveUser })))))))));
 }
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App, null));
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Prinde, { full: true },
+    React.createElement(App, null)));
 </script>
 </body>
 </html>
