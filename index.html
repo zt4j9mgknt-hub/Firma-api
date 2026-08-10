@@ -1211,7 +1211,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.72-noutati-clipesc';
+const APP_VERSION = 'v01.73-restante-apartament';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -3102,9 +3102,44 @@ function SiteToolsTab({ santierId, santierNume, sculeSantier, setSculeSantier, p
                 React.createElement("button", { onClick: () => trimiteScula(s, 'Service'), className: "px-2 py-1 rounded font-medium", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83D\uDD27 Service"),
                 React.createElement("button", { onClick: () => setTrimiteSculaId(null), className: "px-2 py-1", style: { color: 'var(--muted)' } }, "Anuleaz\u0103"))))))))));
 }
-function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setRestante, persist, currentUser }) {
-    const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
+function parseLocRestanta(sel, structura) {
+    if (!sel)
+        return {};
+    const p = String(sel).split(':');
+    const tip = p[0], etajId = p[1], apId = p[2];
+    const e = (structura || []).find((x) => x.id === etajId);
+    if (tip === 'et')
+        return { etajId, apId: null, locNume: (e?.nume || 'Etaj') };
+    if (tip === 'ap') {
+        const a = (e?.apartamente || []).find((x) => x.id === apId);
+        return { etajId, apId, locNume: (a?.nume || 'Ap.') };
+    }
+    return {};
+}
+function RestantaLoc({ structura, sel, setSel, locText, setLocText }) {
+    const are = structura && structura.length > 0;
+    if (are) {
+        return (React.createElement("select", { value: sel, onChange: (e) => setSel(e.target.value), className: "w-full rounded-lg px-2 py-2.5 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } },
+            React.createElement("option", { value: "" }, "\uD83D\uDCCD Unde? \u2014 alege etaj / apartament (op\u021Bional)"),
+            structura.map((e) => (React.createElement("optgroup", { key: e.id, label: e.nume || 'Etaj' },
+                React.createElement("option", { value: 'et:' + e.id },
+                    "Tot ",
+                    e.nume || 'etajul'),
+                (e.apartamente || []).map((a) => React.createElement("option", { key: a.id, value: 'ap:' + e.id + ':' + a.id }, a.nume)))))));
+    }
+    return (React.createElement("input", { value: locText, onChange: (e) => setLocText(e.target.value), placeholder: "\uD83D\uDCCD Unde? (ex: ap. 407) \u2014 op\u021Bional", className: "w-full rounded-lg px-3 py-2.5 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }));
+}
+function EtichetaLoc({ it }) {
+    if (!it || !it.locNume)
+        return null;
+    return React.createElement("span", { className: "shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full", style: { color: '#fff', background: 'var(--acc4)' } },
+        "\uD83D\uDCCD ",
+        it.locNume);
+}
+function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setRestante, structura, persist, currentUser }) {
     const [text, setText] = useState('');
+    const [sel, setSel] = useState('');
+    const [locText, setLocText] = useState('');
     const [veziRezolvate, setVeziRezolvate] = useState(false);
     const aici = (restante || []).filter((r) => r.santierId === santierId);
     const deschise = aici.filter((r) => !r.rezolvat).slice().reverse();
@@ -3114,28 +3149,34 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
         const t = text.trim();
         if (!t)
             return;
-        const it = { id: uid(), santierId, text: t, rezolvat: false, creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: dataLocala(new Date()) };
+        const loc = (structura && structura.length) ? parseLocRestanta(sel, structura) : (locText.trim() ? { locNume: locText.trim() } : {});
+        const it = { id: uid(), santierId, text: t, ...loc, rezolvat: false, creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: dataLocala(new Date()) };
         setPersist([...(restante || []), it]);
         setText('');
-        notifica('manageri', { title: '🔴 Restanță nouă', body: `${currentUser?.nume || 'Un coleg'}: „${t}" — ${santierNume || 'șantier'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
+        setSel('');
+        setLocText('');
+        const undeTxt = loc.locNume ? `[${loc.locNume}] ` : '';
+        notifica('manageri', { title: '🔴 Restanță nouă', body: `${currentUser?.nume || 'Un coleg'}: ${undeTxt}„${t}" — ${santierNume || 'șantier'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
         const echipa = (echipaIds || []).filter((id) => id && id !== currentUser?.id);
         if (echipa.length)
-            notifica(echipa, { title: 'Restanță nouă pe șantier', body: `„${t}" — ${santierNume || 'șantier'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
+            notifica(echipa, { title: 'Restanță nouă pe șantier', body: `${undeTxt}„${t}" — ${santierNume || 'șantier'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
     };
     const rezolva = (it) => {
         setPersist((restante || []).map((r) => r.id === it.id ? { ...r, rezolvat: true, rezolvatDe: currentUser?.nume || '', rezolvatId: currentUser?.id || '', rezolvatLa: dataLocala(new Date()) } : r));
         if (it.creatId && it.creatId !== currentUser?.id)
-            notifica(it.creatId, { title: 'Restanță rezolvată ✅', body: `„${it.text}" — rezolvată de ${currentUser?.nume || 'un coleg'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
+            notifica(it.creatId, { title: 'Restanță rezolvată ✅', body: `${it.locNume ? ('[' + it.locNume + '] ') : ''}„${it.text}" — rezolvată de ${currentUser?.nume || 'un coleg'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
     };
     const redeschide = (it) => setPersist((restante || []).map((r) => r.id === it.id ? { ...r, rezolvat: false, rezolvatDe: null, rezolvatId: null, rezolvatLa: null } : r));
     const sterge = (it) => { if (!window.confirm('Ștergi „' + it.text + '" din listă?'))
         return; setPersist((restante || []).filter((r) => r.id !== it.id)); };
     return (React.createElement("div", null,
-        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Lucruri r\u0103mase de rezolvat pe \u0219antier (ex: \u201Eband\u0103 LED ap. 407\", \u201Edoz\u0103 priz\u0103 baie ap. 408\"). Stau ro\u0219ii p\u00E2n\u0103 le bifezi."),
-        React.createElement("div", { className: "flex gap-1.5 mb-3" },
-            React.createElement("input", { value: text, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter')
-                    adauga(); }, placeholder: "Ce a r\u0103mas? (ex: band\u0103 LED ap. 407)", className: "flex-1 min-w-0 rounded-lg px-3 py-2.5 text-sm outline-none", style: inputStyle }),
-            React.createElement("button", { onClick: adauga, className: "shrink-0 text-sm px-3 py-2.5 rounded-lg font-semibold", style: { color: '#fff', background: 'var(--acc4)' } }, "+ Adaug\u0103")),
+        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Lucruri r\u0103mase de rezolvat, legate de un etaj/apartament (ex: \u201EAp. 407 \u2014 band\u0103 LED\"). Stau ro\u0219ii p\u00E2n\u0103 le bifezi."),
+        React.createElement("div", { className: "rounded-lg p-2.5 mb-3 space-y-1.5", style: { background: '#E0525210', border: '1px solid #E0525244' } },
+            React.createElement(RestantaLoc, { structura: structura, sel: sel, setSel: setSel, locText: locText, setLocText: setLocText }),
+            React.createElement("div", { className: "flex gap-1.5" },
+                React.createElement("input", { value: text, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter')
+                        adauga(); }, placeholder: "Ce a r\u0103mas de f\u0103cut?", className: "flex-1 min-w-0 rounded-lg px-3 py-2.5 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                React.createElement("button", { onClick: adauga, className: "shrink-0 text-sm px-3 py-2.5 rounded-lg font-semibold", style: { color: '#fff', background: 'var(--acc4)' } }, "+ Adaug\u0103"))),
         deschise.length === 0 && rezolvate.length === 0 && (React.createElement("div", { className: "text-center py-8 text-sm", style: { color: 'var(--muted)' } }, "Nicio restan\u021B\u0103 \u2014 totul e la zi. \uD83C\uDF89")),
         deschise.length > 0 && React.createElement("div", { className: "mb-2 text-xs font-bold uppercase tracking-wider", style: { color: 'var(--acc4)' } },
             "\uD83D\uDD34 De rezolvat (",
@@ -3143,8 +3184,10 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
             ")"),
         React.createElement("div", { className: "space-y-1.5" }, deschise.map((it) => (React.createElement("div", { key: it.id, className: "flex items-center gap-2 rounded-xl px-3 py-2.5", style: { background: '#E0525214', border: '1px solid #E0525266', borderLeft: '4px solid #E05252' } },
             React.createElement("div", { className: "min-w-0 flex-1" },
-                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, it.text),
-                React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } },
+                React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" },
+                    React.createElement(EtichetaLoc, { it: it }),
+                    React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, it.text)),
+                React.createElement("div", { className: "text-[10px] mt-0.5", style: { color: 'var(--muted2)' } },
                     it.creatDe ? 'pus de ' + it.creatDe : '',
                     it.data ? ' · ' + fmtData(it.data) : '')),
             React.createElement("button", { onClick: () => rezolva(it), className: "shrink-0 text-xs px-2.5 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713 S-a rezolvat"),
@@ -3157,7 +3200,9 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
                 ")"),
             veziRezolvate && (React.createElement("div", { className: "space-y-1 mt-2" }, rezolvate.map((it) => (React.createElement("div", { key: it.id, className: "flex items-center gap-2 rounded-lg px-3 py-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
                 React.createElement("div", { className: "min-w-0 flex-1" },
-                    React.createElement("div", { className: "text-sm", style: { color: 'var(--muted)', textDecoration: 'line-through' } }, it.text),
+                    React.createElement("div", { className: "text-sm", style: { color: 'var(--muted)', textDecoration: 'line-through' } },
+                        it.locNume ? '📍 ' + it.locNume + ' — ' : '',
+                        it.text),
                     React.createElement("div", { className: "text-[10px]", style: { color: 'var(--acc2)' } },
                         "rezolvat de ",
                         it.rezolvatDe || '—',
@@ -5531,6 +5576,8 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
     const areStructura = !!(structura && structura.length > 0);
     const [showStructEdit, setShowStructEdit] = useState(false);
     const [restText, setRestText] = useState('');
+    const [restSel, setRestSel] = useState('');
+    const [restLocText, setRestLocText] = useState('');
     const [data, setData] = useState(initial?.data || dataInitiala || dataLocala(new Date()));
     const [oraInceput, setOraInceput] = useState(initial?.oraInceput || '08:00');
     const [oraSfarsit, setOraSfarsit] = useState(initial?.oraSfarsit || '17:00');
@@ -5874,17 +5921,21 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
                 React.createElement(SiteStructuraTab, { santierId: santierId, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, materials: materials, materialeLista: materialeLista }))))),
         setRestanteSantier && santierId && (() => {
             const deschise = (restanteSantier || []).filter((r) => r.santierId === santierId && !r.rezolvat).slice().reverse();
+            const areStruct = structura && structura.length > 0;
             const adauga = () => {
                 const t = restText.trim();
                 if (!t)
                     return;
-                const it = { id: uid(), santierId, text: t, rezolvat: false, creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: dataLocala(new Date()) };
+                const loc = areStruct ? parseLocRestanta(restSel, structura) : (restLocText.trim() ? { locNume: restLocText.trim() } : {});
+                const it = { id: uid(), santierId, text: t, ...loc, rezolvat: false, creatDe: currentUser?.nume || '', creatId: currentUser?.id || '', data: dataLocala(new Date()) };
                 const next = [...(restanteSantier || []), it];
                 setRestanteSantier(next);
                 persist('restante', next);
                 setRestText('');
+                setRestSel('');
+                setRestLocText('');
                 try {
-                    notifica('manageri', { title: '🔴 Restanță nouă', body: `${currentUser?.nume || 'Un coleg'}: „${t}" — ${santierNume || 'șantier'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
+                    notifica('manageri', { title: '🔴 Restanță nouă', body: `${currentUser?.nume || 'Un coleg'}: ${loc.locNume ? ('[' + loc.locNume + '] ') : ''}„${t}" — ${santierNume || 'șantier'}.`, tag: 'restanta-' + santierId }, currentUser?.id);
                 }
                 catch (_) { }
             };
@@ -5893,13 +5944,16 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
                 React.createElement("div", { className: "text-xs font-bold mb-1.5", style: { color: 'var(--acc4)' } },
                     "\uD83D\uDD34 Restan\u021Be / de rezolvat pe \u0219antier",
                     deschise.length ? ` (${deschise.length})` : ''),
+                React.createElement("div", { className: "mb-1.5" },
+                    React.createElement(RestantaLoc, { structura: structura, sel: restSel, setSel: setRestSel, locText: restLocText, setLocText: setRestLocText })),
                 React.createElement("div", { className: "flex gap-1.5 mb-2" },
                     React.createElement("input", { value: restText, onChange: (e) => setRestText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') {
                             e.preventDefault();
                             adauga();
-                        } }, placeholder: "Ce a r\u0103mas? (ex: band\u0103 LED ap. 407)", className: "flex-1 min-w-0 rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                        } }, placeholder: "Ce a r\u0103mas de f\u0103cut?", className: "flex-1 min-w-0 rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
                     React.createElement("button", { type: "button", onClick: adauga, className: "shrink-0 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#fff', background: 'var(--acc4)' } }, "+ Adaug\u0103")),
                 deschise.length > 0 && (React.createElement("div", { className: "space-y-1" }, deschise.map((it) => (React.createElement("div", { key: it.id, className: "flex items-center gap-2 rounded-lg px-2.5 py-1.5", style: { background: 'var(--panel)', border: '1px solid #E0525244' } },
+                    React.createElement(EtichetaLoc, { it: it }),
                     React.createElement("span", { className: "min-w-0 flex-1 text-sm", style: { color: 'var(--text)' } }, it.text),
                     React.createElement("button", { type: "button", onClick: () => rezolva(it), className: "shrink-0 text-[11px] px-2 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713 Gata"))))))));
         })(),
@@ -7170,7 +7224,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                 const deschisaLuna = cauta ? true : !!luniDeschise[k];
                 return (React.createElement("div", { key: k, className: "rounded-xl", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("button", { onClick: () => setLuniDeschise((x) => ({ ...x, [k]: !x[k] })), className: "w-full flex items-center gap-2 px-3 py-2.5 text-left" }, React.createElement("span", { style: { fontSize: 10, color: 'var(--muted)', display: 'inline-block', transform: deschisaLuna ? 'rotate(90deg)' : 'none', transition: 'transform .15s' } }, "\u25B6"), React.createElement("span", { className: "text-sm font-semibold flex-1", style: { color: 'var(--text)' } }, numeLuna(k)), React.createElement("span", { className: "text-[11px] shrink-0", style: { color: 'var(--muted2)' } }, lista.length, " ", lista.length === 1 ? 'zi' : 'zile', " \u00B7 ", minutesToHM(oreLuna))), deschisaLuna && React.createElement("div", { className: "px-2 pb-2 space-y-2" }, lista.map((r) => randRaport(r, esteDeschis(r), () => comuta(r))))));
             }))));
-        })())), accHeader('materiale', '📦', 'Materiale', (miscariSantier.filter((m) => m.santierId === selected).length || null)), siteView === 'materiale' && React.createElement(HelpNote, { text: HELP.materiale, isManager: currentUser?.rol === 'Manager' }), siteView === 'materiale' && (React.createElement(SiteMaterialsTab, { santierId: selected, santierNume: santier?.nume || '', company: company, materials: materials, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, persist: persist, onExportToDeviz: onExportToDeviz, onCerereMaterial: onCerereMaterial, currentUser: currentUser })), accHeader('scule', '🔧', 'Scule', (sculeSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'scule' && React.createElement(HelpNote, { text: HELP.scule, isManager: currentUser?.rol === 'Manager' }), siteView === 'scule' && (React.createElement(SiteToolsTab, { santierId: selected, santierNume: santier?.nume || '', sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, persist: persist, currentUser: currentUser })), accHeader('planse', '📐', 'Planșe', (planseSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'planse' && React.createElement(HelpNote, { text: HELP.planse, isManager: currentUser?.rol === 'Manager' }), siteView === 'planse' && (React.createElement(SitePlanseTab, { santierId: selected, santierNume: santier?.nume || '', planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, persist: persist, currentUser: currentUser })), accHeader('media', '📸', 'Foto / Video', (mediaSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'media' && React.createElement(HelpNote, { text: HELP.media, isManager: currentUser?.rol === 'Manager' }), siteView === 'media' && (React.createElement(SiteMediaTab, { santierId: selected, santierNume: santier?.nume || '', mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, persist: persist, currentUser: currentUser })), accHeader('checklist', '✅', 'Checklist', (checklistSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'checklist' && React.createElement(HelpNote, { text: HELP.checklist, isManager: currentUser?.rol === 'Manager' }), siteView === 'checklist' && (React.createElement(ChecklistTab, { santier: santier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected), pozitii: pozitiiSantier.filter((p) => p.santierId === selected), cereri: cereriSantier.filter((c) => c.santierId === selected), materials: materials, sculeSantier: sculeSantier, rapoarte: rapoarte, allUsers: allUsers, currentUser: currentUser, isManager: currentUser?.rol === 'Manager', persist: persist, onFinalizeSantier: finalizeSantier })), accHeader('probleme', '❓', 'Întrebări și probleme', (problemeSantier.filter((p) => p.santierId === selected && (currentUser?.rol === 'Manager' ? !raspunsCorectQA(p) : raspunsuriQA(p).length === 0)).length || null)), siteView === 'probleme' && React.createElement(HelpNote, { text: HELP.probleme, isManager: currentUser?.rol === 'Manager' }), siteView === 'probleme' && (React.createElement(SiteProblemeTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, persist: persist, currentUser: currentUser })), siteView === 'restante' && (React.createElement(SiteRestanteTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), restante: restanteSantier, setRestante: setRestanteSantier, persist: persist, currentUser: currentUser })), accHeader('echipa', '👥', 'Echipă', echipaNormalizata(santier?.echipa).length), siteView === 'echipa' && React.createElement(HelpNote, { text: HELP.echipa, isManager: currentUser?.rol === 'Manager' }), siteView === 'echipa' && (currentUser?.rol === 'Manager' ? (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-2" }, React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "Echip\u0103 asignat\u0103"), React.createElement("button", { onClick: () => setTeamPickerOpen(!teamPickerOpen), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, teamPickerOpen ? 'Închide' : '+ Asignează')), React.createElement("div", { className: "space-y-1 mb-2" }, echipaNormalizata(santier?.echipa).length === 0 && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun electrician asignat."), echipaNormalizata(santier?.echipa).map((e) => {
+        })())), accHeader('materiale', '📦', 'Materiale', (miscariSantier.filter((m) => m.santierId === selected).length || null)), siteView === 'materiale' && React.createElement(HelpNote, { text: HELP.materiale, isManager: currentUser?.rol === 'Manager' }), siteView === 'materiale' && (React.createElement(SiteMaterialsTab, { santierId: selected, santierNume: santier?.nume || '', company: company, materials: materials, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, persist: persist, onExportToDeviz: onExportToDeviz, onCerereMaterial: onCerereMaterial, currentUser: currentUser })), accHeader('scule', '🔧', 'Scule', (sculeSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'scule' && React.createElement(HelpNote, { text: HELP.scule, isManager: currentUser?.rol === 'Manager' }), siteView === 'scule' && (React.createElement(SiteToolsTab, { santierId: selected, santierNume: santier?.nume || '', sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, persist: persist, currentUser: currentUser })), accHeader('planse', '📐', 'Planșe', (planseSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'planse' && React.createElement(HelpNote, { text: HELP.planse, isManager: currentUser?.rol === 'Manager' }), siteView === 'planse' && (React.createElement(SitePlanseTab, { santierId: selected, santierNume: santier?.nume || '', planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, persist: persist, currentUser: currentUser })), accHeader('media', '📸', 'Foto / Video', (mediaSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'media' && React.createElement(HelpNote, { text: HELP.media, isManager: currentUser?.rol === 'Manager' }), siteView === 'media' && (React.createElement(SiteMediaTab, { santierId: selected, santierNume: santier?.nume || '', mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, persist: persist, currentUser: currentUser })), accHeader('checklist', '✅', 'Checklist', (checklistSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'checklist' && React.createElement(HelpNote, { text: HELP.checklist, isManager: currentUser?.rol === 'Manager' }), siteView === 'checklist' && (React.createElement(ChecklistTab, { santier: santier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected), pozitii: pozitiiSantier.filter((p) => p.santierId === selected), cereri: cereriSantier.filter((c) => c.santierId === selected), materials: materials, sculeSantier: sculeSantier, rapoarte: rapoarte, allUsers: allUsers, currentUser: currentUser, isManager: currentUser?.rol === 'Manager', persist: persist, onFinalizeSantier: finalizeSantier })), accHeader('probleme', '❓', 'Întrebări și probleme', (problemeSantier.filter((p) => p.santierId === selected && (currentUser?.rol === 'Manager' ? !raspunsCorectQA(p) : raspunsuriQA(p).length === 0)).length || null)), siteView === 'probleme' && React.createElement(HelpNote, { text: HELP.probleme, isManager: currentUser?.rol === 'Manager' }), siteView === 'probleme' && (React.createElement(SiteProblemeTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, persist: persist, currentUser: currentUser })), siteView === 'restante' && (React.createElement(SiteRestanteTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), restante: restanteSantier, setRestante: setRestanteSantier, structura: structuraSantier.filter((e) => e.santierId === selected), persist: persist, currentUser: currentUser })), accHeader('echipa', '👥', 'Echipă', echipaNormalizata(santier?.echipa).length), siteView === 'echipa' && React.createElement(HelpNote, { text: HELP.echipa, isManager: currentUser?.rol === 'Manager' }), siteView === 'echipa' && (currentUser?.rol === 'Manager' ? (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-2" }, React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "Echip\u0103 asignat\u0103"), React.createElement("button", { onClick: () => setTeamPickerOpen(!teamPickerOpen), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, teamPickerOpen ? 'Închide' : '+ Asignează')), React.createElement("div", { className: "space-y-1 mb-2" }, echipaNormalizata(santier?.echipa).length === 0 && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun electrician asignat."), echipaNormalizata(santier?.echipa).map((e) => {
             const u = allUsers.find((x) => x.id === e.userId);
             return (React.createElement("div", { key: e.userId, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, "\uD83D\uDC77 ", u?.nume || '(cont șters)'), React.createElement("div", { className: "flex items-center gap-1" }, concediuActiv(concedii, { userId: e.userId, nume: u?.nume }, dataLocala(new Date())) && React.createElement("span", { className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: '#C08CE0', fontWeight: 700 } }, "\uD83C\uDFD6 Concediu"), u?.telefon && React.createElement("a", { href: `tel:${String(u.telefon).replace(/\s/g, '')}`, title: u.telefon, className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCDE"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'activ'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'activ' ? '#14181C' : 'var(--muted)', background: e.status === 'activ' ? 'var(--acc2)' : 'var(--panel)' } }, "Activ"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'pauza'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'pauza' ? '#14181C' : 'var(--muted)', background: e.status === 'pauza' ? 'var(--acc3)' : 'var(--panel)' } }, "Pauz\u0103"), React.createElement("button", { onClick: () => removeFromEchipa(santier.id, e.userId), style: { color: 'var(--acc4)', opacity: 0.8 } }, "\u2715"))));
         })), teamPickerOpen && (React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-2", style: { borderTop: '1px solid var(--border)' } }, allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "To\u021Bi electricienii sunt deja asigna\u021Bi (sau nu exist\u0103 niciunul \u00EEnregistrat).")) : allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).map((u) => (React.createElement("button", { key: u.id, onClick: () => addToEchipa(santier.id, u.id), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "+ \uD83D\uDC77 ", u.nume))))))) : (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "Colegi asigna\u021Bi la acest \u0219antier"), React.createElement("div", { className: "space-y-1" }, echipaNormalizata(santier?.echipa).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun coleg asignat.")) : echipaNormalizata(santier?.echipa).map((e) => {
@@ -10775,8 +10829,10 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                         ")")),
                 React.createElement("div", { className: "space-y-1.5" }, lista.map((it) => (React.createElement("div", { key: it.id, className: "flex items-center gap-2 rounded-xl px-3 py-2.5", style: { background: '#E0525214', border: '1px solid #E0525266', borderLeft: '4px solid #E05252' } },
                     React.createElement("div", { className: "min-w-0 flex-1" },
-                        React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, it.text),
-                        React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } },
+                        React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" },
+                            React.createElement(EtichetaLoc, { it: it }),
+                            React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, it.text)),
+                        React.createElement("div", { className: "text-[10px] mt-0.5", style: { color: 'var(--muted2)' } },
                             numeSant[it.santierId] || 'șantier',
                             it.creatDe ? ' · ' + it.creatDe : '')),
                     React.createElement("button", { onClick: () => goToSite(it.santierId, 'restante'), className: "shrink-0 text-[11px] px-2 py-1.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)' } }, "Deschide"),
