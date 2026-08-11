@@ -1213,7 +1213,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.80-profit-termen-semnatura';
+const APP_VERSION = 'v01.83-concediu-20-legal';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -2742,7 +2742,7 @@ const HELP = {
         mgr: 'Ca manager, tu vezi pontajul tuturor:\n\n• Vezi orele pentru toți angajații.\n• Poți face corecții manuale, adică poți adăuga sau scădea ore acolo unde este cazul.\n• Poți scoate pontajul într-un fișier (Excel sau PDF) ca să-l dai la contabilitate.',
     },
     concedii: {
-        text: 'Aici ceri concediu.\n\n1) Alegi de la ce dată până la ce dată vrei să lipsești.\n2) Apeși „Trimite". Șeful primește o înștiințare și îți aprobă sau îți refuză cererea.\n3) Primești o înștiințare cu răspunsul. Zilele care au fost aprobate apar la Pontaj.\n\nSus, în cardul „🏖 Concediu de odihnă rămas", vezi câte zile mai ai din cele 21 pe an. Ține minte că din ele se scad nu doar zilele întregi de concediu aprobate, ci și orele care ți-au lipsit în zilele în care ai lucrat mai puțin de 8 ore. De exemplu, dacă într-o zi ai făcut 6 ore, cele 2 ore care lipsesc se iau din concediul de odihnă. Când concediul de odihnă se termină, orele care lipsesc se trec ca „fără plată".',
+        text: 'Aici ceri concediu.\n\n1) Alegi de la ce dată până la ce dată vrei să lipsești.\n2) Apeși „Trimite". Șeful primește o înștiințare și îți aprobă sau îți refuză cererea.\n3) Primești o înștiințare cu răspunsul. Zilele care au fost aprobate apar la Pontaj.\n\nSus, în cardul „🏖 Concediu de odihnă rămas", vezi câte zile mai ai din cele 20 pe an (minimul legal). Ține minte că din ele se scad nu doar zilele întregi de concediu aprobate, ci și orele care ți-au lipsit în zilele în care ai lucrat mai puțin de 8 ore. De exemplu, dacă într-o zi ai făcut 6 ore, cele 2 ore care lipsesc se iau din concediul de odihnă. Când concediul de odihnă se termină, orele care lipsesc se trec ca „fără plată".',
         mgr: 'Ca manager, tu răspunzi la cereri:\n\n• Vezi cererile de concediu ale tuturor angajaților.\n• Apeși ✓ ca să aprobi sau ✕ ca să respingi. Angajatul primește o înștiințare; ce respingi îi apare lui scris cu roșu.',
     },
     profil: {
@@ -9019,92 +9019,129 @@ class Prinde extends React.Component {
         return this.props.children;
     }
 }
-function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
+let _CONCEDIU_SOLD = [];
+function setSoldModul(v) { _CONCEDIU_SOLD = Array.isArray(v) ? v : []; }
+function numeCheieG(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
+}
+function soldConcediuPentru(nume) {
+    const k = numeCheieG(nume);
+    const s = (_CONCEDIU_SOLD || []).find((x) => numeCheieG(x.nume) === k);
+    if (!s)
+        return null;
+    const zile = Number(s.zile);
+    if (!s.laData || String(s.laData).length < 10 || isNaN(zile))
+        return null;
+    return { zileMin: Math.round(zile * 480), laData: s.laData, dataAngajarii: s.dataAngajarii || '' };
+}
+const ZILE_CO_AN = 20;
+const MIN_CO_AN = ZILE_CO_AN * 480;
+function dreptAnualMin(an, dataAngajarii) {
+    const FULL = MIN_CO_AN;
+    if (dataAngajarii && String(dataAngajarii).length >= 7 && String(dataAngajarii).slice(0, 4) === String(an)) {
+        const luna = Number(String(dataAngajarii).slice(5, 7)) || 1;
+        const luniLucrate = Math.max(1, 12 - (luna - 1));
+        return Math.round(FULL * luniLucrate / 12);
+    }
+    return FULL;
+}
+function _simuleazaConcediu(nume, panaLaData, rapoarte, concedii) {
     const concediiAprobate = (concedii || []).filter((c) => c.nume === nume && c.status === 'Aprobat');
+    const unif = unificaRapoarte(rapoarte);
     const minuteLucratePeZi = {};
     const dateRaportate = [];
-    const unif = unificaRapoarte(rapoarte);
-    const zileCuOmul = new Set();
     unif.forEach((r) => {
-        if (!r.data?.startsWith(String(an)))
+        if (!r.data)
             return;
         if (!(r.persoane || []).some((pp) => pp.nume === nume))
             return;
-        zileCuOmul.add(r.data);
         dateRaportate.push(r.data);
     });
-    zileCuOmul.forEach((zi) => { minuteLucratePeZi[zi] = intervalePersoanaZi(unif, nume, zi).net; });
+    const zileset = new Set(dateRaportate);
+    zileset.forEach((zi) => { minuteLucratePeZi[zi] = intervalePersoanaZi(unif, nume, zi).net; });
     const primaZiCuDate = dateRaportate.length ? dateRaportate.slice().sort()[0] : null;
-    const [anLimita, lunaLimita] = panaLaLuna.split('-').map(Number);
-    const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
-    const dataLimita = `${panaLaLuna}-${String(ultimaZiLimita).padStart(2, '0')}`;
-    let bugetRamasMin = 21 * 8 * 60;
-    const rezultat = {};
-    for (let luna = 0; luna < 12; luna++) {
-        const nrZileLuna = new Date(an, luna + 1, 0).getDate();
-        for (let zi = 1; zi <= nrZileLuna; zi++) {
-            const dataStr = `${an}-${String(luna + 1).padStart(2, '0')}-${String(zi).padStart(2, '0')}`;
-            if (dataStr > dataLimita)
-                return rezultat;
-            if (!primaZiCuDate || dataStr < primaZiCuDate)
-                continue;
-            const dow = new Date(an, luna, zi).getDay();
-            if (dow === 0 || dow === 6)
-                continue;
-            if ((SARBATORI_LEGALE[an] || []).includes(dataStr)) {
-                rezultat[dataStr] = { status: 'sarbatoare', cod: 'SL' };
-                continue;
-            }
-            const concAprobat = concediiAprobate.find((c) => dataStr >= c.dataInceput && dataStr <= c.dataSfarsit);
-            if (concAprobat) {
-                const cod = codPentruTip(concAprobat.tip);
-                if (cod === 'CO')
-                    bugetRamasMin = Math.max(0, bugetRamasMin - 480);
-                rezultat[dataStr] = { status: 'aprobat', cod };
-                continue;
-            }
-            const minLucrate = minuteLucratePeZi[dataStr] || 0;
-            const diferenta = 480 - minLucrate;
-            if (diferenta <= 0) {
-                rezultat[dataStr] = { status: 'lucrat', minuteLucrate: minLucrate, suplimentar: -diferenta };
-            }
-            else {
-                let codAuto;
-                if (bugetRamasMin >= diferenta) {
-                    codAuto = 'CO';
-                    bugetRamasMin -= diferenta;
+    const sold = soldConcediuPentru(nume);
+    const zileMap = {};
+    const bugetLa = {};
+    let buget = sold ? sold.zileMin : MIN_CO_AN;
+    const startDate = sold ? sold.laData : primaZiCuDate;
+    const startYear = sold ? Number(sold.laData.slice(0, 4)) : (primaZiCuDate ? Number(primaZiCuDate.slice(0, 4)) : Number(String(panaLaData).slice(0, 4)));
+    const endYear = Number(String(panaLaData).slice(0, 4));
+    for (let yr = startYear; yr <= endYear; yr++) {
+        if (sold) {
+            if (yr > startYear)
+                buget += dreptAnualMin(yr, sold.dataAngajarii);
+        }
+        else {
+            buget = MIN_CO_AN;
+        }
+        for (let luna = 0; luna < 12; luna++) {
+            const nrZileLuna = new Date(yr, luna + 1, 0).getDate();
+            for (let zi = 1; zi <= nrZileLuna; zi++) {
+                const dataStr = `${yr}-${String(luna + 1).padStart(2, '0')}-${String(zi).padStart(2, '0')}`;
+                if (dataStr > panaLaData)
+                    return { zileMap, bugetLa, bugetFinal: buget };
+                if (startDate && dataStr < startDate)
+                    continue;
+                if (!sold && !primaZiCuDate)
+                    continue;
+                const dow = new Date(yr, luna, zi).getDay();
+                if (dow === 0 || dow === 6)
+                    continue;
+                bugetLa[dataStr] = buget;
+                if ((SARBATORI_LEGALE[yr] || []).includes(dataStr)) {
+                    zileMap[dataStr] = { status: 'sarbatoare', cod: 'SL' };
+                    continue;
+                }
+                const concAprobat = concediiAprobate.find((c) => dataStr >= c.dataInceput && dataStr <= c.dataSfarsit);
+                if (concAprobat) {
+                    const cod = codPentruTip(concAprobat.tip);
+                    if (cod === 'CO')
+                        buget = Math.max(0, buget - 480);
+                    zileMap[dataStr] = { status: 'aprobat', cod };
+                    continue;
+                }
+                const minLucrate = minuteLucratePeZi[dataStr] || 0;
+                const diferenta = 480 - minLucrate;
+                if (diferenta <= 0) {
+                    zileMap[dataStr] = { status: 'lucrat', minuteLucrate: minLucrate, suplimentar: -diferenta };
                 }
                 else {
-                    codAuto = 'I';
-                    bugetRamasMin = 0;
+                    let codAuto;
+                    if (buget >= diferenta) {
+                        codAuto = 'CO';
+                        buget -= diferenta;
+                    }
+                    else {
+                        codAuto = 'I';
+                        buget = 0;
+                    }
+                    zileMap[dataStr] = { status: minLucrate > 0 ? 'partial' : 'absent', minuteLucrate: minLucrate, minuteAuto: diferenta, codAuto };
                 }
-                rezultat[dataStr] = { status: minLucrate > 0 ? 'partial' : 'absent', minuteLucrate: minLucrate, minuteAuto: diferenta, codAuto };
             }
         }
     }
-    return rezultat;
+    return { zileMap, bugetLa, bugetFinal: buget };
+}
+function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
+    const [anLimita, lunaLimita] = String(panaLaLuna).split('-').map(Number);
+    const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
+    const dataLimita = `${panaLaLuna}-${String(ultimaZiLimita).padStart(2, '0')}`;
+    const { zileMap } = _simuleazaConcediu(nume, dataLimita, rapoarte || [], concedii || []);
+    const rez = {};
+    Object.keys(zileMap).forEach((d) => { if (d.slice(0, 4) === String(an) && d <= dataLimita)
+        rez[d] = zileMap[d]; });
+    return rez;
 }
 function bugetCORamas(nume, dataStr, rapoarte, concedii) {
-    const TOTAL_CO_MIN = 21 * 8 * 60;
     const n = String(nume || '').trim();
     const zi = String(dataStr || '');
-    if (!n || zi.length < 10)
-        return TOTAL_CO_MIN;
-    const an = zi.slice(0, 4);
-    const anual = calculPontajAnual(n, an, zi.slice(0, 7), rapoarte || [], concedii || []);
-    let folosit = 0;
-    Object.keys(anual).forEach((d) => {
-        if (d >= zi)
-            return;
-        const info = anual[d];
-        if (info.status === 'aprobat') {
-            if (info.cod === 'CO')
-                folosit += 480;
-        }
-        else if (info.codAuto === 'CO')
-            folosit += (info.minuteAuto || 0);
-    });
-    return Math.max(0, TOTAL_CO_MIN - folosit);
+    if (!n || zi.length < 10) {
+        const s = soldConcediuPentru(n);
+        return s ? s.zileMin : MIN_CO_AN;
+    }
+    const { bugetLa, bugetFinal } = _simuleazaConcediu(n, zi, rapoarte || [], concedii || []);
+    return bugetLa[zi] != null ? bugetLa[zi] : bugetFinal;
 }
 const ACHIZITIE_STATUSES = ['De comandat', 'Comandat', 'Primit'];
 function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajCorectii, persist, company, concedii }) {
@@ -9429,15 +9466,200 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         w.document.close();
         w.focus();
     };
-    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDD50 Pontaj"), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Total de ore \u0219i zile libere pe fiecare angajat (din toate \u0219antierele). Pentru detaliu pe un \u0219antier anume, alege-l din list\u0103."), React.createElement("div", { className: "flex items-center gap-2 mb-2 flex-wrap" }, React.createElement("input", { type: "month", value: luna, onChange: (e) => setLuna(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), isManager && (React.createElement("select", { value: santierFiltru, onChange: (e) => setSantierFiltru(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "Toate \u0219antierele (total pe om)"), santiere.map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, "Rezumat: ", s.nume)))), isManager && lista.length > 0 && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: exportPontajExcel, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCCA Excel (rezumat)"), React.createElement("button", { onClick: exportPontajPDF, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDDA8 PDF (rezumat)")))), isManager && (React.createElement("div", { className: "mb-4 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Foaie colectiv\u0103 de prezen\u021B\u0103 (zi cu zi) \u2014 alege unul, mai multe, sau toate \u0219antierele:"), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, React.createElement("button", { onClick: () => setSantiereExport(santiere.map((s) => s.id)), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' } }, "Selecteaz\u0103 toate"), santiereExport.length > 0 && React.createElement("button", { onClick: () => setSantiereExport([]), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Deselecteaz\u0103"), santiere.map((s) => {
+    const construiesteGrilaFirma = (lunaStr) => {
+        const zile = zileLunaInfo(lunaStr);
+        const an = lunaStr.split('-')[0];
+        const rapLunaAll = unificaRapoarte(rapoarte).filter((r) => r.data?.startsWith(lunaStr));
+        const numeDinRapoarte = [...new Set(rapLunaAll.flatMap((r) => (r.persoane || []).map((p) => p.nume).filter((n) => n?.trim())))];
+        const numeElectricieni = allUsersPontaj.filter((u) => u.rol === 'Electrician').map((u) => u.nume);
+        const map = new Map();
+        [...numeElectricieni, ...numeDinRapoarte].forEach((nume) => { const k = numeCheie(nume); if (!map.has(k))
+            map.set(k, nume); });
+        const numeToate = Array.from(map.values()).sort((a, b) => String(a).localeCompare(String(b), 'ro'));
+        const ceasZi = (nume, dataStr) => {
+            let inc = null, sf = null;
+            rapLunaAll.filter((r) => r.data === dataStr).forEach((r) => {
+                (r.persoane || []).forEach((p) => {
+                    if (numeCheie(p.nume) !== numeCheie(nume))
+                        return;
+                    if (p.oraInceput) {
+                        if (inc === null || p.oraInceput < inc)
+                            inc = p.oraInceput;
+                    }
+                    if (p.oraSfarsit) {
+                        if (sf === null || p.oraSfarsit > sf)
+                            sf = p.oraSfarsit;
+                    }
+                });
+            });
+            return { inc, sf };
+        };
+        const angajati = numeToate.map((nume) => {
+            const anual = calculPontajAnual(nume, an, lunaStr, rapoarte, concedii);
+            const celule = zile.map((zi) => {
+                if (zi.weekend)
+                    return { start: 'X', sfarsit: 'X', pauza: 'X', ore: 'X' };
+                const info = anual[zi.dataStr];
+                if (info?.status === 'aprobat' || info?.status === 'sarbatoare')
+                    return { start: info.cod, sfarsit: info.cod, pauza: info.cod, ore: info.cod };
+                const zizi = minutePersoanaZi(rapoarte, nume, zi.dataStr);
+                if (zizi.net > 0 || info?.status === 'partial') {
+                    const { inc, sf } = ceasZi(nume, zi.dataStr);
+                    const supl = info?.suplimentar > 0 ? ` (+${minutesToHM(info.suplimentar)} supl.)` : '';
+                    const auto = (info?.status === 'partial' && info?.minuteAuto > 0) ? ` (+${minutesToHM(info.minuteAuto)} ${info.codAuto})` : '';
+                    return { start: inc || '', sfarsit: sf || '', pauza: zizi.pauza ? minutesToHM(zizi.pauza) : '\u2014', ore: minutesToHM(zizi.net) + supl + auto };
+                }
+                if (info?.status === 'absent')
+                    return { start: info.codAuto, sfarsit: info.codAuto, pauza: info.codAuto, ore: info.codAuto };
+                return { start: '', sfarsit: '', pauza: '', ore: '' };
+            });
+            return { nume, celule };
+        });
+        return { zile, angajati };
+    };
+    const exportFoaieFirmaExcel = () => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel \u00EEnc\u0103 se \u00EEncarc\u0103 \u2014 mai \u00EEncearc\u0103 o dat\u0103 \u00EEn c\u00E2teva secunde.');
+            return;
+        }
+        const { zile, angajati } = construiesteGrilaFirma(luna);
+        if (!angajati.length) {
+            window.alert('Nicio or\u0103 \u00EEnregistrat\u0103 \u00EEn luna selectat\u0103.');
+            return;
+        }
+        const headerRows = [
+            [`SC ${company?.nume || 'Firma mea'}`],
+            [company?.cui ? `CUI:${company.cui}` : ''],
+            [company?.regCom ? `Numar registrul comertului:${company.regCom}` : ''],
+            ['SANTIER: TOATE SANTIERELE'],
+            [],
+            ['FOAIE COLECTIVA DE PREZENTA - EVIDENTA NUMARULUI DE ORE LUCRATE'],
+            [`LUNA ${lunaNume.toUpperCase()} ${anNume}`],
+            [],
+        ];
+        const headRow1 = ['Nr. crt', 'Nume \u0219i prenume', 'Program de lucru', ...zile.map((z) => z.litera)];
+        const headRow2 = ['', '', '', ...zile.map((z) => z.zi)];
+        const body = [];
+        angajati.forEach((a, i) => {
+            body.push([i + 1, a.nume, 'Inceput', ...a.celule.map((c) => c.start)]);
+            body.push(['', '', 'Sfarsit', ...a.celule.map((c) => c.sfarsit)]);
+            body.push(['', '', 'Pauza de masa (ore)', ...a.celule.map((c) => c.pauza)]);
+            body.push(['', '', 'Nr ore lucrate', ...a.celule.map((c) => c.ore)]);
+        });
+        const legenda = [
+            [],
+            ['Intocmit,', '', 'SL- Sarbatori legale / liber de la stat', '', 'CO- concediu de odihna', '', 'I - invoiri si concediu fara retrib'],
+            [company?.administrator ? `ADM. ${company.administrator}` : '', '', 'Bo - boala obisnuita', '', 'O - obligatii cetatenesti'],
+            ['', '', 'N - Absente nemotivate'],
+        ];
+        const aoa = [...headerRows, headRow1, headRow2, ...body, ...legenda];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws['!cols'] = [{ wch: 6 }, { wch: 22 }, { wch: 18 }, ...zile.map(() => ({ wch: 6 }))];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, `Pontaj ${lunaNume}`.slice(0, 31));
+        XLSX.writeFile(wb, `foaie_pontaj_firma_${luna}.xlsx`);
+    };
+    const exportFoaieFirmaPDF = () => {
+        const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const { zile, angajati } = construiesteGrilaFirma(luna);
+        if (!angajati.length) {
+            window.alert('Nicio or\u0103 \u00EEnregistrat\u0103 \u00EEn luna selectat\u0103.');
+            return;
+        }
+        const randCap1 = zile.map((z) => `<th>${z.litera}</th>`).join('');
+        const randCap2 = zile.map((z) => `<th>${z.zi}</th>`).join('');
+        const randuri = angajati.map((a, i) => `
+        <tr><td rowspan="4">${i + 1}</td><td rowspan="4" style="text-align:left">${esc(a.nume)}</td><td style="text-align:left">Inceput</td>${a.celule.map((c) => `<td>${esc(c.start)}</td>`).join('')}</tr>
+        <tr><td style="text-align:left">Sfarsit</td>${a.celule.map((c) => `<td>${esc(c.sfarsit)}</td>`).join('')}</tr>
+        <tr><td style="text-align:left">Pauza de masa (ore)</td>${a.celule.map((c) => `<td>${esc(c.pauza)}</td>`).join('')}</tr>
+        <tr><td style="text-align:left">Nr ore lucrate</td>${a.celule.map((c) => `<td>${esc(c.ore)}</td>`).join('')}</tr>
+      `).join('');
+        const pagina = `
+      <div class="page">
+        <div class="header-row">
+          <div class="meta">
+            SC ${esc(company?.nume || '')}<br/>
+            ${company?.cui ? `CUI:${esc(company.cui)}<br/>` : ''}
+            ${company?.regCom ? `Numar registrul comertului:${esc(company.regCom)}<br/>` : ''}
+            SANTIER: TOATE SANTIERELE
+          </div>
+          <img class="logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
+        </div>
+        <div class="title">FOAIE COLECTIVA DE PREZENTA - EVIDENTA NUMARULUI DE ORE LUCRATE</div>
+        <div class="subtitle">LUNA ${esc(lunaNume.toUpperCase())} ${esc(anNume)}</div>
+        <table>
+          <thead>
+            <tr><th rowspan="2">Nr. Crt</th><th rowspan="2">Nume si prenume</th><th rowspan="2">Program de lucru</th>${randCap1}</tr>
+            <tr>${randCap2}</tr>
+          </thead>
+          <tbody>${randuri || `<tr><td colspan="${3 + zile.length}">Niciun angajat.</td></tr>`}</tbody>
+        </table>
+        <div class="legend">
+          <div class="legend-col">Intocmit,<br/>${company?.administrator ? `ADM. ${esc(company.administrator)}` : ''}</div>
+          <div class="legend-col">SL- Sarbatori legale / liber de la stat<br/>Bo - boala obisnuita<br/>Bp - boala profesionala<br/>Am - accident de munca<br/>M - maternitate</div>
+          <div class="legend-col">CO- concediu de odihna<br/>O - obligatii cetatenesti<br/>N - Absente nemotivate<br/>Prm - program redus maternitate<br/>Prb - program redus boala</div>
+          <div class="legend-col">I - invoiri si concediu fara retrib</div>
+        </div>
+      </div>`;
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Foaie pontaj firm\u0103</title><style>
+      * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; color:#1a1a1a; font-size:9px; }
+      @page { size: A4 landscape; margin: 10mm; }
+      .page { width:100%; }
+      .header-row { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4mm; }
+      .meta { font-size:10px; line-height:1.6; }
+      .logo { height:34px; }
+      .title { font-size:13px; font-weight:700; text-align:center; margin:3mm 0 1mm; }
+      .subtitle { font-size:11px; text-align:center; margin-bottom:3mm; }
+      table { width:100%; border-collapse:collapse; font-size:8px; }
+      th, td { border:1px solid #999; padding:1mm; text-align:center; }
+      th { background:#f2f2f2; }
+      .legend { display:flex; justify-content:space-between; margin-top:5mm; font-size:9px; }
+      .legend-col { flex:1; line-height:1.7; }
+    </style></head><body>${PRINT_TOOLBAR}${pagina}</body></html>`;
+        const w = window.open('', '_blank');
+        if (!w) {
+            window.alert('Browserul a blocat fereastra nou\u0103. Permite pop-up-urile \u0219i \u00EEncearc\u0103 din nou.');
+            return;
+        }
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+    };
+    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83D\uDD50 Pontaj"), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Total de ore \u0219i zile libere pe fiecare angajat (din toate \u0219antierele). Pentru detaliu pe un \u0219antier anume, alege-l din list\u0103."), React.createElement("div", { className: "flex items-center gap-2 mb-2 flex-wrap" }, React.createElement("input", { type: "month", value: luna, onChange: (e) => setLuna(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), isManager && (React.createElement("select", { value: santierFiltru, onChange: (e) => setSantierFiltru(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "Toate \u0219antierele (total pe om)"), santiere.map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, "Rezumat: ", s.nume)))), isManager && lista.length > 0 && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: exportPontajExcel, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCCA Excel (rezumat)"), React.createElement("button", { onClick: exportPontajPDF, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDDA8 PDF (rezumat)")))), isManager && (React.createElement("div", { className: "mb-3 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--acc2)' } }, React.createElement("div", { className: "text-sm font-semibold mb-0.5", style: { color: 'var(--text)' } }, "\uD83D\uDCCB Pentru contabil\u0103 \u2014 o singur\u0103 foaie, toat\u0103 firma"), React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Toate \u0219antierele contopite \u00EEntr-o singur\u0103 foaie: fiecare angajat o dat\u0103, cu orele pe zi (adunate de pe toate \u0219antierele) \u0219i concediile (CO, SL, I\u2026). Formatul pe care \u00EEl trimi\u021Bi contabilei."), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("button", { onClick: exportFoaieFirmaExcel, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCCA Excel (o foaie)"), React.createElement("button", { onClick: exportFoaieFirmaPDF, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDDA8 PDF (o foaie)")))), isManager && (React.createElement("div", { className: "mb-4 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Foaie colectiv\u0103 de prezen\u021B\u0103, defalcat\u0103 pe fiecare \u0219antier (zi cu zi) \u2014 alege unul, mai multe, sau toate \u0219antierele:"), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, React.createElement("button", { onClick: () => setSantiereExport(santiere.map((s) => s.id)), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' } }, "Selecteaz\u0103 toate"), santiereExport.length > 0 && React.createElement("button", { onClick: () => setSantiereExport([]), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Deselecteaz\u0103"), santiere.map((s) => {
         const activ = santiereExport.includes(s.id);
         return (React.createElement("button", { key: s.id, onClick: () => setSantiereExport(activ ? santiereExport.filter((id) => id !== s.id) : [...santiereExport, s.id]), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: activ ? '#14181C' : 'var(--muted)', background: activ ? 'var(--acc2)' : 'var(--panel2)' } }, s.nume));
     })), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement("button", { onClick: exportFoaiePrezentaExcel, disabled: santiereExport.length === 0, className: "text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCCA Excel ", santiereExport.length > 1 && `(${santiereExport.length} foi)`), React.createElement("button", { onClick: exportFoaiePrezentaPDF, disabled: santiereExport.length === 0, className: "text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDDA8 PDF ", santiereExport.length > 1 && `(${santiereExport.length} pagini)`)))), lista.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio or\u0103 \u00EEnregistrat\u0103 \u00EEn luna selectat\u0103.")) : (React.createElement(React.Fragment, null, isManager && (React.createElement("div", { className: "flex justify-between items-center mb-2 text-sm", style: { color: 'var(--muted)' } }, React.createElement("span", null, santierFiltru ? `Rezumat: ${santiere.find((s) => s.id === santierFiltru)?.nume || ''}` : 'Total pe fiecare angajat'), React.createElement("span", null, "Total ore: ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(totalGeneral))))), React.createElement("div", { className: "space-y-2" }, lista.map((p) => (React.createElement("div", { key: p.nume, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between gap-2" }, React.createElement("span", { className: "text-sm", style: { color: 'var(--text)' } }, p.nume), editState === p.nume ? (React.createElement("div", { className: "flex items-center gap-1.5 shrink-0" }, React.createElement("input", { value: editValue, onChange: (e) => setEditValue(e.target.value), placeholder: "H:MM", className: "w-20 rounded-lg px-2 py-1 text-xs outline-none text-center", style: { ...inputStyle, fontFamily: "'JetBrains Mono', monospace" } }), React.createElement("button", { onClick: () => confirmEdit(p), className: "px-2 py-1 rounded-lg text-xs", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713"), React.createElement("button", { onClick: () => setEditState(null), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u2715"))) : (React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, p.zileLibere > 0 && React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-lg", style: { color: 'var(--acc3)', background: 'var(--panel2)' } }, p.zileLibere, " ", p.zileLibere === 1 ? 'zi liberă' : 'zile libere'), React.createElement("span", { className: "text-sm", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(p.totalFinal)), React.createElement("button", { onClick: () => setExpandedPerson(expandedPerson === p.nume ? null : p.nume), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, expandedPerson === p.nume ? 'Ascunde' : '👁 Zi cu zi'), isManager && React.createElement("button", { onClick: () => startEdit(p), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u270E Edit")))), expandedPerson === p.nume && (React.createElement("div", { className: "mt-2 pt-2 space-y-1", style: { borderTop: '1px solid var(--border)' } }, zileDetaliu(p.nume).length === 0 ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nicio zi lucrat\u0103 luna asta.")) : zileDetaliu(p.nume).map((z) => (React.createElement("div", { key: z.data, className: "flex items-center justify-between text-xs", style: { color: 'var(--muted)' } }, React.createElement("span", null, fmtData(z.data), " \u2014 ", z.santierNume), React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(z.min))))))), p.corectieMin !== 0 && (React.createElement("div", { className: "mt-1.5 flex items-center justify-between text-xs", style: { color: 'var(--acc3)' } }, React.createElement("span", null, "\u270E Corec\u021Bie manual\u0103"), React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace" } }, p.corectieMin > 0 ? '+' : '−', minutesToHM(Math.abs(p.corectieMin)))))))))))));
 }
-function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, company }) {
+function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, company, concediuSold, setConcediuSold }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const [form, setForm] = useState(null);
     const isManager = currentUser?.rol === 'Manager';
+    const [soldOpen, setSoldOpen] = useState(false);
+    const [soldUsers, setSoldUsers] = useState([]);
+    const [soldDraft, setSoldDraft] = useState(null);
+    const [soldStare, setSoldStare] = useState('');
+    useEffect(() => {
+        if (!isManager)
+            return;
+        authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list' }) })
+            .then((r) => r.json()).then((d) => setSoldUsers((d.users || []).filter((u) => u.rol === 'Electrician' || u.rol === 'Manager'))).catch(() => { });
+    }, [isManager]);
+    const deschideSold = () => {
+        const aziL = dataLocala(new Date());
+        const gasit = (nume) => (concediuSold || []).find((x) => numeCheieG(x.nume) === numeCheieG(nume));
+        const draft = (soldUsers || []).map((u) => { const s = gasit(u.nume); return { nume: u.nume, zile: s && s.zile != null ? String(s.zile) : '', laData: (s && s.laData) || aziL, dataAngajarii: (s && s.dataAngajarii) || u.dataAngajarii || '' }; });
+        setSoldDraft(draft);
+        setSoldStare('');
+        setSoldOpen(true);
+    };
+    const salveazaSold = () => {
+        const arr = (soldDraft || []).filter((d) => String(d.zile).trim() !== '' && !isNaN(Number(d.zile)))
+            .map((d) => ({ id: uid(), nume: d.nume, zile: Number(d.zile), laData: d.laData || dataLocala(new Date()), dataAngajarii: d.dataAngajarii || '' }));
+        setConcediuSold(arr);
+        persist('concediuSold', arr);
+        setSoldStare('✅ Salvat. De acum se calculează pornind de la soldurile astea.');
+    };
     const trimiteContabila = (c) => {
         const to = company?.emailContabil || '';
         if (!to) {
@@ -9534,10 +9756,34 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, co
                     faraPlataMin += 480;
             }
         });
-        const coRamasMin = Math.max(0, 21 * 8 * 60 - coFolositMin);
+        const coRamasMin = bugetCORamas(nume, azi, rapoarte, concedii);
         return { nume, coRamasMin, faraPlataMin };
     });
-    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-1" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83C\uDFD6 Concedii"), !form && React.createElement("button", { onClick: () => setForm({ dataInceput: '', dataSfarsit: '', tip: CONCEDIU_TIPURI[0].label, motiv: '' }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Cerere nou\u0103")), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, isManager ? 'Toate cererile de concediu.' : 'Cererile tale de concediu.'), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, form.id ? '✏️ Editează cererea' : '➕ Cerere nouă'), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement(RoCalendarPicker, { value: form.dataInceput, onChange: (v) => setForm({ ...form, dataInceput: v }) }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "\u2014"), React.createElement(RoCalendarPicker, { value: form.dataSfarsit, onChange: (v) => setForm({ ...form, dataSfarsit: v }) })), React.createElement("select", { value: form.tip, onChange: (e) => setForm({ ...form, tip: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, CONCEDIU_TIPURI.map((t) => React.createElement("option", { key: t.label, value: t.label, style: { background: 'var(--panel)' } }, t.label, " (", t.cod, ")"))), (() => {
+    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-1" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83C\uDFD6 Concedii"), !form && React.createElement("button", { onClick: () => setForm({ dataInceput: '', dataSfarsit: '', tip: CONCEDIU_TIPURI[0].label, motiv: '' }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Cerere nou\u0103")), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, isManager ? 'Toate cererile de concediu.' : 'Cererile tale de concediu.'), isManager && (React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--acc1)' } },
+        React.createElement("button", { onClick: () => soldOpen ? setSoldOpen(false) : deschideSold(), className: "w-full flex items-center justify-between gap-2 text-left" },
+            React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\uD83D\uDDD3 Sold concediu de odihn\u0103 (pornire)"),
+            React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, soldOpen ? '▲ ascunde' : '▼ setează')),
+        soldOpen && (React.createElement("div", { className: "mt-3" },
+            React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } },
+                "Scrie c\u00E2te zile de concediu are ",
+                React.createElement("b", null, "acum"),
+                " fiecare om \u0219i de la ce dat\u0103 e valabil soldul. De aici \u00EEncolo aplica\u021Bia scade singur\u0103 (concedii + ore lips\u0103). Data angaj\u0103rii e op\u021Bional\u0103 \u2014 la 1 ianuarie adaug\u0103 automat dreptul anual (20 zile \u2014 minimul legal, pro-rata \u00EEn anul angaj\u0103rii)."),
+            (soldDraft || []).length === 0 ? (React.createElement("p", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nu am g\u0103sit angaja\u021Bi. Verific\u0103 lista de utilizatori.")) : (React.createElement("div", { className: "space-y-2" },
+                (soldDraft || []).map((d, i) => (React.createElement("div", { key: d.nume + i, className: "rounded-lg p-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                    React.createElement("div", { className: "text-xs font-medium mb-1.5", style: { color: 'var(--text)' } }, d.nume),
+                    React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
+                        React.createElement("label", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                            "Zile r\u0103mase",
+                            React.createElement("input", { type: "number", inputMode: "numeric", value: d.zile, onChange: (e) => { const v = e.target.value; setSoldDraft((soldDraft || []).map((x, j) => j === i ? { ...x, zile: v } : x)); }, placeholder: "ex: 14", className: "ml-1 w-20 rounded px-2 py-1 text-xs outline-none text-center", style: inputStyle })),
+                        React.createElement("label", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                            "Valabil de la",
+                            React.createElement("input", { type: "date", value: d.laData, onChange: (e) => { const v = e.target.value; setSoldDraft((soldDraft || []).map((x, j) => j === i ? { ...x, laData: v } : x)); }, className: "ml-1 rounded px-2 py-1 text-xs outline-none", style: inputStyle })),
+                        React.createElement("label", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
+                            "Angajat din",
+                            React.createElement("input", { type: "date", value: d.dataAngajarii, onChange: (e) => { const v = e.target.value; setSoldDraft((soldDraft || []).map((x, j) => j === i ? { ...x, dataAngajarii: v } : x)); }, className: "ml-1 rounded px-2 py-1 text-xs outline-none", style: inputStyle })))))),
+                React.createElement("div", { className: "flex items-center gap-2" },
+                    React.createElement("button", { onClick: salveazaSold, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103 soldurile"),
+                    soldStare && React.createElement("span", { className: "text-xs", style: { color: soldStare.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, soldStare)))))))), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, form.id ? '✏️ Editează cererea' : '➕ Cerere nouă'), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement(RoCalendarPicker, { value: form.dataInceput, onChange: (v) => setForm({ ...form, dataInceput: v }) }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "\u2014"), React.createElement(RoCalendarPicker, { value: form.dataSfarsit, onChange: (v) => setForm({ ...form, dataSfarsit: v }) })), React.createElement("select", { value: form.tip, onChange: (e) => setForm({ ...form, tip: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, CONCEDIU_TIPURI.map((t) => React.createElement("option", { key: t.label, value: t.label, style: { background: 'var(--panel)' } }, t.label, " (", t.cod, ")"))), (() => {
         if (!form.dataInceput || !form.dataSfarsit || form.dataSfarsit < form.dataInceput)
             return null;
         let zileL = 0;
@@ -11016,6 +11262,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'sold-concediu-manual-v1', aud: 'manager', data: '11.08.2026', titlu: '\ud83d\uddd3 Pui tu zilele de concediu de pornire',
+        text: 'La \u201e\ud83c\udfd6 Concedii", sus, ai \u201e\ud83d\uddd3 Sold concediu de odihn\u0103 (pornire)". Treci acolo c\u00e2te zile are ACUM fiecare om \u0219i de la ce dat\u0103 e valabil soldul \u2014 de aici \u00eencolo aplica\u021bia scade singur\u0103 (concedii aprobate + ore lips\u0103 din zile sub 8h) \u0219i \u00ee\u021bi arat\u0103 corect \u201econcediu r\u0103mas". Porne\u0219te de la soldul t\u0103u, nu de la un num\u0103r fix. Dac\u0103 treci \u0219i data angaj\u0103rii, la 1 ianuarie adaug\u0103 automat dreptul anual (20 zile \u2014 minimul legal, pro-rata \u00een anul angaj\u0103rii), peste soldul r\u0103mas \u2014 nu mai trebuie s\u0103 reintroduci nimic \u00een fiecare an.' },
+    { id: 'foaie-firma-contabila-v1', aud: 'manager', data: '11.08.2026', titlu: '\ud83d\udccb O singur\u0103 foaie de pontaj pentru contabil\u0103',
+        text: 'La Pontaj ai acum, sus, \u201e\ud83d\udccb Pentru contabil\u0103 \u2014 o singur\u0103 foaie, toat\u0103 firma". Scoate un singur document (Excel sau PDF) cu to\u021bi angaja\u021bii, orele pe fiecare zi adunate de pe TOATE \u0219antierele \u0219i concediile (CO, SL, I\u2026), \u00een acela\u0219i format de foaie colectiv\u0103 de prezen\u021b\u0103. Nu mai trebuie s\u0103 trimi\u021bi c\u00e2te o foaie de fiecare \u0219antier \u2014 una singur\u0103, gata de trimis. Foaia defalcat\u0103 pe \u0219antier a r\u0103mas mai jos, dac\u0103 \u00ee\u021bi trebuie \u0219i a\u0219a.' },
     { id: 'profit-termen-semnatura-v1', aud: 'toti', data: '10.08.2026', titlu: '\ud83d\udcb6 Profit pe \u0219antier, \ud83d\udcc5 termen la restan\u021be, \u270d\ufe0f semn\u0103tur\u0103 la predare',
         text: 'Patru lucruri noi. 1) \ud83d\udcc5 Termen la restan\u021be: pui \u00een c\u00e2te zile trebuie f\u0103cut un lucru (butonul \ud83d\udcc5 de l\u00e2ng\u0103 restan\u021b\u0103); dac\u0103 trece termenul sau st\u0103 prea mult nerezolvat\u0103, restan\u021ba se agraveaz\u0103 \u2014 devine ro\u0219u tare \u0219i pulseaz\u0103, ca s\u0103 nu se uite la predare. 2) \u270d\ufe0f Semn\u0103tur\u0103 la predare: la \u201eList\u0103 predare (PDF)" clientul poate semna cu degetul pe telefon; semn\u0103tura \u0219i numele lui apar pe procesul-verbal, l\u00e2ng\u0103 semn\u0103tura ta. 3) \ud83d\udcb6 Profitabilitate pe \u0219antier (doar Managerul, pe pagina de start): pe fiecare lucrare vezi valoarea produs\u0103 minus costul real, adic\u0103 ce \u0219antier aduce profit \u0219i care nu \u2014 pune \u201ecostul unei ore de electrician" \u00een \u2699 Firma mea ca s\u0103 ias\u0103 profitul real. 4) \ud83d\udcf2 List\u0103 de comandat: la Stocuri, un buton str\u00e2nge tot ce e sub minim \u00eentr-un mesaj gata de trimis pe WhatsApp c\u0103tre furnizor.' },
     { id: 'calitate-backup-poze-v1', aud: 'toti', data: '10.08.2026', titlu: '\ud83d\udcf7 Poz\u0103 la restan\u021b\u0103, \ud83d\udcca tablou de calitate \u0219i \u2b07\ufe0f backup',
@@ -15496,6 +15746,8 @@ function App() {
     const [concedii, setConcedii] = useState([]);
     const [achizitii, setAchizitii] = useState([]);
     const [pontajCorectii, setPontajCorectii] = useState([]);
+    const [concediuSold, setConcediuSoldState] = useState([]);
+    const setConcediuSold = (v) => { const val = Array.isArray(v) ? v : []; setSoldModul(val); setConcediuSoldState(val); };
     const [mediaSantier, setMediaSantier] = useState([]);
     const [structuraSantier, setStructuraSantier] = useState([]);
     const [pozitiiSantier, setPozitiiSantier] = useState([]);
@@ -15594,6 +15846,7 @@ function App() {
                 ['checklistSablon', CHECKLIST_SABLON_DEFAULT, setChecklistSablon],
                 ['concedii', [], setConcedii],
                 ['pontajCorectii', [], setPontajCorectii],
+                ['concediuSold', [], setConcediuSold],
             ];
             const CHEI_APOI = [
                 ['stockMoves', [], setStockMoves],
@@ -15896,6 +16149,7 @@ function App() {
             mementouri: (v) => setMementouri(v ?? []),
             problemeSantier: (v) => setProblemeSantier(v ?? []),
             restante: (v) => setRestanteSantier(v ?? []),
+            concediuSold: (v) => setConcediuSold(v ?? []),
             miscariSantier: (v) => setMiscariSantier(v ?? []),
             planseSantier: (v) => setPlanseSantier(v ?? []),
             antemasuratori: (v) => setAntemasuratori(v ?? []),
@@ -16598,7 +16852,7 @@ function App() {
                         tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist, santiere: santiere, setSantiere: setSantiere }),
                         tab === 'activitate' && React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
                         tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
-                        tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company }),
+                        tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company, concediuSold: concediuSold, setConcediuSold: setConcediuSold }),
                         tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist, materials: materials, onReceptie: receptioneazaAchizitie }),
                         tab === 'adeverinte' && effectiveUser.rol === 'Manager' && React.createElement(AdeverinteTab, { company: company }),
                         tab === 'profil' && React.createElement(ProfileTab, { currentUser: effectiveUser, onLogout: logout, tema: tema, setTema: setTema, carduri: carduri, setCarduri: setCarduri, onBackup: descarcaBackup, backupStare: backupStare }),
