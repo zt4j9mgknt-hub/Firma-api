@@ -1213,7 +1213,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.83-concediu-20-legal';
+const APP_VERSION = 'v01.83-deviz-excel';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -2341,10 +2341,87 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
         persist('devize', next);
     };
     const clientName = (id) => clients.find((c) => c.id === id)?.nume || '—';
+    const clientCui = (id) => clients.find((c) => c.id === id)?.cui || '';
+    const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+    const exportDevizeExcel = (list) => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+            return;
+        }
+        const lista = (list || devize).slice().sort((a, b) => String(numarDoc(a)).localeCompare(String(numarDoc(b)), 'ro', { numeric: true }));
+        if (!lista.length) {
+            window.alert('Niciun deviz de exportat.');
+            return;
+        }
+        const wb = XLSX.utils.book_new();
+        const sumarHead = [
+            [`SC ${company?.nume || 'Firma mea'}`], [company?.cui ? `CUI: ${company.cui}` : ''], [], ['DEVIZE — sumar'], [],
+        ];
+        const sumarRows = lista.map((d) => {
+            const sub = calcSubtotal(d.items || []);
+            const tva = Number(d.tva) || 0;
+            return {
+                'Nr': numarDoc(d), 'Data': d.data ? fmtData(d.data) : '', 'Client': clientName(d.clientId), 'CUI client': clientCui(d.clientId),
+                'Șantier': d.santierNume || '', 'Lucrare': d.lucrare || '', 'Status': d.status || '',
+                'Subtotal': r2(sub), 'TVA %': tva, 'Total': r2(sub * (1 + tva / 100)),
+            };
+        });
+        const totalGen = lista.reduce((s, d) => s + calcSubtotal(d.items || []) * (1 + (Number(d.tva) || 0) / 100), 0);
+        const wsS = XLSX.utils.aoa_to_sheet(sumarHead);
+        XLSX.utils.sheet_add_json(wsS, sumarRows, { origin: -1 });
+        XLSX.utils.sheet_add_aoa(wsS, [[], ['', '', '', '', '', '', 'TOTAL', '', '', r2(totalGen)]], { origin: -1 });
+        wsS['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 14 }, { wch: 20 }, { wch: 22 }, { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 12 }];
+        XLSX.utils.book_append_sheet(wb, wsS, 'Sumar');
+        const detRows = [];
+        lista.forEach((d) => {
+            (d.items || []).forEach((it) => {
+                const pf = pretFinal(it);
+                const cant = Number(it.cantitate) || 0;
+                detRows.push({
+                    'Nr deviz': numarDoc(d), 'Data': d.data ? fmtData(d.data) : '', 'Client': clientName(d.clientId), 'Șantier': d.santierNume || '',
+                    'Denumire': it.denumire || '', 'UM': it.um || '', 'Cantitate': cant,
+                    'Preț unitar': r2(it.pretUnitar), 'Adaos %': Number(it.adaos) || 0, 'Preț final': r2(pf), 'Valoare': r2(cant * pf),
+                });
+            });
+        });
+        const wsD = XLSX.utils.aoa_to_sheet([[`SC ${company?.nume || 'Firma mea'}`], ['DEVIZE — detaliat (toate articolele)'], []]);
+        XLSX.utils.sheet_add_json(wsD, detRows.length ? detRows : [{ 'Nr deviz': '', 'Denumire': '(niciun articol)' }], { origin: -1 });
+        wsD['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 30 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 9 }, { wch: 11 }, { wch: 12 }];
+        XLSX.utils.book_append_sheet(wb, wsD, 'Detaliat');
+        XLSX.writeFile(wb, `devize_${dataLocala(new Date()).replace(/-/g, '')}.xlsx`);
+    };
+    const exportUnDevizExcel = (d) => {
+        if (typeof XLSX === 'undefined') {
+            window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+            return;
+        }
+        const sub = calcSubtotal(d.items || []);
+        const tva = Number(d.tva) || 0;
+        const head = [
+            [`SC ${company?.nume || 'Firma mea'}`], [company?.cui ? `CUI: ${company.cui}` : ''], [],
+            [`DEVIZ nr. ${numarDoc(d)}${d.data ? ' din ' + fmtData(d.data) : ''}`],
+            [`Client: ${clientName(d.clientId)}${clientCui(d.clientId) ? ' (CUI ' + clientCui(d.clientId) + ')' : ''}`],
+            [d.santierNume ? `Șantier: ${d.santierNume}` : ''], [d.adresaLucrare ? `Adresă: ${d.adresaLucrare}` : ''], [d.lucrare ? `Lucrare: ${d.lucrare}` : ''],
+            [`Status: ${d.status || ''}`], [],
+        ];
+        const rows = (d.items || []).map((it, i) => {
+            const pf = pretFinal(it);
+            const cant = Number(it.cantitate) || 0;
+            return { 'Nr': i + 1, 'Denumire': it.denumire || '', 'UM': it.um || '', 'Cantitate': cant, 'Preț unitar': r2(it.pretUnitar), 'Adaos %': Number(it.adaos) || 0, 'Preț final': r2(pf), 'Valoare': r2(cant * pf) };
+        });
+        const ws = XLSX.utils.aoa_to_sheet(head);
+        XLSX.utils.sheet_add_json(ws, rows.length ? rows : [{ 'Nr': '', 'Denumire': '(niciun articol)' }], { origin: -1 });
+        XLSX.utils.sheet_add_aoa(ws, [[], ['', '', '', '', '', '', 'Subtotal', r2(sub)], ['', '', '', '', '', '', `TVA ${tva}%`, r2(sub * tva / 100)], ['', '', '', '', '', '', 'TOTAL', r2(sub * (1 + tva / 100))]], { origin: -1 });
+        ws['!cols'] = [{ wch: 5 }, { wch: 32 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 9 }, { wch: 11 }, { wch: 12 }];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Deviz ' + String(numarDoc(d)).replace(/[\\/*?:\[\]]/g, '').slice(0, 25));
+        XLSX.writeFile(wb, `deviz_${String(numarDoc(d)).replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`);
+    };
     return (React.createElement("div", null,
         React.createElement("div", { className: "flex justify-between items-center mb-4" },
             React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Devize"),
             React.createElement("div", { className: "flex items-center gap-2" },
+                devize.length > 0 && React.createElement("button", { onClick: () => exportDevizeExcel(devize), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCCA Export\u0103 toate \u00EEn Excel"),
                 devize.length > 0 && React.createElement("button", { onClick: () => printAll(devize), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
                 !form && React.createElement("button", { onClick: () => setForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Deviz nou"))),
         form && React.createElement(PaginaFormular, { titlu: form.id && form.numar ? '✏️ Modifici devizul ' + form.numar : '📑 Deviz nou', onInchide: () => setForm(null) },
@@ -2372,6 +2449,9 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
                         React.createElement("button", { onClick: () => printOne(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--muted)', background: 'var(--panel2)' } },
                             React.createElement(Icon, null, "\uD83D\uDDA8"),
                             " PDF"),
+                        React.createElement("button", { onClick: () => exportUnDevizExcel(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Export\u0103 acest deviz \u00EEn Excel" },
+                            React.createElement(Icon, null, "\uD83D\uDCCA"),
+                            " Excel"),
                         React.createElement("button", { onClick: () => setForm(d), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"),
                         React.createElement("button", { onClick: () => del(d.id), style: { color: 'var(--acc4)' } },
                             React.createElement(Icon, null, "\uD83D\uDDD1")))),
@@ -2742,7 +2822,7 @@ const HELP = {
         mgr: 'Ca manager, tu vezi pontajul tuturor:\n\n• Vezi orele pentru toți angajații.\n• Poți face corecții manuale, adică poți adăuga sau scădea ore acolo unde este cazul.\n• Poți scoate pontajul într-un fișier (Excel sau PDF) ca să-l dai la contabilitate.',
     },
     concedii: {
-        text: 'Aici ceri concediu.\n\n1) Alegi de la ce dată până la ce dată vrei să lipsești.\n2) Apeși „Trimite". Șeful primește o înștiințare și îți aprobă sau îți refuză cererea.\n3) Primești o înștiințare cu răspunsul. Zilele care au fost aprobate apar la Pontaj.\n\nSus, în cardul „🏖 Concediu de odihnă rămas", vezi câte zile mai ai din cele 20 pe an (minimul legal). Ține minte că din ele se scad nu doar zilele întregi de concediu aprobate, ci și orele care ți-au lipsit în zilele în care ai lucrat mai puțin de 8 ore. De exemplu, dacă într-o zi ai făcut 6 ore, cele 2 ore care lipsesc se iau din concediul de odihnă. Când concediul de odihnă se termină, orele care lipsesc se trec ca „fără plată".',
+        text: 'Aici ceri concediu.\n\n1) Alegi de la ce dată până la ce dată vrei să lipsești.\n2) Apeși „Trimite". Șeful primește o înștiințare și îți aprobă sau îți refuză cererea.\n3) Primești o înștiințare cu răspunsul. Zilele care au fost aprobate apar la Pontaj.\n\nSus, în cardul „🏖 Concediu de odihnă rămas", vezi câte zile mai ai din cele 21 pe an. Ține minte că din ele se scad nu doar zilele întregi de concediu aprobate, ci și orele care ți-au lipsit în zilele în care ai lucrat mai puțin de 8 ore. De exemplu, dacă într-o zi ai făcut 6 ore, cele 2 ore care lipsesc se iau din concediul de odihnă. Când concediul de odihnă se termină, orele care lipsesc se trec ca „fără plată".',
         mgr: 'Ca manager, tu răspunzi la cereri:\n\n• Vezi cererile de concediu ale tuturor angajaților.\n• Apeși ✓ ca să aprobi sau ✕ ca să respingi. Angajatul primește o înștiințare; ce respingi îi apare lui scris cu roșu.',
     },
     profil: {
@@ -9019,129 +9099,143 @@ class Prinde extends React.Component {
         return this.props.children;
     }
 }
-let _CONCEDIU_SOLD = [];
-function setSoldModul(v) { _CONCEDIU_SOLD = Array.isArray(v) ? v : []; }
-function numeCheieG(s) {
-    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
+const ZILE_CO_AN = 21;
+let __SOLD_CO = [];
+function setSoldCORegistru(a) { __SOLD_CO = Array.isArray(a) ? a : []; }
+function numeCheieCO(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(Boolean).sort().join(' ');
 }
-function soldConcediuPentru(nume) {
-    const k = numeCheieG(nume);
-    const s = (_CONCEDIU_SOLD || []).find((x) => numeCheieG(x.nume) === k);
-    if (!s)
+function soldCOPentru(nume, sold) {
+    const lista = sold || __SOLD_CO;
+    const n = numeCheieCO(nume);
+    const f = (lista || []).filter((s) => s && s.laData && numeCheieCO(s.nume) === n && s.zile !== '' && s.zile != null);
+    if (!f.length)
         return null;
-    const zile = Number(s.zile);
-    if (!s.laData || String(s.laData).length < 10 || isNaN(zile))
+    f.sort((a, b) => String(a.laData).localeCompare(String(b.laData)));
+    const s = f[f.length - 1];
+    const z = Number(s.zile);
+    if (!isFinite(z))
         return null;
-    return { zileMin: Math.round(zile * 480), laData: s.laData, dataAngajarii: s.dataAngajarii || '' };
+    return { min: Math.max(0, Math.round(z * 480)), laData: String(s.laData) };
 }
-const ZILE_CO_AN = 20;
-const MIN_CO_AN = ZILE_CO_AN * 480;
-function dreptAnualMin(an, dataAngajarii) {
-    const FULL = MIN_CO_AN;
-    if (dataAngajarii && String(dataAngajarii).length >= 7 && String(dataAngajarii).slice(0, 4) === String(an)) {
-        const luna = Number(String(dataAngajarii).slice(5, 7)) || 1;
-        const luniLucrate = Math.max(1, 12 - (luna - 1));
-        return Math.round(FULL * luniLucrate / 12);
-    }
-    return FULL;
+function bugetCOStartAnMin(nume, an, rapoarte, concedii, sold) {
+    const seed = soldCOPentru(nume, sold);
+    if (!seed)
+        return ZILE_CO_AN * 480;
+    const seedAn = Number(seed.laData.slice(0, 4));
+    const anN = Number(an);
+    if (anN <= seedAn)
+        return ZILE_CO_AN * 480;
+    const prev = calculPontajAnual(nume, String(anN - 1), `${anN - 1}-12`, rapoarte, concedii, sold);
+    const ramasPrev = (prev && typeof prev.__ramasFinal === 'number') ? prev.__ramasFinal : ZILE_CO_AN * 480;
+    return ramasPrev + ZILE_CO_AN * 480;
 }
-function _simuleazaConcediu(nume, panaLaData, rapoarte, concedii) {
+function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii, sold) {
     const concediiAprobate = (concedii || []).filter((c) => c.nume === nume && c.status === 'Aprobat');
-    const unif = unificaRapoarte(rapoarte);
     const minuteLucratePeZi = {};
     const dateRaportate = [];
+    const unif = unificaRapoarte(rapoarte);
+    const zileCuOmul = new Set();
     unif.forEach((r) => {
-        if (!r.data)
+        if (!r.data?.startsWith(String(an)))
             return;
         if (!(r.persoane || []).some((pp) => pp.nume === nume))
             return;
+        zileCuOmul.add(r.data);
         dateRaportate.push(r.data);
     });
-    const zileset = new Set(dateRaportate);
-    zileset.forEach((zi) => { minuteLucratePeZi[zi] = intervalePersoanaZi(unif, nume, zi).net; });
+    zileCuOmul.forEach((zi) => { minuteLucratePeZi[zi] = intervalePersoanaZi(unif, nume, zi).net; });
     const primaZiCuDate = dateRaportate.length ? dateRaportate.slice().sort()[0] : null;
-    const sold = soldConcediuPentru(nume);
-    const zileMap = {};
-    const bugetLa = {};
-    let buget = sold ? sold.zileMin : MIN_CO_AN;
-    const startDate = sold ? sold.laData : primaZiCuDate;
-    const startYear = sold ? Number(sold.laData.slice(0, 4)) : (primaZiCuDate ? Number(primaZiCuDate.slice(0, 4)) : Number(String(panaLaData).slice(0, 4)));
-    const endYear = Number(String(panaLaData).slice(0, 4));
-    for (let yr = startYear; yr <= endYear; yr++) {
-        if (sold) {
-            if (yr > startYear)
-                buget += dreptAnualMin(yr, sold.dataAngajarii);
-        }
-        else {
-            buget = MIN_CO_AN;
-        }
-        for (let luna = 0; luna < 12; luna++) {
-            const nrZileLuna = new Date(yr, luna + 1, 0).getDate();
-            for (let zi = 1; zi <= nrZileLuna; zi++) {
-                const dataStr = `${yr}-${String(luna + 1).padStart(2, '0')}-${String(zi).padStart(2, '0')}`;
-                if (dataStr > panaLaData)
-                    return { zileMap, bugetLa, bugetFinal: buget };
-                if (startDate && dataStr < startDate)
-                    continue;
-                if (!sold && !primaZiCuDate)
-                    continue;
-                const dow = new Date(yr, luna, zi).getDay();
-                if (dow === 0 || dow === 6)
-                    continue;
-                bugetLa[dataStr] = buget;
-                if ((SARBATORI_LEGALE[yr] || []).includes(dataStr)) {
-                    zileMap[dataStr] = { status: 'sarbatoare', cod: 'SL' };
-                    continue;
-                }
-                const concAprobat = concediiAprobate.find((c) => dataStr >= c.dataInceput && dataStr <= c.dataSfarsit);
-                if (concAprobat) {
-                    const cod = codPentruTip(concAprobat.tip);
-                    if (cod === 'CO')
-                        buget = Math.max(0, buget - 480);
-                    zileMap[dataStr] = { status: 'aprobat', cod };
-                    continue;
-                }
-                const minLucrate = minuteLucratePeZi[dataStr] || 0;
-                const diferenta = 480 - minLucrate;
-                if (diferenta <= 0) {
-                    zileMap[dataStr] = { status: 'lucrat', minuteLucrate: minLucrate, suplimentar: -diferenta };
+    const [anLimita, lunaLimita] = panaLaLuna.split('-').map(Number);
+    const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
+    const dataLimita = `${panaLaLuna}-${String(ultimaZiLimita).padStart(2, '0')}`;
+    const seed = soldCOPentru(nume, sold);
+    let bugetRamasMin, deductDeLa = null;
+    if (seed && Number(an) === Number(seed.laData.slice(0, 4))) {
+        bugetRamasMin = seed.min;
+        deductDeLa = seed.laData;
+    }
+    else {
+        bugetRamasMin = bugetCOStartAnMin(nume, an, rapoarte, concedii, sold);
+    }
+    const rezultat = {};
+    for (let luna = 0; luna < 12; luna++) {
+        const nrZileLuna = new Date(an, luna + 1, 0).getDate();
+        for (let zi = 1; zi <= nrZileLuna; zi++) {
+            const dataStr = `${an}-${String(luna + 1).padStart(2, '0')}-${String(zi).padStart(2, '0')}`;
+            if (dataStr > dataLimita) {
+                rezultat.__ramasFinal = bugetRamasMin;
+                return rezultat;
+            }
+            if (!primaZiCuDate || dataStr < primaZiCuDate)
+                continue;
+            const dow = new Date(an, luna, zi).getDay();
+            if (dow === 0 || dow === 6)
+                continue;
+            if ((SARBATORI_LEGALE[an] || []).includes(dataStr)) {
+                rezultat[dataStr] = { status: 'sarbatoare', cod: 'SL' };
+                continue;
+            }
+            const poateScade = (!deductDeLa || dataStr >= deductDeLa);
+            const concAprobat = concediiAprobate.find((c) => dataStr >= c.dataInceput && dataStr <= c.dataSfarsit);
+            if (concAprobat) {
+                const cod = codPentruTip(concAprobat.tip);
+                if (cod === 'CO' && poateScade)
+                    bugetRamasMin = Math.max(0, bugetRamasMin - 480);
+                rezultat[dataStr] = { status: 'aprobat', cod };
+                continue;
+            }
+            const minLucrate = minuteLucratePeZi[dataStr] || 0;
+            const diferenta = 480 - minLucrate;
+            if (diferenta <= 0) {
+                rezultat[dataStr] = { status: 'lucrat', minuteLucrate: minLucrate, suplimentar: -diferenta };
+            }
+            else {
+                let codAuto;
+                if (bugetRamasMin >= diferenta) {
+                    codAuto = 'CO';
+                    if (poateScade)
+                        bugetRamasMin -= diferenta;
                 }
                 else {
-                    let codAuto;
-                    if (buget >= diferenta) {
-                        codAuto = 'CO';
-                        buget -= diferenta;
-                    }
-                    else {
-                        codAuto = 'I';
-                        buget = 0;
-                    }
-                    zileMap[dataStr] = { status: minLucrate > 0 ? 'partial' : 'absent', minuteLucrate: minLucrate, minuteAuto: diferenta, codAuto };
+                    codAuto = 'I';
+                    if (poateScade)
+                        bugetRamasMin = 0;
                 }
+                rezultat[dataStr] = { status: minLucrate > 0 ? 'partial' : 'absent', minuteLucrate: minLucrate, minuteAuto: diferenta, codAuto };
             }
         }
     }
-    return { zileMap, bugetLa, bugetFinal: buget };
+    rezultat.__ramasFinal = bugetRamasMin;
+    return rezultat;
 }
-function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii) {
-    const [anLimita, lunaLimita] = String(panaLaLuna).split('-').map(Number);
-    const ultimaZiLimita = new Date(anLimita, lunaLimita, 0).getDate();
-    const dataLimita = `${panaLaLuna}-${String(ultimaZiLimita).padStart(2, '0')}`;
-    const { zileMap } = _simuleazaConcediu(nume, dataLimita, rapoarte || [], concedii || []);
-    const rez = {};
-    Object.keys(zileMap).forEach((d) => { if (d.slice(0, 4) === String(an) && d <= dataLimita)
-        rez[d] = zileMap[d]; });
-    return rez;
-}
-function bugetCORamas(nume, dataStr, rapoarte, concedii) {
+function bugetCORamas(nume, dataStr, rapoarte, concedii, sold) {
     const n = String(nume || '').trim();
     const zi = String(dataStr || '');
-    if (!n || zi.length < 10) {
-        const s = soldConcediuPentru(n);
-        return s ? s.zileMin : MIN_CO_AN;
-    }
-    const { bugetLa, bugetFinal } = _simuleazaConcediu(n, zi, rapoarte || [], concedii || []);
-    return bugetLa[zi] != null ? bugetLa[zi] : bugetFinal;
+    if (!n || zi.length < 10)
+        return ZILE_CO_AN * 480;
+    const an = zi.slice(0, 4);
+    const anual = calculPontajAnual(n, an, zi.slice(0, 7), rapoarte || [], concedii || [], sold);
+    const seed = soldCOPentru(n, sold);
+    const eAnSold = seed && Number(an) === Number(seed.laData.slice(0, 4));
+    const start = eAnSold ? seed.min : bugetCOStartAnMin(n, an, rapoarte || [], concedii || [], sold);
+    let folosit = 0;
+    Object.keys(anual).forEach((d) => {
+        if (d.length !== 10)
+            return;
+        if (d >= zi)
+            return;
+        if (eAnSold && d < seed.laData)
+            return;
+        const info = anual[d];
+        if (info.status === 'aprobat') {
+            if (info.cod === 'CO')
+                folosit += 480;
+        }
+        else if (info.codAuto === 'CO')
+            folosit += (info.minuteAuto || 0);
+    });
+    return Math.max(0, start - folosit);
 }
 const ACHIZITIE_STATUSES = ['De comandat', 'Comandat', 'Primit'];
 function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajCorectii, persist, company, concedii }) {
@@ -9631,34 +9725,20 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         return (React.createElement("button", { key: s.id, onClick: () => setSantiereExport(activ ? santiereExport.filter((id) => id !== s.id) : [...santiereExport, s.id]), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: activ ? '#14181C' : 'var(--muted)', background: activ ? 'var(--acc2)' : 'var(--panel2)' } }, s.nume));
     })), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement("button", { onClick: exportFoaiePrezentaExcel, disabled: santiereExport.length === 0, className: "text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCCA Excel ", santiereExport.length > 1 && `(${santiereExport.length} foi)`), React.createElement("button", { onClick: exportFoaiePrezentaPDF, disabled: santiereExport.length === 0, className: "text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDDA8 PDF ", santiereExport.length > 1 && `(${santiereExport.length} pagini)`)))), lista.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio or\u0103 \u00EEnregistrat\u0103 \u00EEn luna selectat\u0103.")) : (React.createElement(React.Fragment, null, isManager && (React.createElement("div", { className: "flex justify-between items-center mb-2 text-sm", style: { color: 'var(--muted)' } }, React.createElement("span", null, santierFiltru ? `Rezumat: ${santiere.find((s) => s.id === santierFiltru)?.nume || ''}` : 'Total pe fiecare angajat'), React.createElement("span", null, "Total ore: ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(totalGeneral))))), React.createElement("div", { className: "space-y-2" }, lista.map((p) => (React.createElement("div", { key: p.nume, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between gap-2" }, React.createElement("span", { className: "text-sm", style: { color: 'var(--text)' } }, p.nume), editState === p.nume ? (React.createElement("div", { className: "flex items-center gap-1.5 shrink-0" }, React.createElement("input", { value: editValue, onChange: (e) => setEditValue(e.target.value), placeholder: "H:MM", className: "w-20 rounded-lg px-2 py-1 text-xs outline-none text-center", style: { ...inputStyle, fontFamily: "'JetBrains Mono', monospace" } }), React.createElement("button", { onClick: () => confirmEdit(p), className: "px-2 py-1 rounded-lg text-xs", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713"), React.createElement("button", { onClick: () => setEditState(null), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u2715"))) : (React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, p.zileLibere > 0 && React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-lg", style: { color: 'var(--acc3)', background: 'var(--panel2)' } }, p.zileLibere, " ", p.zileLibere === 1 ? 'zi liberă' : 'zile libere'), React.createElement("span", { className: "text-sm", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(p.totalFinal)), React.createElement("button", { onClick: () => setExpandedPerson(expandedPerson === p.nume ? null : p.nume), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, expandedPerson === p.nume ? 'Ascunde' : '👁 Zi cu zi'), isManager && React.createElement("button", { onClick: () => startEdit(p), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "\u270E Edit")))), expandedPerson === p.nume && (React.createElement("div", { className: "mt-2 pt-2 space-y-1", style: { borderTop: '1px solid var(--border)' } }, zileDetaliu(p.nume).length === 0 ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nicio zi lucrat\u0103 luna asta.")) : zileDetaliu(p.nume).map((z) => (React.createElement("div", { key: z.data, className: "flex items-center justify-between text-xs", style: { color: 'var(--muted)' } }, React.createElement("span", null, fmtData(z.data), " \u2014 ", z.santierNume), React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(z.min))))))), p.corectieMin !== 0 && (React.createElement("div", { className: "mt-1.5 flex items-center justify-between text-xs", style: { color: 'var(--acc3)' } }, React.createElement("span", null, "\u270E Corec\u021Bie manual\u0103"), React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace" } }, p.corectieMin > 0 ? '+' : '−', minutesToHM(Math.abs(p.corectieMin)))))))))))));
 }
-function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, company, concediuSold, setConcediuSold }) {
+function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, persist, currentUser, rapoarte, company }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const [form, setForm] = useState(null);
+    const [veziSold, setVeziSold] = useState(false);
     const isManager = currentUser?.rol === 'Manager';
-    const [soldOpen, setSoldOpen] = useState(false);
-    const [soldUsers, setSoldUsers] = useState([]);
-    const [soldDraft, setSoldDraft] = useState(null);
-    const [soldStare, setSoldStare] = useState('');
-    useEffect(() => {
-        if (!isManager)
-            return;
-        authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list' }) })
-            .then((r) => r.json()).then((d) => setSoldUsers((d.users || []).filter((u) => u.rol === 'Electrician' || u.rol === 'Manager'))).catch(() => { });
-    }, [isManager]);
-    const deschideSold = () => {
-        const aziL = dataLocala(new Date());
-        const gasit = (nume) => (concediuSold || []).find((x) => numeCheieG(x.nume) === numeCheieG(nume));
-        const draft = (soldUsers || []).map((u) => { const s = gasit(u.nume); return { nume: u.nume, zile: s && s.zile != null ? String(s.zile) : '', laData: (s && s.laData) || aziL, dataAngajarii: (s && s.dataAngajarii) || u.dataAngajarii || '' }; });
-        setSoldDraft(draft);
-        setSoldStare('');
-        setSoldOpen(true);
-    };
-    const salveazaSold = () => {
-        const arr = (soldDraft || []).filter((d) => String(d.zile).trim() !== '' && !isNaN(Number(d.zile)))
-            .map((d) => ({ id: uid(), nume: d.nume, zile: Number(d.zile), laData: d.laData || dataLocala(new Date()), dataAngajarii: d.dataAngajarii || '' }));
-        setConcediuSold(arr);
-        persist('concediuSold', arr);
-        setSoldStare('✅ Salvat. De acum se calculează pornind de la soldurile astea.');
+    const soldPt = (nume) => (soldConcediu || []).find((s) => numeCheieCO(s.nume) === numeCheieCO(nume)) || {};
+    const setSold = (nume, camp, val) => {
+        const cheie = numeCheieCO(nume);
+        const exista = (soldConcediu || []).some((s) => numeCheieCO(s.nume) === cheie);
+        const next = exista
+            ? (soldConcediu || []).map((s) => numeCheieCO(s.nume) === cheie ? { ...s, nume, [camp]: val } : s)
+            : [...(soldConcediu || []), { id: uid(), nume, zile: '', laData: '', [camp]: val }];
+        setSoldConcediu(next);
+        persist('soldConcediu', next);
     };
     const trimiteContabila = (c) => {
         const to = company?.emailContabil || '';
@@ -9756,34 +9836,10 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, co
                     faraPlataMin += 480;
             }
         });
-        const coRamasMin = bugetCORamas(nume, azi, rapoarte, concedii);
+        const coRamasMin = bugetCORamas(nume, lunaCurenta + '-31', rapoarte, concedii);
         return { nume, coRamasMin, faraPlataMin };
     });
-    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-1" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83C\uDFD6 Concedii"), !form && React.createElement("button", { onClick: () => setForm({ dataInceput: '', dataSfarsit: '', tip: CONCEDIU_TIPURI[0].label, motiv: '' }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Cerere nou\u0103")), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, isManager ? 'Toate cererile de concediu.' : 'Cererile tale de concediu.'), isManager && (React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--acc1)' } },
-        React.createElement("button", { onClick: () => soldOpen ? setSoldOpen(false) : deschideSold(), className: "w-full flex items-center justify-between gap-2 text-left" },
-            React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\uD83D\uDDD3 Sold concediu de odihn\u0103 (pornire)"),
-            React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, soldOpen ? '▲ ascunde' : '▼ setează')),
-        soldOpen && (React.createElement("div", { className: "mt-3" },
-            React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } },
-                "Scrie c\u00E2te zile de concediu are ",
-                React.createElement("b", null, "acum"),
-                " fiecare om \u0219i de la ce dat\u0103 e valabil soldul. De aici \u00EEncolo aplica\u021Bia scade singur\u0103 (concedii + ore lips\u0103). Data angaj\u0103rii e op\u021Bional\u0103 \u2014 la 1 ianuarie adaug\u0103 automat dreptul anual (20 zile \u2014 minimul legal, pro-rata \u00EEn anul angaj\u0103rii)."),
-            (soldDraft || []).length === 0 ? (React.createElement("p", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nu am g\u0103sit angaja\u021Bi. Verific\u0103 lista de utilizatori.")) : (React.createElement("div", { className: "space-y-2" },
-                (soldDraft || []).map((d, i) => (React.createElement("div", { key: d.nume + i, className: "rounded-lg p-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
-                    React.createElement("div", { className: "text-xs font-medium mb-1.5", style: { color: 'var(--text)' } }, d.nume),
-                    React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
-                        React.createElement("label", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
-                            "Zile r\u0103mase",
-                            React.createElement("input", { type: "number", inputMode: "numeric", value: d.zile, onChange: (e) => { const v = e.target.value; setSoldDraft((soldDraft || []).map((x, j) => j === i ? { ...x, zile: v } : x)); }, placeholder: "ex: 14", className: "ml-1 w-20 rounded px-2 py-1 text-xs outline-none text-center", style: inputStyle })),
-                        React.createElement("label", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
-                            "Valabil de la",
-                            React.createElement("input", { type: "date", value: d.laData, onChange: (e) => { const v = e.target.value; setSoldDraft((soldDraft || []).map((x, j) => j === i ? { ...x, laData: v } : x)); }, className: "ml-1 rounded px-2 py-1 text-xs outline-none", style: inputStyle })),
-                        React.createElement("label", { className: "text-[11px]", style: { color: 'var(--muted2)' } },
-                            "Angajat din",
-                            React.createElement("input", { type: "date", value: d.dataAngajarii, onChange: (e) => { const v = e.target.value; setSoldDraft((soldDraft || []).map((x, j) => j === i ? { ...x, dataAngajarii: v } : x)); }, className: "ml-1 rounded px-2 py-1 text-xs outline-none", style: inputStyle })))))),
-                React.createElement("div", { className: "flex items-center gap-2" },
-                    React.createElement("button", { onClick: salveazaSold, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103 soldurile"),
-                    soldStare && React.createElement("span", { className: "text-xs", style: { color: soldStare.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, soldStare)))))))), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, form.id ? '✏️ Editează cererea' : '➕ Cerere nouă'), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement(RoCalendarPicker, { value: form.dataInceput, onChange: (v) => setForm({ ...form, dataInceput: v }) }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "\u2014"), React.createElement(RoCalendarPicker, { value: form.dataSfarsit, onChange: (v) => setForm({ ...form, dataSfarsit: v }) })), React.createElement("select", { value: form.tip, onChange: (e) => setForm({ ...form, tip: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, CONCEDIU_TIPURI.map((t) => React.createElement("option", { key: t.label, value: t.label, style: { background: 'var(--panel)' } }, t.label, " (", t.cod, ")"))), (() => {
+    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-1" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83C\uDFD6 Concedii"), !form && React.createElement("button", { onClick: () => setForm({ dataInceput: '', dataSfarsit: '', tip: CONCEDIU_TIPURI[0].label, motiv: '' }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Cerere nou\u0103")), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, isManager ? 'Toate cererile de concediu.' : 'Cererile tale de concediu.'), form && (React.createElement("div", { ref: formRef, className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, form.id ? '✏️ Editează cererea' : '➕ Cerere nouă'), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement(RoCalendarPicker, { value: form.dataInceput, onChange: (v) => setForm({ ...form, dataInceput: v }) }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "\u2014"), React.createElement(RoCalendarPicker, { value: form.dataSfarsit, onChange: (v) => setForm({ ...form, dataSfarsit: v }) })), React.createElement("select", { value: form.tip, onChange: (e) => setForm({ ...form, tip: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, CONCEDIU_TIPURI.map((t) => React.createElement("option", { key: t.label, value: t.label, style: { background: 'var(--panel)' } }, t.label, " (", t.cod, ")"))), (() => {
         if (!form.dataInceput || !form.dataSfarsit || form.dataSfarsit < form.dataInceput)
             return null;
         let zileL = 0;
@@ -9799,7 +9855,15 @@ function ConcediiTab({ concedii, setConcedii, persist, currentUser, rapoarte, co
         const ramasZile = ramasMin != null ? Math.floor(ramasMin / 480) : null;
         const peste = eCO && ramasZile != null && zileL > ramasZile;
         return React.createElement("div", { className: "text-xs rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', color: peste ? 'var(--acc4)' : 'var(--text)', border: '1px solid ' + (peste ? '#E0525266' : 'var(--border)') } }, `= ${zileL} ${zileL === 1 ? 'zi lucrătoare' : 'zile lucrătoare'} (fără weekenduri și sărbători)`, eCO && ramasZile != null ? ` · îți ${ramasZile === 1 ? 'rămâne 1 zi' : 'rămân ' + ramasZile + ' zile'} de CO` : '', peste ? ' — ceri mai mult decât ai!' : '');
-    })(), React.createElement("textarea", { placeholder: "Motiv (op\u021Bional)", value: form.motiv, onChange: (e) => setForm({ ...form, motiv: e.target.value }), rows: 2, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: saveCerere, disabled: !form.dataInceput || !form.dataSfarsit, className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, form.id ? 'Salvează modificările' : 'Trimite cererea')))), rezumatAutomat.length > 0 && (React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "\uD83C\uDFD6 Concediu de odihn\u0103 r\u0103mas (", anCurent, ")"), React.createElement("div", { className: "space-y-1" }, rezumatAutomat.map((r) => (React.createElement("div", { key: r.nume, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, r.nume), React.createElement("span", null, React.createElement("span", { style: { color: 'var(--acc2)' } }, minutesToZileOre(r.coRamasMin)), r.faraPlataMin > 0 && React.createElement("span", { style: { color: 'var(--muted2)' } }, " \u00B7 "), r.faraPlataMin > 0 && React.createElement("span", { style: { color: 'var(--acc4)' } }, "F\u0103r\u0103 plat\u0103: ", minutesToZileOre(r.faraPlataMin))))))))), listaVizibila.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio cerere de concediu.")) : (React.createElement("div", { className: "space-y-2" }, listaVizibila.map((c) => (React.createElement("div", { key: c.id, className: "rounded-xl p-3 flex items-center justify-between gap-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "min-w-0" }, isManager && React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } }, c.nume), React.createElement("div", { className: "text-sm", style: { color: isManager ? 'var(--muted)' : 'var(--text)' } }, fmtData(c.dataInceput), " \u2192 ", fmtData(c.dataSfarsit), " \u00B7 ", c.tip, " (", codPentruTip(c.tip), ")"), c.motiv && React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted2)' } }, c.motiv)), React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, React.createElement("span", { className: "text-xs", style: { color: c.status === 'Aprobat' ? 'var(--acc2)' : c.status === 'Respins' ? 'var(--acc4)' : 'var(--acc3)' } }, c.status), (isManager || c.userId === currentUser?.id) && React.createElement("button", { onClick: () => printCerereConcediu(c, company), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Export\u0103 cererea \u00EEn PDF (\u0219tampilat\u0103 dac\u0103 e aprobat\u0103)" }, "\uD83D\uDCC4 PDF"), isManager && React.createElement("button", { onClick: () => trimiteContabila(c), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Trimite pe email la contabil\u0103" }, "\uD83D\uDCE7"), isManager && (React.createElement(React.Fragment, null, c.status !== 'Aprobat' && React.createElement("button", { onClick: () => setStatus(c.id, 'Aprobat'), className: "px-2 py-1 rounded-lg text-xs", style: { color: '#14181C', background: 'var(--acc2)' }, title: "Aprob\u0103" }, "\u2713"), c.status !== 'Respins' && React.createElement("button", { onClick: () => setStatus(c.id, 'Respins'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid #E0525266' }, title: "Respinge" }, "\u2715"), c.status !== 'Cerut' && React.createElement("button", { onClick: () => setStatus(c.id, 'Cerut'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Repune \u00EEn a\u0219teptare" }, "\u21A9"))), (isManager || c.userId === currentUser?.id) && (React.createElement("button", { onClick: () => setForm({ id: c.id, dataInceput: c.dataInceput, dataSfarsit: c.dataSfarsit, tip: c.tip, motiv: c.motiv || '' }), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103")), React.createElement("button", { onClick: () => delCerere(c.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1"))))))))));
+    })(), React.createElement("textarea", { placeholder: "Motiv (op\u021Bional)", value: form.motiv, onChange: (e) => setForm({ ...form, motiv: e.target.value }), rows: 2, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B\u0103"), React.createElement("button", { onClick: saveCerere, disabled: !form.dataInceput || !form.dataSfarsit, className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, form.id ? 'Salvează modificările' : 'Trimite cererea')))), rezumatAutomat.length > 0 && (React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "\uD83C\uDFD6 Concediu de odihn\u0103 r\u0103mas (", anCurent, ")"), React.createElement("div", { className: "space-y-1" }, rezumatAutomat.map((r) => (React.createElement("div", { key: r.nume, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, r.nume), React.createElement("span", null, React.createElement("span", { style: { color: 'var(--acc2)' } }, minutesToZileOre(r.coRamasMin)), r.faraPlataMin > 0 && React.createElement("span", { style: { color: 'var(--muted2)' } }, " \u00B7 "), r.faraPlataMin > 0 && React.createElement("span", { style: { color: 'var(--acc4)' } }, "F\u0103r\u0103 plat\u0103: ", minutesToZileOre(r.faraPlataMin))))))))), isManager && (() => {
+        const numeSold = [...new Set([...numeDeUrmarit, ...((soldConcediu || []).map((s) => s.nume).filter(Boolean))])].sort((a, b) => String(a).localeCompare(String(b), 'ro'));
+        return React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("button", { onClick: () => setVeziSold(!veziSold), className: "w-full flex items-center justify-between gap-2 text-left" }, React.createElement("span", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "⚙️ Sold de pornire (zile rămase la o dată)"), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, veziSold ? '▲ ascunde' : '▼ deschide')), veziSold && React.createElement("div", { className: "mt-2" }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Treci pentru fiecare om câte zile de concediu are ACUM și la ce dată (ex: la 1 august). Aplicația calculează mai departe din asta: scade ce se ia și adaugă dreptul nou la fiecare an. Lasă gol dacă vrei să rămână pe 21/an."), numeSold.length === 0
+            ? React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nu am încă nume din rapoarte. Apar aici pe măsură ce se scriu rapoarte.")
+            : React.createElement("div", { className: "space-y-1.5" }, numeSold.map((nume) => {
+                const s = soldPt(nume);
+                return React.createElement("div", { key: nume, className: "flex items-center gap-2 flex-wrap rounded-lg px-2.5 py-1.5", style: { background: 'var(--panel2)' } }, React.createElement("span", { className: "text-xs flex-1 min-w-0 truncate", style: { color: 'var(--text)' } }, nume), React.createElement("input", { type: "number", inputMode: "decimal", value: s.zile != null ? s.zile : '', onChange: (e) => setSold(nume, 'zile', e.target.value), placeholder: "zile", className: "w-16 rounded-lg px-2 py-1 text-xs outline-none text-center", style: inputStyle, title: "Zile de concediu rămase acum" }), React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "la"), React.createElement(RoCalendarPicker, { value: s.laData || '', onChange: (v) => setSold(nume, 'laData', v) }), (s.zile !== '' && s.zile != null && s.laData) && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc2)' } }, "✓"));
+            }))));
+    })(), listaVizibila.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio cerere de concediu.")) : (React.createElement("div", { className: "space-y-2" }, listaVizibila.map((c) => (React.createElement("div", { key: c.id, className: "rounded-xl p-3 flex items-center justify-between gap-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "min-w-0" }, isManager && React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } }, c.nume), React.createElement("div", { className: "text-sm", style: { color: isManager ? 'var(--muted)' : 'var(--text)' } }, fmtData(c.dataInceput), " \u2192 ", fmtData(c.dataSfarsit), " \u00B7 ", c.tip, " (", codPentruTip(c.tip), ")"), c.motiv && React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted2)' } }, c.motiv)), React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, React.createElement("span", { className: "text-xs", style: { color: c.status === 'Aprobat' ? 'var(--acc2)' : c.status === 'Respins' ? 'var(--acc4)' : 'var(--acc3)' } }, c.status), (isManager || c.userId === currentUser?.id) && React.createElement("button", { onClick: () => printCerereConcediu(c, company), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Export\u0103 cererea \u00EEn PDF (\u0219tampilat\u0103 dac\u0103 e aprobat\u0103)" }, "\uD83D\uDCC4 PDF"), isManager && React.createElement("button", { onClick: () => trimiteContabila(c), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Trimite pe email la contabil\u0103" }, "\uD83D\uDCE7"), isManager && (React.createElement(React.Fragment, null, c.status !== 'Aprobat' && React.createElement("button", { onClick: () => setStatus(c.id, 'Aprobat'), className: "px-2 py-1 rounded-lg text-xs", style: { color: '#14181C', background: 'var(--acc2)' }, title: "Aprob\u0103" }, "\u2713"), c.status !== 'Respins' && React.createElement("button", { onClick: () => setStatus(c.id, 'Respins'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid #E0525266' }, title: "Respinge" }, "\u2715"), c.status !== 'Cerut' && React.createElement("button", { onClick: () => setStatus(c.id, 'Cerut'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Repune \u00EEn a\u0219teptare" }, "\u21A9"))), (isManager || c.userId === currentUser?.id) && (React.createElement("button", { onClick: () => setForm({ id: c.id, dataInceput: c.dataInceput, dataSfarsit: c.dataSfarsit, tip: c.tip, motiv: c.motiv || '' }), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103")), React.createElement("button", { onClick: () => delCerere(c.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "\uD83D\uDDD1"))))))))));
 }
 function CampForm({ label, children }) {
     return (React.createElement("div", null, React.createElement("div", { className: "text-[11px] mb-0.5", style: { color: 'var(--muted)' } }, label), children));
@@ -11262,8 +11326,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
-    { id: 'sold-concediu-manual-v1', aud: 'manager', data: '11.08.2026', titlu: '\ud83d\uddd3 Pui tu zilele de concediu de pornire',
-        text: 'La \u201e\ud83c\udfd6 Concedii", sus, ai \u201e\ud83d\uddd3 Sold concediu de odihn\u0103 (pornire)". Treci acolo c\u00e2te zile are ACUM fiecare om \u0219i de la ce dat\u0103 e valabil soldul \u2014 de aici \u00eencolo aplica\u021bia scade singur\u0103 (concedii aprobate + ore lips\u0103 din zile sub 8h) \u0219i \u00ee\u021bi arat\u0103 corect \u201econcediu r\u0103mas". Porne\u0219te de la soldul t\u0103u, nu de la un num\u0103r fix. Dac\u0103 treci \u0219i data angaj\u0103rii, la 1 ianuarie adaug\u0103 automat dreptul anual (20 zile \u2014 minimul legal, pro-rata \u00een anul angaj\u0103rii), peste soldul r\u0103mas \u2014 nu mai trebuie s\u0103 reintroduci nimic \u00een fiecare an.' },
+    { id: 'deviz-excel-v1', aud: 'manager', data: '12.08.2026', titlu: '\ud83d\udcca Devizele se export\u0103 \u0219i \u00een Excel',
+        text: 'La \u201eDevize" ai acum export Excel, nu doar PDF. Sus, \u201e\ud83d\udcca Export\u0103 toate \u00een Excel" scoate un fi\u0219ier cu dou\u0103 file: \u201eSumar" (c\u00e2te un r\u00e2nd pe deviz: num\u0103r, client, \u0219antier, subtotal, TVA, total) \u0219i \u201eDetaliat" (toate articolele din toate devizele, cu denumire, cantitate, pre\u021b unitar, adaos, valoare). La fiecare deviz din list\u0103 ai \u0219i un buton \u201e\ud83d\udcca Excel" care scoate doar devizul \u0103la, cu articolele \u0219i totalurile lui. Bun de trimis la contabil\u0103 sau de prelucrat mai departe.' },
+    { id: 'sold-concediu-v1', aud: 'manager', data: '11.08.2026', titlu: '\ud83c\udfd6 Pui tu zilele de concediu pe care le are fiecare acum',
+        text: 'P\u00e2n\u0103 acum aplica\u021bia presupunea c\u0103 fiecare porne\u0219te anul cu 21 de zile. Acum, la \u201e\ud83c\udfd6 Concedii", ai sec\u021biunea \u201e\u2699\ufe0f Sold de pornire": treci pentru fiecare om c\u00e2te zile de concediu are ACUM \u0219i la ce dat\u0103 (ex: la 1 august, Ionu\u021b are 12 zile). De aici aplica\u021bia calculeaz\u0103 mai departe singur\u0103: scade ce se ia \u0219i, la fiecare an nou, adaug\u0103 dreptul legal (21) peste ce a r\u0103mas (reportarea). Ce s-a luat \u00eenainte de data pe care o pui r\u0103m\u00e2ne \u00een sold, nu se scade de dou\u0103 ori. Dac\u0103 la\u0219i gol, omul r\u0103m\u00e2ne pe 21/an ca \u00eenainte.' },
     { id: 'foaie-firma-contabila-v1', aud: 'manager', data: '11.08.2026', titlu: '\ud83d\udccb O singur\u0103 foaie de pontaj pentru contabil\u0103',
         text: 'La Pontaj ai acum, sus, \u201e\ud83d\udccb Pentru contabil\u0103 \u2014 o singur\u0103 foaie, toat\u0103 firma". Scoate un singur document (Excel sau PDF) cu to\u021bi angaja\u021bii, orele pe fiecare zi adunate de pe TOATE \u0219antierele \u0219i concediile (CO, SL, I\u2026), \u00een acela\u0219i format de foaie colectiv\u0103 de prezen\u021b\u0103. Nu mai trebuie s\u0103 trimi\u021bi c\u00e2te o foaie de fiecare \u0219antier \u2014 una singur\u0103, gata de trimis. Foaia defalcat\u0103 pe \u0219antier a r\u0103mas mai jos, dac\u0103 \u00ee\u021bi trebuie \u0219i a\u0219a.' },
     { id: 'profit-termen-semnatura-v1', aud: 'toti', data: '10.08.2026', titlu: '\ud83d\udcb6 Profit pe \u0219antier, \ud83d\udcc5 termen la restan\u021be, \u270d\ufe0f semn\u0103tur\u0103 la predare',
@@ -15744,10 +15810,10 @@ function App() {
         }
     }, [pendingQaId, problemeSantier]);
     const [concedii, setConcedii] = useState([]);
+    const [soldConcediu, setSoldConcediuState] = useState([]);
+    const setSoldConcediu = (v) => { const arr = Array.isArray(v) ? v : []; setSoldCORegistru(arr); setSoldConcediuState(arr); };
     const [achizitii, setAchizitii] = useState([]);
     const [pontajCorectii, setPontajCorectii] = useState([]);
-    const [concediuSold, setConcediuSoldState] = useState([]);
-    const setConcediuSold = (v) => { const val = Array.isArray(v) ? v : []; setSoldModul(val); setConcediuSoldState(val); };
     const [mediaSantier, setMediaSantier] = useState([]);
     const [structuraSantier, setStructuraSantier] = useState([]);
     const [pozitiiSantier, setPozitiiSantier] = useState([]);
@@ -15845,8 +15911,8 @@ function App() {
                 ['checklistConfirmari', [], setChecklistConfirmari],
                 ['checklistSablon', CHECKLIST_SABLON_DEFAULT, setChecklistSablon],
                 ['concedii', [], setConcedii],
+                ['soldConcediu', [], setSoldConcediu],
                 ['pontajCorectii', [], setPontajCorectii],
-                ['concediuSold', [], setConcediuSold],
             ];
             const CHEI_APOI = [
                 ['stockMoves', [], setStockMoves],
@@ -16149,7 +16215,6 @@ function App() {
             mementouri: (v) => setMementouri(v ?? []),
             problemeSantier: (v) => setProblemeSantier(v ?? []),
             restante: (v) => setRestanteSantier(v ?? []),
-            concediuSold: (v) => setConcediuSold(v ?? []),
             miscariSantier: (v) => setMiscariSantier(v ?? []),
             planseSantier: (v) => setPlanseSantier(v ?? []),
             antemasuratori: (v) => setAntemasuratori(v ?? []),
@@ -16161,6 +16226,7 @@ function App() {
             pozitiiSantier: (v) => setPozitiiSantier(v ?? []),
             materialeListaSantier: (v) => setMaterialeListaSantier(v ?? []),
             concedii: (v) => setConcedii(v ?? []),
+            soldConcediu: (v) => setSoldConcediu(v ?? []),
             achizitii: (v) => setAchizitii(v ?? []),
             pontajCorectii: (v) => setPontajCorectii(v ?? []),
         };
@@ -16852,7 +16918,7 @@ function App() {
                         tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist, santiere: santiere, setSantiere: setSantiere }),
                         tab === 'activitate' && React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
                         tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
-                        tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company, concediuSold: concediuSold, setConcediuSold: setConcediuSold }),
+                        tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, soldConcediu: soldConcediu, setSoldConcediu: setSoldConcediu, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company }),
                         tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist, materials: materials, onReceptie: receptioneazaAchizitie }),
                         tab === 'adeverinte' && effectiveUser.rol === 'Manager' && React.createElement(AdeverinteTab, { company: company }),
                         tab === 'profil' && React.createElement(ProfileTab, { currentUser: effectiveUser, onLogout: logout, tema: tema, setTema: setTema, carduri: carduri, setCarduri: setCarduri, onBackup: descarcaBackup, backupStare: backupStare }),
