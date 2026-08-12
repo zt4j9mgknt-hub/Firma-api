@@ -1213,7 +1213,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.86-deviz-santier-excel';
+const APP_VERSION = 'v01.89-deviz-antet-stilizat';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -11353,6 +11353,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'deviz-antet-stilizat-v1', aud: 'manager', data: '12.08.2026', titlu: '\u2728 Antet de deviz mai \u00eengrijit',
+        text: 'Antetul devizului r\u0103m\u00e2ne a\u0219ezat la fel (Executant \u00b7 Logo \u00b7 Beneficiar sus, \u201eDEVIZ LUCR\u0102RI" la mijloc, Obiectiv/Adres\u0103/Lucrare \u00een st\u00e2nga), dar arat\u0103 mai stilizat: fiecare bloc are o dung\u0103 sub\u021bire bleumarin de accent \u0219i etichete curate. Iese la fel de bine \u0219i la print.' },
     { id: 'deviz-santier-excel-v1', aud: 'manager', data: '12.08.2026', titlu: '\ud83d\udcca Export Excel \u0219i la devizele de pe \u0219antier',
         text: 'La devizele generate din \u0219antier (tarif orar, manoper\u0103 pe pozi\u021bii, materiale, real executat) ai acum, l\u00e2ng\u0103 \u201eGenereaz\u0103 deviz (PDF)", un buton \u201e\ud83d\udcca Excel". Scoate acela\u0219i deviz \u00een Excel \u2014 cu articolele (zile/ore sau materiale, cantit\u0103\u021bi, pre\u021buri) \u0219i totalurile (subtotal, TVA, total). Bun de trimis la contabil\u0103 sau de prelucrat.' },
     { id: 'deviz-obiectiv-v1', aud: 'manager', data: '12.08.2026', titlu: '\ud83d\udcd1 Pe deviz apare \u201eObiectiv", nu numele de \u0219antier',
@@ -12508,41 +12510,66 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 const PRINT_CSS = `
   /* Elimină antetul/subsolul automat al browserului (URL, data, „pagina 1 din…"). */
   @page { size: A4; margin: 0; }
-  * { box-sizing:border-box; } body { margin:0; font-family:Arial, sans-serif; background:#fff; color:#1a1a1a; }
+  * { box-sizing:border-box; }
+  /* IMPORTANT pentru tipar: forțează browserul să tipărească fundalurile colorate (capul de
+     tabel bleumarin, bara de total, panourile) chiar dacă „Background graphics" e nebifat —
+     altfel ieșeau alb pe alb, invizibile. */
+  html, body, .print-page, .pp-table thead th, .pp-totals-final, .pp-party-col, .pp-meta-compact, .pp-table tbody tr:nth-child(even) td { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+  body { margin:0; font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif; -webkit-font-smoothing:antialiased; background:#fff; color:#1a1a1a; }
   .print-page { width:202mm; margin:0 auto; padding:10mm 7mm 16mm; page-break-after:always; }
   /* Footer propriu, centrat jos — apare doar când tipărim/salvăm PDF. */
   .pp-pagefoot { display:none; }
   @media print { .pp-pagefoot { display:block; position:fixed; left:0; right:0; bottom:6mm; text-align:center; font-size:9px; color:#8a949d; letter-spacing:.3px; } }
   .print-page:last-child { page-break-after:auto; }
-  .pp-header-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:6mm; padding-bottom:4mm; border-bottom:2.5px solid #123049; }
-  .pp-logo { height:46px; width:auto; }
+  .pp-header-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:4mm; padding-bottom:2.6mm; border-bottom:2px solid #123049; }
+  .pp-logo { height:38px; width:auto; }
   .pp-title-block { text-align:right; }
-  .pp-title { font-size:22px; font-weight:800; letter-spacing:1.2px; color:#123049; text-transform:uppercase; }
-  .pp-number { font-size:11.5px; color:#4a5a68; margin-top:1.5mm; font-weight:600; }
+  .pp-title { font-size:18px; font-weight:800; letter-spacing:1px; color:#123049; text-transform:uppercase; }
+  .pp-number { font-size:10.5px; color:#4a5a68; margin-top:0.8mm; font-weight:600; }
+  /* Antet: Executant (stânga) · Logo (mijloc) · Beneficiar (dreapta) pe un rând — FĂRĂ linie de
+     despărțire. Sub el, titlul centrat cu numerele, iar Obiectiv/Adresă/Lucrare în stânga. */
+  .pp-toprow { display:flex; justify-content:space-between; align-items:stretch; gap:6mm; margin-bottom:3mm; }
+  .pp-toprow .pp-party-col { flex:1; font-size:9.5px; line-height:1.5; background:transparent; border:none; padding:0.4mm 0; }
+  .pp-toprow .pp-exec { border-left:2px solid #123049; padding-left:3mm; }
+  .pp-toprow .pp-benef { border-right:2px solid #123049; padding-right:3mm; }
+  .pp-toprow .pp-benef { text-align:right; }
+  .pp-logo-mid { flex:0 0 auto; align-self:center; padding:0 3mm; }
+  .pp-logo-mid .pp-logo { height:60px; width:auto; max-width:60mm; }
+  .pp-title-center { text-align:center; margin:1mm 0 4mm; }
+  .pp-title-center .pp-title { font-size:19px; }
+  .pp-doclines { font-size:10.5px; color:#3f4c57; margin-top:1mm; line-height:1.5; }
+  .pp-doclines b { color:#0f2a41; }
+  .pp-meta-left { display:inline-block; font-size:10px; line-height:1.65; color:#3f4c57; border-left:2px solid #123049; padding-left:3mm; margin-bottom:5mm; }
+  .pp-meta-left b { color:#0f2a41; font-weight:700; }
   .pp-meta { font-size:11px; color:#333; line-height:1.9; margin-bottom:6mm; padding:3.5mm 4mm; background:#f4f7fa; border-left:3px solid #123049; border-radius:1.5mm; }
-  .pp-meta b { color:#000; }
-  /* Executant / Beneficiar: două panouri egale, cu chenar — se văd de la distanță. */
-  .pp-parties { display:flex; justify-content:space-between; gap:6mm; margin-bottom:6mm; }
-  .pp-party-col { flex:1; font-size:11px; line-height:1.65; border:1px solid #c3ced8; border-top:3px solid #123049; border-radius:1.5mm; padding:3.5mm 4mm; background:#fbfcfd; }
-  .pp-label { font-size:9.5px; text-transform:uppercase; letter-spacing:1px; color:#123049; margin-bottom:1.5mm; font-weight:800; }
-  .pp-party-name { font-weight:800; font-size:13.5px; margin-bottom:1mm; color:#0f2a41; }
-  .pp-table { width:100%; border-collapse:collapse; font-size:11px; margin-bottom:6mm; }
+  /* Varianta compactă (deviz): rând mai strâns, casetă mai îngustă, sub blocul Executant/Beneficiar. */
+  .pp-meta-compact { line-height:1.4; padding:0 0 0 3.5mm; font-size:9.5px; margin-bottom:4mm; max-width:120mm; background:transparent; border-left:2px solid #123049; }
+  .pp-meta b { color:#0f2a41; font-weight:700; }
+  /* Executant / Beneficiar: coloane aerisite, fără cutie — doar un accent subțire pe margine. */
+  .pp-parties { display:flex; justify-content:space-between; gap:9mm; margin-bottom:4mm; padding-bottom:3.5mm; border-bottom:1px solid #e6ebef; }
+  .pp-party-col { flex:1; font-size:10px; line-height:1.5; padding-left:3.2mm; border-left:2px solid #123049; }
+  .pp-label { font-size:8px; text-transform:uppercase; letter-spacing:1.6px; color:#123049; margin-bottom:1mm; font-weight:700; }
+  .pp-party-name { font-weight:800; font-size:12px; margin-bottom:0.8mm; color:#0f2a41; }
+  .pp-party-col > div:not(.pp-label):not(.pp-party-name) { color:#3f4c57; }
+  .pp-table { width:100%; border-collapse:collapse; font-size:9.5px; margin-bottom:5mm; }
   /* Un rând de tabel NU se rupe între două pagini, iar capul de tabel se repetă. */
   .pp-table tr { page-break-inside:avoid; break-inside:avoid; }
   .pp-table thead { display:table-header-group; }
   .pp-table tfoot { display:table-footer-group; }
   .pp-parties, .pp-totals, .pp-signatures { page-break-inside:avoid; break-inside:avoid; }
-  .pp-table thead th { text-align:center; border:1px solid #b6c2cc; padding:2.6mm 2mm; font-size:9.5px; text-transform:uppercase; letter-spacing:.3px; background:#e9eef3; color:#28323b; font-weight:700; }
-  .pp-table td { text-align:center; border:1px solid #d6dee4; padding:2.3mm 2mm; }
-  .pp-table tbody tr:nth-child(even) td { background:#f6f8fa; }
-  .pp-table tbody td:last-child { font-weight:600; color:#123049; }
-  .pp-table tfoot td { font-weight:700; background:#eef2f6; border-color:#b6c2cc; }
-  .pp-totals { margin-left:auto; width:65mm; font-size:12px; margin-bottom:10mm; }
-  .pp-totals-row { display:flex; justify-content:space-between; padding:1.5mm 0; }
-  .pp-totals-final { border-top:1.5px solid #1a1a1a; font-weight:700; font-size:14px; margin-top:1mm; padding-top:2mm; }
+  .pp-table thead th { text-align:center; border:none; border-bottom:1.5px solid #123049; padding:1.5mm 1.6mm; font-size:8px; text-transform:uppercase; letter-spacing:.4px; background:transparent; color:#123049; font-weight:700; }
+  .pp-table td { text-align:center; border:none; border-bottom:1px solid #eaeef2; padding:1.15mm 1.6mm; line-height:1.28; color:#2b3640; }
+  .pp-table tbody tr:last-child td { border-bottom:1.5px solid #123049; }
+  .pp-table tbody td:last-child { font-weight:700; color:#0f2a41; }
+  /* Coloanele cu bani (Preț unitar + Valoare) aliniate la DREAPTA — standard pe devize/facturi. */
+  .pp-table th:last-child, .pp-table td:last-child, .pp-table th:nth-last-child(2), .pp-table td:nth-last-child(2) { white-space:nowrap; text-align:right; padding-right:2.5mm; }
+  .pp-table tfoot td { font-weight:700; border:none; border-bottom:1px solid #e6ebef; }
+  .pp-totals { margin-left:auto; width:74mm; font-size:12px; margin-bottom:10mm; }
+  .pp-totals-row { display:flex; justify-content:space-between; padding:1.6mm 1mm; color:#3f4c57; }
+  .pp-totals-final { color:#0f2a41; border-top:1.5px solid #123049; font-weight:800; font-size:14.5px; margin-top:1mm; padding:2.4mm 1mm 0; }
   .pp-signatures { display:flex; justify-content:space-between; gap:10mm; margin-top:14mm; font-size:11px; }
   .pp-sign-col { flex:1; }
-  .pp-sign-label { font-size:10px; text-transform:uppercase; color:#888; margin-bottom:1mm; font-weight:700; }
+  .pp-sign-label { font-size:9px; text-transform:uppercase; letter-spacing:1.2px; color:#8a949d; margin-bottom:1mm; font-weight:700; }
   .pp-sign-line { margin-top:14mm; border-top:1px solid #999; width:70%; }
   .pp-status { margin-top:6mm; font-size:10px; color:#888; }
   .doc-toolbar { position:sticky; top:0; z-index:9999; display:flex; gap:10px; justify-content:space-between; align-items:center; background:#14181C; padding:10px 14px; border-bottom:1px solid #2A323B; }
@@ -12731,42 +12758,41 @@ function devizPageHtml({ doc, client, company }) {
     const rows = doc.items.map((it, i) => `
     <tr><td>${i + 1}</td><td style="text-align:left">${esc(it.denumire)}</td><td>${esc(it.um)}</td><td>${esc(it.cantitate)}</td><td>${esc(money(pretFinal(it)))}</td>
     <td>${esc(money((Number(it.cantitate) || 0) * pretFinal(it)))}</td></tr>`).join('');
-    const metaLines = [];
+    const docLines = [];
+    docLines.push(`Nr. ${esc(numarDoc(doc))} / ${esc(dataDoc(doc.data))}`);
     if (doc.nrContract)
-        metaLines.push(`<b>Contract:</b> Nr. ${esc(doc.nrContract)}${doc.dataContract ? ` din ${esc(doc.dataContract)}` : ''}`);
+        docLines.push(`Contract Nr. ${esc(doc.nrContract)}${doc.dataContract ? ` / ${esc(doc.dataContract)}` : ''}`);
     if (doc.actAditional)
-        metaLines.push(`<b>Act adițional:</b> ${esc(doc.actAditional)}${doc.dataActAditional ? ` din ${esc(doc.dataActAditional)}` : ''}`);
+        docLines.push(`Act adițional ${esc(doc.actAditional)}${doc.dataActAditional ? ` / ${esc(doc.dataActAditional)}` : ''}`);
+    const stanga = [];
     if (doc.obiectiv)
-        metaLines.push(`<b>Obiectiv:</b> ${esc(doc.obiectiv)}`);
+        stanga.push(`<div><b>Obiectiv:</b> ${esc(doc.obiectiv)}</div>`);
     if (doc.adresaLucrare)
-        metaLines.push(`<b>Adresă:</b> ${esc(doc.adresaLucrare)}`);
+        stanga.push(`<div><b>Adresă:</b> ${esc(doc.adresaLucrare)}</div>`);
     if (doc.lucrare)
-        metaLines.push(`<b>Lucrare:</b> ${esc(doc.lucrare)}`);
+        stanga.push(`<div><b>Lucrare:</b> ${esc(doc.lucrare)}</div>`);
     return `<div class="print-page">
-    <div class="pp-header-row">
-      <img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
-      <div class="pp-title-block">
-        <div class="pp-title">DEVIZ LUCRĂRI</div>
-        <div class="pp-number">Nr. ${esc(numarDoc(doc))} din ${esc(doc.data)}</div>
-      </div>
-    </div>
-    ${metaLines.length ? `<div class="pp-meta">${metaLines.join('<br/>')}</div>` : ''}
-
-    <div class="pp-parties">
-      <div class="pp-party-col">
+    <div class="pp-toprow">
+      <div class="pp-party-col pp-exec">
         <div class="pp-label">Executant</div>
         <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei)'}</div>
         ${company?.cui ? `<div>CUI: ${esc(company.cui)}</div>` : ''}${company?.regCom ? `<div>Reg. com.: ${esc(company.regCom)}</div>` : ''}
         ${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}${company?.iban ? `<div>IBAN: ${esc(company.iban)}</div>` : ''}${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}
       </div>
-      <div class="pp-party-col">
+      <div class="pp-logo-mid"><img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" /></div>
+      <div class="pp-party-col pp-benef">
         <div class="pp-label">Beneficiar</div>
         <div class="pp-party-name">${esc(client?.nume) || '—'}</div>
         ${client?.cui ? `<div>${client.tip === 'fizica' ? 'CNP' : 'CUI'}: ${esc(client.cui)}</div>` : ''}${client?.adresa ? `<div>${esc(client.adresa)}</div>` : ''}${client?.contact ? `<div>Tel: ${esc(client.contact)}</div>` : ''}
       </div>
     </div>
+    <div class="pp-title-center">
+      <div class="pp-title">DEVIZ LUCRĂRI</div>
+      <div class="pp-doclines">${docLines.join('<br/>')}</div>
+    </div>
+    ${stanga.length ? `<div class="pp-meta-left">${stanga.join('')}</div>` : ''}
 
-    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire</th><th>U.M</th><th>Cantitate</th><th>Valoare</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="pp-table"><thead><tr><th>Nr. crt</th><th style="text-align:left">Denumire</th><th>U.M</th><th>Cantitate</th><th>Preț unitar</th><th>Valoare</th></tr></thead><tbody>${rows}</tbody></table>
 
     <div class="pp-totals">
       <div class="pp-totals-row"><span>Total</span><span>${esc(money(subtotal))}</span></div>
@@ -12978,41 +13004,41 @@ const dataDoc = (v) => {
     return t.replace(/\//g, '.');
 };
 function antetDevizHtml({ titlu, santier, company, nr, data, perioada }) {
-    const meta = [];
-    if (santier?.contract)
-        meta.push(`<b>Contract:</b> Nr. ${esc(santier.contract)}`);
-    if (santier?.actAditional)
-        meta.push(`<b>Act adițional:</b> ${esc(santier.actAditional)}`);
-    if (perioada && (perioada.de || perioada.la))
-        meta.push(`<b>Perioada lucrărilor:</b> ${esc(dataDoc(perioada.de) || '…')} – ${esc(dataDoc(perioada.la) || '…')}`);
-    if (santier?.obiectiv)
-        meta.push(`<b>Obiectiv:</b> ${esc(santier.obiectiv)}`);
     const adr = santier?.adresaDeviz || santier?.adresa;
-    if (adr)
-        meta.push(`<b>Adresă:</b> ${esc(adr)}`);
-    meta.push(`<b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}`);
     const benefLines = String(santier?.benefInfo || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `<div>${esc(l)}</div>`).join('');
-    return `<div class="pp-header-row">
-      <img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" />
-      <div class="pp-title-block">
-        <div class="pp-title">${esc(titlu)}</div>
-        <div class="pp-number">Nr. ${esc(nr)} din ${esc(dataDoc(data))}</div>
-      </div>
-    </div>
-    <div class="pp-meta">${meta.join('<br/>')}</div>
-    <div class="pp-parties">
-      <div class="pp-party-col">
+    const docLines = [];
+    docLines.push(`Nr. ${esc(nr)} / ${esc(dataDoc(data))}`);
+    if (santier?.contract)
+        docLines.push(`Contract Nr. ${esc(santier.contract)}`);
+    if (santier?.actAditional)
+        docLines.push(`Act adițional ${esc(santier.actAditional)}`);
+    if (perioada && (perioada.de || perioada.la))
+        docLines.push(`Perioada: ${esc(dataDoc(perioada.de) || '…')} – ${esc(dataDoc(perioada.la) || '…')}`);
+    const stanga = [];
+    if (santier?.obiectiv)
+        stanga.push(`<div><b>Obiectiv:</b> ${esc(santier.obiectiv)}</div>`);
+    if (adr)
+        stanga.push(`<div><b>Adresă:</b> ${esc(adr)}</div>`);
+    stanga.push(`<div><b>Lucrare:</b> ${esc(santier?.lucrare || 'Instalații electrice interioare')}</div>`);
+    return `<div class="pp-toprow">
+      <div class="pp-party-col pp-exec">
         <div class="pp-label">Executant</div>
         <div class="pp-party-name">${esc(company?.nume) || '(completează datele firmei în „Firma mea")'}</div>
         ${company?.cui ? `<div>CUI: ${esc(company.cui)}</div>` : ''}${company?.regCom ? `<div>Reg. com.: ${esc(company.regCom)}</div>` : ''}
         ${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}${company?.iban ? `<div>IBAN: ${esc(company.iban)}</div>` : ''}${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}${company?.email ? `<div>${esc(company.email)}</div>` : ''}
       </div>
-      <div class="pp-party-col">
+      <div class="pp-logo-mid"><img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" /></div>
+      <div class="pp-party-col pp-benef">
         <div class="pp-label">Beneficiar</div>
         <div class="pp-party-name">${esc(santier?.benefNume) || '—'}</div>
         ${benefLines}
       </div>
-    </div>`;
+    </div>
+    <div class="pp-title-center">
+      <div class="pp-title">${esc(titlu)}</div>
+      <div class="pp-doclines">${docLines.join('<br/>')}</div>
+    </div>
+    <div class="pp-meta-left">${stanga.join('')}</div>`;
 }
 function totaluriDevizHtml({ subtotal, tva, tvaVal, total }) {
     return `<div class="pp-totals">
