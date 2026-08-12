@@ -193,6 +193,32 @@
   .noutBadge { animation: noutBadge 1.1s ease-in-out infinite; }
   @keyframes restUrgentPuls { 0%,100% { box-shadow:0 0 0 0 rgba(224,82,82,0); } 50% { box-shadow:0 0 0 3px rgba(224,82,82,.35); } }
   .restUrgent { animation: restUrgentPuls 1.8s ease-in-out infinite; }
+  /* ---- CLĂDIREA ÎN IZOMETRIE (Structură șantier) ----
+     Stă strânsă ca un bloc; la atingere se desface pe niveluri. Apartamentele se colorează
+     după stadiu. Se mișcă doar transform/opacity, deci merge lin și pe telefoane mai vechi. */
+  .izo-wrap { position:relative; border-radius:14px; overflow:hidden; background:radial-gradient(120% 90% at 50% 24%, rgba(0,229,255,.05), transparent 70%); }
+  /* grila e DOAR decor: nu are voie să fure atingerile de pe clădire */
+  .izo-grid { position:absolute; inset:-8%; opacity:.5; pointer-events:none; transition:transform .55s cubic-bezier(.2,.7,.3,1); }
+  .izo-wrap.deschis .izo-grid { transform:scale(1.12); }
+  .izo-scena { transition:transform .55s cubic-bezier(.2,.7,.3,1); transform-origin:50% 45%; }
+  .izo-wrap.deschis .izo-scena { transform:scale(1.02); }
+  .izo-et { transition:transform .55s cubic-bezier(.2,.7,.3,1); cursor:pointer; }
+  .izo-placa { fill:rgba(0,229,255,.045); stroke:#00E5FF; stroke-opacity:.42; stroke-width:1.3; vector-effect:non-scaling-stroke; }
+  .izo-lat { fill:rgba(0,60,84,.30); stroke:#00E5FF; stroke-opacity:.24; stroke-width:1; vector-effect:non-scaling-stroke; }
+  .izo-et.activ .izo-placa { fill:rgba(0,229,255,.10); stroke-opacity:.95; filter:drop-shadow(0 0 7px rgba(0,229,255,.5)); }
+  .izo-et.activ .izo-lat { stroke-opacity:.55; fill:rgba(0,110,145,.28); }
+  .izo-cel { stroke:rgba(0,229,255,.22); stroke-width:.8; vector-effect:non-scaling-stroke; cursor:pointer; transition:opacity .3s; }
+  .izo-cel.gata { fill:rgba(76,224,171,.34); }
+  .izo-cel.lucru { fill:rgba(0,229,255,.16); }
+  .izo-cel.nou { fill:rgba(120,150,175,.10); }
+  /* Selecția doar CONTUREAZĂ apartamentul — culoarea de stadiu (verde/bleu/gri) rămâne
+     vizibilă, ca să vezi pe loc că s-a făcut verde când îl bifezi „gata". */
+  .izo-cel.ales { stroke:#fff; stroke-width:2; filter:drop-shadow(0 0 7px rgba(0,229,255,.85)); }
+  .izo-celule { opacity:0; transition:opacity .4s .15s; pointer-events:none; }
+  .izo-wrap.deschis .izo-et.activ .izo-celule { opacity:1; pointer-events:auto; }
+  .izo-nume { opacity:0; transition:opacity .4s .1s; }
+  .izo-wrap.deschis .izo-nume { opacity:1; }
+  @media (prefers-reduced-motion: reduce) { .izo-grid, .izo-scena, .izo-et { transition:none !important; } }
   @media (prefers-reduced-motion: reduce) {
     .noutAtentie, .noutBling::after, .noutBadge, .restUrgent { animation: none !important; }
   }
@@ -1214,7 +1240,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.95-cerere-pontaj-premium';
+const APP_VERSION = 'v01.96-cladire-izo';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -6445,6 +6471,96 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
                         arataSalvat('✅ Raportul e salvat');
                     }, className: "px-4 py-2.5 rounded-xl text-base font-bold shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCBE Salveaz\u0103 raportul")))));
 }
+function CladireIzo({ etaje, nrLucrari, onToggleGata, onAlegeEtaj, selEtajId }) {
+    const [desfacut, setDesfacut] = useState(false);
+    const [ales, setAles] = useState(null);
+    const W = 92, H = 46, T = 10, CX = 132;
+    const DESF = 40;
+    const pas = T + 5;
+    const lista = etaje.slice().reverse();
+    const nEt = Math.max(1, lista.length);
+    const susY = H + 12 + (desfacut ? (nEt - 1) * DESF : 0);
+    const inalt = susY + (nEt - 1) * pas + H + T + 16;
+    const P = (cy, u, v) => [CX + (u - v) * W, cy + (u + v - 1) * H];
+    const romb = (cy) => `${CX},${cy - H} ${CX + W},${cy} ${CX},${cy + H} ${CX - W},${cy}`;
+    const etajActivId = selEtajId || (lista[0] && lista[0].id);
+    const grileEtaj = (etaj, cy) => {
+        const aparts = etaj.apartamente || [];
+        if (!aparts.length)
+            return { linii: [], celule: [] };
+        const n = Math.max(2, Math.ceil(Math.sqrt(aparts.length)));
+        const linii = [];
+        for (let i = 1; i < n; i++) {
+            const t = i / n;
+            linii.push(`M${CX - W + W * t} ${cy - H + H * t} L${CX + W * t} ${cy + H * t}`);
+            linii.push(`M${CX + W - W * t} ${cy - H + H * t} L${CX - W * t} ${cy + H * t}`);
+        }
+        const brute = [];
+        for (let i = 0; i < n; i++)
+            for (let j = 0; j < n; j++) {
+                const c = P(cy, (i + 0.5) / n, (j + 0.5) / n);
+                brute.push({ banda: i + j, x: c[0], y: c[1], colturi: [P(cy, i / n, j / n), P(cy, (i + 1) / n, j / n), P(cy, (i + 1) / n, (j + 1) / n), P(cy, i / n, (j + 1) / n)] });
+            }
+        brute.sort((a, b) => (a.banda !== b.banda ? a.banda - b.banda : a.x - b.x));
+        const celule = aparts.map((ap, k) => ({ ap, geo: brute[k] })).filter((x) => x.geo);
+        return { linii, celule };
+    };
+    return (React.createElement("div", null,
+        React.createElement("div", { className: 'izo-wrap' + (desfacut ? ' deschis' : ''), style: { border: '1px solid var(--border)' }, onClick: () => { if (!desfacut)
+                setDesfacut(true); } },
+            React.createElement("svg", { className: "izo-grid", viewBox: "0 0 300 300", preserveAspectRatio: "none", style: { width: '100%', height: '100%', position: 'absolute' } },
+                React.createElement("defs", null,
+                    React.createElement("pattern", { id: "izoPat", width: "30", height: "15", patternUnits: "userSpaceOnUse" },
+                        React.createElement("path", { d: "M15 0 L30 7.5 L15 15 L0 7.5 Z", fill: "none", stroke: "#00E5FF", strokeOpacity: "0.15", strokeWidth: "0.7" }))),
+                React.createElement("rect", { width: "300", height: "300", fill: "url(#izoPat)" })),
+            React.createElement("svg", { viewBox: `0 0 390 ${inalt}`, style: { width: '100%', display: 'block', position: 'relative' } },
+                React.createElement("g", { className: "izo-scena" }, lista.map((etaj, k) => {
+                    const cy = susY + k * pas;
+                    const activ = etaj.id === etajActivId;
+                    const { linii, celule } = grileEtaj(etaj, cy);
+                    const nrAp = (etaj.apartamente || []).length;
+                    const nrGata = (etaj.apartamente || []).filter((a) => a.gata).length;
+                    return (React.createElement("g", { key: etaj.id, className: 'izo-et' + (activ ? ' activ' : ''), style: { transform: desfacut ? `translateY(${-(nEt - 1 - k) * DESF}px)` : 'translateY(0px)' }, onClick: (ev) => { ev.stopPropagation(); if (!desfacut) {
+                            setDesfacut(true);
+                            return;
+                        } setAles(null); if (onAlegeEtaj)
+                            onAlegeEtaj(etaj.id); } },
+                        React.createElement("path", { className: "izo-lat", d: `M${CX - W} ${cy} L${CX - W} ${cy + T} L${CX} ${cy + H + T} L${CX} ${cy + H} Z` }),
+                        React.createElement("path", { className: "izo-lat", d: `M${CX + W} ${cy} L${CX + W} ${cy + T} L${CX} ${cy + H + T} L${CX} ${cy + H} Z` }),
+                        React.createElement("polygon", { className: "izo-placa", points: romb(cy) }),
+                        React.createElement("g", { className: "izo-celule" },
+                            linii.map((d, i) => React.createElement("path", { key: i, d: d, stroke: "#00E5FF", strokeOpacity: "0.26", strokeWidth: "1", fill: "none", vectorEffect: "non-scaling-stroke" })),
+                            celule.map(({ ap, geo }) => {
+                                const nl = nrLucrari ? nrLucrari(ap.id) : 0;
+                                const cls = (ap.gata ? 'gata' : (nl > 0 ? 'lucru' : 'nou')) + (ales && ales.apId === ap.id ? ' ales' : '');
+                                return React.createElement("polygon", { key: ap.id, className: 'izo-cel ' + cls, points: geo.colturi.map((p) => p.join(',')).join(' '), onClick: (ev) => { ev.stopPropagation(); setAles({ etajId: etaj.id, apId: ap.id, nume: ap.nume, lucrari: nl, gata: !!ap.gata, etajNume: etaj.nume }); } });
+                            })),
+                        React.createElement("foreignObject", { className: "izo-nume", x: CX + W + 6, y: cy - 18, width: 170, height: 40 },
+                            React.createElement("div", { xmlns: "http://www.w3.org/1999/xhtml", style: { lineHeight: 1.2 } },
+                                React.createElement("div", { style: { fontWeight: 800, fontSize: 12, color: activ ? '#fff' : 'var(--text)' } }, etaj.nume),
+                                React.createElement("div", { style: { fontSize: 9.5, color: '#7fd8ef' } }, nrAp ? `${nrAp} ap.${nrGata ? ` · ${nrGata} gata` : ''}` : 'fără apartamente')))));
+                }))),
+            !desfacut && (React.createElement("div", { style: { position: 'absolute', left: 0, right: 0, bottom: 8, textAlign: 'center', fontSize: 11, color: 'var(--muted2)', pointerEvents: 'none' } }, "atinge blocul ca s\u0103 vezi nivelurile")),
+            desfacut && (React.createElement("button", { onClick: (ev) => { ev.stopPropagation(); setDesfacut(false); setAles(null); }, style: { position: 'absolute', right: 8, top: 8, fontSize: 10, padding: '4px 9px', borderRadius: 9, color: '#bfe9f4', background: 'rgba(0,229,255,.10)', border: '1px solid rgba(0,229,255,.35)' } }, "\u2921 str\u00E2nge")),
+            desfacut && (React.createElement("div", { style: { position: 'absolute', left: 10, bottom: 8, fontSize: 9, color: 'var(--muted2)', lineHeight: 1.7, pointerEvents: 'none' } },
+                React.createElement("span", { style: { display: 'inline-block', width: 7, height: 7, borderRadius: 2, background: '#4ce0ab', marginRight: 5 } }),
+                "gata",
+                React.createElement("span", { style: { display: 'inline-block', width: 7, height: 7, borderRadius: 2, background: 'rgba(0,229,255,.5)', margin: '0 5px 0 10px' } }),
+                "\u00EEn lucru",
+                React.createElement("span", { style: { display: 'inline-block', width: 7, height: 7, borderRadius: 2, background: 'rgba(120,150,175,.35)', margin: '0 5px 0 10px' } }),
+                "ne\u00EEnceput"))),
+        ales && (React.createElement("div", { className: "rounded-xl px-3 py-2.5 mt-2 flex items-center justify-between gap-2", style: { background: 'var(--panel)', border: '1px solid rgba(0,229,255,.28)' } },
+            React.createElement("div", { style: { minWidth: 0 } },
+                React.createElement("div", { className: "text-sm font-semibold truncate", style: { color: 'var(--text)' } },
+                    ales.nume,
+                    " ",
+                    React.createElement("span", { style: { color: 'var(--muted2)', fontWeight: 400 } },
+                        "\u00B7 ",
+                        ales.etajNume)),
+                React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted)' } }, ales.lucrari > 0 ? `${ales.lucrari} ${ales.lucrari === 1 ? 'lucrare raportată' : 'lucrări raportate'}` : 'nicio lucrare raportată')),
+            React.createElement("button", { onClick: () => { if (onToggleGata)
+                    onToggleGata(ales.etajId, ales.apId); setAles({ ...ales, gata: !ales.gata }); }, className: "text-xs px-3 py-1.5 rounded-lg font-semibold shrink-0", style: ales.gata ? { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } : { color: '#14181C', background: 'var(--acc2)' } }, ales.gata ? '↩ Nu e gata' : '✓ Gata')))));
+}
 function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, persist, onBack, rapoarte, materials, materialeLista }) {
     const refStructura = useRef(structuraSantier);
     refStructura.current = structuraSantier;
@@ -6633,6 +6749,9 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
                     etaje.length,
                     ")"),
                 React.createElement("span", { style: { fontSize: 9, color: 'var(--muted)' } }, (showEtaje || areCautare) ? '▼' : '▶'))),
+        etaje.length > 0 && (React.createElement(CladireIzo, { etaje: etaje, selEtajId: selEtaj, nrLucrari: (apId) => lucrariApart(apId).length, onToggleGata: (etajId, apId) => save(structuraSantier.map((e) => e.id === etajId
+                ? { ...e, apartamente: (e.apartamente || []).map((a) => a.id === apId ? { ...a, gata: !a.gata } : a) }
+                : e)), onAlegeEtaj: (etajId) => { setSelEtaj(etajId); setShowEtaje(true); } })),
         (showEtaje || areCautare) && (React.createElement("div", { className: "rounded-lg p-2 space-y-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
             React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" },
                 etaje.length === 0 && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun etaj \u00EEnc\u0103 \u2014 adaug\u0103 mai jos."),
