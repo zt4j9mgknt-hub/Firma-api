@@ -1213,7 +1213,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.84-print-direct';
+const APP_VERSION = 'v01.86-deviz-santier-excel';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -2194,6 +2194,7 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
     const [dataActAditional, setDataActAditional] = useState(initial?.dataActAditional || '');
     const [adresaLucrare, setAdresaLucrare] = useState(initial?.adresaLucrare || '');
     const [lucrare, setLucrare] = useState(initial?.lucrare || '');
+    const [obiectiv, setObiectiv] = useState(initial?.obiectiv || '');
     const [santierId, setSantierId] = useState(initial?.santierId || '');
     const [santierNume, setSantierNume] = useState(initial?.santierNume || '');
     const alegeSantier = (id) => {
@@ -2208,6 +2209,8 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
             setAdresaLucrare(sx.adresaDeviz || sx.adresa);
         if (sx.lucrare)
             setLucrare(sx.lucrare);
+        if (sx.obiectiv)
+            setObiectiv(sx.obiectiv);
         if (sx.benefClientId)
             setClientId(sx.benefClientId);
         if (sx.contract)
@@ -2248,6 +2251,11 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
                         (santiere || []).map((sx) => (React.createElement("option", { key: sx.id, value: sx.id, style: { background: 'var(--panel)' } }, sx.nume)))),
                     !santierId && (React.createElement("input", { placeholder: "sau scrie numele \u0219antierului", value: santierNume, onChange: (e) => setSantierNume(e.target.value), className: "w-full mt-1.5 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))),
                 React.createElement("div", { className: "col-span-2" },
+                    React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } },
+                        "Obiectiv ",
+                        React.createElement("span", { style: { color: 'var(--muted2)' } }, "\u2014 apare pe devizul clientului (\u00EEn locul numelui de \u0219antier)")),
+                    React.createElement("input", { placeholder: "ex: Bloc reziden\u021Bial \u201EPolus Residence\u201D", value: obiectiv, onChange: (e) => setObiectiv(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })),
+                React.createElement("div", { className: "col-span-2" },
                     React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Adresa \u0219antierului"),
                     React.createElement("input", { placeholder: "ex: Str. Memorandumului 28, Cluj-Napoca", value: adresaLucrare, onChange: (e) => setAdresaLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })),
                 React.createElement("div", { className: "col-span-2" },
@@ -2267,7 +2275,7 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
                         ...(initial || {}),
                         id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || dataLocala(new Date()),
                         clientId, items, tva: Number(tva), status: initial?.status || 'Ciornă',
-                        nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, santierId, santierNume,
+                        nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, obiectiv, santierId, santierNume,
                     }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salveaz\u0103"))))));
 }
 function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill, onFactureaza }) {
@@ -2401,7 +2409,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
             [`SC ${company?.nume || 'Firma mea'}`], [company?.cui ? `CUI: ${company.cui}` : ''], [],
             [`DEVIZ nr. ${numarDoc(d)}${d.data ? ' din ' + fmtData(d.data) : ''}`],
             [`Client: ${clientName(d.clientId)}${clientCui(d.clientId) ? ' (CUI ' + clientCui(d.clientId) + ')' : ''}`],
-            [d.santierNume ? `Șantier: ${d.santierNume}` : ''], [d.adresaLucrare ? `Adresă: ${d.adresaLucrare}` : ''], [d.lucrare ? `Lucrare: ${d.lucrare}` : ''],
+            [d.obiectiv ? `Obiectiv: ${d.obiectiv}` : ''], [d.santierNume ? `Șantier (intern): ${d.santierNume}` : ''], [d.adresaLucrare ? `Adresă: ${d.adresaLucrare}` : ''], [d.lucrare ? `Lucrare: ${d.lucrare}` : ''],
             [`Status: ${d.status || ''}`], [],
         ];
         const rows = (d.items || []).map((it, i) => {
@@ -7526,19 +7534,38 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
                 } const det = devizOrarDetaliu({ santier, rapoarte: rapInterval(), structura: structuraSantier, includeLucrari: modS === 'orar_lucrari' }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
                     window.alert('Nu există rapoarte cu ore în perioada selectată pentru acest șantier.');
                     return;
-                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizOrar({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Genereaz\u0103 deviz (PDF)")), estePoz && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: () => { if (!potContinua())
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizOrar({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Genereaz\u0103 deviz (PDF)")), areOre && (React.createElement("button", { onClick: () => { if (!potContinua())
+                    return; if (!(Number(santier?.tarifOrar) > 0)) {
+                    window.alert('\u0218antierul n-are pus tariful orar. Pune-l \u00eent\u00e2i la \u201eAdministrare \u0219antier".');
+                    return;
+                } const det = devizOrarDetaliu({ santier, rapoarte: rapInterval(), structura: structuraSantier, includeLucrari: modS === 'orar_lucrari' }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert('Nu exist\u0103 rapoarte cu ore \u00een perioada selectat\u0103 pentru acest \u0219antier.');
+                    return;
+                } exportDevizSantierExcel({ det, santier, company, nr: devizNr || '\u2014', data: fmtData(devizData) }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\ud83d\udcca Excel")), estePoz && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: () => { if (!potContinua())
                     return; const det = devizPozDetaliu({ rapoarte: rapInterval(), pozitii: pozitiiS, dinLucrari: areStructuraS }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
                     window.alert(areStructuraS ? 'Nu există cantități pe poziții în „Lucrări pe apartamente" pentru perioada selectată. Verifică denumirile să fie alese din lista de poziții.' : 'Nu există poziții executate raportate în perioada selectată pentru acest șantier.');
                     return;
-                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizPoz({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83D\uDCCB Deviz manoper\u0103"), modS === 'pozitie_propriu' && (React.createElement("button", { onClick: () => { if (!potContinua())
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizPoz({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83D\uDCCB Deviz manoper\u0103"), React.createElement("button", { onClick: () => { if (!potContinua())
+                    return; const det = devizPozDetaliu({ rapoarte: rapInterval(), pozitii: pozitiiS, dinLucrari: areStructuraS }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert('Nu exist\u0103 pozi\u021Bii executate \u00EEn perioada selectat\u0103.');
+                    return;
+                } exportDevizSantierExcel({ det, santier, company, nr: devizNr || '\u2014', data: fmtData(devizData) }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCCA Excel"), modS === 'pozitie_propriu' && (React.createElement("button", { onClick: () => { if (!potContinua())
                     return; const det = devizMatDetaliu({ rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, dinLucrari: areStructuraS, adaosProcent: (company && company.adaosMaterial !== undefined && company.adaosMaterial !== '') ? (Number(company.adaosMaterial) || 0) : 15 }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
                     window.alert('Nu există materiale folosite raportate în perioada selectată pentru acest șantier.');
                     return;
-                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizMateriale({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDF0 Deviz materiale")))), esteReal && (React.createElement("button", { onClick: () => { if (!potContinua())
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizMateriale({ santier, company, nr: devizNr || '—', data: fmtData(devizData), detaliu: det }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83E\uDDF0 Deviz materiale")), modS === 'pozitie_propriu' && (React.createElement("button", { onClick: () => { if (!potContinua())
+                    return; const det = devizMatDetaliu({ rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, dinLucrari: areStructuraS, adaosProcent: (company && company.adaosMaterial !== undefined && company.adaosMaterial !== '') ? (Number(company.adaosMaterial) || 0) : 15 }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert('Nu exist\u0103 materiale folosite \u00EEn perioada selectat\u0103.');
+                    return;
+                } exportDevizSantierExcel({ det, santier, company, nr: devizNr || '\u2014', data: fmtData(devizData) }); }, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCCA Excel")))), esteReal && (React.createElement("button", { onClick: () => { if (!potContinua())
                     return; const det = devizMatDetaliu({ rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, dinLucrari: areStructuraS, adaosProcent: (company && company.adaosMaterial !== undefined && company.adaosMaterial !== '') ? (Number(company.adaosMaterial) || 0) : 15 }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
                     window.alert('Nu există cantități raportate în perioada selectată pentru acest șantier.');
                     return;
-                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizMateriale({ santier, company, nr: devizNr || '—', data: fmtData(devizData), realExecutat: true, detaliu: det }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83E\uDDFE Deviz real executat")), (!santier?.benefNume) && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Completeaz\u0103 \u201EDetalii pentru deviz\" la editarea \u0219antierului (beneficiar, contract)."), estePoz && pozitiiS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 pozi\u021Biile la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), esteReal && materialeListaS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 lista de materiale/opera\u021Biuni cu pre\u021Buri la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--muted2)' } }, "Implicit e luna curent\u0103 (1 \u2192 sf\u00E2r\u0219it). ", (estePoz || esteReal) && areStructuraS ? 'Cantitățile se adună din „Lucrări pe apartamente" × prețul din listă.' : estePoz ? 'Manopera pe poziții' + (modS === 'pozitie_propriu' ? ' + materialele' : '') + ' se adună din rapoarte.' : esteReal ? 'Cantitățile se adună din rapoarte × prețul de manoperă din listă.' : (modS === 'orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar) || 75} lei.`), " TVA 21%.")));
+                } retineNrDeviz(santier, devizNr); salveazaDevizSantier(santier, devizNr, devizData, det); openDevizMateriale({ santier, company, nr: devizNr || '—', data: fmtData(devizData), realExecutat: true, detaliu: det }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\uD83E\uDDFE Deviz real executat")), esteReal && (React.createElement("button", { onClick: () => { if (!potContinua())
+                    return; const det = devizMatDetaliu({ rapoarte: rapInterval(), materialeLista: materialeListaS, materials, materialClient: false, realExecutat: true, dinLucrari: areStructuraS, adaosProcent: (company && company.adaosMaterial !== undefined && company.adaosMaterial !== '') ? (Number(company.adaosMaterial) || 0) : 15 }); det.perioada = { de: devizFrom, la: devizTo }; if (!det.randuri.length) {
+                    window.alert('Nu exist\u0103 cantit\u0103\u021Bi raportate \u00EEn perioada selectat\u0103.');
+                    return;
+                } exportDevizSantierExcel({ det, santier, company, nr: devizNr || '\u2014', data: fmtData(devizData) }); }, className: "text-sm px-4 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\uD83D\uDCCA Excel")), (!santier?.benefNume) && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Completeaz\u0103 \u201EDetalii pentru deviz\" la editarea \u0219antierului (beneficiar, contract)."), estePoz && pozitiiS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 pozi\u021Biile la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), esteReal && materialeListaS.length === 0 && React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--acc4)' } }, "\u26A0 Import\u0103 lista de materiale/opera\u021Biuni cu pre\u021Buri la \u201E\uD83D\uDCCB Pozi\u021Bii/Materiale\"."), React.createElement("span", { className: "text-xs w-full", style: { color: 'var(--muted2)' } }, "Implicit e luna curent\u0103 (1 \u2192 sf\u00E2r\u0219it). ", (estePoz || esteReal) && areStructuraS ? 'Cantitățile se adună din „Lucrări pe apartamente" × prețul din listă.' : estePoz ? 'Manopera pe poziții' + (modS === 'pozitie_propriu' ? ' + materialele' : '') + ' se adună din rapoarte.' : esteReal ? 'Cantitățile se adună din rapoarte × prețul de manoperă din listă.' : (modS === 'orar_lucrari' ? 'Orele + tipurile de lucrări apar pe deviz.' : `Preț/oră: ${Number(santier?.tarifOrar) || 75} lei.`), " TVA 21%.")));
         })(), (() => {
             const normT = (x) => String(x == null ? '' : x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
                 .replace(/,/g, '.').replace(/\s+/g, ' ').trim();
@@ -11326,6 +11353,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'deviz-santier-excel-v1', aud: 'manager', data: '12.08.2026', titlu: '\ud83d\udcca Export Excel \u0219i la devizele de pe \u0219antier',
+        text: 'La devizele generate din \u0219antier (tarif orar, manoper\u0103 pe pozi\u021bii, materiale, real executat) ai acum, l\u00e2ng\u0103 \u201eGenereaz\u0103 deviz (PDF)", un buton \u201e\ud83d\udcca Excel". Scoate acela\u0219i deviz \u00een Excel \u2014 cu articolele (zile/ore sau materiale, cantit\u0103\u021bi, pre\u021buri) \u0219i totalurile (subtotal, TVA, total). Bun de trimis la contabil\u0103 sau de prelucrat.' },
+    { id: 'deviz-obiectiv-v1', aud: 'manager', data: '12.08.2026', titlu: '\ud83d\udcd1 Pe deviz apare \u201eObiectiv", nu numele de \u0219antier',
+        text: 'Pe devizul tip\u0103rit pentru client apare acum \u201eObiectiv", nu numele intern de \u0219antier \u2014 \u0219antierul r\u0103m\u00e2ne doar pentru noi, \u00een aplica\u021bie. La devizul nou ai un c\u00e2mp \u201eObiectiv" (se completeaz\u0103 singur din \u0219antier, dar \u00eel po\u021bi schimba). Dac\u0103 e gol, nu apare r\u00e2ndul. Pe devizele vechi, intri o dat\u0103 \u00een ele \u0219i le salvezi ca s\u0103 prind\u0103 obiectivul.' },
     { id: 'deviz-excel-v1', aud: 'manager', data: '12.08.2026', titlu: '\ud83d\udcca Devizele se export\u0103 \u0219i \u00een Excel',
         text: 'La \u201eDevize" ai acum export Excel, nu doar PDF. Sus, \u201e\ud83d\udcca Export\u0103 toate \u00een Excel" scoate un fi\u0219ier cu dou\u0103 file: \u201eSumar" (c\u00e2te un r\u00e2nd pe deviz: num\u0103r, client, \u0219antier, subtotal, TVA, total) \u0219i \u201eDetaliat" (toate articolele din toate devizele, cu denumire, cantitate, pre\u021b unitar, adaos, valoare). La fiecare deviz din list\u0103 ai \u0219i un buton \u201e\ud83d\udcca Excel" care scoate doar devizul \u0103la, cu articolele \u0219i totalurile lui. Bun de trimis la contabil\u0103 sau de prelucrat mai departe.' },
     { id: 'sold-concediu-v1', aud: 'manager', data: '11.08.2026', titlu: '\ud83c\udfd6 Pui tu zilele de concediu pe care le are fiecare acum',
@@ -12705,8 +12736,8 @@ function devizPageHtml({ doc, client, company }) {
         metaLines.push(`<b>Contract:</b> Nr. ${esc(doc.nrContract)}${doc.dataContract ? ` din ${esc(doc.dataContract)}` : ''}`);
     if (doc.actAditional)
         metaLines.push(`<b>Act adițional:</b> ${esc(doc.actAditional)}${doc.dataActAditional ? ` din ${esc(doc.dataActAditional)}` : ''}`);
-    if (doc.santierNume)
-        metaLines.push(`<b>Șantier:</b> ${esc(doc.santierNume)}`);
+    if (doc.obiectiv)
+        metaLines.push(`<b>Obiectiv:</b> ${esc(doc.obiectiv)}`);
     if (doc.adresaLucrare)
         metaLines.push(`<b>Adresă:</b> ${esc(doc.adresaLucrare)}`);
     if (doc.lucrare)
@@ -12956,8 +12987,6 @@ function antetDevizHtml({ titlu, santier, company, nr, data, perioada }) {
         meta.push(`<b>Perioada lucrărilor:</b> ${esc(dataDoc(perioada.de) || '…')} – ${esc(dataDoc(perioada.la) || '…')}`);
     if (santier?.obiectiv)
         meta.push(`<b>Obiectiv:</b> ${esc(santier.obiectiv)}`);
-    if (santier?.nume)
-        meta.push(`<b>Șantier:</b> ${esc(santier.nume)}`);
     const adr = santier?.adresaDeviz || santier?.adresa;
     if (adr)
         meta.push(`<b>Adresă:</b> ${esc(adr)}`);
@@ -13083,6 +13112,51 @@ function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, struct
     ${totaluriDevizHtml({ subtotal, tva, tvaVal, total })}
     ${semnaturiDevizHtml({ santier, company })}
   </div>`;
+}
+function exportDevizSantierExcel({ det, santier, company, nr, data }) {
+    if (typeof XLSX === 'undefined') {
+        window.alert('Componenta de Excel încă se încarcă — mai încearcă o dată în câteva secunde.');
+        return;
+    }
+    if (!det || !Array.isArray(det.randuri) || !det.randuri.length) {
+        window.alert('Nu există date pentru Excel în perioada selectată.');
+        return;
+    }
+    const r2 = (x) => Math.round((Number(x) || 0) * 100) / 100;
+    const perioada = (det.perioada && (det.perioada.de || det.perioada.la)) ? `${dataDoc(det.perioada.de) || '…'} – ${dataDoc(det.perioada.la) || '…'}` : '';
+    const head = [
+        [`SC ${company?.nume || 'Firma mea'}`], [company?.cui ? `CUI: ${company.cui}` : ''], [],
+        [`DEVIZ nr. ${nr || ''}${data ? ' din ' + data : ''}`],
+        [santier?.obiectiv ? `Obiectiv: ${santier.obiectiv}` : ''],
+        [santier?.benefNume ? `Beneficiar: ${santier.benefNume}` : ''],
+        [(santier?.adresaDeviz || santier?.adresa) ? `Adresă: ${santier.adresaDeviz || santier.adresa}` : ''],
+        [perioada ? `Perioada lucrărilor: ${perioada}` : ''],
+        [],
+    ];
+    let rows;
+    if (det.tip === 'orar') {
+        const areLucrari = det.randuri.some((x) => String(x.lucrari || '').trim());
+        rows = det.randuri.map((x, i) => {
+            const o = { 'Nr': i + 1, 'Data': dataDoc(x.data) };
+            if (areLucrari)
+                o['Lucrări efectuate'] = x.lucrari || '';
+            o['Nr persoane'] = x.nrPers;
+            o['Ore/pers'] = r2(x.ore);
+            o['Total ore'] = r2(x.totalOre);
+            o['Preț unitar'] = r2(x.pret);
+            o['Valoare'] = r2(x.valoare);
+            return o;
+        });
+    }
+    else {
+        rows = det.randuri.map((x, i) => ({ 'Nr': i + 1, 'Denumire': x.denumire || '', 'UM': x.um || '', 'Cantitate': r2(x.cantitate), 'Preț unitar': r2(x.pret), 'Valoare': r2(x.valoare) }));
+    }
+    const ws = XLSX.utils.aoa_to_sheet(head);
+    XLSX.utils.sheet_add_json(ws, rows, { origin: -1 });
+    XLSX.utils.sheet_add_aoa(ws, [[], ['Subtotal', r2(det.subtotal || 0)], [`TVA ${det.tva || 0}%`, r2(det.tvaVal || 0)], ['TOTAL', r2(det.total || 0)]], { origin: -1 });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Deviz');
+    XLSX.writeFile(wb, `deviz_${String(nr || '').replace(/[^a-zA-Z0-9]/g, '_') || 'santier'}.xlsx`);
 }
 function openDevizOrar({ santier, company, rapoarte, toateRapoartele, structura, nr, data, includeLucrari, detaliu }) {
     const d = detaliu || devizOrarDetaliu({ santier, rapoarte, toateRapoartele, structura, includeLucrari });
