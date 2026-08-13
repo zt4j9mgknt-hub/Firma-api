@@ -214,6 +214,8 @@
   /* Selecția doar CONTUREAZĂ apartamentul — culoarea de stadiu (verde/bleu/gri) rămâne
      vizibilă, ca să vezi pe loc că s-a făcut verde când îl bifezi „gata". */
   .izo-cel.ales { stroke:#fff; stroke-width:2; filter:drop-shadow(0 0 7px rgba(0,229,255,.85)); }
+  /* În raport, apartamentul ales se vede plin — să știi dintr-o privire unde ai bifat. */
+  .izo-cel.alesPlin { fill:rgba(0,229,255,.45); }
   /* Numărul apartamentului, scris chiar pe pătrat — mai intuitiv decât să-l cauți. */
   .izo-nr { fill:#eaf6fb; font-weight:700; paint-order:stroke; stroke:rgba(4,14,22,.75); stroke-width:2.4px;
             pointer-events:auto; cursor:pointer; user-select:none; }
@@ -1243,7 +1245,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v01.98-izo-etaj-gol';
+const APP_VERSION = 'v01.99-ordine-ghid-plansa';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -5246,7 +5248,7 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
             return a.nume;
     } return '?'; };
     return (React.createElement("div", null,
-        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted2)' } },
+        React.createElement(Ghid, null,
             "Bifezi cine a lucrat \u2014 pot fi \u0219i doi sau trei \u00EEn acela\u0219i apartament \u2014 apoi alegi apartamentul \u0219i treci lucr\u0103rile una sub alta (1, 2, 3...). L\u00E2ng\u0103 fiecare om bifat scrii ",
             React.createElement("b", null, "c\u00E2te ore a stat el acolo"),
             " \u2014 pot fi 7, 6 \u0219i 5, nu trebuie s\u0103 fie la fel. Cantit\u0103\u021Bile, \u00EEn schimb, se scriu ",
@@ -5254,7 +5256,7 @@ function LucrariApartamenteEditor({ lucrari, setLucrari, structura, persoane, ec
             ", nu pentru fiecare om: e aceea\u0219i lucrare. C\u00E2nd echipa se mut\u0103 \u00EEn alt apartament, ape\u0219i \u201E+ Adaug\u0103\" jos \u0219i porne\u0219ti o list\u0103 nou\u0103."),
         grupuri.map((g) => {
             const etaj = etaje.find((e) => e.id === g.etajId);
-            const aps = (etaj?.apartamente || []).slice().sort(cmp);
+            const aps = (etaj?.apartamente || []).slice().sort(cmpNumeNat);
             const persG = persoaneDinRand(g);
             return (React.createElement("div", { key: g.id, className: "rounded-lg p-2 mb-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
                 React.createElement("div", { className: "flex flex-wrap gap-1 mb-1.5 items-center" },
@@ -6478,6 +6480,27 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
                         arataSalvat('✅ Raportul e salvat');
                     }, className: "px-4 py-2.5 rounded-xl text-base font-bold shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCBE Salveaz\u0103 raportul")))));
 }
+function Ghid({ children, titlu }) {
+    const [open, setOpen] = useState(false);
+    return (React.createElement("div", { className: "mb-2" },
+        React.createElement("button", { type: "button", onClick: () => setOpen(!open), className: "text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } },
+            "\uD83D\uDCD6 ",
+            React.createElement("span", null, open ? 'ascunde' : (titlu || 'cum se completează'))),
+        open && React.createElement("div", { className: "text-xs mt-1.5", style: { color: 'var(--muted2)' } }, children)));
+}
+const cmpNumeNat = (a, b) => {
+    const nr = (s) => { const m = String(s || '').match(/\d+/); return m ? parseInt(m[0], 10) : null; };
+    const na = nr(a?.nume), nb = nr(b?.nume);
+    if (na === null && nb === null)
+        return String(a?.nume || '').localeCompare(String(b?.nume || ''), 'ro', { sensitivity: 'base' });
+    if (na === null)
+        return 1;
+    if (nb === null)
+        return -1;
+    if (na !== nb)
+        return na - nb;
+    return String(a?.nume || '').localeCompare(String(b?.nume || ''), 'ro', { sensitivity: 'base' });
+};
 function CladireIzo({ etaje, nrLucrari, onToggleGata, onAlegeEtaj, selEtajId, mod, selectati, onToggleAp, desfacutInitial }) {
     const [desfacut, setDesfacut] = useState(!!desfacutInitial);
     const [ales, setAles] = useState(null);
@@ -6487,8 +6510,8 @@ function CladireIzo({ etaje, nrLucrari, onToggleGata, onAlegeEtaj, selEtajId, mo
         const t = String(s || '').trim().replace(/^ap(?:artament)?\.?\s*/i, '');
         return t.length > 5 ? t.slice(0, 4) + '…' : t;
     };
-    const W = 92, H = 46, T = 10, CX = 132;
-    const DESF = 40;
+    const W = 116, H = 58, T = 11, CX = 128;
+    const DESF = 46;
     const pas = T + 5;
     const lista = etaje.slice().reverse();
     const nEt = Math.max(1, lista.length);
@@ -6498,7 +6521,7 @@ function CladireIzo({ etaje, nrLucrari, onToggleGata, onAlegeEtaj, selEtajId, mo
     const romb = (cy) => `${CX},${cy - H} ${CX + W},${cy} ${CX},${cy + H} ${CX - W},${cy}`;
     const etajActivId = selEtajId || (lista[0] && lista[0].id);
     const grileEtaj = (etaj, cy) => {
-        const aparts = etaj.apartamente || [];
+        const aparts = (etaj.apartamente || []).slice().sort(cmpNumeNat);
         if (!aparts.length)
             return { linii: [], celule: [] };
         const n = Math.max(2, Math.ceil(Math.sqrt(aparts.length)));
@@ -6548,7 +6571,9 @@ function CladireIzo({ etaje, nrLucrari, onToggleGata, onAlegeEtaj, selEtajId, mo
                             celule.map(({ ap, geo, fs }) => {
                                 const nl = nrLucrari ? nrLucrari(ap.id) : 0;
                                 const evidentiat = alegere ? bifate.includes(ap.id) : (ales && ales.apId === ap.id);
-                                const cls = (ap.gata ? 'gata' : (nl > 0 ? 'lucru' : 'nou')) + (evidentiat ? ' ales' : '');
+                                const cls = alegere
+                                    ? (evidentiat ? 'alesPlin ales' : 'nou')
+                                    : (ap.gata ? 'gata' : (nl > 0 ? 'lucru' : 'nou')) + (evidentiat ? ' ales' : '');
                                 const apasa = (ev) => {
                                     ev.stopPropagation();
                                     if (alegere) {
@@ -6562,14 +6587,14 @@ function CladireIzo({ etaje, nrLucrari, onToggleGata, onAlegeEtaj, selEtajId, mo
                                     React.createElement("polygon", { className: 'izo-cel ' + cls, points: geo.colturi.map((p) => p.join(',')).join(' '), onClick: apasa }),
                                     React.createElement("text", { className: "izo-nr", x: geo.x, y: geo.y + fs * 0.35, fontSize: fs, textAnchor: "middle", onClick: apasa }, numeScurt(ap.nume))));
                             })),
-                        React.createElement("foreignObject", { className: "izo-nume", x: CX + W + 6, y: cy - 18, width: 170, height: 40 },
+                        React.createElement("foreignObject", { className: "izo-nume", x: CX + W + 6, y: cy - 18, width: 136, height: 40 },
                             React.createElement("div", { xmlns: "http://www.w3.org/1999/xhtml", style: { lineHeight: 1.2 } },
                                 React.createElement("div", { style: { fontWeight: 800, fontSize: 12, color: activ ? '#fff' : 'var(--text)' } }, etaj.nume),
                                 React.createElement("div", { style: { fontSize: 9.5, color: '#7fd8ef' } }, nrAp ? `${nrAp} ap.${nrGata ? ` · ${nrGata} gata` : ''}` : 'fără apartamente')))));
                 }))),
             !desfacut && (React.createElement("div", { style: { position: 'absolute', left: 0, right: 0, bottom: 8, textAlign: 'center', fontSize: 11, color: 'var(--muted2)', pointerEvents: 'none' } }, "atinge blocul ca s\u0103 vezi nivelurile")),
             desfacut && (React.createElement("button", { onClick: (ev) => { ev.stopPropagation(); setDesfacut(false); setAles(null); }, style: { position: 'absolute', right: 8, top: 8, fontSize: 10, padding: '4px 9px', borderRadius: 9, color: '#bfe9f4', background: 'rgba(0,229,255,.10)', border: '1px solid rgba(0,229,255,.35)' } }, "\u2921 str\u00E2nge")),
-            desfacut && (React.createElement("div", { style: { position: 'absolute', left: 10, bottom: 8, fontSize: 9, color: 'var(--muted2)', lineHeight: 1.7, pointerEvents: 'none' } },
+            desfacut && !alegere && (React.createElement("div", { style: { position: 'absolute', left: 10, bottom: 8, fontSize: 9, color: 'var(--muted2)', lineHeight: 1.7, pointerEvents: 'none' } },
                 React.createElement("span", { style: { display: 'inline-block', width: 7, height: 7, borderRadius: 2, background: '#4ce0ab', marginRight: 5 } }),
                 "gata",
                 React.createElement("span", { style: { display: 'inline-block', width: 7, height: 7, borderRadius: 2, background: 'rgba(0,229,255,.5)', margin: '0 5px 0 10px' } }),
@@ -6739,7 +6764,7 @@ function SiteStructuraTab({ santierId, structuraSantier, setStructuraSantier, pe
     const delMat = (etajId, apId, matId) => { if (!window.confirm('Ștergi acest material?'))
         return; save(structuraSantier.map((e) => e.id === etajId ? { ...e, apartamente: (e.apartamente || []).map((a) => a.id === apId ? { ...a, materiale: (a.materiale || []).filter((m) => m.id !== matId) } : a) } : e)); };
     const etajeVizibile = etaje.map((e) => {
-        const aps = (e.apartamente || []).slice().sort(cmpNume);
+        const aps = (e.apartamente || []).slice().sort(cmpNumeNat);
         if (!areCautare)
             return { e, aps, isOpen: !!openEtaj[e.id], show: true };
         const fnum = numDin(e.nume);
