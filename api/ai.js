@@ -148,6 +148,7 @@ export default async function handler(req, res) {
     const cerut = process.env.GEMINI_MODEL || MODEL_IMPLICIT;
     const deIncercat = [cerut, ...REZERVE.filter((m) => m !== cerut)];
     let ultimaEroare = 'AI a răspuns cu eroare.';
+    let supraincarcat = false, eraSupraincarcat = false;
     for (const model of deIncercat) {
       let { r, d } = await cereGemini({ key, model, sistem, text, json, inAdresa: false });
       // Vreun model mai vechi care nu știe de „thinkingConfig"? Reîncercăm fără el.
@@ -201,7 +202,35 @@ export default async function handler(req, res) {
       const lipsesteModelul = r.status === 404 || /not found|not supported|unsupported/i.test(msg);
       // Cotă depășită pe modelul ăsta? Mai încercăm pe celelalte: fiecare are cota lui.
       const cotaDepasita = r.status === 429 || /quota|rate limit|exceeded/i.test(msg);
-      if (!lipsesteModelul && !cotaDepasita) break; // cheie greșită sau altceva — nu are rost să insistăm
+      /* MODEL SUPRAÎNCĂRCAT (503). Google răspunde „This model is currently experiencing high
+         demand". Nu e nimic stricat, nu s-a consumat nimic din cotă — pur și simplu serverul
+         lor e plin în secunda aia. Înainte, cazul ăsta nu se potrivea nici cu „lipsește
+         modelul", nici cu „cotă depășită", deci se ieșea din buclă la PRIMUL model și omul
+         primea mesajul în engleză al Google. Acum le încercăm pe toate: fiecare model are
+         propria coadă, iar de obicei al doilea răspunde imediat. */
+      supraincarcat = r.status === 503 || /overloaded|high demand|currently unavailable|try again later/i.test(msg);
+      if (supraincarcat) eraSupraincarcat = true;
+      if (!lipsesteModelul && !cotaDepasita && !supraincarcat) break; // cheie greșită sau altceva — nu insistăm
+    }
+    /* Dacă toate modelele erau pline, mai dăm o tură după o pauză scurtă. Vârfurile de trafic
+       la Google țin de obicei câteva secunde, iar omul e pe schelă cu telefonul în mână —
+       merită să încercăm noi încă o dată în locul lui, decât să-l punem pe el să reia. */
+    if (eraSupraincarcat) {
+      await new Promise((r2) => setTimeout(r2, 1500));
+      for (const model of deIncercat.slice(0, 2)) {
+        const { r, d } = await cereGemini({ key, model, sistem, text, json, inAdresa: false });
+        if (r.ok) {
+          let raspuns = '';
+          try {
+            const parts = d && d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts;
+            if (Array.isArray(parts)) raspuns = parts.map((p) => p.text || '').join('').trim();
+          } catch (_) {}
+          if (raspuns) {
+            const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
+            return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', dupaAsteptare: true });
+          }
+        }
+      }
     }
     if (/quota|rate limit|exceeded/i.test(ultimaEroare)) {
       const sec = (ultimaEroare.match(/retry in ([\d.]+)s/i) || [])[1];
@@ -210,6 +239,15 @@ export default async function handler(req, res) {
                (sec ? `Se poate relua peste ~${Math.ceil(Number(sec))} secunde. ` : '') +
                'Dacă vrei să nu te mai lovești de asta, activează facturarea în Google Cloud — ' +
                'la volumul unei firme mici costă cenți pe lună.',
+      });
+    }
+    if (eraSupraincarcat || /overloaded|high demand|currently unavailable|try again later/i.test(ultimaEroare)) {
+      return res.status(503).json({
+        error: 'Serviciul de AI al Google e aglomerat chiar acum (prea multe cereri la ei, nu la tine). ' +
+               'Am încercat pe toate modelele și am mai dat o tură după o pauză — tot plin. ' +
+               'NU s-a stricat nimic și NU ai consumat nimic din cotă. ' +
+               'Textul tău a rămas scris, nu se pierde: mai încearcă peste un minut, sau completează raportul de mână — merge la fel de bine.',
+        supraincarcat: true,
       });
     }
     return res.status(502).json({ error: ultimaEroare });
