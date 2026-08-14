@@ -1297,6 +1297,7 @@ function echipaNormalizata(echipa) {
 }
 const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e) => e.userId);
 const inEchipa = (echipa, userId) => echipaUserIds(echipa).includes(userId);
+const lucreazaInEchipa = (echipa, userId) => echipaNormalizata(echipa).some((e) => e.userId === userId && e.status !== 'pauza');
 function concediuActiv(concedii, who, dataIso) {
     if (!concedii || !dataIso || !who)
         return null;
@@ -1850,7 +1851,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v02.43-ai-aglomerat';
+const APP_VERSION = 'v02.44-cine-lucreaza-unde';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -5378,11 +5379,11 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
     const echipaIds = echipa.map((e) => e.userId);
     const toggleEchipa = (userId) => {
         const next = echipaIds.includes(userId) ? echipa.filter((e) => e.userId !== userId) : [...echipa, { userId, status: 'activ' }];
-        setForm({ ...form, echipa: next });
+        setForm({ ...form, echipa: next, echipaAtinsa: true });
     };
     const setEchipaStatus = (userId, status) => {
         const next = echipa.map((e) => e.userId === userId ? { ...e, status, dataModificare: dataLocala(new Date()) } : e);
-        setForm({ ...form, echipa: next });
+        setForm({ ...form, echipa: next, echipaAtinsa: true });
     };
     return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement(Sectiune, { nr: 1, icon: "\uD83D\uDCCC", titlu: "Datele \u0219antierului", accent: "var(--acc1)", rezumat: form.nume ? (form.status || 'Activ') : 'necompletat', plin: !!form.nume, deschis: desch('date', !!form.nume), onToggle: () => comuta('date', !!form.nume) },
@@ -8193,7 +8194,15 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         updateEchipa(santierId, echipaNormalizata(s.echipa).map((e) => e.userId === userId ? { ...e, status, dataModificare: dataLocala(new Date()) } : e));
     };
     const saveSantier = (s) => {
-        const s2 = { ...s, necesitaCompletare: false };
+        const vechi = santiere.find((x) => x.id === s.id) || null;
+        const CAMPURI_DIN_AFARA = ['ultimNrDeviz', 'lat', 'lng', 'locatieLa', 'finalizatDe', 'finalizatLa', 'statusSchimbatLa'];
+        const dinAfara = {};
+        if (vechi)
+            CAMPURI_DIN_AFARA.forEach((k) => { if (vechi[k] !== undefined)
+                dinAfara[k] = vechi[k]; });
+        const echipaFinala = (vechi && s.echipaAtinsa !== true) ? (vechi.echipa || []) : (s.echipa || []);
+        const s2 = { ...s, ...dinAfara, echipa: echipaFinala, necesitaCompletare: false };
+        delete s2.echipaAtinsa;
         const next = santiere.some((x) => x.id === s2.id) ? santiere.map((x) => x.id === s2.id ? s2 : x) : [...santiere, s2];
         setSantiere(next);
         persist('santiere', next);
@@ -12066,7 +12075,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         totalDeFacut += (cereriAlocare || []).filter((c) => c.status === 'Cerut').length;
     }
     else {
-        const santiereMele = santiere.filter((s) => inEchipa(s.echipa, currentUser?.id));
+        const santiereMele = santiere.filter((s) => lucreazaInEchipa(s.echipa, currentUser?.id));
         if (dupa17)
             totalDeFacut += santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)).length;
     }
@@ -12102,7 +12111,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         { label: 'Facturi de încasat', value: `${facturiDeIncasat.length} · ${money(sumaDeIncasat)}`, tab: 'facturi' },
         { label: 'Șantiere active', value: santiereActive, tab: 'santiere' },
     ] : [
-        { label: 'Șantierele tale', value: santiere.filter((s) => inEchipa(s.echipa, currentUser?.id)).length, tab: 'santiere' },
+        { label: 'Șantierele tale', value: santiere.filter((s) => lucreazaInEchipa(s.echipa, currentUser?.id)).length, tab: 'santiere' },
     ];
     return (React.createElement("div", null,
         React.createElement("div", { className: "flex items-start justify-between gap-3 mb-8 flex-wrap" },
@@ -12470,6 +12479,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'cine-lucreaza-unde-v1', aud: 'toti', data: '14.08.2026', titlu: '\U0001F477 Nu mai prime\u0219ti cereri de raport de pe \u0219antiere unde nu lucrezi',
+        text: 'Dac\u0103 ai fost pus pe PAUZ\u0102 pe un \u0219antier (mutat pe alt\u0103 lucrare), aplica\u021bia te socotea \u00een continuare om de-al \u0219antierului \u0103luia. Seara \u00ee\u021bi scria „Nu ai trimis raportul pentru …", \u00ee\u021bi ap\u0103rea la „rapoarte restante", intra \u00een bulina de pe icon\u0163\u0103 \u0219i \u00ee\u021bi trimitea notificare pe telefon \u2014 pentru o lucrare la care nu mai erai pus.\n\nCauza: aplica\u021bia amesteca dou\u0103 \u00eentreb\u0103ri diferite \u2014 „e pe lista \u0219antierului?" \u0219i „chiar lucreaz\u0103 acolo?". Acum sunt separate. Pauza \u00eenseamn\u0103 „nu lucreaz\u0103 aici acum", deci nu \u021bi se mai cere nimic de acolo. Dar r\u0103m\u00e2i cu DREPTUL de a deschide \u0219antierul \u0219i de a scrie un raport \u00eent\u00e2rziat, dac\u0103 ai r\u0103mas dator cu unul.\n\n\u0218i cardul „\u2705 Lucrezi" nu mai apare pe un \u0219antier pe care nu e\u0219ti g\u0103sit \u00een echip\u0103 \u2014 \u00eenainte, dac\u0103 nu te g\u0103sea deloc, scria oricum c\u0103 lucrezi acolo.' },
+    { id: 'formular-santier-v1', aud: 'manager', data: '14.08.2026', titlu: '\U0001F4BE Formularul de \u0219antier nu mai \u0219terge ce s-a schimbat \u00eentre timp',
+        text: 'Formularul de \u0219antier \u021binea o poz\u0103 a \u0219antierului de c\u00e2nd l-ai deschis. Dac\u0103 \u00eel l\u0103sai deschis zece minute c\u00e2t c\u0103utai contractul, iar \u00eentre timp aprobai de pe telefon o cerere de alocare, sau se genera un deviz, sau se punea pinul de hart\u0103 \u2014 la „Salveaz\u0103" se scria poza VECHE peste tot.\n\nRezultat: omul tocmai ad\u0103ugat \u00een echip\u0103 disp\u0103rea, num\u0103rul de deviz s\u0103rea \u00eenapoi, pinul se pierdea. F\u0103r\u0103 niciun mesaj. \u0218i, cel mai sup\u0103r\u0103tor, oameni sco\u0219i din echip\u0103 puteau s\u0103 „\u00eenvie".\n\nAcum, la salvare se p\u0103streaz\u0103 din \u00eenregistrarea proasp\u0103t\u0103 tot ce nu editeaz\u0103 formularul, iar echipa se ia din formular doar dac\u0103 ai umblat chiar tu la ea.' },
     { id: 'ai-aglomerat-v1', aud: 'toti', data: '14.08.2026', titlu: '\U0001F916 „Model supra\u00eenc\u0103rcat" \u2014 nu mai renun\u021b\u0103 de la prima \u00eencercare',
         text: 'Dac\u0103 ai v\u0103zut mesajul ro\u0219u \u00een englez\u0103 „This model is currently experiencing high demand" c\u00e2nd ap\u0103seai „\u2728 Completeaz\u0103 raportul" \u2014 aia venea de la Google, nu din aplica\u021bie. \u00censeamn\u0103 c\u0103 serverele lor erau pline \u00een secunda aia. Nu se stricase nimic \u0219i nu consumasei nimic.\n\nProblema era ce f\u0103cea aplica\u021bia cu ea: se oprea la PRIMUL model \u0219i \u00ee\u021bi ar\u0103ta mesajul brut \u00een englez\u0103. Aplica\u021bia are patru modele de rezerv\u0103, fiecare cu coada lui \u2014 dar nu le \u00eencerca, pentru c\u0103 nu recuno\u0219tea felul \u0103sta de eroare.\n\nAcum: le \u00eencearc\u0103 pe toate, iar dac\u0103 toate sunt pline mai d\u0103 o tur\u0103 dup\u0103 o pauz\u0103 scurt\u0103 \u2014 de obicei a doua \u00eencercare merge. Dac\u0103 tot nu, prime\u0219ti un mesaj \u00een rom\u00e2n\u0103 care \u00ee\u021bi spune ce s-a \u00eent\u00e2mplat \u0219i ce ai de f\u0103cut, plus un buton „\u21bb \u00cencearc\u0103 din nou" \u2014 textul t\u0103u dictat r\u0103m\u00e2ne pe ecran, nu-l redictezi.\n\n\u0218i o cauz\u0103 ascuns\u0103, reparat\u0103 tot acum: aplica\u021bia t\u0103ia singur\u0103 cererea dup\u0103 12 secunde \u0219i spunea „f\u0103r\u0103 conexiune la AI". O generare de raport \u00eentreg dureaz\u0103 des mai mult. Acum a\u0219teapt\u0103 p\u00e2n\u0103 la un minut, iar dac\u0103 tot expir\u0103 \u00ee\u021bi spune „a durat prea mult", nu „n-ai internet" \u2014 dou\u0103 lucruri diferite, dou\u0103 mesaje diferite.' },
     { id: 'randament-birou-v1', aud: 'manager', data: '14.08.2026', titlu: '\U0001F5C2 Randament \u2014 cine nu lucreaz\u0103 pe \u0219antier iese din \u00eemp\u0103r\u021bire',
@@ -12661,7 +12674,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     const aziDate = new Date();
     const mesajSarbatoare = ZILE_FELICITARE[dataLocala(aziDate)];
     const sarbatoriiZi = colegiUsers.filter((u) => { const n = nasterePeDinCnp(u.cnp); return n && n.zi === aziDate.getDate() && n.luna === aziDate.getMonth() + 1; });
-    const santiereMele = santiere.filter((s) => inEchipa(s.echipa, currentUser?.id));
+    const santiereMele = santiere.filter((s) => lucreazaInEchipa(s.echipa, currentUser?.id));
     const santiereFaraRaportAzi = dupa17 ? santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
     const zileRestante = (() => {
         const out = [];
@@ -12846,7 +12859,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                 return null;
             const numeSant = {};
             santiere.forEach((s) => { numeSant[s.id] = s.nume; });
-            const idActiveMele = new Set(santiere.filter((s) => s.status === 'Activ' && inEchipa(s.echipa, currentUser?.id)).map((s) => s.id));
+            const idActiveMele = new Set(santiere.filter((s) => s.status === 'Activ' && lucreazaInEchipa(s.echipa, currentUser?.id)).map((s) => s.id));
             const lista = (restanteSantier || []).filter((r) => !r.rezolvat && !r.sters).filter((r) => isManager ? true : idActiveMele.has(r.santierId));
             if (!lista.length)
                 return null;
@@ -13023,7 +13036,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                 const eu = echipaS.find((e) => e.userId === currentUser?.id);
                 const santierInPauzaAzi = s.status === 'Pauză' && s.statusSchimbatLa === azi;
                 const suntInPauza = santierInPauzaAzi;
-                const activ = s.status === 'Activ' && eu?.status !== 'pauza';
+                const activ = s.status === 'Activ' && !!eu && eu.status !== 'pauza';
                 return { s, suntInPauza, activ, echipaS, eu };
             })
                 .filter((x) => x.activ || x.suntInPauza);
@@ -18029,7 +18042,7 @@ function App() {
         }
         else {
             if (dupa17B)
-                n += santiere.filter((s) => s.status === 'Activ' && inEchipa(s.echipa, u.id) && seCereRaport(s, aziB) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziB)).length;
+                n += santiere.filter((s) => s.status === 'Activ' && lucreazaInEchipa(s.echipa, u.id) && seCereRaport(s, aziB) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziB)).length;
         }
         const acumLocal = (() => { const d = new Date(); return dataLocala(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); })();
         n += (mementouri || []).filter((m) => !m.gata && (m.pentruUserId ? m.pentruUserId === u.id : m.creatId === u.id) && `${m.data}T${m.ora || '09:00'}` <= acumLocal).length;
@@ -18037,7 +18050,7 @@ function App() {
             n += (restanteSantier || []).filter((r) => !r.rezolvat && !r.sters).length;
         }
         else if (!RESTANTE_DOAR_MANAGER) {
-            const idSant = new Set(santiere.filter((s) => s.status === 'Activ' && inEchipa(s.echipa, u.id)).map((s) => s.id));
+            const idSant = new Set(santiere.filter((s) => s.status === 'Activ' && lucreazaInEchipa(s.echipa, u.id)).map((s) => s.id));
             n += (restanteSantier || []).filter((r) => !r.rezolvat && !r.sters && idSant.has(r.santierId)).length;
         }
         return n;
@@ -18081,7 +18094,7 @@ function App() {
             notifica(currentUser.id, { title: '⛔ Rapoarte netrimise azi', body: `Nu s-a trimis raport la: ${nume}${activeFaraRaport.length > 4 ? ` +${activeFaraRaport.length - 4}` : ''}.`, tag: 'raport-netrimis' });
         }
         else {
-            const meleFara = activeFaraRaport.filter((s) => inEchipa(s.echipa, currentUser.id));
+            const meleFara = activeFaraRaport.filter((s) => lucreazaInEchipa(s.echipa, currentUser.id));
             if (!meleFara.length)
                 return;
             const flag = 'memRaportEu_' + aziR + '_' + acum.getHours();
