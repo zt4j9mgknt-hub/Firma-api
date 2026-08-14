@@ -8,6 +8,31 @@
 //
 // Fără cheie, ruta întoarce 500 și aplicația folosește automat căutarea locală.
 
+
+/* --- Verificarea biletului de acces (acelasi cod ca in auth.js si data.js, dinadins
+   duplicat: rutele din /api sunt fisiere separate si nu vrem dependente intre ele). --- */
+import crypto from 'crypto';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+function verifyToken(token) {
+  if (!token) return null;
+  const parts = String(token).split('.');
+  if (parts.length !== 2) return null;
+  const [data, sig] = parts;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+  if (sig !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch { return null; }
+}
+function autentifica(req) {
+  const h = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';
+  const dinAntet = String(h).startsWith('Bearer ') ? String(h).slice(7) : null;
+  const dinAdresa = (req.query && req.query.token) ? String(req.query.token) : null;
+  return verifyToken(dinAntet || dinAdresa);
+}
+
 const MODEL_IMPLICIT = 'gemini-2.5-flash';
 // Dacă modelul cerut nu există (Google mai schimbă numele), încercăm pe rând și astea.
 const REZERVE = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
@@ -61,10 +86,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Doar POST.' });
   }
-  // Gate simplu: cere tokenul aplicației (trimis de authFetch ca Bearer).
-  const auth = (req.headers && req.headers.authorization) ? String(req.headers.authorization) : '';
-  if (!auth.startsWith('Bearer ') || auth.length < 12) {
-    return res.status(401).json({ error: 'Lipsește tokenul aplicației.' });
+  /* ÎNAINTE se verifica doar că textul începe cu „Bearer " și are peste 12 caractere —
+     adică „Bearer 123456" trecea. Oricine de pe internet putea folosi cheia ta de Google
+     ca proxy gratuit, nelimitat, până se termina cota (sau până plăteai tu). Acum se
+     verifică semnătura. */
+  const sesiune = autentifica(req);
+  if (!sesiune) {
+    return res.status(401).json({ error: 'Sesiune invalidă sau expirată — te rog reloghează-te.' });
   }
 
   const key = process.env.GEMINI_API_KEY;
