@@ -1850,7 +1850,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v02.40-securitate';
+const APP_VERSION = 'v02.41-randament';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -11916,7 +11916,115 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
             })),
             React.createElement("div", { className: "text-[10px] mt-2", style: { color: 'var(--muted2)' } }, "Estimare din rapoartele zilnice: ore \u00D7 tarif + materiale (pre\u021B de v\u00E2nzare), minus ore \u00D7 cost/or\u0103 + materiale la achizi\u021Bie. Nu \u021Bine loc de contabilitate."))))));
 }
-function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, cereriAlocare, clients, restanteSantier, setTab, setPendingSiteNav, currentUser }) {
+function Randament({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, company, setTab }) {
+    const [deschis, setDeschis] = useState(false);
+    const [fereastra, setFereastra] = useState('contabil');
+    const azi = dataLocala(new Date());
+    const perDe = String(company?.costPerDe || '').trim();
+    const perLa = String(company?.costPerLa || '').trim();
+    const cPers = Number(company?.costPersonalPer) || 0;
+    const cReg = Number(company?.costRegiePer) || 0;
+    const areCifre = !!perDe && !!perLa && (cPers + cReg) > 0;
+    const cost = useMemo(() => (areCifre
+        ? costOraReal({ rapoarte, de: perDe, la: perLa, costPersonal: cPers, costRegie: cReg })
+        : null), [rapoarte, perDe, perLa, cPers, cReg, areCifre]);
+    const [de, la] = fereastra === 'luna' ? [azi.slice(0, 7) + '-01', azi]
+        : fereastra === 'an' ? [azi.slice(0, 4) + '-01-01', azi]
+            : [perDe || azi.slice(0, 4) + '-01-01', perLa || azi];
+    const costOra = cost ? cost.totalPeOra : (Number(company?.costOraMediu) || 0);
+    const oameni = useMemo(() => randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la, costOra })
+        .filter((o) => o.ore > 0).sort((a, b) => b.valoare - a.valoare), [rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la, costOra]);
+    const totalOre = oameni.reduce((s, o) => s + o.ore, 0);
+    const totalVal = oameni.reduce((s, o) => s + o.valoare, 0);
+    const totalCost = totalOre * costOra;
+    const leiPeOra = totalOre > 0 ? totalVal / totalOre : 0;
+    const tile = (eticheta, valoare, nota, culoare) => (React.createElement("div", { className: "rounded-lg px-3 py-2 min-w-0", style: { background: 'var(--panel2)' } },
+        React.createElement("div", { className: "text-[10px] uppercase tracking-wide truncate", style: { color: 'var(--muted2)' } }, eticheta),
+        React.createElement("div", { className: "text-sm font-semibold", style: { color: culoare || 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, valoare),
+        nota && React.createElement("div", { className: "text-[10px] mt-0.5", style: { color: 'var(--muted2)' } }, nota)));
+    const ron = (x) => Math.round(x).toLocaleString('ro-RO') + ' lei';
+    const ora = (x) => (Math.round(x * 10) / 10).toLocaleString('ro-RO') + ' lei/h';
+    return (React.createElement("div", { className: "rounded-xl mb-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+        React.createElement("button", { onClick: () => setDeschis((d) => !d), className: "w-full flex items-center gap-2 px-3 py-2.5 text-left" },
+            React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--acc1)' } }, "\uD83D\uDCC8 Randament \u2014 c\u00E2t produce o or\u0103 fa\u021B\u0103 de c\u00E2t cost\u0103"),
+            React.createElement("span", { className: "ml-auto text-xs shrink-0", style: { color: 'var(--muted2)' } }, deschis ? '▾' : '▸')),
+        deschis && (React.createElement("div", { className: "px-3 pb-3 space-y-2.5" },
+            !areCifre ? (React.createElement("div", { className: "text-[11px] rounded-lg px-3 py-2.5", style: { background: '#E9A23B15', color: 'var(--acc3)', border: '1px solid #E9A23B44' } },
+                "Ca s\u0103 calculez costul adev\u0103rat al unei ore am nevoie de patru cifre din situa\u021Bia lunar\u0103 a contabilei: perioada, totalul de salarii cu taxe \u0219i restul cheltuielilor. Le treci o dat\u0103 \u00EEn \u201E\u2699 Firma mea\", la \u201EDin situa\u021Bia contabilei\". Orele le iau singur din pontaj.",
+                React.createElement("div", { className: "mt-2" },
+                    React.createElement("button", { onClick: () => setTab && setTab('firma'), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "\u2699 Mergi la Firma mea")))) : (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "grid grid-cols-3 gap-2" },
+                    tile('Costă ora (personal)', ora(cost.personalPeOra), 'salarii + taxe'),
+                    tile('Costă ora (tot)', ora(cost.totalPeOra), 'plus regie și uzură'),
+                    tile('Prag tarif', ora(cost.pragTarif), 'sub ăsta lucrezi în pierdere', 'var(--acc3)')),
+                React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted)' } },
+                    "Pe ",
+                    fmtData(perDe),
+                    " \u2013 ",
+                    fmtData(perLa),
+                    ": ",
+                    React.createElement("b", null,
+                        Math.round(cost.orePlatite).toLocaleString('ro-RO'),
+                        " ore pl\u0103tite"),
+                    " la ",
+                    cost.oameni,
+                    " ",
+                    cost.oameni === 1 ? 'om' : 'oameni',
+                    ", din care ",
+                    React.createElement("b", null,
+                        Math.round(cost.orePierdute).toLocaleString('ro-RO'),
+                        " ore (",
+                        Math.round(cost.procentPierdut),
+                        "%)"),
+                    " n-au ajuns \u00EEn lucrare (timp neproductiv raportat). De asta pragul e mai mare dec\u00E2t costul: \u00EEl pl\u0103te\u0219ti pe tot, dar facturezi doar restul."))),
+            React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" },
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Tabelul pe:"),
+                [['contabil', 'perioada contabilei'], ['luna', 'luna asta'], ['an', 'anul asta']].map(([k, et]) => (React.createElement("button", { key: k, onClick: () => setFereastra(k), disabled: k === 'contabil' && !areCifre, className: "btnMic text-[11px] px-2 py-1 rounded-lg disabled:opacity-40", style: { color: fereastra === k ? '#14181C' : 'var(--muted)', background: fereastra === k ? 'var(--acc1)' : 'var(--panel2)' } }, et)))),
+            oameni.length === 0 ? (React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Nu sunt ore raportate \u00EEn perioada asta.")) : (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "space-y-0.5" }, oameni.map((o) => {
+                    const lph = o.ore > 0 ? o.valoare / o.ore : 0;
+                    const bun = costOra > 0 && lph >= costOra;
+                    return (React.createElement("div", { key: o.nume, className: "flex items-center gap-2 px-2 py-1.5 rounded", style: { background: 'var(--panel2)' } },
+                        React.createElement("span", { className: "text-[11px] min-w-0 flex-1 truncate", style: { color: 'var(--text)' } }, o.nume),
+                        React.createElement("span", { className: "text-[10px] shrink-0 w-14 text-right", style: { color: 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } },
+                            Math.round(o.ore),
+                            " h"),
+                        React.createElement("span", { className: "text-[11px] shrink-0 w-20 text-right", style: { color: 'var(--muted)', fontFamily: "'JetBrains Mono', monospace" } }, ron(o.valoare)),
+                        React.createElement("span", { className: "text-[11px] shrink-0 w-20 text-right font-semibold", style: { color: costOra > 0 ? (bun ? 'var(--acc2)' : 'var(--acc4)') : 'var(--muted)', fontFamily: "'JetBrains Mono', monospace" } }, ora(lph))));
+                })),
+                React.createElement("div", { className: "flex items-center gap-2 px-2 pt-1.5", style: { borderTop: '1px solid var(--border)' } },
+                    React.createElement("span", { className: "text-[11px] min-w-0 flex-1 font-semibold", style: { color: 'var(--text)' } }, "Total"),
+                    React.createElement("span", { className: "text-[10px] shrink-0 w-14 text-right", style: { color: 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } },
+                        Math.round(totalOre),
+                        " h"),
+                    React.createElement("span", { className: "text-[11px] shrink-0 w-20 text-right", style: { color: 'var(--muted)', fontFamily: "'JetBrains Mono', monospace" } }, ron(totalVal)),
+                    React.createElement("span", { className: "text-[11px] shrink-0 w-20 text-right font-semibold", style: { color: costOra > 0 ? (leiPeOra >= costOra ? 'var(--acc2)' : 'var(--acc4)') : 'var(--muted)', fontFamily: "'JetBrains Mono', monospace" } }, ora(leiPeOra))),
+                costOra > 0 && (React.createElement("div", { className: "text-[11px] rounded-lg px-2.5 py-2", style: { background: leiPeOra >= costOra ? '#4CAF7D15' : '#E0525215', color: leiPeOra >= costOra ? 'var(--acc2)' : 'var(--acc4)', border: '1px solid ' + (leiPeOra >= costOra ? '#4CAF7D44' : '#E0525244') } }, leiPeOra >= costOra
+                    ? React.createElement(React.Fragment, null,
+                        "O or\u0103 lucrat\u0103 aduce ",
+                        React.createElement("b", null, ora(leiPeOra)),
+                        " \u0219i cost\u0103 ",
+                        React.createElement("b", null, ora(costOra)),
+                        ". \u00CE\u021Bi r\u0103m\u00E2n ",
+                        ora(leiPeOra - costOra),
+                        " pe or\u0103, adic\u0103 ",
+                        ron(totalVal - totalCost),
+                        " pe perioada asta.")
+                    : React.createElement(React.Fragment, null,
+                        "O or\u0103 lucrat\u0103 aduce ",
+                        React.createElement("b", null, ora(leiPeOra)),
+                        " dar cost\u0103 ",
+                        React.createElement("b", null, ora(costOra)),
+                        ". Pierzi ",
+                        ora(costOra - leiPeOra),
+                        " la fiecare or\u0103 lucrat\u0103 \u2014 ",
+                        ron(totalCost - totalVal),
+                        " pe perioada asta. Ori urci tarifele cu ",
+                        Math.round(((costOra / Math.max(leiPeOra, 0.01)) - 1) * 100),
+                        "%, ori scazi orele care nu ajung \u00EEn lucrare."))),
+                React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, "\u201EProdus\" = orele \u00D7 tariful \u0219antierului (la \u0219antierele orare) sau cantit\u0103\u021Bile raportate \u00D7 pre\u021Bul din lista de pozi\u021Bii. Nu e ce ai facturat, e ce ai lucrat.")))))));
+}
+function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, cereriAlocare, clients, restanteSantier, pozitiiSantier, materialeListaSantier, setTab, setPendingSiteNav, currentUser }) {
     const roleIcon = ROLES.find((r) => r.id === currentUser?.rol)?.icon || '👤';
     const [cashOpen, setCashOpen] = useState(false);
     const [factOpen, setFactOpen] = useState(false);
@@ -11928,6 +12036,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     const sumaDeIncasat = facturiDeIncasat.reduce((s, i) => s + calcSubtotal(i.items) * (1 + (Number(i.tva) || 0) / 100), 0);
     const santiereActive = santiere.filter((s) => s.status === 'Activ').length;
     const azi = dataLocala(new Date());
+    const zileInUrma = (n) => { const d = new Date(azi + 'T00:00:00'); d.setDate(d.getDate() - n); return dataLocala(d); };
     const isManager = currentUser?.rol === 'Manager';
     const dupa17 = (new Date().getHours() * 60 + new Date().getMinutes()) >= (17 * 60 + 1);
     let totalDeFacut = 0;
@@ -12009,6 +12118,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6" }, cards.map((c) => (React.createElement("button", { key: c.label, onClick: () => setTab(c.tab), className: "text-left rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
             React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, c.label),
             React.createElement("div", { className: "text-lg font-medium", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, c.value))))),
+        isManager && React.createElement(Randament, { rapoarte: rapoarte, santiere: santiere, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, company: company, setTab: setTab }),
         isManager && React.createElement(TabloCalitate, { restante: restanteSantier, santiere: santiere, setTab: setTab, setPendingSiteNav: setPendingSiteNav }),
         isManager && React.createElement(Profitabilitate, { santiere: santiere, rapoarte: rapoarte, materials: materials, company: company, setTab: setTab, setPendingSiteNav: setPendingSiteNav }),
         isManager && (() => {
@@ -12026,19 +12136,27 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             const sumIncasatLuna = incasatLuna.reduce((s, i) => s + totalDoc(i), 0);
             const devizeLunaEm = devize.filter((d) => d.status !== 'Ciornă' && String(d.data || '').startsWith(lunaCur));
             const sumDevizeLuna = devizeLunaEm.reduce((s, d) => s + totalDoc(d), 0);
+            const devizePeFacturi = new Set();
+            (invoices || []).forEach((i) => (i.devizeIds || []).forEach((x) => devizePeFacturi.add(x)));
             const deFacturat = [];
             (clients || []).forEach((c) => {
                 const factC = invoices.filter((i) => i.clientId === c.id);
                 const ultimaF = factC.map((i) => i.data).sort().slice(-1)[0] || null;
-                const devNefact = devize.filter((d) => d.clientId === c.id && d.status !== 'Ciornă' && !factC.some((i) => String(i.data || '') >= String(d.data || '')));
+                const devNefact = devize.filter((d) => d.clientId === c.id && d.status !== 'Ciornă'
+                    && !devizePeFacturi.has(d.id) && String(d.data || '') <= zileInUrma(7));
                 const areFacturaLuna = factC.some((i) => String(i.data || '').startsWith(lunaCur));
                 const santC = santiere.filter((s) => s.benefClientId === c.id);
                 const lucruLuna = santC.some((s) => rapoarte.some((r) => r.santierId === s.id && String(r.data || '').startsWith(lunaCur)));
-                if (devNefact.length)
-                    deFacturat.push({ c, motiv: `deviz emis pe ${fmtData(devNefact[0].data)}, fără factură după el`, suma: devNefact.reduce((s, d) => s + totalDoc(d), 0), ultimaF });
+                if (devNefact.length) {
+                    const vechi = devNefact.map((d) => String(d.data || '')).sort()[0];
+                    deFacturat.push({ c, motiv: `deviz din ${fmtData(vechi)}, netrecut pe nicio factură`, suma: devNefact.reduce((s, d) => s + totalDoc(d), 0), ultimaF });
+                }
                 else if (lucruLuna && !areFacturaLuna)
                     deFacturat.push({ c, motiv: 'lucrări luna asta, fără factură emisă', suma: null, ultimaF });
             });
+            const nefacturat = muncaNefacturata({ rapoarte, santiere, devize, pozitiiSantier, materialeListaSantier });
+            const nefacturatVechi = nefacturat.filter((x) => x.vechime >= 14 && x.ore > 0);
+            const nefacturatTotal = nefacturatVechi.reduce((s, x) => s + (x.sigur ? x.valoare : 0), 0);
             const stat = (label, val, culoare) => (React.createElement("div", { className: "rounded-lg px-3 py-2", style: { background: 'var(--panel2)' } },
                 React.createElement("div", { className: "text-[10px] uppercase tracking-wide", style: { color: 'var(--muted2)' } }, label),
                 React.createElement("div", { className: "text-sm font-semibold", style: { color: culoare || 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, val)));
@@ -12280,6 +12398,32 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                                     x.tarif ? ` × ${money(x.tarif)}` : '',
                                     x.materialeVal ? ` + materiale ${money(x.materialeVal)}` : '')),
                             React.createElement("span", { className: "shrink-0 font-semibold", style: { color: 'var(--acc2)', fontFamily: "'JetBrains Mono', monospace" } }, money(x.manopera + x.materialeVal)))))))))),
+                nefacturatVechi.length > 0 && (React.createElement("button", { onClick: () => setTab('santiere'), className: "w-full text-left rounded-xl p-4 mb-3", style: { background: '#E0525214', border: '1px solid #E0525266', borderLeft: '4px solid #E05252' } },
+                    React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1.5" },
+                        React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: 'var(--acc4)' } }, "\u23F3 Munc\u0103 f\u0103cut\u0103, f\u0103r\u0103 deviz"),
+                        nefacturatTotal > 0 && React.createElement("span", { className: "shrink-0 text-sm font-bold", style: { color: 'var(--acc4)', fontFamily: "'JetBrains Mono', monospace" } }, money(nefacturatTotal))),
+                    React.createElement("div", { className: "space-y-1" }, nefacturatVechi.slice(0, 5).map((x) => (React.createElement("div", { key: x.santier.id, className: "flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg", style: { background: 'var(--panel2)' } },
+                        React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--text)' } },
+                            "\uD83C\uDFD7 ",
+                            React.createElement("b", null, x.santier.nume),
+                            " \u00B7 ",
+                            x.nrZile,
+                            " ",
+                            x.nrZile === 1 ? 'zi' : 'zile',
+                            " \u00B7 ",
+                            Math.round(x.ore),
+                            " h"),
+                        React.createElement("span", { className: "shrink-0 text-[10px] text-right", style: { color: 'var(--muted2)' } },
+                            "din ",
+                            fmtData(x.primaZi),
+                            " \u00B7 ",
+                            x.vechime,
+                            " zile",
+                            React.createElement("br", null),
+                            React.createElement("span", { style: { color: x.sigur ? 'var(--acc4)' : 'var(--muted2)' } }, x.sigur ? money(x.valoare) : 'fără preț pus')))))),
+                    React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--muted)' } },
+                        "Zilele astea nu sunt acoperite de niciun deviz. Intri pe \u0219antier \u2192 \u201EGenereaz\u0103 deviz\" \u0219i porne\u0219te de la data ar\u0103tat\u0103.",
+                        nefacturatVechi.length > 5 && ` (+ încă ${nefacturatVechi.length - 5})`))),
                 deFacturat.length > 0 && (React.createElement("div", { className: "rounded-xl p-4 mb-3", style: { background: 'var(--panel)', border: '1px solid #E9A23B66', borderLeft: '4px solid #E9A23B' } },
                     React.createElement("div", { className: "flex items-center justify-between mb-2 gap-2" },
                         React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--acc3)' } },
@@ -12310,6 +12454,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'randament-v1', aud: 'manager', data: '14.08.2026', titlu: '\U0001F4C8 Randament \u2014 c\u00e2t produce o or\u0103 fa\u021b\u0103 de c\u00e2t cost\u0103',
+        text: 'Pe prima pagin\u0103 ai un card nou: \u201e\U0001F4C8 Randament".\n\nP\u00e2n\u0103 acum, „c\u00e2t te cost\u0103 o or\u0103 de electrician" era un num\u0103r scris de tine \u00een „Firma mea". Se \u00eenvechea la fiecare m\u0103rire de salariu f\u0103r\u0103 s\u0103 afle nimeni, iar din el ie\u0219eau toate cifrele de profit. Acum se CALCULEAZ\u0102: orele vin din pontajul pe care \u00eel ai deja, banii \u00eei treci o singur\u0103 dat\u0103, exact cum \u021bi-i d\u0103 contabila.\n\nLa „\u2699 Firma mea" ai o grup\u0103 nou\u0103, „Din situa\u021bia contabilei": perioada, totalul de salarii cu taxe, \u0219i restul cheltuielilor. At\u00e2t. Aplica\u021bia \u00eemparte la orele tale \u0219i \u00ee\u021bi d\u0103 trei cifre:\n\n\u2022 c\u00e2t te cost\u0103 ora de om (salarii + taxe)\n\u2022 c\u00e2t te cost\u0103 ora cu tot cu regie (combustibil, asigur\u0103ri, banc\u0103, leasing, uzur\u0103)\n\u2022 PRAGUL DE TARIF \u2014 acela\u0219i cost, dar \u00eemp\u0103r\u021bit doar la orele care chiar ajung \u00een lucrare. Sub num\u0103rul \u0103sta lucrezi \u00een pierdere, oric\u00e2t de ocupat ai fi.\n\nSub ele, fiecare om: c\u00e2te ore a f\u0103cut, c\u00e2t a produs, c\u00e2\u021bi lei pe or\u0103 \u2014 verde dac\u0103 e peste cost, ro\u0219u dac\u0103 e sub. \u0218i, la final, dac\u0103 e\u0219ti pe pierdere, \u00ee\u021bi spune cu c\u00e2t la sut\u0103 ar trebui urcate tarifele.' },
+    { id: 'nefacturat-v1', aud: 'manager', data: '14.08.2026', titlu: '\u23F3 Munc\u0103 f\u0103cut\u0103, f\u0103r\u0103 deviz \u2014 nu se mai ascunde',
+        text: 'Dou\u0103 g\u0103uri prin care munca f\u0103cut\u0103 \u0219i nefacturat\u0103 disp\u0103rea de pe ecran. Am\u00e2ndou\u0103 \u00eenchise.\n\n1) UN DEVIZ EMIS DISP\u0102REA DIN „De facturat" dac\u0103 se emitea, dup\u0103 el, ORICE alt\u0103 factur\u0103 c\u0103tre acela\u0219i client \u2014 chiar dac\u0103 era pentru cu totul alt\u0103 lucrare. Un deviz de 20.000 de lei putea fi acoperit de o factur\u0103 de 300 de lei pentru altceva. Acum se verific\u0103 leg\u0103tura adev\u0103rat\u0103: e facturat doar devizul care chiar apare pe o factur\u0103. La fel ca \u00een Consilier \u2014 cele dou\u0103 ecrane nu mai spun lucruri diferite despre aceia\u0219i bani.\n\n2) MUNCA PENTRU CARE NU S-A F\u0102CUT NICIODAT\u0102 UN DEVIZ nu ap\u0103rea NIC\u0102IERI, oric\u00e2t de veche era. Acum ai sus, ro\u0219u, cardul „\u23F3 Munc\u0103 f\u0103cut\u0103, f\u0103r\u0103 deviz": pe fiecare \u0219antier, c\u00e2te zile \u0219i c\u00e2te ore nu sunt acoperite de niciun deviz, de c\u00e2nd stau a\u0219a, \u0219i c\u00e2t fac \u00een bani. Cele mai vechi sus. Apare doar ce e mai vechi de dou\u0103 s\u0103pt\u0103m\u00e2ni, ca s\u0103 nu te bat\u0103 la cap degeaba. Unde nu se poate calcula suma (pozi\u021bii f\u0103r\u0103 pre\u021b \u00een list\u0103), scrie „f\u0103r\u0103 pre\u021b pus" \u2014 nu inventeaz\u0103 o cifr\u0103.' },
     { id: 'securitate-v1', aud: 'manager', data: '14.08.2026', titlu: '\U0001F512 Verificare de securitate \u2014 o gaur\u0103 grav\u0103, \u00eenchis\u0103',
         text: 'Am trecut prin tot ce \u021bine de securitate: serverul, autentificarea, ce ajunge pe telefoane. Am g\u0103sit o problem\u0103 grav\u0103 \u0219i c\u00e2teva u\u0219i l\u0103sate deschise. Toate sunt reparate.\n\n\u2022 ORICE ANGAJAT PUTEA DEVENI MANAGER. Aplica\u021bia bloca cheia „users" (unde stau conturile \u0219i parolele) \u2014 dar blocajul se ocolea trimi\u021b\u00e2nd cheia \u00eentr-o form\u0103 u\u0219or diferit\u0103. Cine \u0219tia trucul putea rescrie lista de utilizatori: s\u0103 se pun\u0103 Manager, sau s\u0103 \u0219tearg\u0103 parolele tuturor. Acum cheia e verificat\u0103 \u00eenainte de orice, \u0219i se accept\u0103 doar litere \u0219i cifre.\n\n\u2022 TREI RUTE NU VERIFICAU DELOC CINE ESTE. Notific\u0103rile, \u00eenc\u0103rcarea fi\u0219ierelor \u0219i asistentul AI cereau „un token", dar se mul\u021bumeau cu orice text. Oricine de pe internet putea trimite notific\u0103ri cu numele firmei pe telefoanele echipei, putea urca fi\u0219iere de 200 MB pe factura ta, sau putea folosi cheia ta de AI. Acum toate trei verific\u0103 semn\u0103tura adev\u0103rat\u0103.\n\n\u2022 CNP-ul TUTUROR AJUNGEA LA TO\u021aI. Orice angajat logat primea CNP-ul complet al fiec\u0103rui coleg. Acum \u00eel prime\u0219te doar Managerul (\u00eei trebuie la adeverin\u021be) \u0219i fiecare pe al lui; ceilal\u021bi primesc doar partea din care se cite\u0219te ziua de na\u0219tere, deci anivers\u0103rile merg neschimbat.\n\n\u2022 PAROLA SE PUTEA GHICI LA NESF\u00ceR\u0218IT. Acum, dup\u0103 10 \u00eencerc\u0103ri gre\u0219ite de pe aceea\u0219i conexiune, se a\u0219teapt\u0103 15 minute.\n\n\u2022 IE\u0218IREA DIN CONT L\u0102SA TOTUL PE TELEFON \u2014 inclusiv biletul de acces \u0219i copiile cu facturi, clien\u021bi \u0219i ore. Acum se \u0219terg. Rapoartele netrimise \u0219i ciornele R\u0102M\u00c2N \u2014 aia e munca ta, se trimite dup\u0103 relogare.\n\n\u2022 Nu se mai poate \u0219terge ultimul Manager \u0219i nu te po\u021bi \u0219terge pe tine \u2014 o ap\u0103sare gre\u0219it\u0103 bloca firma pe veci.' },
     { id: 'reparatii-verificare-v1', aud: 'toti', data: '13.08.2026', titlu: '\U0001F527 Am verificat toat\u0103 aplica\u021bia \u0219i am reparat',
@@ -12992,6 +13140,91 @@ const SANTIER_ORAR = (s) => {
     const m = String(s?.modFacturare || s?.tipFacturare || 'orar');
     return m === 'orar' || m === 'orar_lucrari';
 };
+function costOraReal({ rapoarte, de, la, costPersonal, costRegie }) {
+    let minutePlatite = 0, minutePierdute = 0;
+    const oameni = new Set(), zile = new Set();
+    unificaRapoarte(rapoarte || []).forEach((r) => {
+        const d = String(r.data || '');
+        if (!d || (de && d < de) || (la && d > la))
+            return;
+        (r.persoane || []).forEach((p) => {
+            const n = String(p && p.nume || '').trim();
+            if (!n)
+                return;
+            oameni.add(n);
+            zile.add(d);
+            minutePlatite += minuteLucrate(p);
+        });
+        (r.timpNeproductiv || []).forEach((t) => { minutePierdute += minutePierduteRand(t); });
+    });
+    const orePlatite = minutePlatite / 60;
+    const orePierdute = Math.min(orePlatite, minutePierdute / 60);
+    const oreFacturabile = Math.max(0, orePlatite - orePierdute);
+    const cp = Number(costPersonal) || 0;
+    const cr = Number(costRegie) || 0;
+    return {
+        orePlatite, orePierdute, oreFacturabile, oameni: oameni.size, zile: zile.size,
+        costPersonal: cp, costRegie: cr, costTotal: cp + cr,
+        personalPeOra: orePlatite > 0 ? cp / orePlatite : 0,
+        totalPeOra: orePlatite > 0 ? (cp + cr) / orePlatite : 0,
+        pragTarif: oreFacturabile > 0 ? (cp + cr) / oreFacturabile : 0,
+        procentPierdut: orePlatite > 0 ? (orePierdute / orePlatite) * 100 : 0,
+        areDate: orePlatite > 0 && (cp + cr) > 0,
+    };
+}
+function muncaNefacturata({ rapoarte, santiere, devize, pozitiiSantier, materialeListaSantier, pana }) {
+    const azi = pana || dataLocala(new Date());
+    const unif = unificaRapoarte(rapoarte || []);
+    const out = [];
+    (santiere || []).forEach((s) => {
+        const rapS = unif.filter((r) => r.santierId === s.id && String(r.data || '') && String(r.data) <= azi);
+        if (!rapS.length)
+            return;
+        const ultimaDev = ultimaZiDevizata(devize, s.id);
+        const nedevizate = rapS.filter((r) => !ultimaDev || String(r.data) > ultimaDev);
+        if (!nedevizate.length)
+            return;
+        const zile = nedevizate.map((r) => String(r.data)).sort();
+        let minute = 0;
+        nedevizate.forEach((r) => (r.persoane || []).forEach((p) => {
+            if (String(p && p.nume || '').trim())
+                minute += minuteFacturabile(unif, r, p);
+        }));
+        const ore = minute / 60;
+        let valoare = 0, sigur = true;
+        if (SANTIER_ORAR(s)) {
+            valoare = ore * (Number(s.tarifOrar) || 0);
+            if (!(Number(s.tarifOrar) > 0))
+                sigur = false;
+        }
+        else {
+            const poz = (pozitiiSantier || []).filter((p) => p.santierId === s.id);
+            const mat = (materialeListaSantier || []).filter((m) => m.santierId === s.id);
+            nedevizate.forEach((r) => {
+                (r.lucrariApartamente || []).forEach((l) => lucrariDinRand(l).forEach((w) => {
+                    valoare += (Number(w.cantitate) || 0) * pretDinListe(w.denumire, poz, mat);
+                }));
+                (r.pozitiiExecutate || []).forEach((p) => {
+                    valoare += (Number(p.cantitate) || 0) * pretDinListe(p.denumire, poz, mat);
+                });
+            });
+            if (!valoare)
+                sigur = false;
+        }
+        let vechime = 0;
+        try {
+            vechime = Math.round((new Date(azi + 'T00:00:00') - new Date(zile[0] + 'T00:00:00')) / 86400000);
+        }
+        catch (_) { }
+        out.push({
+            santier: s, nrZile: zile.length, ore, valoare, sigur, vechime,
+            primaZi: zile[0], ultimaZi: zile[zile.length - 1],
+            deLa: ultimaDev ? ziuaUrmatoare(ultimaDev) : zile[0],
+            areDeviz: !!ultimaDev,
+        });
+    });
+    return out.sort((a, b) => b.vechime - a.vechime);
+}
 function randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la, costOra }) {
     const peOm = {};
     const adauga = (nume, camp, val) => {
@@ -13449,6 +13682,12 @@ function CompanyTab({ company, setCompany, persist, santiere, setSantiere }) {
         ['Costuri (pentru Consilier)', [
                 ['costOraMediu', 'Cât te costă o oră de electrician, cu taxe (lei)'],
                 ['tintaMarja', 'Marja pe care o vrei pe manoperă, % (implicit 30)'],
+            ]],
+        ['Din situația contabilei (ca să se calculeze singur costul orei)', [
+                ['costPerDe', 'Perioada — de la (an-lună-zi, ex: 2026-01-01)'],
+                ['costPerLa', 'Perioada — până la (ex: 2026-07-31)'],
+                ['costPersonalPer', 'Total salarii + tichete + contribuții pe perioada aia (lei)'],
+                ['costRegiePer', 'Restul cheltuielilor pe perioada aia (combustibil, asigurări, bancă, leasing, amortizare…) (lei)'],
             ]],
     ];
     const zonaImagine = (camp, titlu, explicatie, ref, inaltime) => (React.createElement("div", { className: "rounded-lg p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
@@ -18515,7 +18754,7 @@ function App() {
                             etichetaInapoi),
                         React.createElement("button", { onClick: mergiInainte, disabled: !potInainte, className: "btn3d text-xs font-semibold px-3 py-2", style: { color: 'var(--acc1)' } }, "\u00CEnainte \u2192"))),
                     React.createElement(Prinde, null, loading ? (React.createElement(EcranIncarcare, null)) : !tab ? (effectiveUser.rol === 'Manager'
-                        ? React.createElement(Dashboard, { company: company, devize: devize, offers: offers, invoices: invoices, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, concedii: concedii, cereriAlocare: cereriAlocare, clients: clients, restanteSantier: restanteSantier, setTab: setTab, setPendingSiteNav: setPendingSiteNav, currentUser: effectiveUser })
+                        ? React.createElement(Dashboard, { company: company, devize: devize, offers: offers, invoices: invoices, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, concedii: concedii, cereriAlocare: cereriAlocare, clients: clients, restanteSantier: restanteSantier, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab, setPendingSiteNav: setPendingSiteNav, currentUser: effectiveUser })
                         : React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser })) : tabBlocatTest ? (React.createElement("div", { className: "max-w-md mx-auto mt-16 text-center rounded-xl p-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
                         React.createElement("div", { style: { fontSize: 34 } }, "\uD83D\uDD12"),
                         React.createElement("div", { className: "text-base mt-2", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600 } }, "Sec\u021Biune \u00EEn preg\u0103tire"),
