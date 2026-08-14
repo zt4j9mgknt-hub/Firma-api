@@ -79,11 +79,26 @@ export default async function handler(req, res) {
     if (action === 'login') {
       const username = String(body.username || '').trim();
       const password = String(body.password || '').trim();
+      /* FRANA LA GHICIT PAROLE: maximum 10 incercari la 15 minute de pe aceeasi adresa de
+         internet. Nimeni din firma nu greseste parola de 10 ori la rand, dar cineva care
+         incearca la nesfarsit se opreste aici. Daca frana insasi da eroare, logarea ramane
+         posibila — mai bine o firma care lucreaza decat una blocata de o pana de retea. */
+      const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'nec';
+      const cheieFrana = 'firma:frana:' + ip.replace(/[^0-9a-zA-Z.:]/g, '');
+      try {
+        const rF = await fetch(`${base}/incr/${encodeURIComponent(cheieFrana)}`, { headers: { Authorization: `Bearer ${token}` } });
+        const dF = await rF.json();
+        const nr = Number(dF.result) || 0;
+        if (nr === 1) await fetch(`${base}/expire/${encodeURIComponent(cheieFrana)}/900`, { headers: { Authorization: `Bearer ${token}` } });
+        if (nr > 10) return res.status(429).json({ error: 'Prea multe incercari de logare. Asteapta 15 minute si incearca din nou.' });
+      } catch (_) {}
       const users = await getUsers();
       const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-      if (!user) return res.status(401).json({ error: 'Username sau parola gresite.' });
+      // Aceeasi intarziere si acelasi mesaj in ambele cazuri: nu se poate afla din afara
+      // daca un username exista sau nu, iar un atac automat merge de cateva ori mai incet.
+      if (!user) { await new Promise((r) => setTimeout(r, 400)); return res.status(401).json({ error: 'Username sau parola gresite.' }); }
       const hash = hashPassword(password, user.salt);
-      if (hash !== user.passwordHash) return res.status(401).json({ error: 'Username sau parola gresite.' });
+      if (hash !== user.passwordHash) { await new Promise((r) => setTimeout(r, 400)); return res.status(401).json({ error: 'Username sau parola gresite.' }); }
       const sessionToken = signToken({ userId: user.id, rol: user.rol });
       return res.status(200).json({ ok: true, token: sessionToken, user: { id: user.id, nume: user.nume, username: user.username, rol: user.rol, telefon: user.telefon || '', cnp: user.cnp || '' } });
     }
@@ -93,7 +108,20 @@ export default async function handler(req, res) {
 
     if (action === 'list') {
       const users = await getUsers();
-      return res.status(200).json({ ok: true, users: users.map((u) => ({ id: u.id, nume: u.nume, username: u.username, rol: u.rol, telefon: u.telefon || '', cnp: u.cnp || '' })) });
+      /* CNP-ul COMPLET pleaca doar catre Manager si catre om insusi.
+         Inainte, orice angajat logat primea CNP-ul intreg al tuturor colegilor — 13 cifre,
+         numar national de identificare, exact datul cel mai sensibil din toata aplicatia.
+         Aplicatia are nevoie de el in doua locuri: adeverinte (doar Manager) si zilele de
+         nastere ale colegilor (toata lumea). Ziua de nastere sta in PRIMELE 7 cifre, deci
+         pentru ceilalti trimitem primele 7 si restul zero: aniversarile merg mai departe
+         neschimbate, iar numarul adevarat nu mai iese din server. */
+      const eManager = auth.rol === 'Manager';
+      const cnpPentru = (u) => {
+        const c = String(u.cnp || '');
+        if (eManager || u.id === auth.userId) return c;
+        return /^\d{13}$/.test(c) ? c.slice(0, 7) + '000000' : '';
+      };
+      return res.status(200).json({ ok: true, users: users.map((u) => ({ id: u.id, nume: u.nume, username: u.username, rol: u.rol, telefon: u.telefon || '', cnp: cnpPentru(u) })) });
     }
 
     if (action === 'changePassword') {
@@ -144,6 +172,15 @@ export default async function handler(req, res) {
     if (action === 'delete') {
       const { id } = body;
       const users = await getUsers();
+      /* Trei plase, ca o apasare gresita sa nu blocheze firma pentru totdeauna: nu poti
+         sterge ultimul Manager, nu te poti sterge pe tine, si nu se sterge cineva care
+         nu exista. Fara ele, o singura greseala insemna ca nimeni nu se mai poate loga
+         vreodata, iar recuperarea se face doar din consola bazei de date. */
+      if (id === auth.userId) return res.status(400).json({ error: 'Nu te poti sterge pe tine. Roaga alt Manager.' });
+      const tinta = users.find((u) => u.id === id);
+      if (!tinta) return res.status(404).json({ error: 'Utilizator negasit.' });
+      const manageriRamasi = users.filter((u) => u.id !== id && u.rol === 'Manager').length;
+      if (manageriRamasi === 0) return res.status(400).json({ error: 'Nu poti sterge ultimul Manager — nimeni nu ar mai putea administra aplicatia.' });
       const next = users.filter((u) => u.id !== id);
       await saveUsers(next);
       return res.status(200).json({ ok: true });
@@ -164,6 +201,12 @@ export default async function handler(req, res) {
       if (idx === -1) return res.status(404).json({ error: 'Utilizator negasit.' });
       const dupe = users.find((u) => u.id !== id && u.username.toLowerCase() === username.toLowerCase());
       if (dupe) return res.status(400).json({ error: 'Acest username este deja folosit.' });
+      // Daca esti singurul Manager, nu-ti poti lua singur rolul: la urmatoarea logare
+      // aplicatia ar ramane fara nimeni care sa o administreze.
+      if (id === auth.userId && rol !== 'Manager') {
+        const altiManageri = users.filter((u) => u.id !== id && u.rol === 'Manager').length;
+        if (altiManageri === 0) return res.status(400).json({ error: 'Esti singurul Manager — nu-ti poti schimba rolul.' });
+      }
       const user = users[idx];
       let updated = { ...user, nume, username, rol, telefon, cnp };
       if (newPassword) {
