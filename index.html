@@ -1334,6 +1334,7 @@ function echipaNormalizata(echipa) {
 const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e) => e.userId);
 const inEchipa = (echipa, userId) => echipaUserIds(echipa).includes(userId);
 const lucreazaInEchipa = (echipa, userId) => echipaNormalizata(echipa).some((e) => e.userId === userId && e.status !== 'pauza');
+const iSeCereRaport = (echipa, userId, zi) => echipaNormalizata(echipa).some((e) => e.userId === userId && e.status !== 'pauza' && (!e.dataModificare || e.dataModificare < zi));
 function concediuActiv(concedii, who, dataIso) {
     if (!concedii || !dataIso || !who)
         return null;
@@ -5414,7 +5415,7 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
     const echipa = echipaNormalizata(form.echipa);
     const echipaIds = echipa.map((e) => e.userId);
     const toggleEchipa = (userId) => {
-        const next = echipaIds.includes(userId) ? echipa.filter((e) => e.userId !== userId) : [...echipa, { userId, status: 'activ' }];
+        const next = echipaIds.includes(userId) ? echipa.filter((e) => e.userId !== userId) : [...echipa, { userId, status: 'activ', dataModificare: dataLocala(new Date()) }];
         setForm({ ...form, echipa: next, echipaAtinsa: true });
     };
     const setEchipaStatus = (userId, status) => {
@@ -8217,7 +8218,7 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         const s = santiere.find((x) => x.id === santierId);
         const echipa = echipaNormalizata(s.echipa);
         if (!echipa.some((e) => e.userId === userId)) {
-            updateEchipa(santierId, [...echipa, { userId, status: 'activ' }]);
+            updateEchipa(santierId, [...echipa, { userId, status: 'activ', dataModificare: dataLocala(new Date()) }]);
             notifica(userId, { title: 'Ai fost asignat pe un șantier', body: `${s?.nume || 'Șantier'} — deschide aplicația pentru detalii.`, tag: 'asignare' }, currentUser?.id);
         }
     };
@@ -12113,7 +12114,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     else {
         const santiereMele = santiere.filter((s) => lucreazaInEchipa(s.echipa, currentUser?.id));
         if (dupa17)
-            totalDeFacut += santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)).length;
+            totalDeFacut += santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && iSeCereRaport(s.echipa, currentUser?.id, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)).length;
     }
     const seenRespins = (() => { try {
         return JSON.parse(localStorage.getItem('respinsVazut_' + (currentUser?.id || '')) || '[]');
@@ -12515,6 +12516,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'raport-din-a-doua-zi-v1', aud: 'toti', data: '14.08.2026', titlu: '📅 Pus azi pe un șantier? Raportul ți se cere de mâine',
+        text: 'Dacă managerul te punea (sau te reactiva) azi pe un șantier — de exemplu vineri seara, pregătit pentru luni — aplicația îți cerea imediat raportul pe ZIUA DE AZI, deși azi lucraseși în altă parte. Îți apărea „Nu ai trimis raportul pentru …" și primeai memento seara, pentru o zi în care nu aveai ce raporta acolo.\n\nRegula exista deja pentru șantier (un șantier reactivat azi nu cere raport azi), dar lipsea pentru OM. Acum, când ești pus sau reactivat în echipă, aplicația ține minte ziua — și raportul ți se cere de a doua zi încolo. Zilele dinainte să fii pus nu ți se mai cer nici la „rapoarte restante".\n\nPe scurt: te pune vineri pentru luni → vineri nu ți se cere nimic, luni seara da.' },
     { id: 'crash-scena-ios-v1', aud: 'toti', data: '14.08.2026', titlu: '📱 Reparat: aplicația pica pe iPhone la „Tipuri de lucrări"',
         text: 'Dacă pe iPhone îți apărea pagina albă cu „A problem repeatedly occurred" când completai rubrica „🔨 Tipuri de lucrări executate" — reparat.\n\nCe se întâmpla: scena desenată pe tot ecranul folosea efecte de blur (care cer foarte multă memorie video pe telefon) plus animații care nu se opresc niciodată, deci ecranul se redesena continuu. Pe deasupra, la fiecare literă scrisă în câmpuri, desenul se reconstruia din nou — degeaba, că ieșea identic. Pe telefoanele mai vechi, memoria se termina și Safari închidea pagina — la nesfârșit.\n\nAcum: pe iPhone (și pe telefoanele cu memorie puțină) scena rămâne, dar fără blur și fără animațiile fără sfârșit — arată aproape la fel și nu mai costă aproape nimic. Iar desenul se construiește o singură dată, nu la fiecare tastă.\n\nCe ai scris în raport nu s-a pierdut nici la căderi: ciorna se salvează pe telefon la fiecare modificare, deci după orice repornire textul e la locul lui.' },
     { id: 'contabila-lipita-v1', aud: 'manager', data: '14.08.2026', titlu: '📋 Situația de la contabilă: o lipești, se completează singură',
@@ -12715,7 +12718,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     const mesajSarbatoare = ZILE_FELICITARE[dataLocala(aziDate)];
     const sarbatoriiZi = colegiUsers.filter((u) => { const n = nasterePeDinCnp(u.cnp); return n && n.zi === aziDate.getDate() && n.luna === aziDate.getMonth() + 1; });
     const santiereMele = santiere.filter((s) => lucreazaInEchipa(s.echipa, currentUser?.id));
-    const santiereFaraRaportAzi = dupa17 ? santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
+    const santiereFaraRaportAzi = dupa17 ? santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && iSeCereRaport(s.echipa, currentUser?.id, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
     const zileRestante = (() => {
         const out = [];
         const d = new Date(azi + 'T00:00:00');
@@ -12727,7 +12730,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
             const ds = dataLocala(d);
             if ((SARBATORI_LEGALE[d.getFullYear()] || []).includes(ds))
                 continue;
-            santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, ds) && !rapoarte.some((r) => r.santierId === s.id && r.data === ds))
+            santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, ds) && iSeCereRaport(s.echipa, currentUser?.id, ds) && !rapoarte.some((r) => r.santierId === s.id && r.data === ds))
                 .forEach((s) => out.push({ santier: s, data: ds }));
         }
         return out.slice(0, 12);
@@ -18326,7 +18329,7 @@ function App() {
             notifica(currentUser.id, { title: '⛔ Rapoarte netrimise azi', body: `Nu s-a trimis raport la: ${nume}${activeFaraRaport.length > 4 ? ` +${activeFaraRaport.length - 4}` : ''}.`, tag: 'raport-netrimis' });
         }
         else {
-            const meleFara = activeFaraRaport.filter((s) => lucreazaInEchipa(s.echipa, currentUser.id));
+            const meleFara = activeFaraRaport.filter((s) => iSeCereRaport(s.echipa, currentUser.id, aziR));
             if (!meleFara.length)
                 return;
             const flag = 'memRaportEu_' + aziR + '_' + acum.getHours();
