@@ -13265,16 +13265,21 @@ function numarRo(s) {
     if (!t)
         return null;
     const negativ = /^\(/.test(t) || /^-/.test(t);
-    t = t.replace(/[()]/g, '').replace(/lei|ron/gi, '').replace(/[\s ']/g, '').replace(/^-/, '');
+    t = t.replace(/[()]/g, '').replace(/lei|ron/gi, '').replace(/[\s\u00a0']/g, '').replace(/^-/, '');
     if (!/^[0-9][0-9.,]*$/.test(t))
         return null;
-    if (t.indexOf(',') >= 0)
-        t = t.replace(/\./g, '').replace(',', '.');
-    else if (t.indexOf('.') >= 0) {
-        const buc = t.split('.');
+    const virg = t.lastIndexOf(','), pct = t.lastIndexOf('.');
+    const cuSemn = (sep) => {
+        const buc = t.split(sep);
         const ultim = buc[buc.length - 1];
-        t = (buc.length === 2 && ultim.length <= 2) ? buc.join('.') : buc.join('');
-    }
+        return (buc.length === 2 && ultim.length <= 2) ? buc.join('.') : buc.join('');
+    };
+    if (virg >= 0 && pct >= 0)
+        t = virg > pct ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+    else if (virg >= 0)
+        t = cuSemn(',');
+    else if (pct >= 0)
+        t = cuSemn('.');
     const v = Number(t);
     if (!isFinite(v))
         return null;
@@ -13315,7 +13320,9 @@ function citesteSituatiaContabila(text) {
         const l = String(linie).replace(/\t/g, ' ').trim();
         if (!l || l.indexOf('%') >= 0)
             return;
-        if (/\b(perioada|situatia|situatie|balanta|luna|anul|cont de profit)\b/.test(faraSemne(l)))
+        if (/^(situatia|situatie|perioada|balanta|luna|lunile|anul|cont de profit|extras)\b/.test(faraSemne(l)))
+            return;
+        if (/(^|\s)(tel|fax|mob|gsm)[.: ]|@|\bwww\./.test(faraSemne(l)))
             return;
         const tokens = l.match(/-?\(?\s*[0-9][0-9.,]*\)?/g) || [];
         const eData = (s) => {
@@ -13332,8 +13339,11 @@ function citesteSituatiaContabila(text) {
         if (suma === null || suma === 0 || !eticheta)
             return;
         const e = faraSemne(eticheta);
-        const eIgnorat = /venit|incasar|cifra de afaceri|profit|pierdere|rezultat|sold|\btva\b|creant|datorii|disponibil|casa si conturi|stoc/.test(e);
-        const ePersonal = /salar|tichet|contribut|asigutator|asigurator|protectie sociala|protectia sociala|\bcas\b|\bcass\b|impozit pe salar|diurn|indemniz|concediu|personal|medicina munci/.test(e);
+        if (!/[a-z]/.test(e))
+            return;
+        const eImpozit = /impozit/.test(e);
+        const eIgnorat = !eImpozit && /venit|incasar|cifra de afaceri|profit|pierdere|rezultat|sold|\btva\b|creant|datorii|disponibil|casa si conturi|stoc/.test(e);
+        const ePersonal = /salar|tichet|contribut|asigutator|asigurator|protectie sociala|protectia sociala|\bcas\b|\bcass\b|diurn|indemniz|concediu|personal|medicina munci/.test(e);
         const eTotal = /\btotal\b|\bgeneral\b/.test(e) && !ePersonal;
         const grupa = eIgnorat ? 'ignorat' : eTotal ? 'total' : ePersonal ? 'personal' : 'regie';
         if (grupa === 'personal')
