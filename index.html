@@ -1850,7 +1850,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v02.41-randament';
+const APP_VERSION = 'v02.42-randament-birou';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -11925,15 +11925,17 @@ function Randament({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, 
     const cPers = Number(company?.costPersonalPer) || 0;
     const cReg = Number(company?.costRegiePer) || 0;
     const areCifre = !!perDe && !!perLa && (cPers + cReg) > 0;
+    const birou = String(company?.oameniBirou || '');
     const cost = useMemo(() => (areCifre
-        ? costOraReal({ rapoarte, de: perDe, la: perLa, costPersonal: cPers, costRegie: cReg })
-        : null), [rapoarte, perDe, perLa, cPers, cReg, areCifre]);
+        ? costOraReal({ rapoarte, de: perDe, la: perLa, costPersonal: cPers, costRegie: cReg, faraOre: birou })
+        : null), [rapoarte, perDe, perLa, cPers, cReg, areCifre, birou]);
+    const excluseSet = useMemo(() => new Set(birou.split(',').map(cheieNume).filter(Boolean)), [birou]);
     const [de, la] = fereastra === 'luna' ? [azi.slice(0, 7) + '-01', azi]
         : fereastra === 'an' ? [azi.slice(0, 4) + '-01-01', azi]
             : [perDe || azi.slice(0, 4) + '-01-01', perLa || azi];
     const costOra = cost ? cost.totalPeOra : (Number(company?.costOraMediu) || 0);
     const oameni = useMemo(() => randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la, costOra })
-        .filter((o) => o.ore > 0).sort((a, b) => b.valoare - a.valoare), [rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la, costOra]);
+        .filter((o) => o.ore > 0 && !excluseSet.has(cheieNume(o.nume))).sort((a, b) => b.valoare - a.valoare), [rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la, costOra, excluseSet]);
     const totalOre = oameni.reduce((s, o) => s + o.ore, 0);
     const totalVal = oameni.reduce((s, o) => s + o.valoare, 0);
     const totalCost = totalOre * costOra;
@@ -11976,7 +11978,15 @@ function Randament({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, 
                         " ore (",
                         Math.round(cost.procentPierdut),
                         "%)"),
-                    " n-au ajuns \u00EEn lucrare (timp neproductiv raportat). De asta pragul e mai mare dec\u00E2t costul: \u00EEl pl\u0103te\u0219ti pe tot, dar facturezi doar restul."))),
+                    " n-au ajuns \u00EEn lucrare (timp neproductiv raportat). De asta pragul e mai mare dec\u00E2t costul: \u00EEl pl\u0103te\u0219ti pe tot, dar facturezi doar restul."),
+                birou.trim() && (React.createElement("div", { className: "text-[11px] rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', color: 'var(--muted)' } },
+                    "\uD83D\uDDC2 ",
+                    React.createElement("b", null, birou.split(',').map((x) => x.trim()).filter(Boolean).join(', ')),
+                    " ",
+                    birou.split(',').filter((x) => x.trim()).length === 1 ? 'nu intră' : 'nu intră',
+                    " la ore \u2014 acte, clien\u021Bi, solu\u021Bii. Costul r\u0103m\u00E2ne \u00EEn total (e cheltuial\u0103 real\u0103 a firmei), dar orele nu se \u00EEmpart, pentru c\u0103 nu se factureaz\u0103 nim\u0103nui. De aia cifrele de mai sus sunt mai mari dec\u00E2t dac\u0103 i-am fi num\u0103rat: ",
+                    React.createElement("b", null, "a\u0219a arat\u0103 realitatea"),
+                    ".")))),
             React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" },
                 React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Tabelul pe:"),
                 [['contabil', 'perioada contabilei'], ['luna', 'luna asta'], ['an', 'anul asta']].map(([k, et]) => (React.createElement("button", { key: k, onClick: () => setFereastra(k), disabled: k === 'contabil' && !areCifre, className: "btnMic text-[11px] px-2 py-1 rounded-lg disabled:opacity-40", style: { color: fereastra === k ? '#14181C' : 'var(--muted)', background: fereastra === k ? 'var(--acc1)' : 'var(--panel2)' } }, et)))),
@@ -12454,6 +12464,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'randament-birou-v1', aud: 'manager', data: '14.08.2026', titlu: '\U0001F5C2 Randament \u2014 cine nu lucreaz\u0103 pe \u0219antier iese din \u00eemp\u0103r\u021bire',
+        text: 'La „\u2699 Firma mea" ai un c\u00e2mp nou: „Cine NU lucreaz\u0103 pe \u0219antier". Scrii acolo numele t\u0103u (\u0219i al oricui se ocup\u0103 de acte, clien\u021bi, ofertare) \u0219i randamentul se socote\u0219te corect.\n\nDe ce conteaz\u0103: salariul t\u0103u E o cheltuial\u0103 real\u0103 a firmei \u0219i trebuie s\u0103 r\u0103m\u00e2n\u0103 \u00een cost. Dar orele tale NU se factureaz\u0103 nim\u0103nui. Dac\u0103 le num\u0103r\u0103m ca ore de \u0219antier, costul pe or\u0103 iese mai mic dec\u00e2t e \u00een realitate \u2014 \u0219i tariful calculat din el iese prea mic.\n\nAcum: costul r\u0103m\u00e2ne \u00eentreg, orele tale ies din \u00eemp\u0103r\u021bire. Cifra urc\u0103, dar e cea adev\u0103rat\u0103. La 6 oameni cu 150.000 lei cheltuieli ie\u0219eau 313 lei/h; cu tine scos din ore, ies 375 lei/h \u2014 aia e realitatea pe care trebuie s\u0103 o acopere tariful.\n\nNumele se recunoa\u0219te \u0219i scris invers, \u0219i f\u0103r\u0103 diacritice. Po\u021bi pune mai multe, desp\u0103r\u021bite prin virgul\u0103. Iar timpul neproductiv al biroului nu se mai pune \u00een c\u00e2rca \u0219antierului.' },
     { id: 'randament-v1', aud: 'manager', data: '14.08.2026', titlu: '\U0001F4C8 Randament \u2014 c\u00e2t produce o or\u0103 fa\u021b\u0103 de c\u00e2t cost\u0103',
         text: 'Pe prima pagin\u0103 ai un card nou: \u201e\U0001F4C8 Randament".\n\nP\u00e2n\u0103 acum, „c\u00e2t te cost\u0103 o or\u0103 de electrician" era un num\u0103r scris de tine \u00een „Firma mea". Se \u00eenvechea la fiecare m\u0103rire de salariu f\u0103r\u0103 s\u0103 afle nimeni, iar din el ie\u0219eau toate cifrele de profit. Acum se CALCULEAZ\u0102: orele vin din pontajul pe care \u00eel ai deja, banii \u00eei treci o singur\u0103 dat\u0103, exact cum \u021bi-i d\u0103 contabila.\n\nLa „\u2699 Firma mea" ai o grup\u0103 nou\u0103, „Din situa\u021bia contabilei": perioada, totalul de salarii cu taxe, \u0219i restul cheltuielilor. At\u00e2t. Aplica\u021bia \u00eemparte la orele tale \u0219i \u00ee\u021bi d\u0103 trei cifre:\n\n\u2022 c\u00e2t te cost\u0103 ora de om (salarii + taxe)\n\u2022 c\u00e2t te cost\u0103 ora cu tot cu regie (combustibil, asigur\u0103ri, banc\u0103, leasing, uzur\u0103)\n\u2022 PRAGUL DE TARIF \u2014 acela\u0219i cost, dar \u00eemp\u0103r\u021bit doar la orele care chiar ajung \u00een lucrare. Sub num\u0103rul \u0103sta lucrezi \u00een pierdere, oric\u00e2t de ocupat ai fi.\n\nSub ele, fiecare om: c\u00e2te ore a f\u0103cut, c\u00e2t a produs, c\u00e2\u021bi lei pe or\u0103 \u2014 verde dac\u0103 e peste cost, ro\u0219u dac\u0103 e sub. \u0218i, la final, dac\u0103 e\u0219ti pe pierdere, \u00ee\u021bi spune cu c\u00e2t la sut\u0103 ar trebui urcate tarifele.' },
     { id: 'nefacturat-v1', aud: 'manager', data: '14.08.2026', titlu: '\u23F3 Munc\u0103 f\u0103cut\u0103, f\u0103r\u0103 deviz \u2014 nu se mai ascunde',
@@ -13140,22 +13152,34 @@ const SANTIER_ORAR = (s) => {
     const m = String(s?.modFacturare || s?.tipFacturare || 'orar');
     return m === 'orar' || m === 'orar_lucrari';
 };
-function costOraReal({ rapoarte, de, la, costPersonal, costRegie }) {
+function cheieNume(x) {
+    return String(x == null ? '' : x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).sort().join(' ');
+}
+function costOraReal({ rapoarte, de, la, costPersonal, costRegie, faraOre }) {
     let minutePlatite = 0, minutePierdute = 0;
     const oameni = new Set(), zile = new Set();
+    const excluse = new Set((Array.isArray(faraOre) ? faraOre : String(faraOre || '').split(','))
+        .map(cheieNume).filter(Boolean));
+    const eBirou = (nume) => excluse.has(cheieNume(nume));
     unificaRapoarte(rapoarte || []).forEach((r) => {
         const d = String(r.data || '');
         if (!d || (de && d < de) || (la && d > la))
             return;
         (r.persoane || []).forEach((p) => {
             const n = String(p && p.nume || '').trim();
-            if (!n)
+            if (!n || eBirou(n))
                 return;
             oameni.add(n);
             zile.add(d);
             minutePlatite += minuteLucrate(p);
         });
-        (r.timpNeproductiv || []).forEach((t) => { minutePierdute += minutePierduteRand(t); });
+        (r.timpNeproductiv || []).forEach((t) => {
+            const pers = Array.isArray(t && t.persoane) ? t.persoane.filter(Boolean) : [];
+            if (pers.length && pers.every(eBirou))
+                return;
+            minutePierdute += minutePierduteRand(t);
+        });
     });
     const orePlatite = minutePlatite / 60;
     const orePierdute = Math.min(orePlatite, minutePierdute / 60);
@@ -13688,6 +13712,7 @@ function CompanyTab({ company, setCompany, persist, santiere, setSantiere }) {
                 ['costPerLa', 'Perioada — până la (ex: 2026-07-31)'],
                 ['costPersonalPer', 'Total salarii + tichete + contribuții pe perioada aia (lei)'],
                 ['costRegiePer', 'Restul cheltuielilor pe perioada aia (combustibil, asigurări, bancă, leasing, amortizare…) (lei)'],
+                ['oameniBirou', 'Cine NU lucrează pe șantier (nume, separate prin virgulă) — costul lui rămâne, orele nu se facturează'],
             ]],
     ];
     const zonaImagine = (camp, titlu, explicatie, ref, inaltime) => (React.createElement("div", { className: "rounded-lg p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
