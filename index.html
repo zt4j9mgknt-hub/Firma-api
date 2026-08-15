@@ -1369,12 +1369,18 @@ function raportStartPentru(s) {
     }
     return null;
 }
-function seCereRaport(s, azi) {
+function seCereRaport(s, azi, rapoarte) {
     const st = raportStartPentru(s);
     if (st && azi < st)
         return false;
     if (s && s.status === 'Activ' && s.statusSchimbatLa === azi)
         return false;
+    if (rapoarte) {
+        const zi = new Date(azi + 'T00:00:00').getDay();
+        const libera = zi === 0 || zi === 6 || (SARBATORI_LEGALE[azi.slice(0, 4)] || []).includes(azi);
+        if (libera && !rapoarte.some((r) => r && r.data === azi))
+            return false;
+    }
     return true;
 }
 const STOPWORDS_QA = new Set(['si', 'sa', 'la', 'de', 'pe', 'un', 'o', 'in', 'cu', 'ce', 'sau', 'este', 'sunt', 'are', 'am', 'ai', 'nu', 'da', 'se', 'ca', 'al', 'ale', 'a', 'pt', 'pentru', 'din', 'pana', 'pot', 'poate', 'cum', 'care', 'pai', 'mai', 'ma', 'mi', 'te', 'ti', 'ne', 'va', 'lor', 'lui', 'ei', 'el', 'ea', 'asta', 'asa', 'fi', 'fie', 'daca', 'dar', 'ar', 'trebuie', 'face', 'facem', 'fac']);
@@ -1901,7 +1907,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v02.72-panou-comanda';
+const APP_VERSION = 'v02.73-weekend-linistit';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -12944,7 +12950,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         totalDeFacut += materials.filter((m) => !m.arhivat && Number(m.stoc) < Number(m.stocMinim)).length > 0 ? 1 : 0;
         totalDeFacut += new Set(cereriSantier.filter((c) => c.status === 'Cerută').map((c) => c.santierId)).size;
         if (dupa17)
-            totalDeFacut += santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)).length;
+            totalDeFacut += santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, azi, rapoarte) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)).length;
         totalDeFacut += (concedii || []).filter((c) => c.status === 'Cerut').length > 0 ? 1 : 0;
         totalDeFacut += santiere.filter((s) => s.necesitaCompletare).length;
         totalDeFacut += (cereriAlocare || []).filter((c) => c.status === 'Cerut').length;
@@ -12952,7 +12958,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     else {
         const santiereMele = santiere.filter((s) => lucreazaInEchipa(s.echipa, currentUser?.id));
         if (dupa17)
-            totalDeFacut += santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && iSeCereRaport(s.echipa, currentUser?.id, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)).length;
+            totalDeFacut += santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi, rapoarte) && iSeCereRaport(s.echipa, currentUser?.id, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)).length;
     }
     const seenRespins = (() => { try {
         return JSON.parse(localStorage.getItem('respinsVazut_' + (currentUser?.id || '')) || '[]');
@@ -13522,6 +13528,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'weekend-linistit-v1', aud: 'toti', data: '15.08.2026', titlu: '🏖 Weekendul e weekend: fără „Niciun raport trimis azi" sâmbăta și duminica',
+        text: 'Observația patronului, sâmbătă seara: „de ce îmi apare asta acum? E weekend" — corectă. Alerta de seară „Niciun raport trimis azi" se aprindea la 17:01 în ORICE zi, deși sâmbăta și duminica nu se lucrează de regulă.\n\nAcum: sâmbăta, duminica și în sărbătorile legale alerta TACE — și pentru manager, și pentru mementourile angajaților, și pentru bulina de pe iconiță. Excepția cinstită: dacă totuși se lucrează (cineva a trimis un raport în ziua aia), alertele revin pentru celelalte șantiere active — o sâmbătă lucrată nu scapă nefăcută.\n\nCe NU s-a schimbat: „Zile care nu ies la 8 ore" rămâne pe bord până confirmi fiecare zi (aia nu e alertă de azi, e o zi veche care așteaptă hotărârea ta), iar în weekend vezi în continuare planul de LUNI pe șantiere — ca să știi cu ce începi săptămâna.' },
     { id: 'panou-comanda-v1', aud: 'manager', data: '15.08.2026', titlu: '🕹 PANOU DE COMANDĂ: rame de instrument, cadrane cu scală, secvență de pornire',
         text: 'Ultimul pas cerut de patron: nu „dashboard dark", ci consolă de comandă. Ce s-a schimbat:\n\n• RAMELE cardurilor sunt acum stratificate: cadru interior, linie de lumină sus, gradații pe mijlocul laturilor și un LED de stare în colț — nu mai sunt dreptunghiuri simple.\n• CADRANELE au devenit INSTRUMENTE: arc segmentat (nu bandă continuă), gradații majore și minore, scală 0·50·100 și eticheta zonei (SLAB / MEDIU / BUN) sub valoare.\n• BARELE 3D au primit axă cu valori și grilă HUD — proiecție de date, cu axe, nu desen.\n• FUNDALUL are scanlines statice și o grilă cu perspectivă în josul panoului — adâncime, fără nicio buclă de animație.\n• La PORNIRE, o dată pe sesiune: „> INIȚIALIZARE SISTEM… > PANOURI: ONLINE > LEGĂTURĂ DATE: ACTIVĂ > STARE SISTEM: OPERAȚIONAL" — stările sunt reale, apoi secvența dispare.\n• Card nou ⚙ INFO SISTEM: versiunea aplicației, legătura (reală), criptarea AES și starea (câte lucruri ai de făcut).\n• La mouse deasupra, cardul se RIDICĂ ușor și rama interioară se aprinde.\n\nNimic din date, calcule, roluri sau API nu s-a atins. Fără blur, fără bucle — regulile de iPhone rămân lege.' },
     { id: 'structura-imagine-v1', aud: 'manager', data: '15.08.2026', titlu: '🗂 Bordul pe structura EXACTĂ din imaginea de referință',
@@ -13706,7 +13714,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     const dupa17 = (new Date().getHours() * 60 + new Date().getMinutes()) >= (17 * 60 + 1);
     const concediiInAsteptare = concedii ? concedii.filter((c) => c.status === 'Cerut') : [];
     const alocariInAsteptare = (cereriAlocare || []).filter((c) => c.status === 'Cerut');
-    const santiereActiveFaraRaportAzi = dupa17 ? santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
+    const santiereActiveFaraRaportAzi = dupa17 ? santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, azi, rapoarte) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
     const isManager = currentUser?.rol === 'Manager';
     const respinseMele = [
         ...cereriSantier.filter((c) => c.cerutId === currentUser?.id && c.status === 'Respinsă').map((c) => ({ id: 'mat-' + c.id, icon: '📦', text: `${c.denumire} — ${c.cantitate} ${c.um}`, data: c.data })),
@@ -13758,7 +13766,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     const mesajSarbatoare = ZILE_FELICITARE[dataLocala(aziDate)];
     const sarbatoriiZi = colegiUsers.filter((u) => { const n = nasterePeDinCnp(u.cnp); return n && n.zi === aziDate.getDate() && n.luna === aziDate.getMonth() + 1; });
     const santiereMele = santiere.filter((s) => lucreazaInEchipa(s.echipa, currentUser?.id));
-    const santiereFaraRaportAzi = dupa17 ? santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi) && iSeCereRaport(s.echipa, currentUser?.id, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
+    const santiereFaraRaportAzi = dupa17 ? santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, azi, rapoarte) && iSeCereRaport(s.echipa, currentUser?.id, azi) && !rapoarte.some((r) => r.santierId === s.id && r.data === azi)) : [];
     const zileRestante = (() => {
         const out = [];
         const d = new Date(azi + 'T00:00:00');
@@ -13770,7 +13778,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
             const ds = dataLocala(d);
             if ((SARBATORI_LEGALE[d.getFullYear()] || []).includes(ds))
                 continue;
-            santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, ds) && iSeCereRaport(s.echipa, currentUser?.id, ds) && !rapoarte.some((r) => r.santierId === s.id && r.data === ds))
+            santiereMele.filter((s) => s.status === 'Activ' && seCereRaport(s, ds, rapoarte) && iSeCereRaport(s.echipa, currentUser?.id, ds) && !rapoarte.some((r) => r.santierId === s.id && r.data === ds))
                 .forEach((s) => out.push({ santier: s, data: ds }));
         }
         return out.slice(0, 12);
@@ -19313,11 +19321,11 @@ function App() {
             n += cereriSantier.filter((c) => c.status === 'Cerută').length;
             n += (concedii || []).filter((c) => c.status === 'Cerut').length;
             if (dupa17B)
-                n += santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, aziB) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziB)).length;
+                n += santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, aziB, rapoarte) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziB)).length;
         }
         else {
             if (dupa17B)
-                n += santiere.filter((s) => s.status === 'Activ' && lucreazaInEchipa(s.echipa, u.id) && seCereRaport(s, aziB) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziB)).length;
+                n += santiere.filter((s) => s.status === 'Activ' && lucreazaInEchipa(s.echipa, u.id) && seCereRaport(s, aziB, rapoarte) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziB)).length;
         }
         const acumLocal = (() => { const d = new Date(); return dataLocala(d) + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); })();
         n += (mementouri || []).filter((m) => !m.gata && (m.pentruUserId ? m.pentruUserId === u.id : m.creatId === u.id) && `${m.data}T${m.ora || '09:00'}` <= acumLocal).length;
@@ -19354,7 +19362,7 @@ function App() {
         if ((acum.getHours() * 60 + acum.getMinutes()) < (17 * 60 + 1))
             return;
         const aziR = dataLocala(acum);
-        const activeFaraRaport = santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, aziR) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziR));
+        const activeFaraRaport = santiere.filter((s) => s.status === 'Activ' && seCereRaport(s, aziR, rapoarte) && !rapoarte.some((r) => r.santierId === s.id && r.data === aziR));
         if (currentUser.rol === 'Manager') {
             if (!activeFaraRaport.length)
                 return;
