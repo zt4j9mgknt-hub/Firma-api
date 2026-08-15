@@ -1888,7 +1888,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v02.47-cadrane-cu-ac';
+const APP_VERSION = 'v02.52-inel-impletit';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -11815,21 +11815,90 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers
                             btnAdauga('client', c.id, c.nume))))));
             })))));
 }
-function Cadran({ procent }) {
-    const rad = (g) => (g * Math.PI) / 180;
-    const pct = (r, g) => (50 + r * Math.cos(rad(g))).toFixed(2) + ' ' + (52 - r * Math.sin(rad(g))).toFixed(2);
-    const unghi = (p) => 180 - Math.max(0, Math.min(100, p)) * 1.8;
-    const arc = (p1, p2, r) => 'M ' + pct(r, unghi(p1)) + ' A ' + r + ' ' + r + ' 0 0 1 ' + pct(r, unghi(p2));
+let __cadranNr = 0;
+function Cadran({ procent, centru, eticheta }) {
+    const idRef = useRef(0);
+    if (!idRef.current)
+        idRef.current = ++__cadranNr;
+    const uid = 'hud' + idRef.current;
     const are = procent != null && isFinite(procent);
-    const g = are ? unghi(procent) : null;
-    return (React.createElement("svg", { viewBox: "0 0 100 58", style: { width: '100%', maxWidth: 132, display: 'block', margin: '2px auto 0' }, "aria-hidden": "true" }, are ? (React.createElement(React.Fragment, null,
-        React.createElement("path", { d: arc(0, 40, 40), stroke: "#E05252", strokeWidth: "8", fill: "none", strokeLinecap: "round", opacity: ".85" }),
-        React.createElement("path", { d: arc(41, 70, 40), stroke: "#E9A23B", strokeWidth: "8", fill: "none", opacity: ".85" }),
-        React.createElement("path", { d: arc(71, 100, 40), stroke: "#4CAF7D", strokeWidth: "8", fill: "none", strokeLinecap: "round", opacity: ".85" }),
-        React.createElement("line", { x1: "50", y1: "52", x2: 50 + 30 * Math.cos(rad(g)), y2: 52 - 30 * Math.sin(rad(g)), stroke: "var(--text)", strokeWidth: "2.6", strokeLinecap: "round" }),
-        React.createElement("circle", { cx: "50", cy: "52", r: "3.4", fill: "var(--text)" }))) : (React.createElement("path", { d: arc(0, 100, 40), stroke: "var(--border)", strokeWidth: "8", fill: "none", strokeLinecap: "round" }))));
+    const p = are ? Math.max(0, Math.min(100, procent)) : 0;
+    const [gata, setGata] = useState(false);
+    useEffect(() => { const t = setTimeout(() => setGata(true), 80); return () => clearTimeout(t); }, []);
+    const [fractie, setFractie] = useState(0);
+    useEffect(() => {
+        if (!are)
+            return;
+        let id;
+        const t0 = performance.now(), durata = 1300;
+        const pas = (t) => {
+            const x = Math.min(1, (t - t0) / durata);
+            setFractie(1 - Math.pow(1 - x, 3));
+            if (x < 1)
+                id = requestAnimationFrame(pas);
+        };
+        id = requestAnimationFrame(pas);
+        return () => cancelAnimationFrame(id);
+    }, [are]);
+    const CX = 50, CY = 50, SWEEP = 280, START = 230;
+    const rad = (g) => (g * Math.PI) / 180;
+    const unghi = (v) => START - (SWEEP * v) / 100;
+    const pt = (r, g) => [CX + r * Math.cos(rad(g)), CY - r * Math.sin(rad(g))];
+    const P = (r, g) => { const [x, y] = pt(r, g); return x.toFixed(2) + ' ' + y.toFixed(2); };
+    const arcR = (v1, v2, r) => 'M ' + P(r, unghi(v1)) + ' A ' + r + ' ' + r + ' 0 ' + ((unghi(v1) - unghi(v2)) > 180 ? 1 : 0) + ' 1 ' + P(r, unghi(v2));
+    const lung = (r) => 2 * Math.PI * r * (SWEEP / 360);
+    const stare = !are ? 'rgba(143,168,189,.3)' : p <= 40 ? '#E05252' : p <= 70 ? '#E9A23B' : '#4CAF7D';
+    const FIRE = [
+        { r: 37.2, w: 3.1, o: 0.95, dv: 0 },
+        { r: 35.2, w: 1.7, o: 0.55, dv: 1.6 },
+        { r: 39.0, w: 1.5, o: 0.45, dv: -1.2 },
+        { r: 36.1, w: 1.2, o: 0.35, dv: 2.8 },
+        { r: 38.2, w: 1.1, o: 0.3, dv: -2.2 },
+    ];
+    const fire = [];
+    FIRE.forEach((f, k) => {
+        fire.push(React.createElement("path", { key: 's' + k, d: arcR(0, 100, f.r), stroke: "rgba(143,168,189,.1)", strokeWidth: f.w, fill: "none", strokeLinecap: "round" }));
+        if (!are)
+            return;
+        const v1 = Math.max(0, 0 + f.dv * 0.3), v2 = Math.max(v1 + 0.5, Math.min(100, p + f.dv));
+        const L = lung(f.r) * ((v2 - v1) / 100);
+        fire.push(React.createElement("path", { key: 'f' + k, "data-arc": "1", d: arcR(v1, v2, f.r), stroke: stare, strokeOpacity: f.o, strokeWidth: f.w, fill: "none", strokeLinecap: "round", strokeDasharray: L.toFixed(2), strokeDashoffset: (gata ? 0 : L).toFixed(2), style: { transition: 'stroke-dashoffset 1.3s cubic-bezier(.3,.85,.3,1) ' + (k * 110) + 'ms' } }));
+    });
+    const halo = are ? [
+        React.createElement("path", { key: "h1", d: arcR(0, p, 37.2), stroke: stare, strokeOpacity: gata ? 0.13 : 0, strokeWidth: "10", fill: "none", strokeLinecap: "round", style: { transition: 'stroke-opacity .6s ease .5s' } }),
+        React.createElement("path", { key: "h2", d: arcR(0, p, 37.2), stroke: stare, strokeOpacity: gata ? 0.06 : 0, strokeWidth: "16", fill: "none", strokeLinecap: "round", style: { transition: 'stroke-opacity .6s ease .6s' } }),
+    ] : [];
+    const repere = [40, 70].map((v) => {
+        const [x, y] = pt(42.6, unghi(v));
+        return React.createElement("circle", { key: 'p' + v, cx: x.toFixed(2), cy: y.toFixed(2), r: ".9", fill: "rgba(143,168,189,.4)" });
+    });
+    const [vx, vy] = pt(37.2, unghi(p));
+    const intarziereVarf = 1300 + 4 * 110;
+    const brut = String(centru !== undefined ? centru : (are ? Math.round(p) + '%' : '—'));
+    const mNum = are ? brut.match(/-?\d+/) : null;
+    const textCentru = mNum ? brut.replace(mNum[0], String(Math.round(Number(mNum[0]) * fractie))) : brut;
+    return (React.createElement("svg", { "data-cadran": true, viewBox: "0 0 100 100", style: { width: '100%', maxWidth: 142, display: 'block', margin: '4px auto 0' }, "aria-hidden": "true" },
+        React.createElement("defs", null,
+            React.createElement("radialGradient", { id: uid + 'd', cx: ".5", cy: ".36", r: ".85" },
+                React.createElement("stop", { offset: "0", stopColor: "#233040" }),
+                React.createElement("stop", { offset: ".55", stopColor: "#141d28" }),
+                React.createElement("stop", { offset: "1", stopColor: "#0a0f16" })),
+            React.createElement("linearGradient", { id: uid + 'g', x1: "0", y1: "0", x2: "0", y2: "1" },
+                React.createElement("stop", { offset: "0", stopColor: "#ffffff", stopOpacity: ".14" }),
+                React.createElement("stop", { offset: ".55", stopColor: "#ffffff", stopOpacity: "0" }))),
+        halo,
+        repere,
+        fire,
+        are && (React.createElement(React.Fragment, null,
+            React.createElement("circle", { cx: vx.toFixed(2), cy: vy.toFixed(2), r: "3.8", fill: stare, opacity: gata ? 0.25 : 0, style: { transition: 'opacity .4s ease ' + intarziereVarf + 'ms' } }),
+            React.createElement("circle", { cx: vx.toFixed(2), cy: vy.toFixed(2), r: "1.7", fill: "#fff", opacity: gata ? 0.92 : 0, style: { transition: 'opacity .4s ease ' + intarziereVarf + 'ms' } }))),
+        React.createElement("circle", { cx: CX, cy: CY, r: "27.5", fill: 'url(#' + uid + 'd)' }),
+        React.createElement("circle", { cx: CX, cy: CY, r: "27.5", fill: "none", stroke: "rgba(255,255,255,.08)", strokeWidth: ".9" }),
+        React.createElement("ellipse", { cx: "50", cy: "40", rx: "19", ry: "10.5", fill: 'url(#' + uid + 'g)' }),
+        React.createElement("text", { x: "50", y: eticheta ? 52 : 55, textAnchor: "middle", fill: are ? 'var(--text)' : 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace", fontWeight: "600", fontSize: brut.length > 4 ? 11.5 : 15 }, textCentru),
+        eticheta && React.createElement("text", { x: "50", y: "61.5", textAnchor: "middle", fill: "var(--muted2)", fontFamily: "-apple-system, 'Segoe UI', sans-serif", fontWeight: "600", fontSize: "4.6", letterSpacing: "1.1" }, String(eticheta).toUpperCase())));
 }
-function Ceas({ icon, titlu, valoare, nota, culoare, margine, procent, onClick }) {
+function Ceas({ icon, titlu, valoare, nota, culoare, margine, procent, centru, eticheta, onClick }) {
     return (React.createElement("button", { onClick: onClick, className: "text-left rounded-xl p-3.5 min-w-0", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (margine || culoare || 'var(--border)') } },
         React.createElement("div", { className: "flex items-center justify-between gap-1" },
             React.createElement("span", { className: "text-[11px] font-semibold truncate", style: { color: 'var(--muted)' } },
@@ -11837,7 +11906,7 @@ function Ceas({ icon, titlu, valoare, nota, culoare, margine, procent, onClick }
                 " ",
                 titlu),
             React.createElement("span", { className: "shrink-0 text-xs", style: { color: 'var(--muted2)' } }, "\u203A")),
-        procent !== undefined && React.createElement(Cadran, { procent: procent }),
+        procent !== undefined && React.createElement(Cadran, { procent: procent, centru: centru, eticheta: eticheta }),
         React.createElement("div", { className: 'text-base font-bold truncate' + (procent !== undefined ? ' text-center mt-0.5' : ' mt-1'), style: { color: culoare || 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, valoare),
         nota && React.createElement("div", { className: 'text-[10px] mt-0.5 truncate' + (procent !== undefined ? ' text-center' : ''), style: { color: 'var(--muted2)' } }, nota)));
 }
@@ -11876,8 +11945,8 @@ function TabloCalitate({ restante, santiere, setTab, setPendingSiteNav, mod, onD
         React.createElement("div", { className: "text-lg font-bold", style: { color: culoare || 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, val),
         React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, sub)));
     if (mod === 'ceas') {
-        const ac = Math.max(0, Math.min(100, 100 - deschise * 10 - depasite * 15));
-        return React.createElement(Ceas, { icon: "\uD83D\uDCCA", titlu: "Calitate", onClick: onDeschide, procent: ac, valoare: deschise > 0 ? deschise + ' rămase' : '✓ la zi', nota: depasite > 0 ? '⏰ ' + depasite + ' cu termen depășit' : total > 0 ? rataRez + '% rezolvate' : 'nicio restanță notată', culoare: depasite > 0 ? 'var(--acc4)' : deschise > 0 ? 'var(--acc3)' : 'var(--acc2)' });
+        const ac = total === 0 ? null : Math.max(0, Math.min(100, 100 - deschise * 10 - depasite * 15));
+        return React.createElement(Ceas, { icon: "\uD83D\uDCCA", titlu: "Calitate", onClick: onDeschide, procent: ac, centru: ac != null ? rataRez + '%' : undefined, eticheta: "rezolvate", valoare: total === 0 ? '—' : deschise > 0 ? deschise + ' rămase' : '✓ la zi', nota: depasite > 0 ? '⏰ ' + depasite + ' cu termen depășit' : deschise > 0 ? rataRez + '% rezolvate' : total > 0 ? 'toate rezolvate' : 'nicio restanță notată încă', culoare: total === 0 ? 'var(--muted2)' : depasite > 0 ? 'var(--acc4)' : deschise > 0 ? 'var(--acc3)' : 'var(--acc2)' });
     }
     return (React.createElement("div", { className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement("button", { onClick: () => !ePagina && setDeschis(!deschis), className: "w-full flex items-center justify-between gap-2 text-left" },
@@ -11960,7 +12029,8 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
         return; setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); };
     if (mod === 'ceas') {
         const ac = costOra > 0 && tValoare > 0 ? Math.max(0, Math.min(100, 55 + (tProfit / tValoare) * 150)) : null;
-        return React.createElement(Ceas, { icon: "\uD83D\uDCB6", titlu: "Profit pe \u0219antiere", onClick: onDeschide, procent: ac, valoare: rand.length === 0 ? '—' : costOra > 0 ? money(tProfit) : money(tValoare), nota: rand.length === 0 ? 'încă fără rapoarte' : costOra > 0 ? rand.length + ' șantiere cu activitate' : 'valoare produsă (fără costul orei)', culoare: rand.length === 0 ? 'var(--muted2)' : costOra > 0 ? (tProfit >= 0 ? 'var(--acc2)' : 'var(--acc4)') : 'var(--text)' });
+        const inMijloc = ac != null ? (tProfit >= 0 ? '+' : '') + Math.round((tProfit / tValoare) * 100) + '%' : undefined;
+        return React.createElement(Ceas, { icon: "\uD83D\uDCB6", titlu: "Profit pe \u0219antiere", onClick: onDeschide, procent: ac, centru: inMijloc, eticheta: "marj\u0103", valoare: rand.length === 0 ? '—' : costOra > 0 ? money(tProfit) : money(tValoare), nota: rand.length === 0 ? 'încă fără rapoarte' : costOra > 0 ? rand.length + ' șantiere cu activitate' : 'valoare produsă (fără costul orei)', culoare: rand.length === 0 ? 'var(--muted2)' : costOra > 0 ? (tProfit >= 0 ? 'var(--acc2)' : 'var(--acc4)') : 'var(--text)' });
     }
     return (React.createElement("div", { className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement("button", { onClick: () => !ePagina && setDeschis(!deschis), className: "w-full flex items-center justify-between gap-2 text-left" },
@@ -12039,7 +12109,8 @@ function Randament({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, 
         const stiuCostul = costOra > 0;
         const amProductie = totalOre > 0;
         const ac = stiuCostul && amProductie ? Math.max(0, Math.min(100, 55 + (leiPeOra / costOra - 1) * 75)) : null;
-        return React.createElement(Ceas, { icon: "\uD83D\uDCC8", titlu: "Randament", onClick: onDeschide, procent: ac, valoare: !stiuCostul ? '—' : amProductie ? ora(leiPeOra) + ' / ' + ora(costOra) : ora(costOra), nota: !stiuCostul ? 'lipsesc cifrele contabilei' : amProductie ? 'produs pe oră / costul orei' : 'costul orei (fără ore în perioadă)', culoare: !stiuCostul ? 'var(--muted2)' : !amProductie ? 'var(--text)' : leiPeOra >= costOra ? 'var(--acc2)' : 'var(--acc4)' });
+        const inMijloc = ac != null ? Math.round((leiPeOra / costOra) * 100) + '%' : undefined;
+        return React.createElement(Ceas, { icon: "\uD83D\uDCC8", titlu: "Randament", onClick: onDeschide, procent: ac, centru: inMijloc, eticheta: "din cost", valoare: !stiuCostul ? '—' : amProductie ? ora(leiPeOra) + ' / ' + ora(costOra) : ora(costOra), nota: !stiuCostul ? 'lipsesc cifrele contabilei' : amProductie ? 'produs pe oră / costul orei' : 'costul orei (fără ore în perioadă)', culoare: !stiuCostul ? 'var(--muted2)' : !amProductie ? 'var(--text)' : leiPeOra >= costOra ? 'var(--acc2)' : 'var(--acc4)' });
     }
     return (React.createElement("div", { className: "rounded-xl mb-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement("button", { onClick: () => !ePagina && setDeschis((d) => !d), className: "w-full flex items-center gap-2 px-3 py-2.5 text-left" },
@@ -12340,7 +12411,9 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             }
         };
         const restSumC = restante.reduce((sx, ix) => sx + totalDoc(ix), 0);
-        const acCash = deIncasat <= 0 ? 100 : Math.max(0, Math.min(100, 100 - (restSumC / deIncasat) * 100));
+        const acCash = deIncasat > 0 ? Math.max(0, Math.min(100, 100 - (restSumC / deIncasat) * 100))
+            : facturatLuna.length > 0 ? 100
+                : null;
         const perMDe = eAn ? lunaMunca + '-01-01' : lunaMunca + '-01';
         const perMLa = ((eAn ? lunaMunca + '-12-31' : lunaMunca + '-31') < azi) ? (eAn ? lunaMunca + '-12-31' : lunaMunca + '-31') : azi;
         let zileLucrM = 0;
@@ -12362,8 +12435,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         const acMunca = capacitateOre > 0 ? Math.max(0, Math.min(100, (totalOreLuna / capacitateOre) * 100)) : null;
         if (!pagina)
             return (React.createElement(React.Fragment, null,
-                React.createElement(Ceas, { icon: "\uD83D\uDCB0", titlu: "Cashflow", onClick: () => setPagina('cash'), procent: acCash, valoare: money(deIncasat), nota: restante.length ? restante.length + (restante.length === 1 ? ' factură restantă' : ' facturi restante') : 'de încasat · ' + numeLuna, culoare: restante.length ? 'var(--acc4)' : 'var(--acc2)' }),
-                React.createElement(Ceas, { icon: "\uD83D\uDD28", titlu: "Din munca echipei", onClick: () => setPagina('munca'), procent: acMunca, valoare: dinRapoarte.length ? money(totalDinMunca) : '—', nota: dinRapoarte.length ? Math.round(totalOreLuna) + ' h din ' + capacitateOre + ' posibile · ' + etichetaLuna(lunaMunca) : 'fără rapoarte în ' + etichetaLuna(lunaMunca), culoare: dinRapoarte.length ? 'var(--acc1)' : 'var(--muted2)' }),
+                React.createElement(Ceas, { icon: "\uD83D\uDCB0", titlu: "Cashflow", onClick: () => setPagina('cash'), procent: acCash, centru: acCash != null ? Math.round(acCash) + '%' : undefined, eticheta: "la termen", valoare: money(deIncasat), nota: restante.length ? restante.length + (restante.length === 1 ? ' factură restantă' : ' facturi restante') : 'de încasat · ' + numeLuna, culoare: restante.length ? 'var(--acc4)' : 'var(--acc2)' }),
+                React.createElement(Ceas, { icon: "\uD83D\uDD28", titlu: "Din munca echipei", onClick: () => setPagina('munca'), procent: acMunca, centru: acMunca != null ? Math.round(acMunca) + '%' : undefined, eticheta: "\u00EEnc\u0103rcare", valoare: dinRapoarte.length ? money(totalDinMunca) : '—', nota: dinRapoarte.length ? Math.round(totalOreLuna) + ' h din ' + capacitateOre + ' posibile · ' + etichetaLuna(lunaMunca) : 'fără rapoarte în ' + etichetaLuna(lunaMunca), culoare: dinRapoarte.length ? 'var(--acc1)' : 'var(--muted2)' }),
                 nefacturatVechi.length > 0 && React.createElement(Ceas, { icon: "\u23F3", titlu: "F\u0103r\u0103 deviz", onClick: () => setPagina('nefacturat'), valoare: nefacturatTotal > 0 ? money(nefacturatTotal) : nefacturatVechi.length + ' șantiere', nota: "munc\u0103 f\u0103cut\u0103, nefacturat\u0103", culoare: "var(--acc4)" }),
                 deFacturat.length > 0 && React.createElement(Ceas, { icon: "\uD83E\uDDFE", titlu: "De facturat", onClick: () => setPagina('defacturat'), valoare: deFacturat.length + (deFacturat.length === 1 ? ' client' : ' clienți'), nota: "lucr\u0103ri f\u0103r\u0103 factur\u0103 emis\u0103", culoare: "var(--acc3)" })));
         return (React.createElement(React.Fragment, null,
@@ -12593,6 +12666,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, "\u2192")))));
 }
 const NOUTATI = [
+    { id: 'bord-impletit-v1', aud: 'manager', data: '15.08.2026', titlu: '💠 Bordul: inele împletite, cu centru de sticlă',
+        text: 'Bordul de pe prima pagină, în forma lui finală de azi: fiecare indicator e un INEL ÎMPLETIT din mai multe fire luminoase — cu adâncime, halo discret și centru de sticlă — care se țese singur când deschizi pagina, în timp ce numărul din mijloc crește de la 0 la valoarea reală, cu vârful alb aprinzându-se la capăt.\n\nCuloarea inelului e starea: roșu = rău, galben = de urmărit, verde = bine. Sub procent scrie mărunt CE anume e procentul: DIN COST la Randament (118% = ora produce cu 18% peste cât costă), REZOLVATE la Calitate, MARJĂ la Profit, LA TERMEN la Cashflow (cât din banii de încasat nu sunt restanți), ÎNCĂRCARE la Munca echipei (cât din orele posibile s-au lucrat). Punctele mici de pe inel sunt pragurile de 40 și 70.\n\nRegulile de cinste rămân: fără date, inelul stă stins, cu „—". Țeserea rulează O SINGURĂ dată, la afișare — fără blur, fără bucle, nimic care să încarce telefonul.' },
     { id: 'cadrane-v1', aud: 'manager', data: '15.08.2026', titlu: '🧭 Ceasurile au acum cadran cu ac, ca la mașină',
         text: 'Ceasurile de pe prima pagină au primit cadran adevărat: arc gradat roșu → galben → verde și un AC care arată unde ești, ca ceasul de rezervor sau turometrul.\n\nCe arată fiecare ac:\n• 📈 Randament — ora produsă față de ora costată. Mijlocul galbenului = pe zero; cu 20% peste cost intri în verde, cu 20% sub cost ești în roșu.\n• 📊 Calitate — rezervor plin = nicio restanță; fiecare restanță trage acul în jos, cele cu termen depășit mai tare.\n• 💶 Profit — acul e marja: zero la mijloc, 10% marjă = verde.\n• 💰 Cashflow — plin = nimic restant; acul cade cu partea restantă din banii de încasat.\n• 🔨 Din munca echipei — turometru: orele lucrate față de orele posibile (oameni × 8 ore × zilele lucrătoare din perioadă). Sub cifră scrie și „X h din Y posibile".\n\nUnde nu există date (de exemplu lipsesc cifrele contabilei la Randament), cadranul e gri și acul lipsește — un ac care ar arăta ceva neadevărat e mai rău decât niciun ac. Cifra exactă rămâne mereu scrisă sub cadran.' },
     { id: 'ceasuri-dashboard-v1', aud: 'manager', data: '15.08.2026', titlu: '⏱ Prima pagină: ceasuri, nu acordeoane',
