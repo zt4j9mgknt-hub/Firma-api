@@ -1969,7 +1969,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.02-extras-analiza';
+const APP_VERSION = 'v03.03-comparatie-corecta';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -13113,20 +13113,48 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
                     : { fel: 'rau', text: 'Pe minus: șantierele consumă mai mult decât aduc' };
         if (format === 'card') {
             const areCeva = rand.length > 0;
-            const a = pulsProfit[pulsProfit.length - 1], b = pulsProfit[pulsProfit.length - 2];
-            const delta = a > 0 && b > 0 ? Math.round((a / b - 1) * 100) : null;
-            const lunaPrec = LUNI_BORD[new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).getMonth()];
+            const aziD = new Date();
+            const ziAzi = aziD.getDate();
+            const ultimaZi = new Date(aziD.getFullYear(), aziD.getMonth() + 1, 0).getDate();
+            const lunaIncheiata = ziAzi === ultimaZi;
+            const cheiaCur = dataLocala(aziD).slice(0, 7);
+            const dPrec = new Date(aziD.getFullYear(), aziD.getMonth() - 1, 1);
+            const cheiaPrec = dPrec.getFullYear() + '-' + String(dPrec.getMonth() + 1).padStart(2, '0');
+            let mtdCur = 0, mtdPrec = 0;
+            unificaRapoarte(rapoarte || []).forEach((rr) => {
+                const dd = String(rr.data || '');
+                const kk = dd.slice(0, 7);
+                if (kk !== cheiaCur && kk !== cheiaPrec)
+                    return;
+                if (!lunaIncheiata && Number(dd.slice(8, 10)) > ziAzi)
+                    return;
+                const sSant = (santiere || []).find((ss) => ss.id === rr.santierId);
+                const tarifR = Number(sSant && sSant.tarifOrar) || 0;
+                let minuteR = 0;
+                (rr.persoane || []).forEach((pp) => { if (String(pp && pp.nume || '').trim())
+                    minuteR += minuteFacturabile(rapoarte, rr, pp); });
+                let matV = 0;
+                (rr.materialeFolosite || []).forEach((mm) => { matV += (Number(mm.cantitate) || 0) * costMaterial(mm.denumire) * (1 + adaos / 100); });
+                const v = (minuteR / 60) * tarifR + matV;
+                if (kk === cheiaCur)
+                    mtdCur += v;
+                else
+                    mtdPrec += v;
+            });
+            const delta = mtdCur > 0 && mtdPrec > 0 ? Math.round((mtdCur / mtdPrec - 1) * 100) : null;
+            const lunaPrec = LUNI_BORD[dPrec.getMonth()];
+            const etichetaDelta = lunaIncheiata ? 'față de ' + lunaPrec : 'față de 1–' + ziAzi + ' ' + lunaPrec;
             const culP = !areCeva ? 'var(--muted2)' : costOra > 0 ? (tProfit >= 0 ? 'var(--acc2)' : 'var(--acc4)') : 'var(--text)';
             const culPastila = verdictP ? (verdictP.fel === 'bine' ? '#2ECC80' : verdictP.fel === 'atentie' ? '#E5A43F' : '#E05B5B') : '#E5A43F';
             const textPastila = areCeva
-                ? (delta != null ? (delta >= 0 ? '▲ +' : '▼ −') + Math.abs(delta) + '% față de ' + lunaPrec + (marjaP != null ? ' · marjă ' + marjaP + '%' : '') : (marjaP != null ? 'marjă ' + marjaP + '%' : 'fără costul orei — valoare, nu profit'))
+                ? (delta != null ? (delta >= 0 ? '▲ +' : '▼ −') + Math.abs(delta) + '% ' + etichetaDelta + (marjaP != null ? ' · marjă ' + marjaP + '%' : '') : (marjaP != null ? 'marjă ' + marjaP + '%' : 'fără costul orei — valoare, nu profit'))
                 : null;
             return (React.createElement(CardBord, { atribut: "profit", titlu: costOra > 0 ? 'Profit pe șantiere' : 'Valoare produsă', lat: true, ord: 1, onClick: onDeschide, copii: (React.createElement(React.Fragment, null,
                     React.createElement("div", { style: { fontSize: 27, fontWeight: 700, color: culP, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-.01em', lineHeight: 1.15 } }, areCeva ? (costOra > 0 ? money(tProfit) : money(tValoare)) : '—'),
                     textPastila && (React.createElement("span", { className: "inline-block text-[9.5px] font-bold px-2 py-0.5 rounded-full mt-1 mb-1", style: { color: culPastila, background: culPastila + '1c' } }, textPastila)),
                     !areCeva && React.createElement("div", { className: "text-[10px] mb-1", style: { color: 'var(--muted2)' } }, "\u00EEnc\u0103 f\u0103r\u0103 rapoarte cu ore sau materiale"),
                     React.createElement(GraficArie, { serie: pulsProfit, luniChei: ultimeleLuni(6), culoare: costOra > 0 ? (tProfit >= 0 ? '#2ECC80' : '#E05B5B') : '#4A9BE0' }),
-                    React.createElement("div", { className: "text-[9px] mt-1", style: { color: 'var(--muted2)' } }, costOra > 0 ? 'valoarea produsă pe 6 luni · atinge o lună pentru cifra exactă' : 'valoarea produsă pe 6 luni · pentru profit, pune cifrele contabilei în ⚙ Firma mea'))) }));
+                    React.createElement("div", { className: "text-[9px] mt-1", style: { color: 'var(--muted2)' } }, (lunaIncheiata ? 'valoarea produsă pe 6 luni' : 'valoarea produsă pe 6 luni · ' + LUNI_BORD[aziD.getMonth()] + ' e în curs (zilele 1–' + ziAzi + ')') + (costOra > 0 ? ' · atinge o lună pentru cifra exactă' : ' · pentru profit, pune cifrele contabilei în ⚙ Firma mea')))) }));
         }
         if (format === 'perf') {
             const STARI = { bine: ['OPTIM', '#00FF9C'], atentie: ['ATENȚIE', '#FFC048'], rau: ['CRITIC', '#FF4757'] };
@@ -14087,6 +14115,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'comparatie-corecta-v1', aud: 'manager', data: '16.08.2026', titlu: '⚖ Comparația de pe bord e acum PE ACEEAȘI PERIOADĂ',
+        text: 'Pastila de sub profitul de pe bord compara luna în curs (pe jumătate) cu luna trecută ÎNTREAGĂ — strâmb: pe 16 ale lunii ieșea mereu „în scădere", chiar dacă mergeai mai bine.\n\nAcum comparația e corectă:\n• ÎN TIMPUL LUNII: zilele 1–16 din august se compară cu zilele 1–16 din iulie — aceeași perioadă, măr cu măr. Pastila spune explicit: „față de 1–16 iul".\n• LA FINAL DE LUNĂ (în ultima zi): abia atunci se compară luni întregi — „față de iul".\n• Sub grafic scrie când luna e în curs: „august e în curs (zilele 1–16)" — ca să știi că ultimul punct de pe grafic nu e luna terminată.\n\nGraficul pe 6 luni rămâne neschimbat (luni întregi, cum au fost); doar pastila de comparație folosește fereastra egală.' },
     { id: 'extras-analiza-v1', aud: 'manager', data: '16.08.2026', titlu: '📒 Extras contabil pe șantier + 🧠 analiză cu AI la fiecare rubrică',
         text: 'Două lucruri cerute la obiect:\n\n📒 EXTRASUL CONTABIL PE ȘANTIER. Când apeși pe un șantier din bord (din „Munca echipei" sau din „Profit pe șantiere"), nu mai aterizezi în ecranul operațional cu rapoarte și echipă — se deschide EXTRASUL lui: valoare produsă, cost real, profit și marjă, devizat, facturat, încasat, de încasat, muncă fără deviz. Doar banii, pe rânduri clare, cu explicația de sub fiecare cifră. Ecranul operațional rămâne la un buton distanță, jos.\n\n🧠 ANALIZA, TRATATĂ INDIVIDUAL. Fiecare pagină de rubrică (Profit, Cashflow, Munca echipei, Randament, Calitate) și fiecare extras de șantier are acum secțiunea „ANALIZĂ — unde sunt probleme și cum le rezolvi": problemele găsite automat din datele tale (roșu = bani pierduți acum, galben = de urmărit), fiecare cu soluția în cuvinte, banii în joc și butonul „→ mergi unde se rezolvă". Sub ele, „✨ Părerea AI" — analiza AI cerută FIX pe cifrele acelei rubrici sau ale acelui șantier, nu generalități. AI-ul primește doar cifre reale din aplicație și are interdicție să inventeze.\n\nCa de obicei: unde lipsesc date, scrie cinstit ce lipsește și unde se completează.' },
     { id: 'bord-modern-v1', aud: 'manager', data: '16.08.2026', titlu: '📊 BORDUL MODERN: grafice adevărate, un pic izometrice, vii și interactive',
