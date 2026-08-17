@@ -1966,7 +1966,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.12-timpi-morti';
+const APP_VERSION = 'v03.13-instiintari-ora';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -6781,9 +6781,14 @@ function SantiereTab({ santiere, setSantiere, rapoarte, setRapoarte, etape, setE
         if (esteNou && !withSite.trimisTs) {
             withSite.trimisTs = Date.now();
             withSite.trimisLa = new Date().toISOString();
+            withSite.trimisDe = currentUser?.nume || '';
+            withSite.trimisId = currentUser?.id || '';
         }
-        if (!esteNou)
+        if (!esteNou) {
             withSite.modificatLa = new Date().toISOString();
+            withSite.modificatTs = Date.now();
+            withSite.modificatDe = currentUser?.nume || '';
+        }
         let next;
         if (!esteNou && Array.isArray(r._idUnite) && r._idUnite.length > 1) {
             const curat = { ...withSite };
@@ -10333,14 +10338,13 @@ function ProiecteTab({ clients, invoices, setInvoices, devize, setDevize, offers
 function InstiintariTab({ rapoarte, cereriSantier, problemeSantier, restanteSantier, sculeSantier, santiere, goToSectiune }) {
     const numeS = (sid) => (santiere || []).find((s) => s.id === sid)?.nume || 'Șantier șters';
     const ts = (x) => {
-        if (typeof x.creatTs === 'number')
-            return x.creatTs;
-        if (typeof x.trimisTs === 'number')
-            return x.trimisTs;
-        if (x.modificatLa)
-            return Date.parse(x.modificatLa) || 0;
-        if (x.trimisLa)
-            return Date.parse(x.trimisLa) || 0;
+        const nr = [x.modificatTs, x.creatTs, x.trimisTs].filter((v) => typeof v === 'number' && v > 0);
+        if (nr.length)
+            return Math.max(...nr);
+        const byStr = [x.modificatLa, x.trimisLa].map((s) => s ? (Date.parse(s) || 0) : 0);
+        const maxStr = Math.max(...byStr);
+        if (maxStr > 0)
+            return maxStr;
         const dt = x.data || '';
         return dt ? (Date.parse(dt.length <= 10 ? dt + 'T12:00:00' : dt) || 0) : 0;
     };
@@ -10353,32 +10357,36 @@ function InstiintariTab({ rapoarte, cereriSantier, problemeSantier, restanteSant
         const out = [];
         (rapoarte || []).forEach((r) => {
             const modif = r.modificatLa && (!r.trimisLa || (Date.parse(r.modificatLa) > Date.parse(r.trimisLa) + 2000));
+            const isoStr = modif ? (r.modificatLa || r.trimisLa || r.data) : (r.trimisLa || r.data);
+            const cine = modif ? (r.modificatDe || numePers(r)) : (r.trimisDe || numePers(r));
             out.push({ id: 'r' + r.id, tip: 'raport', icon: '📋', sid: r.santierId, tinta: 'rapoarte',
-                titlu: modif ? 'Raport modificat' : 'Raport zilnic', cine: numePers(r),
-                detaliu: r.data ? 'pentru ' + fmtData(r.data) : '', t: ts(r) });
+                titlu: modif ? 'Raport modificat' : 'Raport zilnic', cine,
+                detaliu: r.data ? 'pentru ' + fmtData(r.data) : '', t: ts(r), isoStr });
         });
         (cereriSantier || []).forEach((c) => {
             out.push({ id: 'c' + c.id, tip: 'material', icon: '📦', sid: c.santierId, tinta: 'materiale',
                 titlu: 'Cerere de materiale', cine: c.cerutDe || c.creatDe || c.adaugatDe || c.nume || '',
-                detaliu: c.denumire ? c.denumire + (c.cantitate ? ' · ' + c.cantitate + ' ' + (c.um || '') : '') : '', t: ts(c) });
+                detaliu: c.denumire ? c.denumire + (c.cantitate ? ' · ' + c.cantitate + ' ' + (c.um || '') : '') : '',
+                t: ts(c), isoStr: c.creatLa || c.modificatLa || null });
         });
         (problemeSantier || []).forEach((p) => {
             if (!p.santierId)
                 return;
             out.push({ id: 'p' + p.id, tip: 'problema', icon: '❓', sid: p.santierId, tinta: 'probleme',
                 titlu: p.status === 'rezolvat' ? 'Întrebare rezolvată' : 'Întrebare / problemă', cine: p.creatDe || '',
-                detaliu: p.intrebare || p.text || '', t: ts(p) });
+                detaliu: p.intrebare || p.text || '', t: ts(p), isoStr: p.creatLa || p.modificatLa || null });
         });
         (restanteSantier || []).forEach((x) => {
             if (x.sters)
                 return;
             out.push({ id: 'x' + x.id, tip: 'restanta', icon: '🔴', sid: x.santierId, tinta: 'restante',
                 titlu: x.rezolvat ? 'Restanță rezolvată' : 'Restanță de rezolvat', cine: x.creatDe || '',
-                detaliu: [x.locNume, x.text].filter(Boolean).join(' · '), t: ts(x) });
+                detaliu: [x.locNume, x.text].filter(Boolean).join(' · '), t: ts(x), isoStr: x.creatLa || x.modificatLa || null });
         });
         (sculeSantier || []).forEach((s) => {
             out.push({ id: 's' + s.id, tip: 'scula', icon: '🔧', sid: s.santierId, tinta: 'scule',
-                titlu: 'Sculă la șantier', cine: s.adusDe || s.creatDe || '', detaliu: s.denumire || s.nume || '', t: ts(s) });
+                titlu: 'Sculă la șantier', cine: s.adusDe || s.creatDe || '', detaliu: s.denumire || s.nume || '',
+                t: ts(s), isoStr: s.creatLa || s.modificatLa || null });
         });
         return out.sort((a, b) => b.t - a.t).slice(0, 200);
     }, [rapoarte, cereriSantier, problemeSantier, restanteSantier, sculeSantier, santiere]);
@@ -10396,9 +10404,47 @@ function InstiintariTab({ rapoarte, cereriSantier, problemeSantier, restanteSant
     catch (_) { } setVazutLa(acum); };
     const TIPURI = [['', 'Toate'], ['raport', '📋 Rapoarte'], ['material', '📦 Materiale'], ['problema', '❓ Probleme'], ['restanta', '🔴 Restanțe']];
     const vizibile = filtru ? evenimente.filter((e) => e.tip === filtru) : evenimente;
-    const candText = (t) => {
+    const candText = (t, isoStr) => {
         if (!t)
             return '';
+        if (isoStr && isoStr.length > 10) {
+            try {
+                const d = new Date(isoStr);
+                if (!isNaN(d.getTime())) {
+                    const azi = new Date();
+                    azi.setHours(0, 0, 0, 0);
+                    const ieri = new Date(azi);
+                    ieri.setDate(ieri.getDate() - 1);
+                    const dim = new Date(d);
+                    dim.setHours(0, 0, 0, 0);
+                    const hm = d.toTimeString().slice(0, 5);
+                    if (dim.getTime() === azi.getTime())
+                        return hm;
+                    if (dim.getTime() === ieri.getTime())
+                        return 'ieri ' + hm;
+                    return fmtData(isoStr.slice(0, 10)) + ' ' + hm;
+                }
+            }
+            catch (_) { }
+        }
+        if (isoStr && isoStr.length === 10) {
+            const dim = new Date(isoStr + 'T00:00:00');
+            const azi2 = new Date();
+            azi2.setHours(0, 0, 0, 0);
+            const zile = Math.round((azi2.getTime() - dim.getTime()) / 86400000);
+            if (zile === 0)
+                return 'azi';
+            if (zile === 1)
+                return 'ieri';
+            if (zile < 7)
+                return 'acum ' + zile + ' zile';
+            try {
+                return fmtData(isoStr);
+            }
+            catch (_) {
+                return '';
+            }
+        }
         const dif = Date.now() - t;
         const min = Math.round(dif / 60000);
         if (min < 1)
@@ -10408,9 +10454,9 @@ function InstiintariTab({ rapoarte, cereriSantier, problemeSantier, restanteSant
         const ore = Math.round(min / 60);
         if (ore < 24)
             return 'acum ' + ore + (ore === 1 ? ' oră' : ' ore');
-        const zile = Math.round(ore / 24);
-        if (zile < 7)
-            return 'acum ' + zile + (zile === 1 ? ' zi' : ' zile');
+        const zile2 = Math.round(ore / 24);
+        if (zile2 < 7)
+            return 'acum ' + zile2 + (zile2 === 1 ? ' zi' : ' zile');
         try {
             return fmtData(new Date(t).toISOString().slice(0, 10));
         }
@@ -10440,7 +10486,7 @@ function InstiintariTab({ rapoarte, cereriSantier, problemeSantier, restanteSant
                             "\u00B7 \uD83C\uDFD7 ",
                             numeS(e.sid))),
                     (e.cine || e.detaliu) && React.createElement("div", { className: "text-[11px] truncate", style: { color: 'var(--muted)' } }, [e.cine, e.detaliu].filter(Boolean).join(' — '))),
-                React.createElement("span", { className: "text-[10px] shrink-0 whitespace-nowrap", style: { color: 'var(--muted2)' } }, candText(e.t))));
+                React.createElement("span", { className: "text-[10px] shrink-0 whitespace-nowrap", style: { color: 'var(--muted2)' } }, candText(e.t, e.isoStr))));
         })))));
 }
 const HEX_FUNDAL = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cg fill='none' stroke='%2300E5FF' stroke-opacity='.06'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100'/%3E%3Cpath d='M28 0L28 34L0 50L0 84L28 100L56 84L56 50L28 34'/%3E%3C/g%3E%3C/svg%3E\") 0 0 / 34px 61px";
