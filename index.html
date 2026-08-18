@@ -1686,11 +1686,14 @@ function mergeById(serverVal, clientVal, key) {
     const out = Array.from(map.values());
     return key ? faraSterse(key, out) : out;
 }
+const CHEI_ESUATE = new Set();
 async function loadKey(key, fallback) {
     const pending = getPending().find((x) => x.key === key);
     const cached = cacheGet(key);
     try {
         const r = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
+        if (!r.ok)
+            throw new Error('HTTP ' + r.status);
         const data = await r.json();
         let val = data.value ?? fallback;
         if (pending !== undefined)
@@ -1705,13 +1708,16 @@ async function loadKey(key, fallback) {
                 }
                 catch { }
                 cacheSet(key, curat);
+                CHEI_ESUATE.delete(key);
                 return curat;
             }
         }
         cacheSet(key, val);
+        CHEI_ESUATE.delete(key);
         return val;
     }
     catch {
+        CHEI_ESUATE.add(key);
         if (cached !== undefined)
             return faraSterse(key, pending !== undefined ? mergeById(cached, pending.value, key) : cached);
         return faraSterse(key, pending !== undefined ? pending.value : fallback);
@@ -1724,17 +1730,44 @@ function saveKey(key, value) {
     return p;
 }
 async function saveKeyIntern(key, value) {
-    noteazaSterse(key, cacheGet(key), value);
+    const cachePrec = cacheGet(key);
+    noteazaSterse(key, cachePrec, value);
     cacheSet(key, value);
     let deTrimis = value;
+    let serverCitit = false;
+    let dateServer = null;
     if (Array.isArray(value)) {
         try {
             const r0 = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
-            const d0 = await r0.json();
-            if (Array.isArray(d0.value) && d0.value.length)
-                deTrimis = mergeById(d0.value, value, key);
+            if (r0.ok) {
+                const d0 = await r0.json();
+                serverCitit = true;
+                if (Array.isArray(d0.value))
+                    dateServer = d0.value;
+                if (Array.isArray(d0.value) && d0.value.length)
+                    deTrimis = mergeById(d0.value, value, key);
+            }
         }
         catch (_) { }
+    }
+    if (Array.isArray(deTrimis) && deTrimis.length === 0) {
+        if (!serverCitit) {
+            if (Array.isArray(cachePrec) && cachePrec.length)
+                cacheSet(key, cachePrec);
+            try {
+                console.warn('[anti-golire] „' + key + '": scriere goală oprită (server necitit).');
+            }
+            catch (_) { }
+            return;
+        }
+        if (Array.isArray(dateServer) && dateServer.some((x) => x && x.id != null && !eSters(key, x.id))) {
+            cacheSet(key, dateServer);
+            try {
+                arataSalvat('⚠ Am oprit o golire accidentală — datele de pe server sunt intacte.');
+            }
+            catch (_) { }
+            return;
+        }
     }
     let res;
     try {
@@ -1966,7 +1999,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.18b-retry-fix';
+const APP_VERSION = 'v03.18d-anti-golire';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -19002,13 +19035,14 @@ function App() {
             mq.removeEventListener ? mq.removeEventListener('change', onCh) : mq.removeListener(onCh);
         } };
     }, [tema]);
-    const loadAllData = async (showSpinner) => {
+    const loadAllData = async (showSpinner, incercare = 0) => {
         if (showSpinner)
             setLoading(true);
         try {
             await syncQueue();
         }
         catch { }
+        CHEI_ESUATE.clear();
         try {
             const eMgrDate = currentUser?.rol === 'Manager';
             if (!eMgrDate) {
@@ -19062,6 +19096,8 @@ function App() {
             ];
             const valori = await Promise.all(CHEI.map(([cheie, implicit]) => loadKey(cheie, implicit)));
             CHEI.forEach(([, , pune], i) => pune(valori[i]));
+            const cheiVal1 = CHEI.map(([k]) => k);
+            const nrEsuate = cheiVal1.filter((k) => CHEI_ESUATE.has(k)).length;
             Promise.all(CHEI_APOI.map(([cheie, implicit]) => loadKey(cheie, implicit).catch(() => implicit)))
                 .then((v2) => CHEI_APOI.forEach(([, , pune], i) => pune(v2[i])))
                 .catch(() => { });
@@ -19069,8 +19105,15 @@ function App() {
                 await loadKey('pushSubs', []);
             }
             catch { }
-            setError(null);
             setDateIncarcate(true);
+            if (nrEsuate > 0) {
+                setError('⚠ Conexiune slabă — unele date nu s-au încărcat acum. Datele tale sunt în siguranță pe server. Se reîncearcă singur… sau apasă ↻ Reîncearcă.');
+                if (incercare < 2)
+                    setTimeout(() => { loadAllData(false, incercare + 1); }, 2500);
+            }
+            else {
+                setError(null);
+            }
         }
         catch (e) {
             if (showSpinner)
@@ -20009,73 +20052,74 @@ function App() {
                             "\u2190 ",
                             etichetaInapoi),
                         React.createElement("button", { onClick: mergiInainte, disabled: !potInainte, className: "btn3d text-xs font-semibold px-3 py-2", style: { color: 'var(--acc1)' } }, "\u00CEnainte \u2192"))),
-                    React.createElement(Prinde, null, loading ? (React.createElement(EcranIncarcare, null)) : !tab ? (effectiveUser.rol === 'Manager'
-                        ? React.createElement(Dashboard, { company: company, devize: devize, offers: offers, invoices: invoices, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, concedii: concedii, cereriAlocare: cereriAlocare, clients: clients, restanteSantier: restanteSantier, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab, setPendingSiteNav: setPendingSiteNav, currentUser: effectiveUser })
-                        : React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser })) : tabBlocatTest ? (React.createElement("div", { className: "max-w-md mx-auto mt-16 text-center rounded-xl p-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-                        React.createElement("div", { style: { fontSize: 34 } }, "\uD83D\uDD12"),
-                        React.createElement("div", { className: "text-base mt-2", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600 } }, "Sec\u021Biune \u00EEn preg\u0103tire"),
-                        React.createElement("p", { className: "text-sm mt-2", style: { color: 'var(--muted)' } },
-                            "Aceast\u0103 parte a aplica\u021Biei se activeaz\u0103 dup\u0103 perioada de test. Deocamdat\u0103 po\u021Bi lucra la ",
-                            React.createElement("b", { style: { color: 'var(--text)' } }, "Activitatea mea"),
-                            ", ",
-                            React.createElement("b", { style: { color: 'var(--text)' } }, "\u0218antiere"),
-                            " \u0219i ",
-                            React.createElement("b", { style: { color: 'var(--text)' } }, "Profil"),
-                            "."),
-                        React.createElement("button", { onClick: () => setTab('santiere'), className: "mt-4 text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83C\uDFD7 Mergi la \u0218antiere"))) : (React.createElement(React.Fragment, null,
-                        error && (React.createElement("div", { className: "text-xs mb-4 px-3 py-2 rounded-lg flex items-center justify-between gap-2", style: { color: 'var(--acc4)', background: 'rgba(224,82,82,.14)' } },
+                    React.createElement(Prinde, null,
+                        !loading && error && (React.createElement("div", { className: "text-xs mb-4 px-3 py-2 rounded-lg flex items-center justify-between gap-2", style: { color: 'var(--acc4)', background: 'rgba(224,82,82,.14)' } },
                             React.createElement("span", null, error),
                             React.createElement("button", { onClick: () => { setError(null); loadAllData(false); }, className: "text-xs font-semibold px-2 py-1 rounded-lg shrink-0", style: { color: 'var(--acc4)', background: 'rgba(224,82,82,.18)', border: '1px solid rgba(224,82,82,.4)' } }, "\u21BB Re\u00EEncearc\u0103"))),
-                        HELP[tab] && React.createElement(HelpNote, { text: HELP[tab], isManager: effectiveUser.rol === 'Manager' }),
-                        tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, clients: clients, materials: materials, santiere: santiere, onFactureaza: facturaDinDeviz, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => deductStock(doc.items, `Deviz ${doc.numar}`), onReverse: (doc) => reverseStock(doc.items, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null) })),
-                        tab === 'antemasuratoare' && effectiveUser.rol === 'Manager' && (React.createElement(AntemasuratoareTab, { antemasuratori: antemasuratori, setAntemasuratori: setAntemasuratori, clients: clients, santiere: santiere, persist: persist, currentUser: effectiveUser, onOferta: ofertaDinAntemasuratoare })),
-                        tab === 'oferte' && (React.createElement("div", null,
-                            React.createElement("div", { className: "flex justify-between items-center mb-4" },
-                                React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Oferte"),
-                                React.createElement("div", { className: "flex items-center gap-2" },
-                                    offers.length > 0 && React.createElement("button", { onClick: () => printAll(offers, 'Ofertă'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
-                                    !offerForm && React.createElement("button", { onClick: () => setOfferForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 ofert\u0103"))),
-                            offerForm && React.createElement(PaginaFormular, { titlu: offerForm.id && offerForm.numar ? '✏️ Modifici oferta ' + offerForm.numar : '📄 Ofertă nouă', onInchide: () => setOfferForm(null) },
-                                React.createElement(DocForm, { kind: "Ofert\u0103", clients: clients, materials: materials, initial: (offerForm.id || offerForm.items) ? offerForm : null, onCancel: () => setOfferForm(null), onSave: saveOffer })),
-                            React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: devizDinOferta, onPrint: printOne('Ofertă'), onDuplica: duplicaDoc('Ofertă') }))),
-                        tab === 'facturi' && (React.createElement("div", null,
-                            React.createElement("div", { className: "flex justify-between items-center mb-4" },
-                                React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Facturi"),
-                                React.createElement("div", { className: "flex items-center gap-2" },
-                                    invoices.length > 0 && React.createElement("button", { onClick: () => printAll(invoices, 'Factură'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
-                                    !invoiceForm && React.createElement("button", { onClick: () => setInvoiceForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 factur\u0103"))),
-                            invoiceForm && React.createElement(PaginaFormular, { titlu: invoiceForm.id && invoiceForm.numar ? '✏️ Modifici factura ' + invoiceForm.numar : '🧾 Factură nouă', onInchide: () => setInvoiceForm(null) },
-                                React.createElement(DocForm, { kind: "Factur\u0103", clients: clients, materials: materials, initial: invoiceForm.id ? invoiceForm : null, onCancel: () => setInvoiceForm(null), onSave: saveInvoice })),
-                            React.createElement(DocTable, { kind: "Factur\u0103", docs: invoices, clients: clients, statuses: INVOICE_STATUSES, onEdit: setInvoiceForm, onDelete: deleteInvoice, onStatusChange: invoiceStatus, onPrint: printOne('Factură'), onSmartBill: sendInvoiceToSmartBill, onDuplica: duplicaDoc('Factură') }))),
-                        tab === 'clienti' && React.createElement(ClientsTab, { clients: clients, setClients: setClients, persist: persist }),
-                        tab === 'notite' && effectiveUser.rol === 'Manager' && React.createElement(NotiteTab, { notite: notite, setNotite: setNotite, persist: persist, clients: clients, santiere: santiere, currentUser: effectiveUser, onOfertaDinNota: (n) => {
-                                const items = (n.materiale || []).map((m) => ({ id: uid(), denumire: m.denumire, um: m.um || 'buc', cantitate: Number(m.cantitate) || 1, pretUnitar: 0, adaos: 0 }));
-                                setOfferForm({ items, clientId: n.clientId || '' });
-                                setTab('oferte');
-                            } }),
-                        tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, setDevize: setDevize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, pdfDeviz: pdfDevizBlob, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz, onReverse: (d) => reverseStock(d.items, `Ștergere deviz ${d.numar}`) }),
-                        (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
-                        tab === 'santiere' && React.createElement(SantiereTab, { santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
-                        tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
-                        tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
-                        tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, currentUser: effectiveUser }),
-                        tab === 'activitate' && React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
-                        tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
-                        tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, soldConcediu: soldConcediu, setSoldConcediu: setSoldConcediu, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company }),
-                        tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist, materials: materials, onReceptie: receptioneazaAchizitie }),
-                        tab === 'adeverinte' && effectiveUser.rol === 'Manager' && React.createElement(AdeverinteTab, { company: company }),
-                        tab === 'profil' && React.createElement(ProfileTab, { currentUser: effectiveUser, onLogout: logout, tema: tema, setTema: setTema, carduri: carduri, setCarduri: setCarduri, onBackup: descarcaBackup, backupStare: backupStare }),
-                        tab === 'asistent' && React.createElement(AsistentTab, { problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, santiere: santiere, persist: persist, currentUser: effectiveUser, qaTarget: qaTarget, clearQaTarget: () => setQaTarget(null) }),
-                        tab === 'memento' && React.createElement(MementoTab, { mementouri: mementouri, setMementouri: setMementouri, persist: persist, clients: clients, santiere: santiere, currentUser: effectiveUser, colegi: totiUtilizatorii }),
-                        tab === 'calculator' && React.createElement(CalculatorTab, null),
-                        tab === 'normativ' && React.createElement(NormativTab, { normativPdf: normativPdf, setNormativPdf: setNormativPdf, normativIndexFile: normativIndexFile, setNormativIndexFile: setNormativIndexFile, persist: persist, isManager: effectiveUser.rol === 'Manager' }),
-                        tab === 'ghid' && React.createElement(GhidTab, { isManager: effectiveUser.rol === 'Manager' }),
-                        tab === 'utilizatori' && effectiveUser.rol === 'Manager' && React.createElement(UsersTab, { currentUser: effectiveUser }),
-                        tab === 'cheltuieli' && effectiveUser.rol === 'Manager' && React.createElement(CheltuieliTab, { cheltuieliFirma: cheltuieliFirma, setCheltuieliFirma: setCheltuieliFirma, persist: persist }),
-                        tab === 'scadentar' && effectiveUser.rol === 'Manager' && React.createElement(ScadentarTab, { invoices: invoices, cheltuieliFirma: cheltuieliFirma }),
-                        tab === 'devizrealizat' && effectiveUser.rol === 'Manager' && React.createElement(DevizRealizatTab, { devize: devize, rapoarte: rapoarte, santiere: santiere, company: company }),
-                        tab === 'calendar' && React.createElement(CalendarEchipaTab, { rapoarte: rapoarte, santiere: santiere, planificareSantier: planificareSantier, setPlanificareSantier: setPlanificareSantier, persist: persist, currentUser: effectiveUser }),
-                        tab === 'scule-global' && React.createElement(SculeGlobalTab, { sculeSantier: sculeSantier, santiere: santiere })))))))));
+                        loading ? (React.createElement(EcranIncarcare, null)) : !tab ? (effectiveUser.rol === 'Manager'
+                            ? React.createElement(Dashboard, { company: company, devize: devize, offers: offers, invoices: invoices, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, concedii: concedii, cereriAlocare: cereriAlocare, clients: clients, restanteSantier: restanteSantier, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab, setPendingSiteNav: setPendingSiteNav, currentUser: effectiveUser })
+                            : React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser })) : tabBlocatTest ? (React.createElement("div", { className: "max-w-md mx-auto mt-16 text-center rounded-xl p-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                            React.createElement("div", { style: { fontSize: 34 } }, "\uD83D\uDD12"),
+                            React.createElement("div", { className: "text-base mt-2", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600 } }, "Sec\u021Biune \u00EEn preg\u0103tire"),
+                            React.createElement("p", { className: "text-sm mt-2", style: { color: 'var(--muted)' } },
+                                "Aceast\u0103 parte a aplica\u021Biei se activeaz\u0103 dup\u0103 perioada de test. Deocamdat\u0103 po\u021Bi lucra la ",
+                                React.createElement("b", { style: { color: 'var(--text)' } }, "Activitatea mea"),
+                                ", ",
+                                React.createElement("b", { style: { color: 'var(--text)' } }, "\u0218antiere"),
+                                " \u0219i ",
+                                React.createElement("b", { style: { color: 'var(--text)' } }, "Profil"),
+                                "."),
+                            React.createElement("button", { onClick: () => setTab('santiere'), className: "mt-4 text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83C\uDFD7 Mergi la \u0218antiere"))) : (React.createElement(React.Fragment, null,
+                            HELP[tab] && React.createElement(HelpNote, { text: HELP[tab], isManager: effectiveUser.rol === 'Manager' }),
+                            tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, clients: clients, materials: materials, santiere: santiere, onFactureaza: facturaDinDeviz, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => deductStock(doc.items, `Deviz ${doc.numar}`), onReverse: (doc) => reverseStock(doc.items, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null) })),
+                            tab === 'antemasuratoare' && effectiveUser.rol === 'Manager' && (React.createElement(AntemasuratoareTab, { antemasuratori: antemasuratori, setAntemasuratori: setAntemasuratori, clients: clients, santiere: santiere, persist: persist, currentUser: effectiveUser, onOferta: ofertaDinAntemasuratoare })),
+                            tab === 'oferte' && (React.createElement("div", null,
+                                React.createElement("div", { className: "flex justify-between items-center mb-4" },
+                                    React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Oferte"),
+                                    React.createElement("div", { className: "flex items-center gap-2" },
+                                        offers.length > 0 && React.createElement("button", { onClick: () => printAll(offers, 'Ofertă'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
+                                        !offerForm && React.createElement("button", { onClick: () => setOfferForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 ofert\u0103"))),
+                                offerForm && React.createElement(PaginaFormular, { titlu: offerForm.id && offerForm.numar ? '✏️ Modifici oferta ' + offerForm.numar : '📄 Ofertă nouă', onInchide: () => setOfferForm(null) },
+                                    React.createElement(DocForm, { kind: "Ofert\u0103", clients: clients, materials: materials, initial: (offerForm.id || offerForm.items) ? offerForm : null, onCancel: () => setOfferForm(null), onSave: saveOffer })),
+                                React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: devizDinOferta, onPrint: printOne('Ofertă'), onDuplica: duplicaDoc('Ofertă') }))),
+                            tab === 'facturi' && (React.createElement("div", null,
+                                React.createElement("div", { className: "flex justify-between items-center mb-4" },
+                                    React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Facturi"),
+                                    React.createElement("div", { className: "flex items-center gap-2" },
+                                        invoices.length > 0 && React.createElement("button", { onClick: () => printAll(invoices, 'Factură'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
+                                        !invoiceForm && React.createElement("button", { onClick: () => setInvoiceForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 factur\u0103"))),
+                                invoiceForm && React.createElement(PaginaFormular, { titlu: invoiceForm.id && invoiceForm.numar ? '✏️ Modifici factura ' + invoiceForm.numar : '🧾 Factură nouă', onInchide: () => setInvoiceForm(null) },
+                                    React.createElement(DocForm, { kind: "Factur\u0103", clients: clients, materials: materials, initial: invoiceForm.id ? invoiceForm : null, onCancel: () => setInvoiceForm(null), onSave: saveInvoice })),
+                                React.createElement(DocTable, { kind: "Factur\u0103", docs: invoices, clients: clients, statuses: INVOICE_STATUSES, onEdit: setInvoiceForm, onDelete: deleteInvoice, onStatusChange: invoiceStatus, onPrint: printOne('Factură'), onSmartBill: sendInvoiceToSmartBill, onDuplica: duplicaDoc('Factură') }))),
+                            tab === 'clienti' && React.createElement(ClientsTab, { clients: clients, setClients: setClients, persist: persist }),
+                            tab === 'notite' && effectiveUser.rol === 'Manager' && React.createElement(NotiteTab, { notite: notite, setNotite: setNotite, persist: persist, clients: clients, santiere: santiere, currentUser: effectiveUser, onOfertaDinNota: (n) => {
+                                    const items = (n.materiale || []).map((m) => ({ id: uid(), denumire: m.denumire, um: m.um || 'buc', cantitate: Number(m.cantitate) || 1, pretUnitar: 0, adaos: 0 }));
+                                    setOfferForm({ items, clientId: n.clientId || '' });
+                                    setTab('oferte');
+                                } }),
+                            tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, setDevize: setDevize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, pdfDeviz: pdfDevizBlob, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz, onReverse: (d) => reverseStock(d.items, `Ștergere deviz ${d.numar}`) }),
+                            (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
+                            tab === 'santiere' && React.createElement(SantiereTab, { santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
+                            tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
+                            tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
+                            tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, currentUser: effectiveUser }),
+                            tab === 'activitate' && React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
+                            tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
+                            tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, soldConcediu: soldConcediu, setSoldConcediu: setSoldConcediu, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company }),
+                            tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist, materials: materials, onReceptie: receptioneazaAchizitie }),
+                            tab === 'adeverinte' && effectiveUser.rol === 'Manager' && React.createElement(AdeverinteTab, { company: company }),
+                            tab === 'profil' && React.createElement(ProfileTab, { currentUser: effectiveUser, onLogout: logout, tema: tema, setTema: setTema, carduri: carduri, setCarduri: setCarduri, onBackup: descarcaBackup, backupStare: backupStare }),
+                            tab === 'asistent' && React.createElement(AsistentTab, { problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, santiere: santiere, persist: persist, currentUser: effectiveUser, qaTarget: qaTarget, clearQaTarget: () => setQaTarget(null) }),
+                            tab === 'memento' && React.createElement(MementoTab, { mementouri: mementouri, setMementouri: setMementouri, persist: persist, clients: clients, santiere: santiere, currentUser: effectiveUser, colegi: totiUtilizatorii }),
+                            tab === 'calculator' && React.createElement(CalculatorTab, null),
+                            tab === 'normativ' && React.createElement(NormativTab, { normativPdf: normativPdf, setNormativPdf: setNormativPdf, normativIndexFile: normativIndexFile, setNormativIndexFile: setNormativIndexFile, persist: persist, isManager: effectiveUser.rol === 'Manager' }),
+                            tab === 'ghid' && React.createElement(GhidTab, { isManager: effectiveUser.rol === 'Manager' }),
+                            tab === 'utilizatori' && effectiveUser.rol === 'Manager' && React.createElement(UsersTab, { currentUser: effectiveUser }),
+                            tab === 'cheltuieli' && effectiveUser.rol === 'Manager' && React.createElement(CheltuieliTab, { cheltuieliFirma: cheltuieliFirma, setCheltuieliFirma: setCheltuieliFirma, persist: persist }),
+                            tab === 'scadentar' && effectiveUser.rol === 'Manager' && React.createElement(ScadentarTab, { invoices: invoices, cheltuieliFirma: cheltuieliFirma }),
+                            tab === 'devizrealizat' && effectiveUser.rol === 'Manager' && React.createElement(DevizRealizatTab, { devize: devize, rapoarte: rapoarte, santiere: santiere, company: company }),
+                            tab === 'calendar' && React.createElement(CalendarEchipaTab, { rapoarte: rapoarte, santiere: santiere, planificareSantier: planificareSantier, setPlanificareSantier: setPlanificareSantier, persist: persist, currentUser: effectiveUser }),
+                            tab === 'scule-global' && React.createElement(SculeGlobalTab, { sculeSantier: sculeSantier, santiere: santiere })))))))));
 }
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Prinde, { full: true },
     React.createElement(App, null)));
