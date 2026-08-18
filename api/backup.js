@@ -1,12 +1,10 @@
 // api/backup.js
-// COPIA DE SIGURANȚĂ A FIRMEI. În fiecare noapte ia TOATĂ baza de date (toate cheile
-// „firma:*" din Redis), o închide într-un fișier CRIPTAT și îl pune în Vercel Blob.
-// Ține ultimele 30 de zile; ce e mai vechi se șterge singur.
+// COPIA DE SIGURANȚĂ A FIRMEI. Ia TOATĂ baza de date (toate cheile „firma:*"), o
+// CRIPTEAZĂ și o pune deoparte sub prefixul „bkp:" — pe care aplicația nu-l atinge
+// niciodată. Ține ultimele 30 de copii; ce e mai vechi se șterge singur.
 //
-// De ce criptat: fișierele din Blob au adresă publică (greu de ghicit, dar publică).
-// Datele firmei — clienți, prețuri, salarii — nu au ce căuta în clar acolo. Cheia de
-// criptare e SESSION_SECRET, care stă doar pe server. Fără ea, fișierul e un morman
-// de octeți fără sens, chiar dacă cineva îi află adresa.
+// De ce criptat: chiar și cine ar ajunge la baza de date vede doar octeți fără sens.
+// Cheia se face din SESSION_SECRET, care stă doar pe server.
 //
 // CUM PORNEȘTE SINGURĂ, FĂRĂ NICIO CONFIGURARE: aplicația cheamă „?action=zilnic" la
 // prima deschidere din zi, de pe orice telefon logat. Serverul verifică dacă există deja
@@ -19,10 +17,9 @@
 //   GET  /api/backup?action=lista         -> ce copii există (Manager)
 //   POST /api/backup {action:'restaureaza', url, chei?} -> pune datele înapoi (Manager)
 //
-// Cere pe Vercel: BLOB_READ_WRITE_TOKEN, KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET.
+// Cere pe Vercel: KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET.
 // Toate există deja în proiect — nu e nimic de adăugat.
 
-import { put, list, del } from '@vercel/blob';
 import crypto from 'crypto';
 
 /* --- Biletul de acces (același cod ca în auth.js / data.js, dinadins duplicat:
@@ -107,7 +104,24 @@ async function toateCheile() {
   return Array.from(new Set(chei)).sort();
 }
 
-/* ---------- FACEREA COPIEI ---------- */
+/* ---------- UNDE STAU COPIILE ----------
+   În Redis, sub prefixul „bkp:" — pe care aplicația NU-l atinge niciodată. Am renunțat la
+   Vercel Blob: depozitul e privat, iar regulile lui de acces sunt o piesă în plus care se
+   poate strica exact în ziua în care ai nevoie de copie. Redis-ul e deja acolo, îl știm că
+   merge, iar 30 de copii de ~170 KB înseamnă ~5 MB din cei 256 MB disponibili.
+   Fiecare copie are și termen de expirare, ca să se cureţe singură dacă nimeni nu umblă. */
+const PREFIX = 'bkp:';
+const INDEX = 'bkp:index';
+const PASTREZ = 30;
+
+async function citesteIndex() {
+  try { const b = await redis(['GET', INDEX]); return b ? JSON.parse(b) : []; }
+  catch (_) { return []; }
+}
+async function scrieIndex(lista) {
+  await redis(['SET', INDEX, JSON.stringify(lista)]);
+}
+
 async function faCopie(eticheta) {
   const chei = await toateCheile();
   if (!chei.length) throw new Error('Nu am găsit nicio cheie „firma:*" — nu fac o copie goală.');
@@ -122,23 +136,23 @@ async function faCopie(eticheta) {
   }
   const acum = new Date();
   const zi = acum.toISOString().slice(0, 10);
-  const pachet = JSON.stringify({ versiune: 1, facutLa: acum.toISOString(), chei: chei.length, rezumat, date });
-  const fisier = await put(
-    `copii-siguranta/${zi}${eticheta ? '-' + eticheta : ''}.bin`,
-    cripteaza(pachet),
-    { access: 'public', addRandomSuffix: true, contentType: 'application/octet-stream' }
-  );
-  return { url: fisier.url, pathname: fisier.pathname, zi, chei: chei.length, rezumat, octeti: pachet.length };
+  const id = zi + (eticheta ? '-' + eticheta : '');
+  const pachet = JSON.stringify({ versiune: 2, facutLa: acum.toISOString(), chei: chei.length, rezumat, date });
+  const criptat = cripteaza(pachet).toString('base64');
+  await redis(['SET', PREFIX + id, criptat, 'EX', String(60 * 24 * 3600)]);
+
+  const index = (await citesteIndex()).filter((x) => x.id !== id);
+  index.unshift({ id, facutLa: acum.toISOString(), octeti: pachet.length, chei: chei.length, rezumat });
+  const pastrate = index.slice(0, PASTREZ);
+  for (const vechi of index.slice(PASTREZ)) { try { await redis(['DEL', PREFIX + vechi.id]); } catch (_) {} }
+  await scrieIndex(pastrate);
+  return { id, zi, chei: chei.length, rezumat, octeti: pachet.length, sterse: index.length - pastrate.length };
 }
 
-/* Ștergem ce e mai vechi de 30 de zile, dar NU coborâm niciodată sub 7 copii păstrate. */
-async function curataVechi() {
-  const { blobs } = await list({ prefix: 'copii-siguranta/' });
-  const sortate = blobs.slice().sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1));
-  const limita = Date.now() - 30 * 24 * 3600 * 1000;
-  const deSters = sortate.slice(7).filter((b) => new Date(b.uploadedAt).getTime() < limita);
-  for (const b of deSters) { try { await del(b.url); } catch (_) {} }
-  return deSters.length;
+async function incarcaCopie(id) {
+  const b64 = await redis(['GET', PREFIX + String(id)]);
+  if (!b64) throw new Error('Copia asta nu mai există.');
+  return JSON.parse(decripteaza(Buffer.from(String(b64), 'base64')));
 }
 
 export default async function handler(req, res) {
@@ -147,10 +161,6 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
-
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN lipsește. Conectează Blob store-ul la proiect pe Vercel și redeploy.' });
-  }
 
   const cron = eCron(req);
   const sesiune = cron ? null : autentifica(req);
@@ -168,27 +178,22 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET' && actiune === 'zilnic') {
       const azi = new Date().toISOString().slice(0, 10);
-      const { blobs } = await list({ prefix: 'copii-siguranta/' + azi });
-      if (blobs && blobs.length) return res.status(200).json({ ok: true, sarit: true, motiv: 'există deja copia pe ' + azi });
+      const index = await citesteIndex();
+      if (index.some((x) => String(x.id).slice(0, 10) === azi)) {
+        return res.status(200).json({ ok: true, sarit: true, motiv: 'există deja copia pe ' + azi });
+      }
       const rez = await faCopie('');
-      let sterse = 0;
-      try { sterse = await curataVechi(); } catch (_) {}
-      return res.status(200).json({ ok: true, ...rez, sterse });
+      return res.status(200).json({ ok: true, ...rez });
     }
 
     if (req.method === 'GET' && actiune === 'lista') {
-      const { blobs } = await list({ prefix: 'copii-siguranta/' });
-      const lista = blobs
-        .map((b) => ({ url: b.url, nume: b.pathname.replace('copii-siguranta/', ''), facutLa: b.uploadedAt, octeti: b.size }))
-        .sort((a, b) => (a.facutLa < b.facutLa ? 1 : -1));
-      return res.status(200).json({ copii: lista });
+      const index = await citesteIndex();
+      return res.status(200).json({ copii: index.map((x) => ({ id: x.id, facutLa: x.facutLa, octeti: x.octeti, chei: x.chei })) });
     }
 
     if (req.method === 'GET') {
       const rez = await faCopie(cron ? '' : 'manual');
-      let sterse = 0;
-      try { sterse = await curataVechi(); } catch (_) {}
-      return res.status(200).json({ ok: true, ...rez, sterse });
+      return res.status(200).json({ ok: true, ...rez });
     }
 
     if (req.method === 'POST') {
@@ -197,10 +202,8 @@ export default async function handler(req, res) {
       /* Ce e într-o copie: îl arătăm ÎNAINTE de restaurare, ca omul să vadă negru pe alb
          câte înregistrări intră și peste ce. Fără asta, „restaurează" e un buton pe orbite. */
       if (body.action === 'cuprins') {
-        if (!body.url) return res.status(400).json({ error: 'Lipsește adresa copiei.' });
-        const r = await fetch(String(body.url));
-        if (!r.ok) return res.status(404).json({ error: 'Nu am găsit copia.' });
-        const pachet = JSON.parse(decripteaza(Buffer.from(await r.arrayBuffer())));
+        if (!body.id) return res.status(400).json({ error: 'Lipsește copia cerută.' });
+        const pachet = await incarcaCopie(body.id);
         const acum = {};
         for (const k of Object.keys(pachet.date || {})) {
           const brut = await redis(['GET', k]);
@@ -213,10 +216,8 @@ export default async function handler(req, res) {
 
       if (body.action === 'restaureaza') {
         if (!eManager) return res.status(403).json({ error: 'Doar Managerul poate restaura.' });
-        if (!body.url) return res.status(400).json({ error: 'Lipsește adresa copiei.' });
-        const r = await fetch(String(body.url));
-        if (!r.ok) return res.status(404).json({ error: 'Nu am găsit copia.' });
-        const pachet = JSON.parse(decripteaza(Buffer.from(await r.arrayBuffer())));
+        if (!body.id) return res.status(400).json({ error: 'Lipsește copia cerută.' });
+        const pachet = await incarcaCopie(body.id);
 
         /* PLASĂ DE SIGURANȚĂ: înainte să punem ceva înapoi, salvăm starea de ACUM.
            Dacă restaurarea nu era ce credeai, te poți întoarce la cum era acum un minut. */
@@ -231,7 +232,7 @@ export default async function handler(req, res) {
           await redis(['SET', k, val]);
           puse.push(k);
         }
-        return res.status(200).json({ ok: true, puse, copiaDinainte: inainte ? inainte.url : null });
+        return res.status(200).json({ ok: true, puse, copiaDinainte: inainte ? inainte.id : null });
       }
 
       return res.status(400).json({ error: 'Acțiune necunoscută.' });
