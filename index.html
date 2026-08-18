@@ -1966,7 +1966,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.13-instiintari-ora';
+const APP_VERSION = 'v03.14-nepontat';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -13053,6 +13053,18 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     })();
     const idSantiereMele = new Set(santiereMele.map((s) => s.id));
     const cereriLaSantiereleMele = cereriSantier.filter((c) => idSantiereMele.has(c.santierId)).slice().reverse().slice(0, 6);
+    const _ziuaDateAzi = new Date(azi + 'T00:00:00');
+    const _ziSaptAzi = _ziuaDateAzi.getDay();
+    const _eWeekend = _ziSaptAzi === 0 || _ziSaptAzi === 6;
+    const _eSarbatoare = (SARBATORI_LEGALE[_ziuaDateAzi.getFullYear()] || []).includes(azi);
+    const _inConcediuAzi = !isManager && (concedii || []).some((c) => c.userId === currentUser?.id && (c.status === 'Aprobat' || c.status === 'Aprobată') &&
+        c.dataInceput <= azi && c.dataSfarsit >= azi);
+    const _minuteAziMele = (!isManager && dupa17 && !_eWeekend && !_eSarbatoare && !_inConcediuAzi && currentUser)
+        ? minutePersoanaZi(rapoarte, currentUser.nume, azi).net
+        : 8 * 60;
+    const _lipsescMinAzi = Math.max(0, 8 * 60 - _minuteAziMele);
+    const aratNepontat = !isManager && dupa17 && !_eWeekend && !_eSarbatoare && !_inConcediuAzi && _lipsescMinAzi > 0;
+    const _santierulMeuActiv = santiereMele.find((s) => s.status === 'Activ') || santiereMele[0] || null;
     const qaSite = (problemeSantier || []).filter((p) => p.santierId);
     const qaRelevante = (isManager
         ? qaSite.filter((p) => !raspunsCorectQA(p))
@@ -13076,7 +13088,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
     };
     const nimicDeFacut = (isManager
         ? materialeSubStoc.length === 0 && cereriInAsteptarePeSantier.length === 0 && santiereActiveFaraRaportAzi.length === 0 && concediiInAsteptare.length === 0 && alocariInAsteptare.length === 0 && zileNeincheiate.length === 0
-        : santiereFaraRaportAzi.length === 0 && zileRestante.length === 0 && santiereMele.length === 0 && cereriLaSantiereleMele.length === 0)
+        : santiereFaraRaportAzi.length === 0 && zileRestante.length === 0 && santiereMele.length === 0 && cereriLaSantiereleMele.length === 0 && !aratNepontat)
         && (qaRelevante || []).length === 0
         && (respinseAfisate || []).length === 0
         && (mementouri || []).filter((m) => !m.gata).length === 0;
@@ -13323,6 +13335,24 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                         React.createElement("span", { style: { color: 'var(--acc1)' } }, "\u2192")),
                     React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted)' } }, membri.length > 0 ? `👥 ${membri.join(', ')}` : '⚠ Fără echipă asignată')))))));
         })(),
+        aratNepontat && (React.createElement("div", { className: "mb-6 rounded-xl p-4", style: { background: '#E9A23B12', border: '1px solid #E9A23B88', borderLeft: '4px solid #E9A23B' } },
+            React.createElement("div", { className: "flex items-start gap-3" },
+                React.createElement("span", { style: { fontSize: 22, lineHeight: 1.1 } }, "\uD83D\uDCCB"),
+                React.createElement("div", { className: "flex-1 min-w-0" },
+                    React.createElement("div", { className: "font-bold mb-1", style: { fontSize: 14, color: 'var(--acc3)', fontFamily: "'Space Grotesk', sans-serif" } }, _minuteAziMele === 0
+                        ? 'Azi nu ai ore trimise'
+                        : `Zi parțial completată — mai lipsesc ${minutesToHM(_lipsescMinAzi)} h`),
+                    React.createElement("div", { className: "text-sm mb-3", style: { color: 'var(--text)', lineHeight: 1.6 } }, _minuteAziMele === 0
+                        ? 'Nu avem nicio oră pontată pentru tine azi. Dacă ai lucrat undeva, trimite un raport sau anunță managerul — orele nescrise nu apar în pontaj.'
+                        : React.createElement(React.Fragment, null,
+                            "Ai ",
+                            React.createElement("b", null,
+                                minutesToHM(_minuteAziMele),
+                                " h"),
+                            " pontate. Dac\u0103 ai lucrat \u0219i \u00EEn alt\u0103 parte, completeaz\u0103 sau anun\u021B\u0103 managerul \u2014 orele lips\u0103 nu apar \u00EEn pontaj.")),
+                    React.createElement("div", { className: "flex flex-wrap gap-2" },
+                        _santierulMeuActiv ? (React.createElement("button", { onClick: () => goToSite(_santierulMeuActiv.id, 'probleme'), className: "text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Anun\u021B\u0103 managerul")) : (React.createElement("button", { onClick: () => setTab('santiere'), className: "text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, "Cere alocare pe \u0219antier")),
+                        _santierulMeuActiv && (React.createElement("button", { onClick: () => goToSite(_santierulMeuActiv.id, 'rapoarte'), className: "text-sm px-4 py-2 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Trimite raport"))))))),
         !isManager && oraAcum >= 17 && santiereFaraRaportAzi.length > 0 && (React.createElement("div", { className: "mb-6" },
             React.createElement("button", { onClick: () => setMementoOpen(!mementoOpen), className: "w-full flex items-center justify-between rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid #E05252' } },
                 React.createElement("span", { className: "text-sm font-medium", style: { color: 'var(--acc4)' } },
