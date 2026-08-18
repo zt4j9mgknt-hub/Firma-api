@@ -1966,7 +1966,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.15-click-instiintare';
+const APP_VERSION = 'v03.16-chat-consilier';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -14150,6 +14150,10 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
     const lei = (v) => Math.round(Number(v) || 0).toLocaleString('ro-RO') + ' lei';
     const costOra = useMemo(() => costOraFolosit(company, rapoarte), [company, rapoarte]);
     const zonaParere = useRef(null);
+    const [conversatie, setConversatie] = useState([]);
+    const [intrebareCurenta, setIntrebareCurenta] = useState('');
+    const [busyChat, setBusyChat] = useState(false);
+    const conversatieEndRef = useRef(null);
     const semnale = useMemo(() => analizaConsilier({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, azi }), [company, santiere, rapoarte, devize, invoices, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier]);
     const oameni = useMemo(() => randamentOameni({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, la: azi, costOra }), [rapoarte, santiere, pozitiiSantier, materialeListaSantier, de, costOra]);
     const timpi = useMemo(() => analizaTimpiMorti({ rapoarte, santiere, de, la: azi, costOra }), [rapoarte, santiere, de, costOra]);
@@ -14229,6 +14233,46 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
     const intreabaBifate = () => intreaba(semnale.filter((x) => bifatS(x.id)), oameni.filter((o) => bifatO(o.nume)), '', true);
     const intreabaTot = () => intreaba(semnale, oameni, '', true);
     const intreabaTimpi = () => intreaba([], [], 'timpii care nu s-au dus în lucrare', true);
+    const intreabaDirect = async (textIntrebare) => {
+        if (!textIntrebare.trim() || busyChat)
+            return;
+        const ntreb = textIntrebare.trim();
+        const istoricCurent = conversatie.slice();
+        setConversatie((prev) => [...prev, { rol: 'patron', text: ntreb }]);
+        setIntrebareCurenta('');
+        setBusyChat(true);
+        const rezumatFirma = construiesteRezumat(semnale, oameni, '', false);
+        const prompt = 'Ești consultantul de afaceri al firmei. Datele reale ale firmei sunt mai jos. ' +
+            'Patronul îți pune o întrebare directă — răspunde scurt (max 200 cuvinte), cinstit și concret, ' +
+            'în română, la persoana a II-a. Nu inventa cifre care nu sunt în date. ' +
+            'Dacă ceva nu se poate determina din date, spune-o clar.\n\n' +
+            'Date firmă:\n' + rezumatFirma + '\n\nÎntrebarea patronului: ' + ntreb;
+        const contextAI = istoricCurent.map((m) => (m.rol === 'patron' ? 'Patron: ' : 'Consilier: ') + m.text);
+        try {
+            const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, timeoutMs: 60000,
+                body: JSON.stringify({ intrebare: prompt, context: contextAI }) });
+            let d = {};
+            try {
+                d = await r.json();
+            }
+            catch { }
+            if (r.ok && d && d.raspuns) {
+                const curat = String(d.raspuns).replace(/\*\*/g, '').replace(/^#+\s*/gm, '').replace(/^[*-]\s+/gm, '• ').replace(/\n{3,}/g, '\n\n').trim();
+                setConversatie((prev) => [...prev, { rol: 'consilier', text: curat }]);
+            }
+            else {
+                setConversatie((prev) => [...prev, { rol: 'consilier', text: (d && d.error) ? d.error : 'AI indisponibil momentan.' }]);
+            }
+        }
+        catch (e) {
+            setConversatie((prev) => [...prev, { rol: 'consilier', text: (e && e.name === 'AbortError') ? 'A durat prea mult, mai încearcă.' : 'Fără conexiune la AI.' }]);
+        }
+        setBusyChat(false);
+        setTimeout(() => { try {
+            conversatieEndRef.current && conversatieEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+        catch (_) { } }, 100);
+    };
     const butonAnaliza = (onClick, eticheta) => (React.createElement("button", { onClick: onClick, disabled: busyAI, className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, eticheta));
     return (React.createElement("div", null,
         React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "\uD83E\uDDED Consilier"),
@@ -14338,7 +14382,29 @@ function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, m
                 butonAnaliza(intreabaTot, busyAI ? 'Se gândește…' : '✨ Analizează tot'),
                 butonAnaliza(intreabaBifate, `🔎 Doar ce am bifat (${nrBifate})`)),
             errAI && React.createElement("div", { className: "text-[11px] mt-2 px-2.5 py-2 rounded-lg", style: { color: 'var(--acc4)', background: '#E0525215' } }, errAI),
-            parere && (React.createElement("div", { className: "text-xs mt-3 px-3 py-2.5 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)', whiteSpace: 'pre-line', lineHeight: 1.65 } }, parere)))));
+            parere && (React.createElement("div", { className: "text-xs mt-3 px-3 py-2.5 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)', whiteSpace: 'pre-line', lineHeight: 1.65 } }, parere))),
+        React.createElement("div", { className: "rounded-xl p-4 mt-4", style: { background: 'var(--panel)', border: '1px solid #C08CE066' } },
+            React.createElement("div", { className: "flex items-center justify-between mb-1" },
+                React.createElement("div", { className: "text-sm font-semibold", style: { color: '#C08CE0' } }, "\uD83D\uDCAC \u00CEntreab\u0103 direct"),
+                conversatie.length > 0 && (React.createElement("button", { onClick: () => setConversatie([]), className: "text-[10px] px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "\u0218terge conversa\u021Bia"))),
+            React.createElement("p", { className: "text-[11px] mb-3", style: { color: 'var(--muted2)', lineHeight: 1.55 } }, "Pune orice \u00EEntrebare despre firma ta \u2014 datele reale se trimit automat, nu ai nimic de copiat."),
+            conversatie.length > 0 && (React.createElement("div", { className: "space-y-2 mb-3", style: { maxHeight: 360, overflowY: 'auto' } },
+                conversatie.map((m, i) => (React.createElement("div", { key: i, className: 'flex ' + (m.rol === 'patron' ? 'justify-end' : 'justify-start') },
+                    React.createElement("div", { className: "rounded-xl px-3 py-2 text-xs", style: {
+                            maxWidth: '85%', whiteSpace: 'pre-line', lineHeight: 1.65,
+                            background: m.rol === 'patron' ? '#C08CE022' : 'var(--panel2)',
+                            border: '1px solid ' + (m.rol === 'patron' ? '#C08CE066' : 'var(--border)'),
+                            color: 'var(--text)',
+                        } }, m.text)))),
+                busyChat && (React.createElement("div", { className: "flex justify-start" },
+                    React.createElement("div", { className: "rounded-xl px-3 py-2 text-xs", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--muted)' } }, "Se g\u00E2nde\u0219te\u2026"))),
+                React.createElement("div", { ref: conversatieEndRef }))),
+            React.createElement("div", { className: "flex gap-2" },
+                React.createElement("input", { type: "text", value: intrebareCurenta, onChange: (e) => setIntrebareCurenta(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        intreabaDirect(intrebareCurenta);
+                    } }, placeholder: "Ex: cine \u00EEmi aduce cel mai mult? sau: pe ce \u0219antier pierd bani?", disabled: busyChat, className: "flex-1 text-xs px-3 py-2 rounded-lg disabled:opacity-50", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--text)', outline: 'none', fontFamily: 'inherit' } }),
+                React.createElement("button", { onClick: () => intreabaDirect(intrebareCurenta), disabled: busyChat || !intrebareCurenta.trim(), className: "text-[11px] px-3 py-2 rounded-lg font-semibold disabled:opacity-40 shrink-0", style: { color: '#14181C', background: '#C08CE0' } }, busyChat ? '…' : 'Trimite')))));
 }
 function CompanyTab({ company, setCompany, persist, santiere, setSantiere, rapoarte, currentUser }) {
     const [form, setForm] = useState(company);
