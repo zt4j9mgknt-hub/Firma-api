@@ -2075,7 +2075,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.47-pv-cu-respect';
+const APP_VERSION = 'v03.48-pv-obiectiuni-corecte';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -6786,14 +6786,13 @@ function printProcesVerbal({ pv, santier, client, company, lucrari, obiectiuni, 
     const randLucrari = (lucrari || []).length
         ? lucrari.map((l, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(l.denumire)}</td><td>${esc(l.cantitate ?? '')}</td><td>${esc(l.um || '')}</td></tr>`).join('')
         : '<tr><td colspan="4" style="text-align:left;color:#7a8591;">Lucrările executate sunt cele din devizul/contractul aferent șantierului.</td></tr>';
-    const randObi = (obiectiuni || []).length
-        ? obiectiuni.map((o, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(o.text)}</td><td style="text-align:left">${esc(o.loc || '')}</td><td>${esc(o.termen ? fmtData(o.termen) : '')}</td></tr>`).join('')
+    const toateObiPV = [
+        ...(obiectiuni || []).map((o) => ({ ...o, cine: 'Executant' })),
+        ...obiCl.map((o) => ({ text: o.text, loc: '', termen: '', cine: 'Beneficiar' })),
+    ];
+    const randObi = toateObiPV.length
+        ? toateObiPV.map((o, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(o.text)}</td><td style="text-align:left">${esc(o.loc || '—')}</td><td>${esc(o.termen ? fmtData(o.termen) : '—')}</td><td>${esc(o.cine)}</td></tr>`).join('')
         : '';
-    const blocObiClient = obiCl.length ? `
-    <div style="font-size:11px;font-weight:700;color:#123049;margin-top:5mm;">2b. Obiecțiuni semnalate de beneficiar la semnare</div>
-    <table><tr><th style="width:12mm">Nr.</th><th style="text-align:left">Ce a semnalat beneficiarul</th></tr>
-      ${obiCl.map((o, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(o.text)}</td></tr>`).join('')}
-    </table>` : '';
     const semnBenef = pv.semnatura
         ? `<img src="${pv.semnatura}" alt="" style="max-height:20mm;max-width:62mm;display:block;margin-bottom:1mm;" />`
         : '<div style="height:20mm;"></div>';
@@ -6836,9 +6835,9 @@ function printProcesVerbal({ pv, santier, client, company, lucrari, obiectiuni, 
 
       <div style="font-size:11px;font-weight:700;color:#123049;margin-top:5mm;">2. Obiecțiuni / lucrări rămase de executat</div>
       ${randObi
-        ? `<table><thead><tr><th style="width:10%">Nr.</th><th style="text-align:left">Ce a rămas</th><th style="text-align:left;width:26%">Loc</th><th style="width:18%">Termen</th></tr></thead><tbody>${randObi}</tbody></table>`
+        ? `<table><thead><tr><th style="width:9%">Nr.</th><th style="text-align:left">Ce a rămas</th><th style="text-align:left;width:22%">Loc</th><th style="width:15%">Termen</th><th style="width:18%">Semnalat de</th></tr></thead><tbody>${randObi}</tbody></table>
+           <div style="margin-top:2mm;padding:3mm;border-radius:1.5mm;background:#fdf6e8;border:0.4px solid #e6cf9a;font-size:10.5px;color:#7a5a12;">Recepția se face <b>cu rezervele de mai sus</b>. Ele rămân de rezolvat.</div>`
         : `<div style="margin-top:2mm;padding:3mm;border-radius:1.5mm;background:#f2f9f4;border:0.4px solid #bfe0c9;font-size:10.5px;color:#1d5b31;">Nu s-au consemnat obiecțiuni. Lucrările se recepționează fără rezerve.</div>`}
-      ${blocObiClient}
 
       ${pv.observatii ? `<div style="font-size:11px;font-weight:700;color:#123049;margin-top:5mm;">3. Alte mențiuni</div>
       <div style="font-size:10.5px;color:#26313c;line-height:1.7;margin-top:1.5mm;white-space:pre-wrap;">${esc(pv.observatii)}</div>` : ''}
@@ -6907,11 +6906,17 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
         setFormOpen(true);
     } }, [devizInitial]);
     const perioada = (() => {
+        const p = devizAles && devizAles.perioada;
+        if (p && p.de && p.la)
+            return fmtData(p.de) + ' – ' + fmtData(p.la);
+        if (devizAles && devizAles.data)
+            return fmtData(devizAles.data);
         const zile = (rapoarte || []).filter((r) => String(r.santierId) === String(santierId)).map((r) => String(r.data || '')).filter(Boolean).sort();
         if (!zile.length)
             return '';
         return fmtData(zile[0]) + ' – ' + fmtData(zile[zile.length - 1]);
     })();
+    const perioadaDinDeviz = !!(devizAles && devizAles.perioada && devizAles.perioada.de && devizAles.perioada.la);
     const urmatorulNumar = () => {
         const anul = new Date().getFullYear();
         const ale = (proceseVerbale || []).filter((x) => String(x.numar || '').endsWith('/' + anul));
@@ -7090,9 +7095,10 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
                 React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } },
                     "\uD83D\uDC65 Beneficiar: ",
                     React.createElement("b", { style: { color: 'var(--text)' } }, client?.nume || '(neatribuit)')),
-                perioada && React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } },
+                perioada && (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } },
                     "\uD83D\uDCC5 Perioada: ",
-                    perioada),
+                    perioada,
+                    React.createElement("span", { style: { color: perioadaDinDeviz ? 'var(--acc2)' : 'var(--acc3)' } }, perioadaDinDeviz ? ' — din devizul ales' : ' — din rapoarte (alege un deviz ca s-o ia de acolo)'))),
                 React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } },
                     "\uD83D\uDCCB Lucr\u0103ri trecute \u00EEn document: ",
                     React.createElement("b", { style: { color: 'var(--text)' } }, lucrari.length || 'după deviz'))),
@@ -7201,7 +7207,9 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
                         pv.calitate ? ' · ' + pv.calitate : '',
                         pv.semnatLaDistanta ? ' · de pe telefonul lui' : '')
                     : React.createElement("b", { style: { color: 'var(--acc3)' } }, "\u23F3 A\u0219teapt\u0103 semn\u0103tura clientului"),
-                (pv.obiectiuni || []).length > 0 ? ' · ' + pv.obiectiuni.length + ' obiecțiuni' : ' · fără obiecțiuni',
+                ((pv.obiectiuni || []).length + (pv.obiectiuniClient || []).length) > 0
+                    ? ' · ' + ((pv.obiectiuni || []).length + (pv.obiectiuniClient || []).length) + ' obiecțiuni'
+                    : ' · fără obiecțiuni',
                 (pv.obiectiuniClient || []).length > 0 && (React.createElement("span", { className: "block font-semibold", style: { color: 'var(--acc3)' } },
                     "\u26A0 Clientul a semnalat ",
                     pv.obiectiuniClient.length,
