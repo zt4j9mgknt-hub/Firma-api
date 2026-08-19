@@ -204,9 +204,10 @@ export default async function handler(req, res) {
              asta pică pe telefonul lui ca un formular venit de nicăieri. -->
         <div class="salut">
           <b>Bună ziua!</b><br>
-          Vă scriem din partea firmei <b>${esc(company?.nume || '')}</b>${santier?.nume ? ', pentru lucrarea <b>' + esc(santier.nume) + '</b>' : ''}.
-          Mai jos aveți procesul-verbal de recepție. Vă rugăm să-l citiți, iar dacă a rămas ceva de făcut,
-          scrieți-ne în căsuța de la final — apoi semnați cu degetul, direct pe telefon.
+          Vă scriem din partea firmei <b>${esc(company?.nume || '')}</b>. Mai jos regăsiți Procesul-verbal de recepție
+          ${santier?.nume ? 'aferent lucrării <b>' + esc(santier.nume) + '</b>' : ''}.<br><br>
+          Vă rugăm să parcurgeți documentul. Dacă există <b>neconcordanțe sau obiecțiuni</b>, vă rugăm să le consemnați
+          în rubrica dedicată de la finalul paginii, înainte de semnare.
         </div>
       </div>
       <div class="card">
@@ -226,11 +227,13 @@ export default async function handler(req, res) {
         ${pv.observatii ? `<div class="eticheta">Alte mențiuni</div><div class="mic">${esc(pv.observatii)}</div>` : ''}
       </div>
       <div class="card">
-        <div class="eticheta" style="margin-top:0">Aveți ceva de semnalat?</div>
-        <div class="mic" style="margin-bottom:8px">Dacă a rămas ceva de făcut sau ceva nu e în regulă, scrieți aici — un lucru pe rând, pe câte un rând. Rămâne scris pe proces-verbal, lângă semnătura dumneavoastră. Dacă totul e în regulă, lăsați gol.</div>
-        <textarea id="obiectiuni" rows="4" placeholder="ex: Lipsește capacul de la doza din hol&#10;ex: Priza de la geam nu e fixată"></textarea>
+        <div class="eticheta" style="margin-top:0">Neconcordanțe sau obiecțiuni</div>
+        <div class="mic" style="margin-bottom:8px">Dacă la recepția lucrărilor constatați neconcordanțe față de documentele contractuale
+          sau aveți obiecțiuni, vă rugăm să le consemnați mai jos, câte una pe rând. Acestea vor fi înscrise în procesul-verbal,
+          alături de semnătura dumneavoastră. Dacă nu aveți obiecțiuni, vă rugăm să lăsați rubrica necompletată.</div>
+        <textarea id="obiectiuni" rows="4" placeholder="ex.: Interfonul de la intrarea principală nu este funcțional&#10;ex.: Priza din dreptul ferestrei nu este fixată"></textarea>
         <div class="eticheta">Semnătura dumneavoastră</div>
-        <div class="avertisment" style="margin-bottom:10px">Prin semnare confirmați că ați luat la cunoștință conținutul de mai sus, împreună cu ce ați scris dumneavoastră mai jos.</div>
+        <div class="avertisment" style="margin-bottom:10px">Prin semnare confirmați că ați luat la cunoștință conținutul prezentului proces-verbal, inclusiv neconcordanțele și obiecțiunile consemnate mai sus.</div>
         <canvas id="pad"></canvas>
         <button class="sters" onclick="sterge()">↺ Șterge semnătura</button>
         <div style="margin-top:12px"><input id="nume" placeholder="Numele și prenumele" value="${esc(pv.numeBeneficiar || '')}"></div>
@@ -266,7 +269,7 @@ export default async function handler(req, res) {
             .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
             .then(function(x){ if(!x.ok) throw new Error(x.d.error||'Nu s-a putut trimite.');
               var n=(x.d&&x.d.obiectiuni)||0;
-              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost trimisă'+(n?', împreună cu '+n+(n===1?' observație':' observații'):'')+'. O primim pe loc și vă putem da documentul complet.</div>'+${JSON.stringify('<div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>' + (company && company.nume ? company.nume : '') + '</b>')}+'</div>'; })
+              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost transmisă'+(n?', împreună cu '+n+(n===1?' obiecțiune consemnată':' obiecțiuni consemnate'):'')+'. Am înregistrat-o, iar documentul complet vă va fi transmis de reprezentantul nostru.</div>'+${JSON.stringify('<div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>' + (company && company.nume ? company.nume : '') + '</b>')}+'</div>'; })
             .catch(function(e){ b.disabled=false;b.textContent='✓ Semnez documentul'; m.style.color='#B03030'; m.textContent=e.message; });
         }
       <\/script>`;
