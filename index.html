@@ -2018,7 +2018,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.24b-lizibilitate';
+const APP_VERSION = 'v03.25-cautare-si-fisa';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -9189,6 +9189,225 @@ function culoriGrafic(cate) {
     return cate ? p.slice(0, Math.min(cate, p.length)) : p.slice();
 }
 const CULOARE_ALTELE = '#8B8B8B';
+function CautareGlobala({ inchide, date, currentUser, setTab, setPendingSiteNav }) {
+    const [q, setQ] = useState('');
+    const refInput = useRef(null);
+    useEffect(() => { const t = setTimeout(() => { try {
+        refInput.current && refInput.current.focus();
+    }
+    catch (_) { } }, 60); return () => clearTimeout(t); }, []);
+    useEffect(() => {
+        const esc = (e) => { if (e.key === 'Escape')
+            inchide(); };
+        window.addEventListener('keydown', esc);
+        return () => window.removeEventListener('keydown', esc);
+    }, [inchide]);
+    const eManager = currentUser?.rol === 'Manager';
+    const n = (x) => cautNorm(x);
+    const termeni = n(q).split(' ').filter((t) => t.length >= 2);
+    const potriveste = (...bucati) => {
+        if (!termeni.length)
+            return false;
+        const text = bucati.map(n).join(' ');
+        return termeni.every((t) => text.includes(t));
+    };
+    const numeSantier = (id) => (date.santiere || []).find((x) => x.id === id)?.nume || '';
+    const numeClient = (id) => (date.clients || []).find((x) => x.id === id)?.nume || '';
+    const duLaSantier = (santierId, siteView) => {
+        setPendingSiteNav({ santierId, siteView: siteView || '__closed__', origine: { tab: 'cautare', pagina: null, eticheta: 'Căutare' } });
+        setTab('santiere');
+        inchide();
+    };
+    const duLaTab = (t) => { setTab(t); inchide(); };
+    const grupuri = [];
+    const adauga = (titlu, icon, lista, cheie, randeaza) => {
+        if (lista.length)
+            grupuri.push({ titlu, icon, cheie, total: lista.length, lista: lista.slice(0, 6), randeaza });
+    };
+    if (termeni.length) {
+        adauga('Șantiere', '🏗', (date.santiere || []).filter((x) => potriveste(x.nume, x.adresa, x.benefNume, x.obiectiv)), 'sant', (x) => ({ titlu: x.nume, sub: [x.adresa, x.status].filter(Boolean).join(' · '), du: () => duLaSantier(x.id) }));
+        adauga('Clienți', '👥', (date.clients || []).filter((x) => potriveste(x.nume, x.cui, x.adresa, x.telefon, x.email, x.persoana)), 'cli', (x) => ({ titlu: x.nume, sub: [x.cui, x.telefon].filter(Boolean).join(' · '), du: () => duLaTab('clienti') }));
+        adauga('Oameni', '👷', (date.allUsers || []).filter((x) => potriveste(x.nume, x.username, x.telefon, x.rol)), 'om', (x) => ({ titlu: x.nume, sub: [x.rol, x.telefon].filter(Boolean).join(' · '), du: () => duLaTab(eManager ? 'utilizatori' : 'profil') }));
+        adauga('Rapoarte', '📋', unificaRapoarte(date.rapoarte || []).filter((x) => potriveste(x.explicatii, numeSantier(x.santierId), (x.persoane || []).map((p) => p.nume).join(' '), (x.lucrari || []).map((l) => l.denumire).join(' '), (x.materiale || []).map((m) => m.denumire).join(' '))).sort((a, b) => (a.data < b.data ? 1 : -1)), 'rap', (x) => ({ titlu: fmtData(x.data) + ' · ' + numeSantier(x.santierId), sub: String(x.explicatii || '').slice(0, 70), du: () => duLaSantier(x.santierId, 'rapoarte') }));
+        adauga('Materiale în stoc', '📦', (date.materials || []).filter((x) => potriveste(x.denumire, x.categorie, x.cod)), 'mat', (x) => ({ titlu: x.denumire, sub: [x.categorie, 'stoc ' + (x.stoc ?? 0) + ' ' + (x.um || '')].filter(Boolean).join(' · '), du: () => duLaTab('stocuri') }));
+        adauga('Scule pe șantier', '🔧', (date.sculeSantier || []).filter((x) => potriveste(x.denumire, x.adusaDe, numeSantier(x.santierId))), 'scu', (x) => ({ titlu: x.denumire, sub: numeSantier(x.santierId) + (x.adusaDe ? ' · ' + x.adusaDe : ''), du: () => duLaSantier(x.santierId, 'scule') }));
+        adauga('Întrebări și probleme', '❓', (date.problemeSantier || []).filter((x) => potriveste(x.intrebare, numeSantier(x.santierId), x.creatDe)), 'qa', (x) => ({ titlu: String(x.intrebare || '').slice(0, 70), sub: numeSantier(x.santierId), du: () => duLaSantier(x.santierId, 'probleme') }));
+        adauga('Restanțe', '🔴', (date.restanteSantier || []).filter((x) => potriveste(x.text, x.denumire, x.locNume, numeSantier(x.santierId))), 'res', (x) => ({ titlu: String(x.text || x.denumire || '').slice(0, 70), sub: [numeSantier(x.santierId), x.locNume].filter(Boolean).join(' · '), du: () => duLaSantier(x.santierId, 'restante') }));
+        adauga('Notițe', '📝', (date.notite || []).filter((x) => potriveste(x.titlu, x.text)), 'not', (x) => ({ titlu: x.titlu || String(x.text || '').slice(0, 50), sub: String(x.text || '').slice(0, 70), du: () => duLaTab('notite') }));
+        if (eManager) {
+            adauga('Facturi', '🧾', (date.invoices || []).filter((x) => potriveste(x.numar, numeClient(x.clientId), x.status)), 'fac', (x) => ({ titlu: 'Factura ' + (x.numar || '') + ' · ' + numeClient(x.clientId), sub: [fmtData(x.data), x.status].filter(Boolean).join(' · '), du: () => duLaTab('facturi') }));
+            adauga('Devize', '🧮', (date.devize || []).filter((x) => potriveste(x.numar, numeClient(x.clientId), (x.items || []).map((i) => i.denumire).join(' '))), 'dev', (x) => ({ titlu: 'Deviz ' + (x.numar || '') + ' · ' + numeClient(x.clientId), sub: [fmtData(x.data), x.status].filter(Boolean).join(' · '), du: () => duLaTab('devize') }));
+            adauga('Oferte', '📨', (date.offers || []).filter((x) => potriveste(x.numar, numeClient(x.clientId), (x.items || []).map((i) => i.denumire).join(' '))), 'ofe', (x) => ({ titlu: 'Oferta ' + (x.numar || '') + ' · ' + numeClient(x.clientId), sub: fmtData(x.data), du: () => duLaTab('oferte') }));
+        }
+    }
+    const totalGasit = grupuri.reduce((a, g) => a + g.total, 0);
+    return (React.createElement("div", { style: { position: 'fixed', inset: 0, zIndex: 200, background: 'var(--appbg)', overflowY: 'auto' } },
+        React.createElement("div", { style: { position: 'sticky', top: 0, zIndex: 2, background: 'var(--appbg)', borderBottom: '1px solid var(--border)' }, className: "px-3 py-2.5" },
+            React.createElement("div", { className: "flex items-center gap-2" },
+                React.createElement("input", { ref: refInput, value: q, onChange: (e) => setQ(e.target.value), placeholder: "Caut\u0103 \u00EEn tot: \u0219antier, client, raport, material, om\u2026", className: "flex-1 rounded-lg px-3 py-2.5 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                React.createElement("button", { onClick: inchide, className: "btn3d text-sm font-semibold px-3 py-2.5 shrink-0", style: { color: 'var(--muted)' } }, "\u2715")),
+            termeni.length > 0 && (React.createElement("div", { className: "text-xs mt-1.5", style: { color: 'var(--muted)' } }, totalGasit === 0 ? 'Nimic găsit.' : totalGasit + (totalGasit === 1 ? ' rezultat' : ' rezultate')))),
+        React.createElement("div", { className: "p-3 space-y-4" },
+            termeni.length === 0 && (React.createElement("div", { className: "text-sm", style: { color: 'var(--muted)' } },
+                "Scrie cel pu\u021Bin dou\u0103 litere. Caut \u00EEn \u0219antiere, clien\u021Bi, oameni, rapoarte, materiale, scule, \u00EEntreb\u0103ri, restan\u021Be \u0219i noti\u021Be",
+                eManager ? ', plus facturi, devize și oferte' : '',
+                ".")),
+            grupuri.map((g) => (React.createElement("div", { key: g.cheie },
+                React.createElement("div", { className: "text-xs font-bold uppercase tracking-wider mb-1.5", style: { color: 'var(--muted2)' } },
+                    g.icon,
+                    " ",
+                    g.titlu,
+                    " ",
+                    React.createElement("span", { style: { fontWeight: 400 } },
+                        "\u00B7 ",
+                        g.total)),
+                React.createElement("div", { className: "space-y-1.5" },
+                    g.lista.map((x, i) => {
+                        const r = g.randeaza(x);
+                        return (React.createElement("button", { key: g.cheie + i, onClick: r.du, className: "w-full text-left rounded-lg px-3 py-2.5", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                            React.createElement("div", { className: "text-sm font-semibold truncate", style: { color: 'var(--text)' } }, r.titlu),
+                            r.sub && React.createElement("div", { className: "text-xs truncate", style: { color: 'var(--muted)' } }, r.sub)));
+                    }),
+                    g.total > g.lista.length && (React.createElement("div", { className: "text-xs px-1", style: { color: 'var(--muted2)' } },
+                        "\u2026\u0219i \u00EEnc\u0103 ",
+                        g.total - g.lista.length,
+                        ". Scrie mai exact ca s\u0103 le restr\u00E2ngi.")))))))));
+}
+function FisaOmTab({ allUsers, rapoarte, santiere, concedii, cereriSantier, restanteSantier, company, currentUser }) {
+    const [alesId, setAlesId] = useState(null);
+    const [luniInapoi, setLuniInapoi] = useState(6);
+    const oameni = (allUsers || []).slice().sort((a, b) => String(a.nume || '').localeCompare(String(b.nume || ''), 'ro'));
+    const om = oameni.find((u) => u.id === alesId) || null;
+    const costOra = costOraFolosit(company, rapoarte);
+    const hm = (min) => { const h = Math.floor(min / 60); const m = Math.round(min % 60); return (h ? h + 'h' : '') + (m ? ' ' + m + 'm' : (h ? '' : '0m')); };
+    const dateOm = useMemo(() => {
+        if (!om)
+            return null;
+        const numeOm = String(om.nume || '').trim();
+        const azi = dataLocala(new Date());
+        const start = (() => { const d = new Date(azi + 'T00:00:00'); d.setMonth(d.getMonth() - (luniInapoi - 1)); d.setDate(1); return dataLocala(d); })();
+        let minuteLucrate = 0, minuteMoarte = 0;
+        const peLuna = new Map();
+        const peSantier = new Map();
+        const zile = new Set();
+        const motive = new Map();
+        unificaRapoarte(rapoarte || []).forEach((r) => {
+            const data = String(r.data || '');
+            if (!data || data < start)
+                return;
+            const luna = data.slice(0, 7);
+            (r.persoane || []).forEach((pp) => {
+                if (String(pp.nume || '').trim() !== numeOm)
+                    return;
+                const min = minuteFacturabile(rapoarte, r, pp);
+                minuteLucrate += min;
+                zile.add(data);
+                peLuna.set(luna, (peLuna.get(luna) || 0) + min);
+                const sid = String(r.santierId || '');
+                peSantier.set(sid, (peSantier.get(sid) || 0) + min);
+            });
+            (r.timpNeproductiv || []).forEach((t) => {
+                const pers = (Array.isArray(t.persoane) ? t.persoane : []).filter(Boolean);
+                if (!pers.some((x) => String(x).trim() === numeOm))
+                    return;
+                const min = minutePersoanaTimp(t, numeOm) || 0;
+                minuteMoarte += min;
+                const c = String(t.categorie || 'altele');
+                motive.set(c, (motive.get(c) || 0) + min);
+            });
+        });
+        const conc = (concedii || []).filter((c) => c.userId === om.id || String(c.nume || '').trim() === numeOm);
+        const cereri = (cereriSantier || []).filter((c) => c.cerutId === om.id || String(c.cerutDe || '').trim() === numeOm);
+        const restante = (restanteSantier || []).filter((x) => String(x.creatDe || '').trim() === numeOm || String(x.lasatDe || '').trim() === numeOm);
+        const santiereleLui = (santiere || []).filter((sx) => inEchipa(sx.echipa, om.id));
+        return {
+            minuteLucrate, minuteMoarte, zile: zile.size,
+            procMort: minuteLucrate > 0 ? Math.round(minuteMoarte / minuteLucrate * 100) : null,
+            peLuna: Array.from(peLuna.entries()).map(([k, v]) => ({ luna: k, minute: v })).sort((a, b) => (a.luna < b.luna ? -1 : 1)),
+            peSantier: Array.from(peSantier.entries()).map(([k, v]) => ({ santierId: k, nume: (santiere || []).find((sx) => sx.id === k)?.nume || '—', minute: v })).sort((a, b) => b.minute - a.minute),
+            motive: Array.from(motive.entries()).map(([k, v]) => ({ id: k, minute: v })).sort((a, b) => b.minute - a.minute),
+            conc, cereri, restante, santiereleLui,
+        };
+    }, [om, rapoarte, santiere, concedii, cereriSantier, restanteSantier, luniInapoi]);
+    const LUNI_S = ['ian', 'feb', 'mar', 'apr', 'mai', 'iun', 'iul', 'aug', 'sep', 'oct', 'noi', 'dec'];
+    const etLuna = (k) => LUNI_S[Number(k.slice(5, 7)) - 1] + ' ' + k.slice(2, 4);
+    const cartela = (eticheta, valoare, culoare, subtext) => (React.createElement("div", { className: "rounded-lg px-3 py-2.5", style: { background: 'var(--panel2)' } },
+        React.createElement("div", { className: "text-xs uppercase tracking-wide", style: { color: 'var(--muted2)' } }, eticheta),
+        React.createElement("div", { className: "text-base font-bold", style: { color: culoare || 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, valoare),
+        subtext && React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, subtext)));
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Fi\u0219a omului"),
+        React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted)' } }, "Tot ce \u0219tie aplica\u021Bia despre un angajat, \u00EEntr-un singur loc: ore, timp neproductiv, \u0219antiere, concedii, materiale cerute, restan\u021Be l\u0103sate \u00EEn urm\u0103."),
+        React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-4" },
+            oameni.length === 0 && React.createElement("span", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Nu am putut \u00EEnc\u0103rca lista de oameni."),
+            oameni.map((u) => (React.createElement("button", { key: u.id, onClick: () => setAlesId(alesId === u.id ? null : u.id), className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: alesId === u.id ? '#14181C' : 'var(--muted)', background: alesId === u.id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+                u.rol === 'Manager' ? '💼' : '👷',
+                " ",
+                u.nume)))),
+        !om && React.createElement("div", { className: "rounded-xl p-6 text-center text-sm", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--muted)' } }, "Alege un om de mai sus."),
+        om && dateOm && (React.createElement("div", { className: "rounded-xl p-4 space-y-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap" },
+                React.createElement("div", null,
+                    React.createElement("div", { className: "text-base font-bold", style: { color: 'var(--text)' } },
+                        om.rol === 'Manager' ? '💼' : '👷',
+                        " ",
+                        om.nume),
+                    React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } },
+                        om.rol,
+                        om.telefon ? ' · ' + om.telefon : '',
+                        om.username ? ' · @' + om.username : '')),
+                React.createElement("div", { className: "flex gap-1.5" }, [[3, '3 luni'], [6, '6 luni'], [12, '12 luni']].map(([v, et]) => (React.createElement("button", { key: v, onClick: () => setLuniInapoi(v), className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: luniInapoi === v ? '#14181C' : 'var(--muted)', background: luniInapoi === v ? 'var(--acc3)' : 'var(--panel2)', border: '1px solid var(--border)' } }, et))))),
+            React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" },
+                cartela('Ore lucrate', hm(dateOm.minuteLucrate), 'var(--acc1)', dateOm.zile + (dateOm.zile === 1 ? ' zi' : ' zile')),
+                cartela('Timp neproductiv', hm(dateOm.minuteMoarte), dateOm.procMort != null && dateOm.procMort >= pragTimpMort(company) ? 'var(--acc4)' : 'var(--acc3)', dateOm.procMort != null ? dateOm.procMort + '% din ore' : '—'),
+                cartela('Șantiere', String(dateOm.peSantier.length), 'var(--text)', dateOm.santiereleLui.length + ' alocate acum'),
+                cartela('Concedii', String(dateOm.conc.filter((c) => c.status === 'Aprobat').length), 'var(--text)', dateOm.conc.filter((c) => c.status === 'Cerut').length + ' în așteptare')),
+            dateOm.peLuna.length > 0 && (React.createElement("div", null,
+                React.createElement("div", { className: "text-xs uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Ore pe lun\u0103"),
+                React.createElement("div", { className: "flex items-end justify-between gap-1.5", style: { height: 84 } }, dateOm.peLuna.map((L) => {
+                    const maxL = Math.max(...dateOm.peLuna.map((y) => y.minute)) || 1;
+                    return (React.createElement("div", { key: L.luna, className: "flex-1 flex flex-col items-center gap-1" },
+                        React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } }, Math.round(L.minute / 60)),
+                        React.createElement("div", { style: { width: '70%', height: Math.max(3, Math.round(L.minute / maxL * 48)), background: culoriGrafic(1)[0], borderRadius: '3px 3px 0 0' } }),
+                        React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, etLuna(L.luna))));
+                })),
+                React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted2)' } }, "ore lucrate, pe lun\u0103"))),
+            dateOm.peSantier.length > 0 && (React.createElement("div", null,
+                React.createElement("div", { className: "text-xs uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Unde a lucrat"),
+                React.createElement("div", { className: "space-y-1" }, dateOm.peSantier.slice(0, 8).map((x) => (React.createElement("div", { key: x.santierId, className: "flex items-center justify-between gap-2 text-sm px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } },
+                    React.createElement("span", { className: "truncate", style: { color: 'var(--text)' } },
+                        "\uD83C\uDFD7 ",
+                        x.nume),
+                    React.createElement("span", { className: "shrink-0", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, hm(x.minute)))))))),
+            dateOm.motive.length > 0 && (React.createElement("div", null,
+                React.createElement("div", { className: "text-xs uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Unde i s-a dus timpul neproductiv"),
+                React.createElement("div", { className: "space-y-1" }, dateOm.motive.slice(0, 6).map((m) => (React.createElement("div", { key: m.id, className: "flex items-center justify-between gap-2 text-sm px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } },
+                    React.createElement("span", { className: "truncate", style: { color: 'var(--text)' } },
+                        iconCategorieTimp(m.id),
+                        " ",
+                        numeCategorieTimp(m.id)),
+                    React.createElement("span", { className: "shrink-0", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } },
+                        hm(m.minute),
+                        costOra > 0 ? ' · ' + money(m.minute / 60 * costOra) : ''))))))),
+            React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-3" },
+                React.createElement("div", null,
+                    React.createElement("div", { className: "text-xs uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Concedii"),
+                    dateOm.conc.length === 0 ? React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Niciunul.") : (React.createElement("div", { className: "space-y-1" }, dateOm.conc.slice(-6).reverse().map((c) => (React.createElement("div", { key: c.id, className: "flex items-center justify-between gap-2 text-sm px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } },
+                        React.createElement("span", { className: "truncate", style: { color: 'var(--text)' } },
+                            fmtData(c.dataInceput),
+                            " \u2013 ",
+                            fmtData(c.dataSfarsit)),
+                        React.createElement("span", { className: "shrink-0", style: { color: c.status === 'Aprobat' ? 'var(--acc2)' : c.status === 'Cerut' ? 'var(--acc3)' : 'var(--acc4)' } }, c.status))))))),
+                React.createElement("div", null,
+                    React.createElement("div", { className: "text-xs uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Materiale cerute"),
+                    dateOm.cereri.length === 0 ? React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Niciunul.") : (React.createElement("div", { className: "space-y-1" }, dateOm.cereri.slice(-6).reverse().map((c) => (React.createElement("div", { key: c.id, className: "flex items-center justify-between gap-2 text-sm px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } },
+                        React.createElement("span", { className: "truncate", style: { color: 'var(--text)' } },
+                            c.denumire,
+                            " ",
+                            c.cantitate ? '· ' + c.cantitate + ' ' + (c.um || '') : ''),
+                        React.createElement("span", { className: "shrink-0", style: { color: 'var(--muted2)' } }, c.status)))))))),
+            React.createElement("div", { className: "text-xs pt-2", style: { color: 'var(--muted2)', borderTop: '1px solid var(--border)' } }, "Cifrele vin din rapoartele zilnice, pe perioada aleas\u0103 mai sus. Orele sunt cele facturabile (f\u0103r\u0103 pauza de pr\u00E2nz), la fel ca \u00EEn Pontaj.")))));
+}
 class Prinde extends React.Component {
     constructor(props) { super(props); this.state = { er: null }; }
     static getDerivedStateFromError(er) { return { er }; }
@@ -19587,7 +19806,7 @@ function App() {
     const tabBlocatTest = accesLimitat && !!tab && !TABURI_TEST.includes(tab);
     const CONTAB_TABS = ['proiecte', 'devize', 'oferte', 'facturi', 'clienti', 'notite', 'antemasuratoare', 'scadentar', 'devizrealizat'];
     const MATERIALE_TABS = ['gestiune', 'stocuri', 'achizitii', 'scule-global'];
-    const OAMENI_TABS = ['pontaj', 'concedii', 'adeverinte', 'utilizatori', 'calendar'];
+    const OAMENI_TABS = ['pontaj', 'concedii', 'adeverinte', 'utilizatori', 'calendar', 'fisaom'];
     const UNELTE_TABS = ['asistent', 'memento', 'calculator', 'normativ', 'ghid'];
     const SETARI_TABS = ['firma', 'profil', 'cheltuieli'];
     const [grupDeschis, setGrupDeschis] = useState(null);
@@ -19633,6 +19852,12 @@ function App() {
     const [dateIncarcate, setDateIncarcate] = useState(false);
     const noutBroadcastRef = useRef(false);
     const [pendingSiteNav, setPendingSiteNav] = useState(null);
+    const [totiOamenii, setTotiOamenii] = useState([]);
+    useEffect(() => {
+        authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list' }) })
+            .then((r) => r.json()).then((d) => setTotiOamenii(d.users || [])).catch(() => { });
+    }, []);
+    const [cautareDeschisa, setCautareDeschisa] = useState(false);
     const [dashPagina, setDashPagina] = useState(null);
     const [siteSectiune, setSiteSectiune] = useState(null);
     const [navSantier, setNavSantier] = useState(null);
@@ -20808,7 +21033,7 @@ function App() {
                 React.createElement("button", { onClick: () => setSidebarOpen(true), className: "text-xl px-1", style: { color: 'var(--text)' } }, "\u2630"),
                 React.createElement("button", { onClick: () => { setTab(effectiveUser.rol === 'Manager' ? null : 'activitate'); setSidebarOpen(false); }, title: "\u00CEnapoi la Dashboard" },
                     React.createElement("img", { src: "/logo.png", alt: "Logo", style: { height: 24, width: 'auto', display: 'block' } })),
-                React.createElement("div", { style: { width: 28 } })),
+                React.createElement("button", { onClick: () => setCautareDeschisa(true), title: "Caut\u0103 \u00EEn tot", className: "text-xl px-1", style: { color: 'var(--text)' } }, "\uD83D\uDD0D")),
             sidebarOpen && (React.createElement("div", { onClick: () => setSidebarOpen(false), className: "md:hidden fixed inset-0", style: { background: 'rgba(0,0,0,0.6)', zIndex: 40 } })),
             React.createElement("div", { className: "w-full flex" },
                 React.createElement("aside", { className: `w-full md:w-56 shrink-0 p-4 flex flex-col gap-1 fixed md:static inset-y-0 left-0 overflow-y-auto transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`, style: { borderRight: '1px solid var(--border)', background: 'var(--panel)', zIndex: 50, overflowY: 'auto' } },
@@ -20845,6 +21070,7 @@ function App() {
                                     ['scule-global', '🔧 Scule (global)', true],
                                 ]],
                             ['oameni', effectiveUser.rol === 'Manager' ? '👷' : '👥', effectiveUser.rol === 'Manager' ? 'Angajați' : 'Echipa', OAMENI_TABS, false, [
+                                    ['fisaom', '👤 Fișa omului', true],
                                     ['pontaj', '🕐 Pontaj', false],
                                     ['concedii', '🏖 Concedii', false],
                                     ['adeverinte', '📄 Adeverințe', true],
@@ -20906,6 +21132,7 @@ function App() {
                                 currentUser.nume),
                             React.createElement("button", { onClick: logout, style: { color: 'var(--acc4)' } }, "Ie\u0219i")),
                         React.createElement("div", { className: "px-3 pb-1 text-[10px]", style: { color: 'var(--muted2)' } }, APP_VERSION))),
+                cautareDeschisa && React.createElement(CautareGlobala, { inchide: () => setCautareDeschisa(false), currentUser: effectiveUser, setTab: setTab, setPendingSiteNav: setPendingSiteNav, date: { santiere, clients, allUsers: totiOamenii, rapoarte, materials, sculeSantier, problemeSantier, restanteSantier: restanteSantier, notite, invoices, devize, offers } }),
                 React.createElement("main", { className: "flex-1 p-3 md:p-6 max-w-4xl w-full min-w-0" },
                     React.createElement(BandaTest, null),
                     !loading && (potInapoi || potInainte) && (React.createElement("div", { className: "barnav flex items-center gap-2 mb-3" },
@@ -20963,6 +21190,7 @@ function App() {
                             tab === 'santiere' && React.createElement(SantiereTab, { onOrigine: (o) => { setDashPagina(o && o.pagina != null ? o.pagina : null); sarPeste.current = true; setTab(o && o.tab !== undefined ? o.tab : null); }, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                             tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
                             tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
+                            tab === 'fisaom' && effectiveUser.rol === 'Manager' && React.createElement(FisaOmTab, { allUsers: totiOamenii, rapoarte: rapoarte, santiere: santiere, concedii: concedii, cereriSantier: cereriSantier, restanteSantier: restanteSantier, company: company, currentUser: effectiveUser }),
                             tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, currentUser: effectiveUser, categoriiTimp: categoriiTimp, setCategoriiTimp: setCategoriiTimp }),
                             tab === 'activitate' && React.createElement(ActivitateaMeaTab, { company: company, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
                             tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
