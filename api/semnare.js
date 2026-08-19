@@ -80,11 +80,19 @@ function pagina({ titlu, corp }) {
   td{border:1px solid #E6ECF4;padding:8px}
   .eticheta{font-size:13px;font-weight:700;color:#123049;text-transform:uppercase;letter-spacing:.03em;margin:18px 0 4px}
   canvas{width:100%;height:170px;background:#fff;border:2px dashed #B9C6D6;border-radius:12px;touch-action:none;display:block}
+  .salut{margin-top:14px;padding:13px 15px;border-radius:12px;background:#EEF5FF;border:1px solid #CFE0F5;
+         font-size:15px;line-height:1.6;color:#1B2A3A}
+  .incheiere{text-align:center;padding:18px 12px 28px;font-size:14px;line-height:1.7;color:#3F5164}
+  .incheiere .respect{color:#7C8B9C}
   input,textarea{width:100%;padding:13px;font-size:16px;border:1px solid #DCE3EE;border-radius:10px;background:#F7FAFD;color:#16202B;font-family:inherit}
   textarea{resize:vertical;line-height:1.5;margin-bottom:14px}
   button{font-size:17px;font-weight:700;padding:15px 18px;border:0;border-radius:12px;width:100%;cursor:pointer}
   .primar{background:#35986A;color:#fff}
-  .sters{background:#F1F5FA;color:#5F6E80;font-size:14px;padding:9px;width:auto;margin-top:6px}
+  /* „Șterge semnătura" era un butonaș gri, cât o notă de subsol — omul semna strâmb și
+     nu-l găsea. Acum e buton întreg, cât degetul, cu chenar și scris citeț. */
+  .sters{background:#fff;color:#B03030;font-size:17px;font-weight:700;padding:15px;width:100%;
+         margin-top:10px;border:2px solid #E4B8B8;border-radius:12px}
+  .sters:active{background:#FBEFEF}
   .avertisment{background:#FFF6E3;border:1px solid #E8D9A8;color:#6B5410;border-radius:10px;padding:12px;font-size:14px}
   .bun{background:#EFF9F2;border:1px solid #BFE0C9;color:#1D5B31;border-radius:10px;padding:14px}
   .rau{background:#FDF0F0;border:1px solid #F0C4C4;color:#8B1E1E;border-radius:10px;padding:14px}
@@ -163,7 +171,8 @@ export default async function handler(req, res) {
       return res.status(200).send(pagina({
         titlu: 'Deja semnat',
         corp: `<div class="card"><h1>✅ Document semnat</h1>
-          <div class="bun" style="margin-top:10px">Procesul-verbal nr. ${esc(pv.numar || '')} a fost semnat de <b>${esc(pv.numeBeneficiar || '')}</b>${pv.semnatLa ? ' la ' + esc(new Date(pv.semnatLa).toLocaleString('ro-RO')) : ''}.<br><br>Nu mai e nimic de făcut. Mulțumim!</div></div>`,
+          <div class="bun" style="margin-top:10px">Procesul-verbal nr. ${esc(pv.numar || '')} a fost semnat de <b>${esc(pv.numeBeneficiar || '')}</b>${pv.semnatLa ? ' la ' + esc(new Date(pv.semnatLa).toLocaleString('ro-RO')) : ''}.<br><br>Nu mai e nimic de făcut.</div>
+          <div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>${esc(company?.nume || '')}</b>${company?.telefon ? '<br>Tel: ' + esc(company.telefon) : ''}</div></div>`,
       }));
     }
 
@@ -187,6 +196,14 @@ export default async function handler(req, res) {
       <div class="card">
         <h1>Proces-verbal de recepție</h1>
         <div class="mic">Nr. ${esc(pv.numar || '')} din ${esc(fmtData(pv.data))}</div>
+        <!-- OMUL TREBUIE SĂ ȘTIE DE LA CINE E ȘI CE ARE DE FĂCUT. Fără salut, pagina
+             asta pică pe telefonul lui ca un formular venit de nicăieri. -->
+        <div class="salut">
+          <b>Bună ziua!</b><br>
+          Vă scriem din partea firmei <b>${esc(company?.nume || '')}</b>${santier?.nume ? ', pentru lucrarea <b>' + esc(santier.nume) + '</b>' : ''}.
+          Mai jos aveți procesul-verbal de recepție. Vă rugăm să-l citiți, iar dacă a rămas ceva de făcut,
+          scrieți-ne în căsuța de la final — apoi semnați cu degetul, direct pe telefon.
+        </div>
       </div>
       <div class="card">
         <table>
@@ -217,7 +234,12 @@ export default async function handler(req, res) {
         <div id="mesaj" class="mic" style="margin:10px 0;min-height:20px"></div>
         <button class="primar" id="btn" onclick="trimite()">✓ Semnez documentul</button>
       </div>
-      <div class="mic" style="text-align:center;padding-bottom:24px">${esc(company?.nume || '')}${company?.telefon ? ' · ' + esc(company.telefon) : ''}</div>
+      <div class="incheiere">
+        Vă mulțumim pentru colaborare!<br>
+        <span class="respect">Cu respect,</span><br>
+        <b>${esc(company?.nume || '')}</b>
+        ${company?.telefon ? '<br>Tel: ' + esc(company.telefon) : ''}${company?.email ? '<br>' + esc(company.email) : ''}
+      </div>
       <script>
         var c=document.getElementById('pad'),ctx,desen=false,gol=true;
         function initPad(){var dpr=window.devicePixelRatio||1;var w=c.clientWidth||300;c.width=w*dpr;c.height=170*dpr;ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.lineJoin='round';ctx.lineCap='round';ctx.strokeStyle='#111';ctx.lineWidth=2.4;}
@@ -240,7 +262,7 @@ export default async function handler(req, res) {
             .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
             .then(function(x){ if(!x.ok) throw new Error(x.d.error||'Nu s-a putut trimite.');
               var n=(x.d&&x.d.obiectiuni)||0;
-              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost trimisă'+(n?', împreună cu '+n+(n===1?' observație':' observații'):'')+'. Executantul o primește pe loc și vă poate da documentul complet.</div></div>'; })
+              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost trimisă'+(n?', împreună cu '+n+(n===1?' observație':' observații'):'')+'. O primim pe loc și vă putem da documentul complet.</div>'+${JSON.stringify('<div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>' + (company && company.nume ? company.nume : '') + '</b>')}+'</div>'; })
             .catch(function(e){ b.disabled=false;b.textContent='✓ Semnez documentul'; m.style.color='#B03030'; m.textContent=e.message; });
         }
       <\/script>`;
