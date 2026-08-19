@@ -179,18 +179,22 @@ export default async function handler(req, res) {
     const randLucrari = (pv.lucrari || []).length
       ? pv.lucrari.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.denumire)}</td><td>${esc(l.cantitate ?? '')} ${esc(l.um || '')}</td></tr>`).join('')
       : `<tr><td colspan="3" class="mic">Conform ${pv.devizNumar ? 'devizului nr. ' + esc(pv.devizNumar) + (pv.devizData ? ' din ' + esc(pv.devizData) : '') : 'devizului'}${pv.contract ? ' și contractului nr. ' + esc(pv.contract) : ''}, aferent lucrării.</td></tr>`;
-    const randObi = (pv.obiectiuni || []).length
-      ? `<div class="eticheta">Obiecțiuni / rămase de executat</div><table><tr><th>Nr.</th><th>Ce a rămas</th><th>Loc</th></tr>${
-          pv.obiectiuni.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.text)}</td><td>${esc(o.loc || '—')}</td></tr>`).join('')}</table>`
-      : '<div class="eticheta">Obiecțiuni consemnate de executant</div><div class="bun">Executantul nu a consemnat obiecțiuni.</div>';
+    /* UN SINGUR TABEL, cu cine a semnalat. Două liste separate duceau la un document
+       care se contrazicea: sus scria „nu s-au consemnat obiecțiuni", jos era scris ce
+       reproșase clientul. */
+    const toateObi = [
+      ...(pv.obiectiuni || []).map((o) => ({ text: o.text, loc: o.loc || '—', cine: 'Executant' })),
+      ...(pv.obiectiuniClient || []).map((o) => ({ text: o.text, loc: '—', cine: 'Beneficiar' })),
+    ];
+    const randObi = toateObi.length
+      ? `<div class="eticheta">Obiecțiuni / rămase de executat</div><table><tr><th>Nr.</th><th>Ce a rămas</th><th>Loc</th><th>Semnalat de</th></tr>${
+          toateObi.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.text)}</td><td>${esc(o.loc)}</td><td>${esc(o.cine)}</td></tr>`).join('')}</table>`
+      : '<div class="eticheta">Obiecțiuni</div><div class="bun">Nu s-au consemnat obiecțiuni.</div>';
     /* DE CE NU SE TRECEAU OBIECȚIUNILE: pagina asta doar ARĂTA ce scrisese executantul
        înainte să trimită linkul. Clientul, care e la celălalt capăt al telefonului, n-avea
        unde să scrie nimic — putea doar să semneze sau să nu semneze. Acum are căsuța lui:
        ce scrie aici pleacă odată cu semnătura și rămâne pe document. */
-    const obiClient = (pv.obiectiuniClient || []).length
-      ? `<div class="eticheta">Obiecțiunile dumneavoastră</div><table><tr><th>Nr.</th><th>Ce ați semnalat</th></tr>${
-          pv.obiectiuniClient.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.text)}</td></tr>`).join('')}</table>`
-      : '';
+    const obiClient = '';
 
     const corp = `
       <div class="card">
