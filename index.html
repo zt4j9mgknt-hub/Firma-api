@@ -2041,7 +2041,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.32-google-calendar';
+const APP_VERSION = 'v03.33-semnare-la-distanta';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -6825,6 +6825,7 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
     const [obiTermen, setObiTermen] = useState('');
     const [obiInRestante, setObiInRestante] = useState(true);
     const [editId, setEditId] = useState(null);
+    const [linkSemnare, setLinkSemnare] = useState(null);
     const [stare, setStare] = useState('');
     const alePV = (proceseVerbale || []).filter((x) => String(x.santierId) === String(santierId))
         .slice().sort((a, b) => (a.data < b.data ? 1 : -1));
@@ -6887,6 +6888,53 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
         const noi = (proceseVerbale || []).filter((x) => x.id !== pv.id);
         setProceseVerbale(noi);
         persist('proceseVerbale', noi);
+    };
+    const trimiteSpreSemnare = async () => {
+        if (!String(numeBenef).trim()) {
+            setStare('⚠ Scrie numele celui care va semna.');
+            return;
+        }
+        setStare('Pregătesc documentul…');
+        const acum = new Date();
+        const toateObi = [...(cuObiectiuni ? restanteDeschise : []), ...obiNoi];
+        const vechi = editId ? (proceseVerbale || []).find((x) => x.id === editId) : null;
+        const pv = {
+            id: vechi ? vechi.id : uid(), santierId,
+            numar: vechi ? vechi.numar : urmatorulNumar(),
+            data: vechi ? vechi.data : dataLocala(acum),
+            ora: vechi ? vechi.ora : String(acum.getHours()).padStart(2, '0') + ':' + String(acum.getMinutes()).padStart(2, '0'),
+            numeBeneficiar: String(numeBenef).trim(), calitate: String(calitate).trim(),
+            observatii: String(observatii).trim(), semnatura: '', perioada,
+            lucrare: santier?.lucrare || '', obiectiuni: toateObi, lucrari,
+            creatDe: vechi ? vechi.creatDe : (currentUser?.nume || ''), creatId: vechi ? vechi.creatId : (currentUser?.id || ''),
+            trimisSpreSemnare: true, trimisLa: dataLocala(acum),
+        };
+        const noi = vechi ? (proceseVerbale || []).map((x) => (x.id === pv.id ? pv : x)) : [...(proceseVerbale || []), pv];
+        setProceseVerbale(noi);
+        try {
+            await persist('proceseVerbale', noi);
+        }
+        catch (_) { }
+        try {
+            const r = await authFetch('/api/semnare?action=link&pv=' + encodeURIComponent(pv.id));
+            const t = await r.text();
+            let d = {};
+            try {
+                d = JSON.parse(t);
+            }
+            catch (_) {
+                throw new Error('Fișierul „api/semnare.js" nu e pe server. Urcă-l în folderul „api".');
+            }
+            if (!r.ok)
+                throw new Error(d.error || 'Nu am putut face linkul.');
+            setLinkSemnare({ link: d.link, pv });
+            setFormOpen(false);
+            setEditId(null);
+            setStare('');
+        }
+        catch (e) {
+            setStare('⚠ ' + ((e && e.message) || 'Eroare.'));
+        }
     };
     const salveazaSiTipareste = () => {
         if (!semnatura) {
@@ -6989,12 +7037,35 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
                 React.createElement("textarea", { value: observatii, onChange: (e) => setObservatii(e.target.value), rows: 2, className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } })),
             React.createElement("div", null,
                 React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "\u270D\uFE0F Semn\u0103tura beneficiarului \u2014 semneaz\u0103 cu degetul"),
-                React.createElement(SemnaturaPad, { onSemnatura: setSemnatura })),
+                React.createElement(SemnaturaPad, { onSemnatura: setSemnatura }),
+                React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted2)' } },
+                    "Dac\u0103 omul nu e aici, sari peste semn\u0103tur\u0103 \u0219i apas\u0103 ",
+                    React.createElement("b", null, "\u201E\uD83D\uDCE4 Trimite clientului spre semnare\""),
+                    " \u2014 prime\u0219ti un link de pus pe WhatsApp, iar el semneaz\u0103 de pe telefonul lui.")),
             stare && React.createElement("div", { className: "text-xs", style: { color: 'var(--acc3)' } }, stare),
             React.createElement("div", { className: "flex flex-wrap gap-2" },
-                React.createElement("button", { onClick: salveazaSiTipareste, className: "text-sm px-3 py-2.5 rounded-lg font-bold", style: { color: '#14181C', background: 'var(--acc2)' } }, editId ? '✓ Salvează modificările' : '✓ Semnat — fă documentul'),
+                React.createElement("button", { onClick: salveazaSiTipareste, className: "text-sm px-3 py-2.5 rounded-lg font-bold", style: { color: '#14181C', background: 'var(--acc2)' } }, editId ? '✓ Salvează modificările' : '✓ Semnat pe loc — fă documentul'),
+                React.createElement("button", { onClick: trimiteSpreSemnare, className: "text-sm px-3 py-2.5 rounded-lg font-bold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCE4 Trimite clientului spre semnare"),
                 React.createElement("button", { onClick: golesteForm, className: "text-sm px-3 py-2.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renun\u021B")))),
-        React.createElement("div", { className: "text-xs uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Procese-verbale semnate"),
+        linkSemnare && (React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: 'var(--panel2)', border: '1px solid var(--acc1)' } },
+            React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "\uD83D\uDCE4 Trimite linkul clientului"),
+            React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } },
+                "Documentul nr. ",
+                linkSemnare.pv.numar,
+                " e salvat, nesemnat. Clientul deschide linkul pe telefonul lui, cite\u0219te \u0219i semneaz\u0103 cu degetul. Semn\u0103tura vine singur\u0103 aici."),
+            React.createElement("div", { className: "rounded-lg px-2.5 py-2 text-xs mb-2", style: { background: 'var(--panel)', color: 'var(--muted)', wordBreak: 'break-all' } }, linkSemnare.link),
+            React.createElement("div", { className: "flex flex-wrap gap-2" },
+                React.createElement("a", { href: 'https://wa.me/?text=' + encodeURIComponent('Bună ziua! Vă rog să semnați procesul-verbal de recepție pentru ' + (santier?.nume || 'lucrare') + ': ' + linkSemnare.link), target: "_blank", rel: "noopener noreferrer", className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)', textDecoration: 'none' } }, "\uD83D\uDCAC Trimite pe WhatsApp"),
+                React.createElement("button", { onClick: () => { try {
+                        navigator.clipboard.writeText(linkSemnare.link);
+                        setStare('✅ Link copiat.');
+                    }
+                    catch (_) {
+                        setStare('Selectează linkul și copiază-l cu mâna.');
+                    } }, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83D\uDCCB Copiaz\u0103"),
+                React.createElement("button", { onClick: () => setLinkSemnare(null), className: "text-sm px-3 py-2 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)' } }, "\u00CEnchide")),
+            stare && React.createElement("div", { className: "text-xs mt-2", style: { color: stare.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, stare))),
+        React.createElement("div", { className: "text-xs uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Procese-verbale"),
         alePV.length === 0 ? (React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Niciunul \u00EEnc\u0103 pe acest \u0219antier.")) : (React.createElement("div", { className: "space-y-1.5" }, alePV.map((pv) => (React.createElement("div", { key: pv.id, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
             React.createElement("div", { className: "flex items-center justify-between gap-2" },
                 React.createElement("span", { className: "text-sm font-semibold truncate", style: { color: 'var(--text)' } },
@@ -7007,10 +7078,32 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
                     React.createElement("button", { onClick: () => deschideEditare(pv), title: "Modific\u0103", className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: 'var(--acc3)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\u270F\uFE0F"),
                     React.createElement("button", { onClick: () => stergePV(pv), title: "\u0218terge", className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: 'var(--acc4)', background: 'var(--panel)', border: '1px solid #E0525266' } }, "\uD83D\uDDD1"))),
             React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } },
-                "Semnat de ",
-                pv.numeBeneficiar,
-                pv.calitate ? ' · ' + pv.calitate : '',
-                (pv.obiectiuni || []).length > 0 ? ' · ' + pv.obiectiuni.length + ' obiecțiuni' : ' · fără obiecțiuni'))))))));
+                pv.semnatura
+                    ? React.createElement(React.Fragment, null,
+                        "\u270D\uFE0F Semnat de ",
+                        React.createElement("b", { style: { color: 'var(--text)' } }, pv.numeBeneficiar),
+                        pv.calitate ? ' · ' + pv.calitate : '',
+                        pv.semnatLaDistanta ? ' · de pe telefonul lui' : '')
+                    : React.createElement("b", { style: { color: 'var(--acc3)' } }, "\u23F3 A\u0219teapt\u0103 semn\u0103tura clientului"),
+                (pv.obiectiuni || []).length > 0 ? ' · ' + pv.obiectiuni.length + ' obiecțiuni' : ' · fără obiecțiuni'),
+            !pv.semnatura && (React.createElement("button", { onClick: async () => {
+                    setStare('Refac linkul…');
+                    try {
+                        const r = await authFetch('/api/semnare?action=link&pv=' + encodeURIComponent(pv.id));
+                        const d = await r.json();
+                        if (!r.ok)
+                            throw new Error(d.error || 'Nu a mers.');
+                        setLinkSemnare({ link: d.link, pv });
+                        setStare('');
+                        try {
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                        catch (_) { }
+                    }
+                    catch (e) {
+                        setStare('⚠ ' + ((e && e.message) || 'Eroare.'));
+                    }
+                }, className: "text-xs mt-1.5 px-2.5 py-1.5 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCE4 Trimite din nou linkul")))))))));
 }
 function SiteTimpiMortiTab({ santierId, santierNume, santier, rapoarte, company, isManager, onDeschideRaport }) {
     const [perioada, setPerioada] = useState('tot');
