@@ -80,7 +80,8 @@ function pagina({ titlu, corp }) {
   td{border:1px solid #E6ECF4;padding:8px}
   .eticheta{font-size:13px;font-weight:700;color:#123049;text-transform:uppercase;letter-spacing:.03em;margin:18px 0 4px}
   canvas{width:100%;height:170px;background:#fff;border:2px dashed #B9C6D6;border-radius:12px;touch-action:none;display:block}
-  input{width:100%;padding:13px;font-size:16px;border:1px solid #DCE3EE;border-radius:10px;background:#F7FAFD;color:#16202B}
+  input,textarea{width:100%;padding:13px;font-size:16px;border:1px solid #DCE3EE;border-radius:10px;background:#F7FAFD;color:#16202B;font-family:inherit}
+  textarea{resize:vertical;line-height:1.5;margin-bottom:14px}
   button{font-size:17px;font-weight:700;padding:15px 18px;border:0;border-radius:12px;width:100%;cursor:pointer}
   .primar{background:#35986A;color:#fff}
   .sters{background:#F1F5FA;color:#5F6E80;font-size:14px;padding:9px;width:auto;margin-top:6px}
@@ -136,8 +137,15 @@ export default async function handler(req, res) {
       /* Recitim chiar acum: între trimiterea linkului și semnătură, cineva din firmă
          poate fi modificat documentul. Scriem peste versiunea proaspătă, nu peste una veche. */
       const proaspete = await citeste('proceseVerbale', []);
+      /* Ce a scris clientul: câte un lucru pe rând. Le curățăm de rânduri goale și le
+         tăiem la o lungime rezonabilă, ca nimeni să nu poată umple baza de date de aici. */
+      const obiClientNoi = String(body.obiectiuni || '')
+        .split(/\r?\n/).map((t) => t.trim()).filter(Boolean).slice(0, 30)
+        .map((t, i) => ({ id: 'oc' + Date.now() + '-' + i, text: t.slice(0, 400), deLaClient: true }));
+
       const noi = (Array.isArray(proaspete) ? proaspete : []).map((x) => x.id === idCerut ? {
         ...x,
+        obiectiuniClient: obiClientNoi,
         semnatura: String(body.semnatura),
         numeBeneficiar: String(body.nume).trim(),
         calitate: String(body.calitate || '').trim() || x.calitate || 'Beneficiar',
@@ -147,7 +155,7 @@ export default async function handler(req, res) {
         semnatDispozitiv: String(req.headers['user-agent'] || '').slice(0, 160),
       } : x);
       await scrie('proceseVerbale', noi);
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, obiectiuni: obiClientNoi.length });
     }
 
     /* ---------- PAGINA PE CARE O VEDE CLIENTUL ---------- */
@@ -161,11 +169,19 @@ export default async function handler(req, res) {
 
     const randLucrari = (pv.lucrari || []).length
       ? pv.lucrari.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.denumire)}</td><td>${esc(l.cantitate ?? '')} ${esc(l.um || '')}</td></tr>`).join('')
-      : '<tr><td colspan="3" class="mic">Conform devizului/contractului aferent lucrării.</td></tr>';
+      : `<tr><td colspan="3" class="mic">Conform ${pv.devizNumar ? 'devizului nr. ' + esc(pv.devizNumar) + (pv.devizData ? ' din ' + esc(pv.devizData) : '') : 'devizului'}${pv.contract ? ' și contractului nr. ' + esc(pv.contract) : ''}, aferent lucrării.</td></tr>`;
     const randObi = (pv.obiectiuni || []).length
       ? `<div class="eticheta">Obiecțiuni / rămase de executat</div><table><tr><th>Nr.</th><th>Ce a rămas</th><th>Loc</th></tr>${
           pv.obiectiuni.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.text)}</td><td>${esc(o.loc || '—')}</td></tr>`).join('')}</table>`
-      : '<div class="eticheta">Obiecțiuni</div><div class="bun">Nu s-au consemnat obiecțiuni.</div>';
+      : '<div class="eticheta">Obiecțiuni consemnate de executant</div><div class="bun">Executantul nu a consemnat obiecțiuni.</div>';
+    /* DE CE NU SE TRECEAU OBIECȚIUNILE: pagina asta doar ARĂTA ce scrisese executantul
+       înainte să trimită linkul. Clientul, care e la celălalt capăt al telefonului, n-avea
+       unde să scrie nimic — putea doar să semneze sau să nu semneze. Acum are căsuța lui:
+       ce scrie aici pleacă odată cu semnătura și rămâne pe document. */
+    const obiClient = (pv.obiectiuniClient || []).length
+      ? `<div class="eticheta">Obiecțiunile dumneavoastră</div><table><tr><th>Nr.</th><th>Ce ați semnalat</th></tr>${
+          pv.obiectiuniClient.map((o, i) => `<tr><td>${i + 1}</td><td>${esc(o.text)}</td></tr>`).join('')}</table>`
+      : '';
 
     const corp = `
       <div class="card">
@@ -178,15 +194,22 @@ export default async function handler(req, res) {
           <tr><th>Beneficiar</th><td>${esc(client?.nume || pv.numeBeneficiar || '')}</td></tr>
           <tr><th>Obiectiv</th><td>${esc(santier?.nume || '')}${santier?.adresa ? '<br><span class="mic">' + esc(santier.adresa) + '</span>' : ''}</td></tr>
           ${pv.perioada ? `<tr><th>Perioada</th><td>${esc(pv.perioada)}</td></tr>` : ''}
+          ${pv.contract ? `<tr><th>Contract nr.</th><td>${esc(pv.contract)}</td></tr>` : ''}
+          ${pv.actAditional ? `<tr><th>Act adițional nr.</th><td>${esc(pv.actAditional)}</td></tr>` : ''}
+          ${pv.devizNumar ? `<tr><th>Deviz nr.</th><td>${esc(pv.devizNumar)}${pv.devizData ? ' din ' + esc(pv.devizData) : ''}</td></tr>` : ''}
         </table>
         <div class="eticheta">Lucrări executate</div>
         <table><tr><th style="width:12%">Nr.</th><th>Denumire</th><th style="width:26%">Cant.</th></tr>${randLucrari}</table>
         ${randObi}
+        ${obiClient}
         ${pv.observatii ? `<div class="eticheta">Alte mențiuni</div><div class="mic">${esc(pv.observatii)}</div>` : ''}
       </div>
       <div class="card">
-        <div class="eticheta" style="margin-top:0">Semnătura dumneavoastră</div>
-        <div class="avertisment" style="margin-bottom:10px">Prin semnare confirmați că ați luat la cunoștință conținutul de mai sus, inclusiv obiecțiunile consemnate.</div>
+        <div class="eticheta" style="margin-top:0">Aveți ceva de semnalat?</div>
+        <div class="mic" style="margin-bottom:8px">Dacă a rămas ceva de făcut sau ceva nu e în regulă, scrieți aici — un lucru pe rând, pe câte un rând. Rămâne scris pe proces-verbal, lângă semnătura dumneavoastră. Dacă totul e în regulă, lăsați gol.</div>
+        <textarea id="obiectiuni" rows="4" placeholder="ex: Lipsește capacul de la doza din hol&#10;ex: Priza de la geam nu e fixată"></textarea>
+        <div class="eticheta">Semnătura dumneavoastră</div>
+        <div class="avertisment" style="margin-bottom:10px">Prin semnare confirmați că ați luat la cunoștință conținutul de mai sus, împreună cu ce ați scris dumneavoastră mai jos.</div>
         <canvas id="pad"></canvas>
         <button class="sters" onclick="sterge()">↺ Șterge semnătura</button>
         <div style="margin-top:12px"><input id="nume" placeholder="Numele și prenumele" value="${esc(pv.numeBeneficiar || '')}"></div>
@@ -213,10 +236,11 @@ export default async function handler(req, res) {
           if(!nume){m.style.color='#B03030';m.textContent='Scrie numele.';return;}
           b.disabled=true;b.textContent='Se trimite…';m.style.color='#5F6E80';m.textContent='';
           fetch(location.pathname+location.search,{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({pv:${JSON.stringify(idCerut)},k:${JSON.stringify(k)},semnatura:c.toDataURL('image/png'),nume:nume,calitate:document.getElementById('calitate').value})})
+            body:JSON.stringify({pv:${JSON.stringify(idCerut)},k:${JSON.stringify(k)},semnatura:c.toDataURL('image/png'),nume:nume,calitate:document.getElementById('calitate').value,obiectiuni:document.getElementById('obiectiuni').value})})
             .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
             .then(function(x){ if(!x.ok) throw new Error(x.d.error||'Nu s-a putut trimite.');
-              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost trimisă. Executantul o primește pe loc și îți poate da documentul complet.</div></div>'; })
+              var n=(x.d&&x.d.obiectiuni)||0;
+              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost trimisă'+(n?', împreună cu '+n+(n===1?' observație':' observații'):'')+'. Executantul o primește pe loc și vă poate da documentul complet.</div></div>'; })
             .catch(function(e){ b.disabled=false;b.textContent='✓ Semnez documentul'; m.style.color='#B03030'; m.textContent=e.message; });
         }
       <\/script>`;
