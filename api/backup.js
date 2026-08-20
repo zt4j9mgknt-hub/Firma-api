@@ -105,14 +105,74 @@ async function toateCheile() {
 }
 
 /* ---------- UNDE STAU COPIILE ----------
-   În Redis, sub prefixul „bkp:" — pe care aplicația NU-l atinge niciodată. Am renunțat la
-   Vercel Blob: depozitul e privat, iar regulile lui de acces sunt o piesă în plus care se
-   poate strica exact în ziua în care ai nevoie de copie. Redis-ul e deja acolo, îl știm că
-   merge, iar 30 de copii de ~170 KB înseamnă ~5 MB din cei 256 MB disponibili.
-   Fiecare copie are și termen de expirare, ca să se cureţe singură dacă nimeni nu umblă. */
+   ÎN DOUĂ LOCURI, dinadins.
+
+   1) În Redis, sub prefixul „bkp:" — pe care aplicația NU-l atinge niciodată. Ăsta e
+      depozitul de zi cu zi: e deja acolo, merge, e rapid, iar 30 de copii de ~170 KB
+      înseamnă ~5 MB din cei 256 MB. Fiecare copie are termen de expirare.
+
+   2) În Vercel Blob — ALT sistem, altă factură, altă avarie. Ăsta e rostul lui: până acum,
+      copiile de siguranță stăteau în exact baza de date pe care o apărau. Dacă pica contul
+      Upstash, ștergeai din greșeală baza, sau expira gratuitatea — pierdeai și datele, ȘI
+      copiile, în aceeași secundă. Acum copia zilnică pleacă și dincolo.
+
+   DE CE E ÎN REGULĂ CĂ ADRESA DIN BLOB E PUBLICĂ: fișierul e criptat AES-256-GCM cu o cheie
+   făcută din SESSION_SECRET, care stă doar pe server. Cine nimerește adresa vede octeți fără
+   niciun sens. În plus adresa are un sufix aleator — nu se poate ghici.
+
+   ȘI DACĂ BLOB-UL NU MERGE? Nu se întâmplă nimic rău: copia din Redis se face oricum, iar
+   răspunsul spune limpede că a doua copie n-a plecat. Copia de siguranță nu are voie să
+   cadă din cauza depozitului secundar. */
 const PREFIX = 'bkp:';
 const INDEX = 'bkp:index';
 const PASTREZ = 30;
+const BLOB_DOSAR = 'copii-firma/';
+
+/* Blob-ul se încarcă LENEȘ (doar când chiar îl folosim). Dacă biblioteca lipsește de pe
+   server, nu vrem ca simpla pornire a fișierului să dea „FUNCTION_INVOCATION_FAILED". */
+async function blobModul() {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error('BLOB_READ_WRITE_TOKEN nu e setat pe Vercel (Storage → Blob → Connect).');
+  return await import('@vercel/blob');
+}
+
+async function pusInBlob(id, criptatB64) {
+  try {
+    const { put, list, del } = await blobModul();
+    const r = await put(BLOB_DOSAR + id + '.bin', criptatB64, {
+      access: 'public',
+      contentType: 'application/octet-stream',
+      addRandomSuffix: true,
+      cacheControlMaxAge: 0,
+    });
+    // curățenie: păstrăm și dincolo tot ultimele 30
+    try {
+      const l = await list({ prefix: BLOB_DOSAR, limit: 1000 });
+      const toate = (l.blobs || []).sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)));
+      for (const vechi of toate.slice(PASTREZ)) { try { await del(vechi.url); } catch (_) {} }
+    } catch (_) {}
+    return { ok: true, url: r.url };
+  } catch (e) {
+    return { ok: false, motiv: (e && e.message) || 'necunoscut' };
+  }
+}
+
+async function listaDinBlob() {
+  const { list } = await blobModul();
+  const l = await list({ prefix: BLOB_DOSAR, limit: 1000 });
+  return (l.blobs || [])
+    .map((b) => ({
+      id: String(b.pathname).slice(BLOB_DOSAR.length).replace(/-[A-Za-z0-9]{20,}\.bin$/, '').replace(/\.bin$/, ''),
+      url: b.url, octeti: b.size, facutLa: b.uploadedAt,
+    }))
+    .sort((a, b) => String(b.facutLa).localeCompare(String(a.facutLa)));
+}
+
+async function incarcaDinBlob(url) {
+  const r = await fetch(String(url));
+  if (!r.ok) throw new Error('Nu am putut aduce copia din Blob (cod ' + r.status + ').');
+  const b64 = (await r.text()).trim();
+  return JSON.parse(decripteaza(Buffer.from(b64, 'base64')));
+}
 
 async function citesteIndex() {
   try { const b = await redis(['GET', INDEX]); return b ? JSON.parse(b) : []; }
@@ -141,12 +201,15 @@ async function faCopie(eticheta) {
   const criptat = cripteaza(pachet).toString('base64');
   await redis(['SET', PREFIX + id, criptat, 'EX', String(60 * 24 * 3600)]);
 
+  // A DOUA COPIE, în afara Redis-ului. Dacă nu merge, copia din Redis rămâne bună.
+  const dincolo = await pusInBlob(id, criptat);
+
   const index = (await citesteIndex()).filter((x) => x.id !== id);
-  index.unshift({ id, facutLa: acum.toISOString(), octeti: pachet.length, chei: chei.length, rezumat });
+  index.unshift({ id, facutLa: acum.toISOString(), octeti: pachet.length, chei: chei.length, rezumat, blob: dincolo.ok ? dincolo.url : null });
   const pastrate = index.slice(0, PASTREZ);
   for (const vechi of index.slice(PASTREZ)) { try { await redis(['DEL', PREFIX + vechi.id]); } catch (_) {} }
   await scrieIndex(pastrate);
-  return { id, zi, chei: chei.length, rezumat, octeti: pachet.length, sterse: index.length - pastrate.length };
+  return { id, zi, chei: chei.length, rezumat, octeti: pachet.length, sterse: index.length - pastrate.length, dincolo };
 }
 
 async function incarcaCopie(id) {
@@ -188,7 +251,49 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET' && actiune === 'lista') {
       const index = await citesteIndex();
-      return res.status(200).json({ copii: index.map((x) => ({ id: x.id, facutLa: x.facutLa, octeti: x.octeti, chei: x.chei })) });
+      let dincolo = null, dincoloMotiv = '';
+      try { dincolo = await listaDinBlob(); }
+      catch (e) { dincoloMotiv = (e && e.message) || 'necunoscut'; }
+      return res.status(200).json({
+        copii: index.map((x) => ({ id: x.id, facutLa: x.facutLa, octeti: x.octeti, chei: x.chei, blob: x.blob || null })),
+        dincolo, dincoloMotiv,
+      });
+    }
+
+    /* PROBA DE RESTAURARE. Până acum nimeni nu verifica dacă o copie chiar SE POATE
+       desface — aflai în ziua în care aveai nevoie de ea, adică prea târziu. Asta ia cea
+       mai nouă copie (din Redis ȘI pe cea din Blob), o decriptează, o desface și numără ce
+       e în ea. NU SCRIE NIMIC. E singura probă care spune „copia e bună", nu „copia există". */
+    if (req.method === 'GET' && actiune === 'proba') {
+      const index = await citesteIndex();
+      if (!index.length) return res.status(200).json({ ok: false, motiv: 'Nu există nicio copie încă.' });
+      const cea = index[0];
+      const raport = { id: cea.id, facutLa: cea.facutLa, redis: null, blob: null };
+
+      try {
+        const pachet = await incarcaCopie(cea.id);
+        const chei = Object.keys(pachet.date || {});
+        let inregistrari = 0, stricate = 0;
+        for (const k of chei) {
+          try { const v = JSON.parse(pachet.date[k]); if (Array.isArray(v)) inregistrari += v.length; }
+          catch (_) { stricate++; }
+        }
+        raport.redis = { ok: true, chei: chei.length, inregistrari, stricate };
+      } catch (e) { raport.redis = { ok: false, motiv: (e && e.message) || 'necunoscut' }; }
+
+      try {
+        const l = await listaDinBlob();
+        const potrivit = l.find((x) => x.id === cea.id) || l[0];
+        if (!potrivit) throw new Error('Nu există încă nicio copie în Blob.');
+        const pachet = await incarcaDinBlob(potrivit.url);
+        const chei = Object.keys(pachet.date || {});
+        let inregistrari = 0;
+        for (const k of chei) { try { const v = JSON.parse(pachet.date[k]); if (Array.isArray(v)) inregistrari += v.length; } catch (_) {} }
+        raport.blob = { ok: true, chei: chei.length, inregistrari, facutLa: pachet.facutLa };
+      } catch (e) { raport.blob = { ok: false, motiv: (e && e.message) || 'necunoscut' }; }
+
+      raport.ok = !!(raport.redis && raport.redis.ok);
+      return res.status(200).json(raport);
     }
 
     if (req.method === 'GET') {
@@ -202,8 +307,8 @@ export default async function handler(req, res) {
       /* Ce e într-o copie: îl arătăm ÎNAINTE de restaurare, ca omul să vadă negru pe alb
          câte înregistrări intră și peste ce. Fără asta, „restaurează" e un buton pe orbite. */
       if (body.action === 'cuprins') {
-        if (!body.id) return res.status(400).json({ error: 'Lipsește copia cerută.' });
-        const pachet = await incarcaCopie(body.id);
+        if (!body.id && !body.blobUrl) return res.status(400).json({ error: 'Lipsește copia cerută.' });
+        const pachet = body.blobUrl ? await incarcaDinBlob(body.blobUrl) : await incarcaCopie(body.id);
         const acum = {};
         for (const k of Object.keys(pachet.date || {})) {
           const brut = await redis(['GET', k]);
@@ -216,8 +321,9 @@ export default async function handler(req, res) {
 
       if (body.action === 'restaureaza') {
         if (!eManager) return res.status(403).json({ error: 'Doar Managerul poate restaura.' });
-        if (!body.id) return res.status(400).json({ error: 'Lipsește copia cerută.' });
-        const pachet = await incarcaCopie(body.id);
+        if (!body.id && !body.blobUrl) return res.status(400).json({ error: 'Lipsește copia cerută.' });
+        // Se poate restaura și din copia de dincolo (Blob), dacă Redis-ul e cel care a pățit ceva.
+        const pachet = body.blobUrl ? await incarcaDinBlob(body.blobUrl) : await incarcaCopie(body.id);
 
         /* PLASĂ DE SIGURANȚĂ: înainte să punem ceva înapoi, salvăm starea de ACUM.
            Dacă restaurarea nu era ce credeai, te poți întoarce la cum era acum un minut. */
