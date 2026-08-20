@@ -2093,7 +2093,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.50-lacat-server';
+const APP_VERSION = 'v03.51-copii-in-doua-locuri';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -14320,6 +14320,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'copii-doua-locuri-v1', aud: 'manager', data: '20.08.2026', titlu: '🗄 Copia de siguranță pleacă acum și în AFARA bazei de date + probă de restaurare',
+        text: 'Copiile de siguranță stăteau în exact baza de date pe care o apărau. Dacă pica contul, ștergeai din greșeală baza sau expira gratuitatea, pierdeai în aceeași secundă și datele, ȘI copiile. Acum fiecare copie pleacă în două locuri: în baza de date (ca până acum) și în Vercel Blob — alt sistem, altă avarie. Fișierul e criptat, deci nici dacă cineva nimerește adresa nu vede nimic.\n\n🧪 PROBĂ DE RESTAURARE — buton nou în Profil → Copii de siguranță. „Există o copie" și „copia se poate desface" sunt două lucruri diferite, iar diferența o afli de obicei în ziua cea mai proastă. Butonul ia cea mai nouă copie, o decriptează, o desface și îți spune câte seturi și câte înregistrări sunt în ea. Nu modifică nimic. Apasă-l o dată pe lună.\n\nÎn panou scrie acum negru pe alb: copia 1 (în baza de date) și copia 2 (în afara ei) — dacă a doua lipsește, o vezi imediat.\n\n📄 CLIENTUL ÎȘI VEDE DOCUMENTUL SEMNAT. Până acum, după ce semna, îi apărea doar „Document semnat. Nu mai e nimic de făcut." — rămânea fără nicio dovadă a ce a semnat. Acum vede procesul-verbal întreg, cu obiecțiunile pe care le-a scris el și cu semnătura lui, și are buton de tipărire / salvare ca PDF.' },
     { id: 'lacat-server-v1', aud: 'manager', data: '20.08.2026', titlu: '🔒 Banii firmei sunt acum închiși pe SERVER, nu doar pe ecran',
         text: 'Până acum, permisiunile existau doar în ecran: aplicația nu-i arăta electricianului tab-ul «Facturi», dar serverul îi dădea conținutul oricui era logat, dacă îl cerea direct. Adică oricine avea un cont putea, în principiu, să vadă toate facturile, ofertele, devizele și cheltuielile firmei — și să le și rescrie. Acum refuzul se dă pe server, unde nu se poate ocoli.\n\nÎNCHISE COMPLET (nici citit, nici scris de altcineva decât tine): oferte, facturi, devize, cheltuieli firmă, antemăsurători, sold concediu.\n\nCITIT DE TOȚI, MODIFICAT DOAR DE TINE: datele firmei (antet, IBAN, ștampilă), corecțiile de pontaj, motivele proprii de timp mort.\n\nCONCEDIILE: omul își depune și își modifică cererea LUI, dar nu mai poate atinge cererea unui coleg și nu-și mai poate aproba singur concediul — aprobarea o dă tot serverul numai Managerului.\n\n🧾 JURNAL DE MODIFICĂRI. În Profil ai un buton nou: cine a modificat ce și când, ultimele 500 de salvări. Când dispare ceva și nimeni nu știe de la cine, aici scrie. Ține doar urma, nu conținutul — nu umflă baza de date.\n\nPentru băieți nu se schimbă nimic din ce fac zilnic: rapoarte, pontaj, scule, materiale, poze, procese-verbale — toate merg exact ca înainte.' },
     { id: 'timpi-morti-ansamblu-v1', aud: 'manager', data: '17.08.2026', titlu: '⏱ Timpi morți — imagine de ansamblu, pe fiecare șantier',
@@ -16206,6 +16208,9 @@ function CopiiSiguranta() {
     const [aleasa, setAleasa] = useState(null);
     const [cuprins, setCuprins] = useState(null);
     const [confirmare, setConfirmare] = useState(false);
+    const [dincolo, setDincolo] = useState(null);
+    const [dincoloMotiv, setDincoloMotiv] = useState('');
+    const [proba, setProba] = useState(null);
     const incarca = async () => {
         setStare('');
         setOcupat('lista');
@@ -16215,6 +16220,8 @@ function CopiiSiguranta() {
             if (!r.ok)
                 throw new Error(d.error || 'Nu am putut citi lista.');
             setLista(d.copii || []);
+            setDincolo(Array.isArray(d.dincolo) ? d.dincolo : null);
+            setDincoloMotiv(d.dincoloMotiv || '');
         }
         catch (e) {
             setStare('⚠ ' + (e.message || 'Eroare.'));
@@ -16232,6 +16239,22 @@ function CopiiSiguranta() {
                 throw new Error(d.error || 'Nu am putut face copia.');
             setStare('✅ Copie făcută: ' + d.chei + ' seturi de date, ' + Math.round((d.octeti || 0) / 1024) + ' KB.');
             incarca();
+        }
+        catch (e) {
+            setStare('⚠ ' + (e.message || 'Eroare.'));
+        }
+        setOcupat('');
+    };
+    const faProba = async () => {
+        setStare('');
+        setProba(null);
+        setOcupat('proba');
+        try {
+            const r = await authFetch('/api/backup?action=proba');
+            const d = await citeste(r);
+            if (!r.ok)
+                throw new Error(d.error || 'Proba nu a mers.');
+            setProba(d);
         }
         catch (e) {
             setStare('⚠ ' + (e.message || 'Eroare.'));
@@ -16290,7 +16313,32 @@ function CopiiSiguranta() {
         React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Serverul face singur, \u00EEn fiecare noapte, o copie criptat\u0103 a \u00EEntregii baze \u0219i o \u021Bine 30 de zile. Dac\u0103 se pierde ceva, o pui \u00EEnapoi de aici."),
         React.createElement("div", { className: "flex flex-wrap gap-2 mb-2" },
             React.createElement("button", { onClick: faAcum, disabled: !!ocupat, className: "text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc2)' } }, ocupat === 'fac' ? 'Fac copia…' : '💾 Fă o copie acum'),
+            React.createElement("button", { onClick: faProba, disabled: !!ocupat, className: "text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, ocupat === 'proba' ? 'Verific…' : '🧪 Probă de restaurare'),
             React.createElement("button", { onClick: incarca, disabled: !!ocupat, className: "text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "\u21BB Re\u00EEmprosp\u0103teaz\u0103")),
+        React.createElement("div", { className: "rounded-lg px-2.5 py-2 mb-2 text-xs", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+            React.createElement("div", { style: { color: 'var(--acc2)' } }, "\u2705 Copia 1 \u2014 \u00EEn baza de date (Redis), ultimele 30."),
+            dincolo && dincolo.length > 0
+                ? React.createElement("div", { style: { color: 'var(--acc2)' } },
+                    "\u2705 Copia 2 \u2014 \u00EEn afara bazei de date (Vercel Blob): ",
+                    dincolo.length,
+                    " ",
+                    dincolo.length === 1 ? 'copie' : 'copii',
+                    ". Dac\u0103 pic\u0103 Redis-ul, datele sunt tot aici.")
+                : React.createElement("div", { style: { color: 'var(--acc3)' } },
+                    "\u26A0 Copia 2 (\u00EEn afara bazei de date) \u00EEnc\u0103 nu exist\u0103",
+                    dincoloMotiv ? ' — ' + dincoloMotiv : '',
+                    ". Apas\u0103 \u201E\uD83D\uDCBE F\u0103 o copie acum\" ca s\u0103 plece prima.")),
+        proba && (React.createElement("div", { className: "rounded-lg px-2.5 py-2 mb-2 text-xs", style: { background: 'var(--panel2)', border: '1px solid ' + (proba.ok ? 'var(--acc2)' : '#E0525266') } },
+            React.createElement("div", { className: "font-semibold mb-1", style: { color: proba.ok ? 'var(--acc2)' : 'var(--acc4)' } }, proba.ok ? '✅ Copia se desface — datele sunt recuperabile.' : '⛔ Copia NU se desface. Sună-mă.'),
+            React.createElement("div", { style: { color: 'var(--muted)' } },
+                "Verificat\u0103: ",
+                cand(proba.facutLa)),
+            proba.redis && React.createElement("div", { style: { color: proba.redis.ok ? 'var(--text)' : 'var(--acc4)' } },
+                "\u2022 \u00EEn baza de date: ",
+                proba.redis.ok ? proba.redis.chei + ' seturi · ' + proba.redis.inregistrari + ' înregistrări' + (proba.redis.stricate ? ' · ⚠ ' + proba.redis.stricate + ' stricate' : '') : proba.redis.motiv),
+            proba.blob && React.createElement("div", { style: { color: proba.blob.ok ? 'var(--text)' : 'var(--acc3)' } },
+                "\u2022 \u00EEn afara bazei de date: ",
+                proba.blob.ok ? proba.blob.chei + ' seturi · ' + proba.blob.inregistrari + ' înregistrări' : proba.blob.motiv))),
         stare && React.createElement("p", { className: "text-xs mb-2", style: { color: stare.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, stare),
         lista === null && !stare && React.createElement("p", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Se \u00EEncarc\u0103\u2026"),
         lista && lista.length === 0 && React.createElement("p", { className: "text-xs", style: { color: 'var(--muted2)' } }, "\u00CEnc\u0103 nicio copie. Apas\u0103 \u201EF\u0103 o copie acum\" \u2014 prima e cea mai important\u0103."),
