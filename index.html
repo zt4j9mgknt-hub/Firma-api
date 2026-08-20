@@ -1868,12 +1868,14 @@ async function loadKey(key, fallback) {
     try {
         const r = await authFetch(`/api/data?key=${encodeURIComponent(key)}`);
         if (r.status === 403) {
+            CHEI_ESUATE.add(key);
             try {
-                cacheSet(key, Array.isArray(fallback) ? [] : fallback);
+                console.warn('[drepturi] „' + key + '": serverul a refuzat. Păstrez ce am pe telefon.');
             }
             catch (_) { }
-            CHEI_ESUATE.delete(key);
-            return fallback;
+            if (cached !== undefined)
+                return faraSterse(key, pending !== undefined ? mergeById(cached, pending.value, key) : cached);
+            return faraSterse(key, pending !== undefined ? pending.value : fallback);
         }
         if (!r.ok)
             throw new Error('HTTP ' + r.status);
@@ -2194,7 +2196,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.59-push-diagnostic';
+const APP_VERSION = 'v03.61-facturile-inapoi';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -14074,6 +14076,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         })();
         const pulsCash = luni6.map((L) => Math.round(L.fact));
         if (!pagina) {
+            const facturiNeincarcate = CHEI_ESUATE.has('invoices');
             const verdictCash = acCash == null ? undefined
                 : restante.length === 0 ? { fel: 'bine', text: 'Nicio factură restantă' }
                     : acCash >= 70 ? { fel: 'atentie', text: restante.length + ' restante — ' + Math.round(100 - acCash) + '% din bani întârzie' }
@@ -14093,9 +14096,14 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             const areAlerte = nefacturatVechi.length > 0 || deFacturat.length > 0;
             return (React.createElement(React.Fragment, null,
                 React.createElement(CardBord, { atribut: "cash", titlu: "Cashflow", ord: 2, onClick: () => setPagina('cash'), copii: (React.createElement(React.Fragment, null,
-                        React.createElement(DonutIzo, { felii: feliiCash, gol: totalJoc <= 0, centruMare: totalJoc > 0 ? Math.round(deIncasat / totalJoc * 100) + '%' : '—', centruMic: totalJoc > 0 ? 'încă neîncasat (cu TVA)' : 'fără facturi în joc' }),
+                        React.createElement(DonutIzo, { felii: feliiCash, gol: totalJoc <= 0, centruMare: totalJoc > 0 ? Math.round(deIncasat / totalJoc * 100) + '%' : (facturiNeincarcate ? '?' : '—'), centruMic: totalJoc > 0 ? 'încă neîncasat (cu TVA)' : (facturiNeincarcate ? 'facturile nu s-au încărcat' : 'fără facturi în joc') }),
                         totalJoc > 0 && React.createElement(LegendaDonut, { felii: feliiCash }),
-                        React.createElement("div", { className: "text-[9.5px] font-semibold mt-1.5 text-center", style: { color: culCash } }, verdictCash ? verdictCash.text : 'emite prima factură și donutul prinde viață'))) }),
+                        React.createElement("div", { className: "text-[9.5px] font-semibold mt-1.5 text-center", style: { color: facturiNeincarcate ? 'var(--acc4)' : culCash } }, facturiNeincarcate
+                            ? '⚠ Nu am putut aduce facturile de pe server. Trage ecranul în jos ca să reîncerci.'
+                            : verdictCash ? verdictCash.text
+                                : deFacturat.length > 0
+                                    ? deFacturat.length + (deFacturat.length === 1 ? ' lucrare gata de facturat' : ' lucrări gata de facturat') + ' — emite prima factură'
+                                    : 'emite prima factură și donutul prinde viață'))) }),
                 React.createElement(CardBord, { atribut: "munca", titlu: "Munca echipei", lat: true, ord: 4, onClick: () => setPagina('munca'), copii: (React.createElement(React.Fragment, null,
                         React.createElement("div", { className: "flex items-baseline gap-2 flex-wrap" },
                             React.createElement("span", { style: { fontSize: 18, fontWeight: 700, color: dinRapoarte.length ? 'var(--acc1)' : 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } }, dinRapoarte.length ? money(totalDinMunca) : '—'),
@@ -14506,6 +14514,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'facturile-inapoi-v1', aud: 'manager', data: '20.08.2026', titlu: '🔧 Ți-am golit eu facturile de pe ecran. Iată de ce, și ce am reparat',
+        text: 'Ai zis „până ieri apărea 100% neîncasat". Ai avut dreptate — și era din cauza mea, nu a datelor tale. Facturile n-au dispărut de nicăieri: sunt pe server, întregi.\n\nCE AM STRICAT. Lacătul pus ieri se uita la rolul scris în biletul tău de acces. Biletul ăla ține 30 de zile, deci tu umbli cu unul făcut demult. Serverul, negăsind scris „Manager" în el, te-a tratat ca pe un angajat și ți-a refuzat facturile. Iar aplicația, la refuz, ȘTERGEA copia de pe telefon și arăta zero — în tăcere, ca și cum n-ai fi avut niciodată facturi.\n\nDOUĂ REPARAȚII, ca să nu se mai poată repeta:\n\n1. Serverul nu se mai ia după biletul vechi. Dacă în bilet nu scrie „Manager", nu refuză pe loc — se uită în lista de utilizatori și află rolul tău adevărat.\n\n2. UN REFUZ NU MAI ȘTERGE NIMIC DE PE TELEFON. Regula asta nu se mai schimbă. Dacă serverul refuză o cheie pe care aplicația chiar a cerut-o, înseamnă că ceva e stricat — nu că „n-ai voie". Păstrăm ce avem și scriem pe ecran „nu am putut aduce", în loc să arătăm zero.\n\nAm adăugat și 6 probe automate pentru fix cazul ăsta: „patron cu bilet vechi, fără rol scris în el, își vede facturile" — dar „angajat cu bilet vechi tot nu le vede".' },
+    { id: 'cashflow-sincer-v1', aud: 'manager', data: '20.08.2026', titlu: '💶 Cardul Cashflow spune acum DE CE e gol',
+        text: 'Ai întrebat unde e cashflow-ul. Donutul gol putea însemna două lucruri complet diferite, și arăta la fel în amândouă:\n\n1. CHIAR nu ai emis nicio factură în aplicație — atunci e corect că e gol.\n2. FACTURILE NU S-AU ÎNCĂRCAT de pe server (net picat, sesiune expirată). Asta e o avarie, nu o stare — dar scria tot „fără facturi în joc", ca și cum ar fi normal.\n\nAcum, dacă facturile n-au ajuns, cardul scrie roșu: „⚠ Nu am putut aduce facturile de pe server. Trage ecranul în jos ca să reîncerci." Nu mai trece drept „n-ai facturi".\n\nȘi când chiar nu ai facturi, cardul îți spune ce ai de făcut cu cifra ta: „3 lucrări gata de facturat — emite prima factură", în loc de un îndemn general.\n\nCa să vezi negru pe alb dacă ai facturi pe server: Profil → 📏 Cât loc ocupă. Dacă „Facturi" nu apare deloc în listă, înseamnă că pe server nu există nicio factură salvată.' },
     { id: 'push-plasa-v1', aud: 'manager', data: '20.08.2026', titlu: '🩺 Notificări: o greșeală de-a mea, reparată, plus un buton care spune unde se oprește',
         text: 'Ieri am mutat pe server decizia „cui se trimite" — bine făcut, dar am lăsat o greșeală: funcția care citește lista de telefoane înghițea ORICE eroare și întorcea o listă goală. Iar de când serverul își caută singur telefoanele, listă goală înseamnă „nu trimit nimănui". Adică dacă baza de date nu răspundea o clipă, notificările nu mai plecau — și răspunsul era tot „ok, trimis către 0". Înainte lista venea de pe telefon și mergea oricum.\n\nAcum: dacă serverul nu găsește pe nimeni, dar telefonul i-a dat o listă, merge pe ea în loc să tacă. Iar dacă tot nu poate, o spune limpede, nu se preface că a trimis.\n\n🩺 DE CE NU VIN NOTIFICĂRILE? — buton nou în Profil, lângă celelalte. Nu trimite nimic; întreabă serverul ce vede el și îți arată pe pași unde se oprește: ruta răspunde / ești logat / sunt cheile VAPID / se poate citi lista de telefoane / sunt telefoane înscrise / e vreun manager între ele / e și telefonul tău. Șase cauze diferite, care până acum arătau toate la fel.\n\nProbele automate au crescut de la 24 la 35 și acoperă acum și cazul „baza de date nu răspunde".' },
     { id: 'loc-de-proba-v1', aud: 'manager', data: '20.08.2026', titlu: '🧪 Se poate ridica un loc de probă, separat de datele firmei',
