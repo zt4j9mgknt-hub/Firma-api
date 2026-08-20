@@ -127,6 +127,10 @@ const PREFIX = 'bkp:';
 const INDEX = 'bkp:index';
 const PASTREZ = 30;
 const BLOB_DOSAR = 'copii-firma/';
+/* Crește la fiecare schimbare de comportament a rutei. Aplicația o citește și îți spune
+   dacă pe server e varianta veche — altfel te uiți la un avertisment fără să știi că, de
+   fapt, n-ai urcat fișierul. */
+const VERSIUNE_RUTA = 2;
 
 /* Blob-ul se încarcă LENEȘ (doar când chiar îl folosim). Dacă biblioteca lipsește de pe
    server, nu vrem ca simpla pornire a fișierului să dea „FUNCTION_INVOCATION_FAILED". */
@@ -255,9 +259,42 @@ export default async function handler(req, res) {
       try { dincolo = await listaDinBlob(); }
       catch (e) { dincoloMotiv = (e && e.message) || 'necunoscut'; }
       return res.status(200).json({
+        // Spunem ce versiune de fișier răspunde. Fără asta, dacă pe server rămâne
+        // varianta veche a lui backup.js, aplicația arată „Copia 2 nu există" și pare o
+        // defecțiune — când de fapt fișierul de pe server pur și simplu nu știe de Blob.
+        versiuneRuta: VERSIUNE_RUTA,
         copii: index.map((x) => ({ id: x.id, facutLa: x.facutLa, octeti: x.octeti, chei: x.chei, blob: x.blob || null })),
         dincolo, dincoloMotiv,
       });
+    }
+
+    /* PROBĂ SCURTĂ PE DEPOZITUL DIN AFARĂ. Scrie un fișier mic, îl citește înapoi, îl
+       șterge, și spune EXACT ce s-a stricat dacă s-a stricat. Fără asta, „Copia 2 nu
+       există" e un avertisment fără cauză, iar cauza poate fi oricare din patru. */
+    if (req.method === 'GET' && actiune === 'blob-test') {
+      const pasi = [];
+      let url = '';
+      try {
+        pasi.push({ pas: 'există BLOB_READ_WRITE_TOKEN', ok: !!process.env.BLOB_READ_WRITE_TOKEN });
+        const { put, list, del } = await blobModul();
+        pasi.push({ pas: 'biblioteca @vercel/blob se încarcă', ok: true });
+        const r = await put(BLOB_DOSAR + 'proba.txt', 'proba-' + new Date().toISOString(), {
+          access: 'public', contentType: 'text/plain', addRandomSuffix: true, cacheControlMaxAge: 0,
+        });
+        url = r.url;
+        pasi.push({ pas: 'scrierea unui fișier mic', ok: true, url: r.url });
+        const citit = await fetch(r.url);
+        pasi.push({ pas: 'citirea lui înapoi', ok: citit.ok, detaliu: 'cod ' + citit.status });
+        const l = await list({ prefix: BLOB_DOSAR, limit: 1000 });
+        pasi.push({ pas: 'listarea dosarului', ok: true, detaliu: (l.blobs || []).length + ' fișiere' });
+        await del(url);
+        pasi.push({ pas: 'ștergerea fișierului de probă', ok: true });
+        return res.status(200).json({ ok: true, pasi });
+      } catch (e) {
+        pasi.push({ pas: 'AICI S-A OPRIT', ok: false, detaliu: (e && e.message) || String(e) });
+        try { if (url) { const { del } = await blobModul(); await del(url); } } catch (_) {}
+        return res.status(200).json({ ok: false, pasi });
+      }
     }
 
     /* PROBA DE RESTAURARE. Până acum nimeni nu verifica dacă o copie chiar SE POATE
