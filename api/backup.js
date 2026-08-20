@@ -116,9 +116,10 @@ async function toateCheile() {
       Upstash, ștergeai din greșeală baza, sau expira gratuitatea — pierdeai și datele, ȘI
       copiile, în aceeași secundă. Acum copia zilnică pleacă și dincolo.
 
-   DE CE E ÎN REGULĂ CĂ ADRESA DIN BLOB E PUBLICĂ: fișierul e criptat AES-256-GCM cu o cheie
-   făcută din SESSION_SECRET, care stă doar pe server. Cine nimerește adresa vede octeți fără
-   niciun sens. În plus adresa are un sufix aleator — nu se poate ghici.
+   DOUĂ LACĂTE PE COPIA DE DINCOLO: depozitul firmei e configurat PRIVAT (deci adresa nu
+   e de-ajuns ca s-o iei), iar fișierul e pe deasupra criptat AES-256-GCM cu o cheie făcută
+   din SESSION_SECRET, care stă doar pe server. Chiar dacă depozitul ar fi public mâine,
+   cine nimerește adresa tot vede doar octeți fără sens. Adresa are și sufix aleator.
 
    ȘI DACĂ BLOB-UL NU MERGE? Nu se întâmplă nimic rău: copia din Redis se face oricum, iar
    răspunsul spune limpede că a doua copie n-a plecat. Copia de siguranță nu are voie să
@@ -139,22 +140,72 @@ async function blobModul() {
   return await import('@vercel/blob');
 }
 
+/* CUM SE SCRIE ÎN DEPOZITUL DIN AFARĂ, FĂRĂ SĂ GHICESC EU.
+   Prima variantă cerea scriere PUBLICĂ. Depozitul firmei e configurat PRIVAT, deci a
+   refuzat-o („Cannot use public access on a private store") — iar a doua copie nu pleca.
+   Nu am cum să văd de aici cum e configurat depozitul tău, așa că nu mai ghicesc: încerc
+   variantele pe rând și o folosesc pe prima care merge. Dacă mâine schimbi depozitul din
+   privat în public, sau invers, merge mai departe fără să umble nimeni în cod. */
+const VARIANTE_SCRIERE = [
+  { nume: 'implicit (cum e configurat depozitul)', opt: {} },
+  { nume: 'privat', opt: { access: 'private' } },
+  { nume: 'public', opt: { access: 'public' } },
+];
+
+async function scrieInBlob(cale, continut) {
+  const { put } = await blobModul();
+  const greseli = [];
+  for (const v of VARIANTE_SCRIERE) {
+    try {
+      const r = await put(cale, continut, {
+        contentType: 'application/octet-stream',
+        addRandomSuffix: true,
+        cacheControlMaxAge: 0,
+        ...v.opt,
+      });
+      return { r, metoda: v.nume, greseli };
+    } catch (e) {
+      greseli.push(v.nume + ': ' + ((e && e.message) || 'necunoscut'));
+    }
+  }
+  const err = new Error(greseli.join(' | '));
+  err.greseli = greseli;
+  throw err;
+}
+
+/* CITIREA ÎNAPOI. Un fișier dintr-un depozit privat nu se ia cu o simplă adresă — are
+   nevoie fie de adresa de descărcare pe care o dă chiar el, fie de biletul de acces al
+   depozitului. Le încercăm pe rând, ca și la scriere. */
+async function citesteDinBlob(intrare) {
+  const adrese = [intrare && intrare.downloadUrl, intrare && intrare.url, typeof intrare === 'string' ? intrare : null].filter(Boolean);
+  const jeton = process.env.BLOB_READ_WRITE_TOKEN;
+  const greseli = [];
+  for (const adr of adrese) {
+    for (const cuJeton of [false, true]) {
+      if (cuJeton && !jeton) continue;
+      try {
+        const r = await fetch(String(adr), cuJeton ? { headers: { Authorization: 'Bearer ' + jeton } } : undefined);
+        if (!r.ok) { greseli.push((cuJeton ? 'cu bilet' : 'simplu') + ': cod ' + r.status); continue; }
+        return { text: (await r.text()).trim(), metoda: (cuJeton ? 'cu biletul depozitului' : 'adresă directă') };
+      } catch (e) { greseli.push((cuJeton ? 'cu bilet' : 'simplu') + ': ' + ((e && e.message) || 'necunoscut')); }
+    }
+  }
+  const err = new Error('Nu am putut aduce copia din Blob. ' + greseli.join(' | '));
+  err.greseli = greseli;
+  throw err;
+}
+
 async function pusInBlob(id, criptatB64) {
   try {
-    const { put, list, del } = await blobModul();
-    const r = await put(BLOB_DOSAR + id + '.bin', criptatB64, {
-      access: 'public',
-      contentType: 'application/octet-stream',
-      addRandomSuffix: true,
-      cacheControlMaxAge: 0,
-    });
+    const { list, del } = await blobModul();
+    const { r, metoda } = await scrieInBlob(BLOB_DOSAR + id + '.bin', criptatB64);
     // curățenie: păstrăm și dincolo tot ultimele 30
     try {
       const l = await list({ prefix: BLOB_DOSAR, limit: 1000 });
       const toate = (l.blobs || []).sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)));
       for (const vechi of toate.slice(PASTREZ)) { try { await del(vechi.url); } catch (_) {} }
     } catch (_) {}
-    return { ok: true, url: r.url };
+    return { ok: true, url: r.url, downloadUrl: r.downloadUrl || null, metoda };
   } catch (e) {
     return { ok: false, motiv: (e && e.message) || 'necunoscut' };
   }
@@ -166,16 +217,14 @@ async function listaDinBlob() {
   return (l.blobs || [])
     .map((b) => ({
       id: String(b.pathname).slice(BLOB_DOSAR.length).replace(/-[A-Za-z0-9]{20,}\.bin$/, '').replace(/\.bin$/, ''),
-      url: b.url, octeti: b.size, facutLa: b.uploadedAt,
+      url: b.url, downloadUrl: b.downloadUrl || null, octeti: b.size, facutLa: b.uploadedAt,
     }))
     .sort((a, b) => String(b.facutLa).localeCompare(String(a.facutLa)));
 }
 
-async function incarcaDinBlob(url) {
-  const r = await fetch(String(url));
-  if (!r.ok) throw new Error('Nu am putut aduce copia din Blob (cod ' + r.status + ').');
-  const b64 = (await r.text()).trim();
-  return JSON.parse(decripteaza(Buffer.from(b64, 'base64')));
+async function incarcaDinBlob(intrare) {
+  const { text } = await citesteDinBlob(intrare);
+  return JSON.parse(decripteaza(Buffer.from(text, 'base64')));
 }
 
 async function citesteIndex() {
@@ -276,15 +325,13 @@ export default async function handler(req, res) {
       let url = '';
       try {
         pasi.push({ pas: 'există BLOB_READ_WRITE_TOKEN', ok: !!process.env.BLOB_READ_WRITE_TOKEN });
-        const { put, list, del } = await blobModul();
+        const { list, del } = await blobModul();
         pasi.push({ pas: 'biblioteca @vercel/blob se încarcă', ok: true });
-        const r = await put(BLOB_DOSAR + 'proba.txt', 'proba-' + new Date().toISOString(), {
-          access: 'public', contentType: 'text/plain', addRandomSuffix: true, cacheControlMaxAge: 0,
-        });
+        const { r, metoda } = await scrieInBlob(BLOB_DOSAR + 'proba.txt', 'proba-de-scriere');
         url = r.url;
-        pasi.push({ pas: 'scrierea unui fișier mic', ok: true, url: r.url });
-        const citit = await fetch(r.url);
-        pasi.push({ pas: 'citirea lui înapoi', ok: citit.ok, detaliu: 'cod ' + citit.status });
+        pasi.push({ pas: 'scrierea unui fișier mic', ok: true, detaliu: 'a mers pe „' + metoda + '"' });
+        const cit = await citesteDinBlob(r);
+        pasi.push({ pas: 'citirea lui înapoi', ok: cit.text === 'proba-de-scriere', detaliu: 'a mers pe „' + cit.metoda + '"' });
         const l = await list({ prefix: BLOB_DOSAR, limit: 1000 });
         pasi.push({ pas: 'listarea dosarului', ok: true, detaliu: (l.blobs || []).length + ' fișiere' });
         await del(url);
