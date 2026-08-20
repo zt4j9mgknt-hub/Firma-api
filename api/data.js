@@ -200,6 +200,29 @@ function pazaConcedii(vechi, nou, userId) {
   return null;
 }
 
+/* ===== ROLUL ADEVĂRAT, NU CEL DIN BILET =====
+   AICI AM GREȘIT IERI. Lacătul se uita la „rol" din biletul de acces — iar biletul ține
+   30 DE ZILE. Deci un om logat de mult umblă cu un bilet vechi: dacă în el nu scrie rolul
+   (sau scrie unul vechi), serverul îl trata ca pe un angajat și îi refuza facturile. Adică
+   patronul putea rămâne peste noapte fără cifrele lui, fără să se fi schimbat nimic la el.
+   Iar aplicația, primind refuz, arăta zero — ca și cum n-ar avea facturi.
+
+   Acum: dacă biletul spune „Manager", îl credem. Dacă NU spune asta, nu refuzăm imediat —
+   întrebăm lista de utilizatori care e rolul adevărat al omului. O singură citire în plus,
+   doar pe cheile încuiate, și doar când biletul nu e deja lămuritor. */
+async function rolulAdevarat(base, token, auth) {
+  if (!auth) return '';
+  if (auth.rol === 'Manager') return 'Manager';
+  try {
+    const u = await redisGet(base, token, 'firma:users');
+    const lista = Array.isArray(u) ? u : [];
+    const eu = lista.find((x) => x && String(x.id) === String(auth.userId));
+    return (eu && eu.rol) || auth.rol || '';
+  } catch (_) {
+    return auth.rol || '';
+  }
+}
+
 let pusher = null;
 function getPusher() {
   if (pusher) return pusher;
@@ -238,19 +261,19 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       // Jurnalul: cine ce a modificat. Doar Managerul, și niciodată prin „key".
       if (req.query.jurnal) {
-        if (auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea jurnalul.' });
+        if ((await rolulAdevarat(base, token, auth)) !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea jurnalul.' });
         const j = (await redisGet(base, token, 'log:jurnal')) || [];
         return res.status(200).json({ jurnal: Array.isArray(j) ? j : [] });
       }
       // Cât loc ocupă fiecare lucru în baza de date. Doar Managerul.
       if (req.query.marime) {
-        if (auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea asta.' });
+        if ((await rolulAdevarat(base, token, auth)) !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea asta.' });
         return res.status(200).json(await masoara(base, token));
       }
       const key = normalizeazaCheia(req.query.key);
       if (!key) return res.status(400).json({ error: 'Lipseste parametrul key.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
-      if (CHEI_DOAR_MANAGER.has(key) && auth.rol !== 'Manager') {
+      if (CHEI_DOAR_MANAGER.has(key) && (await rolulAdevarat(base, token, auth)) !== 'Manager') {
         return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
       }
 
@@ -263,7 +286,8 @@ export default async function handler(req, res) {
       const key = normalizeazaCheia(cheieBruta);
       if (!key) return res.status(400).json({ error: 'Lipseste key in body.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
-      const eManager = auth.rol === 'Manager';
+      const rolReal = await rolulAdevarat(base, token, auth);
+      const eManager = rolReal === 'Manager';
       if (CHEI_DOAR_MANAGER.has(key) && !eManager) return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
       if (CHEI_DOAR_MANAGER_SCRIE.has(key) && !eManager) return res.status(403).json({ error: 'Doar Managerul poate modifica asta.', interzis: true });
 
@@ -280,7 +304,7 @@ export default async function handler(req, res) {
         await scrieJurnal(base, token, {
           la: new Date().toISOString(),
           uid: auth.userId || '',
-          rol: auth.rol || '',
+          rol: rolReal || auth.rol || '',   // rolul adevărat, nu cel scris în biletul vechi
           cheie: key,
           n: Array.isArray(value) ? value.length : (value && typeof value === 'object' ? Object.keys(value).length : 1),
           octeti: JSON.stringify(value ?? null).length,
