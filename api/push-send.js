@@ -33,6 +33,52 @@ function autentifica(req) {
 }
 
 
+/* ===== CINE ARE VOIE SĂ TRIMITĂ CUI =====
+   GAURA CARE ERA AICI. Aplicația îi dădea serverului lista de telefoane către care să
+   trimită, iar serverul o executa fără să întrebe nimic. Lista de abonați se poate citi
+   de orice om logat. Deci orice angajat putea trimite, cu numele și iconița firmei, un
+   mesaj către TOATĂ echipa — inclusiv unul care să pară de la patron.
+
+   Acum serverul nu mai primește telefoane, ci un DESTINATAR, și își caută singur lista:
+     - Managerul poate trimite oricui („toți", „manageri", sau nume alese).
+     - Un angajat poate trimite DOAR la birou („manageri") sau către o persoană anume —
+       niciodată către toată lumea.
+   Restul aplicației nu se schimbă: din 26 de locuri care trimit înștiințări, 23 trimit
+   oricum la birou.
+
+   COMPATIBILITATE: telefoanele care n-au apucat să se actualizeze trimit încă lista
+   veche. Pe alea le acceptăm de la Manager, iar de la angajat le redirectăm la birou —
+   ca înștiințările lor să ajungă totuși, până se actualizează. */
+async function redis(cmd) {
+  const base = process.env.KV_REST_API_URL;
+  const token = process.env.KV_REST_API_TOKEN;
+  if (!base || !token) throw new Error('Baza de date nu e configurată.');
+  const r = await fetch(base, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmd),
+  });
+  const d = await r.json();
+  if (d && d.error) throw new Error('Redis: ' + d.error);
+  return d.result;
+}
+async function abonatii() {
+  try {
+    const b = await redis(['GET', 'firma:pushSubs']);
+    const l = b ? JSON.parse(b) : [];
+    return Array.isArray(l) ? l : [];
+  } catch (_) { return []; }
+}
+function alege(lista, destinatar, eManager) {
+  if (destinatar === 'toti') {
+    // Doar patronul are voie să dea un anunț la toată lumea.
+    return eManager ? lista : lista.filter((x) => x.rol === 'Manager');
+  }
+  if (destinatar === 'manageri') return lista.filter((x) => x.rol === 'Manager');
+  const ids = Array.isArray(destinatar) ? destinatar.map(String) : [String(destinatar)];
+  return lista.filter((x) => ids.includes(String(x.userId)));
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Doar POST.' });
@@ -58,7 +104,28 @@ export default async function handler(req, res) {
     webpush.setVapidDetails(subject, pub, priv);
 
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-    const subscriptions = Array.isArray(body.subscriptions) ? body.subscriptions : [];
+    const eManager = sesiune.rol === 'Manager';
+
+    /* Destinatarul se rezolvă pe SERVER, din lista lui, nu din ce trimite telefonul. */
+    let subscriptions = [];
+    let redirectat = false;
+    if (body.destinatar !== undefined && body.destinatar !== null) {
+      const lista = await abonatii();
+      const fara = body.exceptUserId ? lista.filter((x) => String(x.userId) !== String(body.exceptUserId)) : lista;
+      const alesi = alege(fara, body.destinatar, eManager);
+      redirectat = body.destinatar === 'toti' && !eManager;
+      subscriptions = alesi.map((x) => x.sub).filter(Boolean);
+    } else if (eManager) {
+      // telefon vechi, dar e al patronului → mergem pe lista trimisă, ca înainte
+      subscriptions = Array.isArray(body.subscriptions) ? body.subscriptions : [];
+    } else {
+      // telefon vechi, al unui angajat → nu-i luăm lista de bună; trimitem la birou
+      const lista = await abonatii();
+      const fara = body.exceptUserId ? lista.filter((x) => String(x.userId) !== String(body.exceptUserId)) : lista;
+      subscriptions = fara.filter((x) => x.rol === 'Manager').map((x) => x.sub).filter(Boolean);
+      redirectat = true;
+    }
+
     const payload = JSON.stringify({
       title: body.title || 'SC SMART ELECTROCONECT',
       body: body.body || '',
@@ -67,7 +134,8 @@ export default async function handler(req, res) {
     });
 
     if (subscriptions.length === 0) {
-      return res.status(200).json({ ok: true, sent: 0, note: 'Niciun abonat.' });
+      return res.status(200).json({ ok: true, sent: 0, versiuneRuta: 2,
+        note: redirectat ? 'Niciun manager abonat.' : 'Niciun abonat.' });
     }
 
     let sent = 0;
@@ -82,7 +150,7 @@ export default async function handler(req, res) {
       }
     }));
 
-    return res.status(200).json({ ok: true, sent, stale });
+    return res.status(200).json({ ok: true, sent, stale, redirectat, versiuneRuta: 2 });
   } catch (err) {
     console.error('push-send error:', err);
     return res.status(400).json({ error: (err && err.message) ? err.message : 'Trimitere eșuată.' });
