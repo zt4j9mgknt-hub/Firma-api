@@ -108,6 +108,51 @@ async function redisSet(base, token, cheieIntreaga, valoare) {
   return d.result === 'OK';
 }
 
+/* Comandă Redis în formă generală (SCAN, STRLEN…), pe lângă cele două ajutoare de sus. */
+async function redisCmd(base, token, cmd) {
+  const r = await fetch(base, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmd),
+  });
+  const d = await r.json();
+  if (d && d.error) throw new Error('Redis: ' + d.error);
+  return d.result;
+}
+
+/* ===== CÂT LOC OCUPĂ FIECARE LUCRU =====
+   Baza de date gratuită are un plafon (256 MB). Până acum nimeni nu putea vedea CE anume
+   îl umple — se putea doar ghici. Asta măsoară fiecare cheie, în octeți adevărați (STRLEN
+   pe server, nu estimare), și separă datele de copiile de siguranță. Doar Managerul. */
+async function masoara(base, token) {
+  const chei = [];
+  let cursor = '0';
+  do {
+    const rez = await redisCmd(base, token, ['SCAN', cursor, 'MATCH', '*', 'COUNT', '300']);
+    cursor = String(rez[0]);
+    (rez[1] || []).forEach((k) => chei.push(String(k)));
+  } while (cursor !== '0');
+
+  const unice = Array.from(new Set(chei));
+  const randuri = [];
+  for (const k of unice) {
+    let octeti = 0;
+    try { octeti = Number(await redisCmd(base, token, ['STRLEN', k])) || 0; } catch (_) {}
+    randuri.push({ cheie: k, octeti });
+  }
+  const grup = (p) => randuri.filter((x) => x.cheie.startsWith(p)).reduce((s, x) => s + x.octeti, 0);
+  return {
+    date: randuri.filter((x) => x.cheie.startsWith('firma:'))
+      .map((x) => ({ cheie: x.cheie.slice(6), octeti: x.octeti }))
+      .sort((a, b) => b.octeti - a.octeti),
+    totalDate: grup('firma:'),
+    totalCopii: grup('bkp:'),
+    totalJurnal: grup('log:'),
+    total: randuri.reduce((s, x) => s + x.octeti, 0),
+    plafon: 256 * 1024 * 1024,
+  };
+}
+
 /* ===== JURNALUL =====
    Cine, când, ce cheie a modificat și cu câte înregistrări a rămas. Nu ține conținutul
    (ar dubla baza de date) — ține urma. Când ceva dispare și nimeni nu știe de ce, aici
@@ -196,6 +241,11 @@ export default async function handler(req, res) {
         if (auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea jurnalul.' });
         const j = (await redisGet(base, token, 'log:jurnal')) || [];
         return res.status(200).json({ jurnal: Array.isArray(j) ? j : [] });
+      }
+      // Cât loc ocupă fiecare lucru în baza de date. Doar Managerul.
+      if (req.query.marime) {
+        if (auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea asta.' });
+        return res.status(200).json(await masoara(base, token));
       }
       const key = normalizeazaCheia(req.query.key);
       if (!key) return res.status(400).json({ error: 'Lipseste parametrul key.' });
