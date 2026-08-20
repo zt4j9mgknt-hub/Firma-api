@@ -1,4 +1,4 @@
-// api/push-send.js
+l// api/push-send.js
 // Trimite notificări Web Push. Nu ține nimic în memorie: aplicația îi dă lista de abonamente
 // (deja salvate prin sistemul de date al aplicației) + mesajul, iar ruta le trimite.
 //
@@ -62,12 +62,22 @@ async function redis(cmd) {
   if (d && d.error) throw new Error('Redis: ' + d.error);
   return d.result;
 }
+/* GRESEALA CARE ERA AICI, si de ce nu se vedea.
+   Functia asta inghitea ORICE eroare si intorcea o lista goala. Iar de cand serverul isi
+   cauta singur telefoanele, lista goala inseamna „nu trimit nimanui". Deci daca baza de
+   date nu raspundea o clipa, notificarile nu mai plecau — si nimeni nu afla de ce, fiindca
+   raspunsul era tot „ok, trimis catre 0". Inainte de schimbarea asta, lista venea de pe
+   telefon si mergea oricum.
+   Acum: greseala se raporteaza, iar daca nu putem citi lista, ne intoarcem la cea trimisa
+   de telefon in loc sa tacem. O notificare nu are voie sa dispara fara sa spuna de ce. */
 async function abonatii() {
   try {
     const b = await redis(['GET', 'firma:pushSubs']);
     const l = b ? JSON.parse(b) : [];
-    return Array.isArray(l) ? l : [];
-  } catch (_) { return []; }
+    return { lista: Array.isArray(l) ? l : [], eroare: '' };
+  } catch (e) {
+    return { lista: [], eroare: (e && e.message) || 'necunoscuta' };
+  }
 }
 function alege(lista, destinatar, eManager) {
   if (destinatar === 'toti') {
@@ -80,6 +90,35 @@ function alege(lista, destinatar, eManager) {
 }
 
 export default async function handler(req, res) {
+  /* DIAGNOSTIC — nu trimite nimic, doar spune ce vede serverul.
+     „Nu merg notificarile" poate insemna sase lucruri diferite, iar pana acum nu se putea
+     afla care. Aici se vad toate deodata: ce versiune de ruta e urcata, daca sunt cheile
+     VAPID, daca se poate citi lista de telefoane si cate sunt pe fiecare rol. */
+  if (req.method === 'GET' && req.query && req.query.diag) {
+    const sesiuneD = autentifica(req);
+    if (!sesiuneD) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    const ab = await abonatii();
+    const pasi = [
+      { pas: 'ruta /api/push-send răspunde', ok: true, detaliu: 'versiunea ' + 3 },
+      { pas: 'ești logat', ok: true, detaliu: 'rol ' + (sesiuneD.rol || '?') },
+      { pas: 'cheile de notificări (VAPID) sunt puse pe server',
+        ok: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
+        detaliu: process.env.VAPID_PUBLIC_KEY ? '' : 'lipsesc VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY' },
+      { pas: 'adresa de contact (VAPID_SUBJECT)', ok: !!process.env.VAPID_SUBJECT,
+        detaliu: process.env.VAPID_SUBJECT ? '' : 'lipsește — unele servicii resping notificările fără ea' },
+      { pas: 'serverul poate citi lista de telefoane', ok: !ab.eroare, detaliu: ab.eroare || '' },
+      { pas: 'sunt telefoane înscrise', ok: ab.lista.length > 0, detaliu: ab.lista.length + ' în total' },
+      { pas: 'e înscris cel puțin un telefon de manager',
+        ok: ab.lista.some((x) => x && x.rol === 'Manager'),
+        detaliu: ab.lista.filter((x) => x && x.rol === 'Manager').length + ' manager, '
+               + ab.lista.filter((x) => x && x.rol !== 'Manager').length + ' angajați' },
+      { pas: 'telefonul tău e printre ele',
+        ok: ab.lista.some((x) => x && String(x.userId) === String(sesiuneD.userId)),
+        detaliu: '' },
+    ];
+    return res.status(200).json({ ok: pasi.every((x) => x.ok), versiuneRuta: 3, pasi });
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Doar POST.' });
   }
@@ -107,23 +146,49 @@ export default async function handler(req, res) {
     const eManager = sesiune.rol === 'Manager';
 
     /* Destinatarul se rezolvă pe SERVER, din lista lui, nu din ce trimite telefonul. */
+    const deLaTelefon = Array.isArray(body.subscriptions) ? body.subscriptions : [];
     let subscriptions = [];
     let redirectat = false;
+    let sursa = '';          // de unde au ieșit telefoanele — se vede în diagnostic
+    let eroareLista = '';
+
+    const dinServer = await abonatii();
+    eroareLista = dinServer.eroare;
+    const fara = body.exceptUserId
+      ? dinServer.lista.filter((x) => String(x.userId) !== String(body.exceptUserId))
+      : dinServer.lista;
+
     if (body.destinatar !== undefined && body.destinatar !== null) {
-      const lista = await abonatii();
-      const fara = body.exceptUserId ? lista.filter((x) => String(x.userId) !== String(body.exceptUserId)) : lista;
       const alesi = alege(fara, body.destinatar, eManager);
       redirectat = body.destinatar === 'toti' && !eManager;
       subscriptions = alesi.map((x) => x.sub).filter(Boolean);
+      sursa = 'server';
     } else if (eManager) {
       // telefon vechi, dar e al patronului → mergem pe lista trimisă, ca înainte
-      subscriptions = Array.isArray(body.subscriptions) ? body.subscriptions : [];
+      subscriptions = deLaTelefon;
+      sursa = 'telefon (versiune veche, patron)';
     } else {
       // telefon vechi, al unui angajat → nu-i luăm lista de bună; trimitem la birou
-      const lista = await abonatii();
-      const fara = body.exceptUserId ? lista.filter((x) => String(x.userId) !== String(body.exceptUserId)) : lista;
       subscriptions = fara.filter((x) => x.rol === 'Manager').map((x) => x.sub).filter(Boolean);
       redirectat = true;
+      sursa = 'server (telefon vechi, redirectat la birou)';
+    }
+
+    /* PLASA: dacă serverul n-a găsit pe nimeni DAR telefonul ne-a dat o listă, mergem pe
+       ea în loc să nu trimitem nimic. Cazul tipic: baza de date n-a răspuns o clipă.
+       Pentru un angajat păstrăm regula — din lista lui luăm doar telefoanele de birou,
+       iar dacă nici lista serverului nu se poate citi, o luăm ca atare: mai bine ajunge
+       la cine trebuie decât să nu ajungă deloc. */
+    if (!subscriptions.length && deLaTelefon.length) {
+      if (eManager) { subscriptions = deLaTelefon; sursa = 'telefon (plasă: serverul n-a găsit pe nimeni)'; }
+      else if (fara.length) {
+        const aleBiroului = new Set(fara.filter((x) => x.rol === 'Manager').map((x) => x.sub && x.sub.endpoint).filter(Boolean));
+        subscriptions = deLaTelefon.filter((x) => x && aleBiroului.has(x.endpoint));
+        sursa = 'telefon, filtrat la birou (plasă)';
+      } else {
+        subscriptions = deLaTelefon; redirectat = true;
+        sursa = 'telefon (plasă: lista serverului nu se poate citi)';
+      }
     }
 
     const payload = JSON.stringify({
@@ -134,8 +199,9 @@ export default async function handler(req, res) {
     });
 
     if (subscriptions.length === 0) {
-      return res.status(200).json({ ok: true, sent: 0, versiuneRuta: 2,
-        note: redirectat ? 'Niciun manager abonat.' : 'Niciun abonat.' });
+      return res.status(200).json({ ok: true, sent: 0, versiuneRuta: 3, sursa, eroareLista,
+        note: eroareLista ? ('Nu am putut citi lista de telefoane: ' + eroareLista)
+                          : (redirectat ? 'Niciun manager abonat.' : 'Niciun abonat.') });
     }
 
     let sent = 0;
@@ -150,7 +216,7 @@ export default async function handler(req, res) {
       }
     }));
 
-    return res.status(200).json({ ok: true, sent, stale, redirectat, versiuneRuta: 2 });
+    return res.status(200).json({ ok: true, sent, stale, redirectat, sursa, eroareLista, versiuneRuta: 3 });
   } catch (err) {
     console.error('push-send error:', err);
     return res.status(400).json({ error: (err && err.message) ? err.message : 'Trimitere eșuată.' });
