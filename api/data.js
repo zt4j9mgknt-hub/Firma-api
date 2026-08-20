@@ -40,10 +40,120 @@ function authenticate(req) {
 // relogheze cu rol de Manager. Aici e adevărata gaură — o închidem.
 const CHEI_INTERZISE = new Set(['users']);
 
-// (OPȚIONAL) Chei pe care doar Managerul are voie să le SCRIE. Lăsat gol ca să nu stric
-// niciun flux existent. Dacă vrei ca electricienii să nu poată modifica firma/facturile,
-// adaugă aici, de ex.: new Set(['company', 'invoices']). Citirea rămâne permisă.
-const CHEI_DOAR_MANAGER_SCRIE = new Set([]);
+/* ===== LACĂTUL PE BANI ȘI PE DOSARUL DE PERSONAL =====
+   Până acum, permisiunile existau DOAR în ecran: aplicația nu-i arăta electricianului
+   tab-ul „Facturi", dar serverul îi dădea conținutul cheii oricui era logat, dacă o cerea
+   direct (o adresă scrisă de mână în browser era de-ajuns). Adică oricine avea un cont
+   putea vedea toate facturile, ofertele și cheltuielile firmei — și le putea și rescrie.
+   Aici se închide, pe server, unde nu se poate ocoli.
+
+   DOUĂ TREPTE, ca să nu stric fluxuri care merg:
+   - CHEI_DOAR_MANAGER      → nici citit, nici scris de altcineva decât Managerul.
+   - CHEI_DOAR_MANAGER_SCRIE → oricine citește (are nevoie ca să-și vadă orele, firma pe
+                               antet etc.), dar doar Managerul modifică. */
+const CHEI_DOAR_MANAGER = new Set([
+  'offers',          // ofertele
+  'invoices',        // facturile
+  'devize',          // devizele
+  'cheltuieliFirma', // cheltuielile firmei
+  'antemasuratori',  // antemăsurătorile (prețuri de intrare)
+  'soldConcediu',    // soldul de concediu al fiecărui om
+]);
+const CHEI_DOAR_MANAGER_SCRIE = new Set([
+  'company',          // datele firmei (antet, IBAN, ștampilă)
+  'pontajCorectii',   // corecțiile de ore — omul își vede orele, dar nu și le umflă
+  'categoriiTimp',    // motivele proprii de timp mort
+  'noutatiAnuntate',  // registrul de noutăți deja anunțate
+]);
+
+/* CONCEDIILE sunt caz aparte: omul TREBUIE să-și poată depune cererea, dar nu are ce
+   căuta în cererile colegilor și nu are voie să-și aprobe singur concediul. Deci cheia
+   rămâne deschisă la scriere, dar serverul compară ce era cu ce vine și acceptă doar
+   modificări pe rândurile LUI, cu status „Cerut". */
+const CHEI_RANDURI_PROPRII = new Set(['concedii']);
+
+/* Câte însemnări ținem în jurnal. 500 acoperă câteva luni de lucru normal. */
+const JURNAL_MAX = 500;
+
+/* GAURA CARE ERA AICI, si de ce arata inofensiv.
+   Verificarea era `CHEI_INTERZISE.has(key)`, iar `key` venea direct din JSON — deci putea
+   fi ORICE tip, nu doar text. Trimis ca lista cu un element, `["users"]`:
+       new Set(['users']).has(['users'])  ->  false     (lista nu e egala cu textul)
+       encodeURIComponent(['users'])      ->  "users"   (lista se face text singura)
+   Adica blocajul nu se declansa, dar adresa catre Redis iesea exact `firma:users`.
+   Orice angajat logat putea rescrie lista de utilizatori — sa se puna Manager, sau sa
+   stearga parolele tuturor. Acum cheia devine text INAINTE de orice verificare, si
+   acceptam doar litere, cifre si liniuta — nimic altceva nu poate ajunge in adresa. */
+const CHEI_PERMISE = /^[A-Za-z0-9_-]{1,64}$/;
+function normalizeazaCheia(k) {
+  if (typeof k !== 'string') return null;   // liste, obiecte, numere — refuzate din start
+  return CHEI_PERMISE.test(k) ? k : null;
+}
+
+/* --- Două ajutoare mici, ca să nu repet adresa bazei de date în cinci locuri. --- */
+async function redisGet(base, token, cheieIntreaga) {
+  const r = await fetch(`${base}/get/${encodeURIComponent(cheieIntreaga)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const d = await r.json();
+  try { return d.result ? JSON.parse(d.result) : null; } catch { return null; }
+}
+async function redisSet(base, token, cheieIntreaga, valoare) {
+  const r = await fetch(`${base}/set/${encodeURIComponent(cheieIntreaga)}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
+    body: JSON.stringify(valoare),
+  });
+  const d = await r.json();
+  return d.result === 'OK';
+}
+
+/* ===== JURNALUL =====
+   Cine, când, ce cheie a modificat și cu câte înregistrări a rămas. Nu ține conținutul
+   (ar dubla baza de date) — ține urma. Când ceva dispare și nimeni nu știe de ce, aici
+   scrie de pe ce cont s-a scris ultima oară. Stă sub „log:", nu sub „firma:", ca să NU
+   poată fi citit sau șters prin magazinul general de date. */
+async function scrieJurnal(base, token, intrare) {
+  try {
+    const vechi = (await redisGet(base, token, 'log:jurnal')) || [];
+    const lista = Array.isArray(vechi) ? vechi : [];
+    lista.unshift(intrare);
+    await redisSet(base, token, 'log:jurnal', lista.slice(0, JURNAL_MAX));
+  } catch { /* jurnalul nu are voie să strice salvarea */ }
+}
+
+/* ===== PAZA PE CONCEDII =====
+   Compară lista veche cu cea nouă și spune dacă un NEmanager avea voie s-o facă.
+   Întoarce null dacă e în regulă, sau textul motivului dacă nu. */
+function pazaConcedii(vechi, nou, userId) {
+  if (!Array.isArray(nou)) return 'Concediile trebuie trimise ca listă.';
+  const v = Array.isArray(vechi) ? vechi : [];
+  const alMeu = (c) => c && String(c.userId) === String(userId);
+  const dupaId = (l) => { const m = new Map(); l.forEach((c) => { if (c && c.id != null) m.set(String(c.id), c); }); return m; };
+  const mv = dupaId(v), mn = dupaId(nou);
+  // 1. Nicio cerere a altcuiva nu are voie să dispară sau să se schimbe.
+  for (const [id, cv] of mv) {
+    if (alMeu(cv)) continue;
+    const cn = mn.get(id);
+    if (!cn) return 'Nu poți șterge cererea de concediu a altcuiva.';
+    if (JSON.stringify(cn) !== JSON.stringify(cv)) return 'Nu poți modifica cererea de concediu a altcuiva.';
+  }
+  // 2. Nu poți adăuga cereri pe numele altcuiva.
+  for (const [id, cn] of mn) {
+    if (!mv.has(id) && !alMeu(cn)) return 'Nu poți depune cerere în numele altcuiva.';
+  }
+  // 3. Aprobarea o dă Managerul, nu solicitantul.
+  for (const [id, cn] of mn) {
+    if (!alMeu(cn)) continue;
+    const cv = mv.get(id);
+    const statusNou = String(cn.status || '');
+    const statusVechi = cv ? String(cv.status || '') : '';
+    if (statusNou !== statusVechi && statusNou !== 'Cerut') {
+      return 'Doar Managerul poate aproba sau respinge un concediu.';
+    }
+  }
+  return null;
+}
 
 let pusher = null;
 function getPusher() {
@@ -81,33 +191,50 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      const key = req.query.key;
+      // Jurnalul: cine ce a modificat. Doar Managerul, și niciodată prin „key".
+      if (req.query.jurnal) {
+        if (auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea jurnalul.' });
+        const j = (await redisGet(base, token, 'log:jurnal')) || [];
+        return res.status(200).json({ jurnal: Array.isArray(j) ? j : [] });
+      }
+      const key = normalizeazaCheia(req.query.key);
       if (!key) return res.status(400).json({ error: 'Lipseste parametrul key.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
+      if (CHEI_DOAR_MANAGER.has(key) && auth.rol !== 'Manager') {
+        return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
+      }
 
-      const r = await fetch(`${base}/get/firma:${encodeURIComponent(key)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await r.json();
-      const value = data.result ? JSON.parse(data.result) : null;
+      const value = await redisGet(base, token, `firma:${key}`);
       return res.status(200).json({ value });
     }
 
     if (req.method === 'POST') {
-      const { key, value } = req.body || {};
+      const { key: cheieBruta, value } = req.body || {};
+      const key = normalizeazaCheia(cheieBruta);
       if (!key) return res.status(400).json({ error: 'Lipseste key in body.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
-      if (CHEI_DOAR_MANAGER_SCRIE.has(key) && auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate modifica asta.' });
+      const eManager = auth.rol === 'Manager';
+      if (CHEI_DOAR_MANAGER.has(key) && !eManager) return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
+      if (CHEI_DOAR_MANAGER_SCRIE.has(key) && !eManager) return res.status(403).json({ error: 'Doar Managerul poate modifica asta.', interzis: true });
 
-      const r = await fetch(`${base}/set/firma:${encodeURIComponent(key)}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'text/plain' },
-        body: JSON.stringify(value),
-      });
-      const data = await r.json();
-      const ok = data.result === 'OK';
+      // Concediile: omul își depune și își modifică DOAR cererea lui, și nu și-o aprobă singur.
+      if (CHEI_RANDURI_PROPRII.has(key) && !eManager) {
+        const inainte = await redisGet(base, token, `firma:${key}`);
+        const motiv = pazaConcedii(inainte, value, auth.userId);
+        if (motiv) return res.status(403).json({ error: motiv, interzis: true });
+      }
+
+      const ok = await redisSet(base, token, `firma:${key}`, value);
 
       if (ok) {
+        await scrieJurnal(base, token, {
+          la: new Date().toISOString(),
+          uid: auth.userId || '',
+          rol: auth.rol || '',
+          cheie: key,
+          n: Array.isArray(value) ? value.length : (value && typeof value === 'object' ? Object.keys(value).length : 1),
+          octeti: JSON.stringify(value ?? null).length,
+        });
         const p = getPusher();
         if (p) {
           try { await p.trigger('firma-updates', 'data-changed', { key }); } catch {}
