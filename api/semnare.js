@@ -93,6 +93,12 @@ function pagina({ titlu, corp }) {
   .sters{background:#fff;color:#B03030;font-size:17px;font-weight:700;padding:15px;width:100%;
          margin-top:10px;border:2px solid #E4B8B8;border-radius:12px}
   .sters:active{background:#FBEFEF}
+  /* Butonul de tipărire de pe documentul deja semnat: același format mare, dar
+     nu roșu — roșul e rezervat pentru „șterge". */
+  .tipar{background:#fff;color:#20507A;font-size:17px;font-weight:700;padding:15px;width:100%;
+         margin-top:14px;border:2px solid #BBD1E4;border-radius:12px}
+  .tipar:active{background:#EEF4FA}
+  @media print{ .tipar{display:none} }
   .avertisment{background:#FFF6E3;border:1px solid #E8D9A8;color:#6B5410;border-radius:10px;padding:12px;font-size:14px}
   .bun{background:#EFF9F2;border:1px solid #BFE0C9;color:#1D5B31;border-radius:10px;padding:14px}
   .rau{background:#FDF0F0;border:1px solid #F0C4C4;color:#8B1E1E;border-radius:10px;padding:14px}
@@ -166,16 +172,6 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, obiectiuni: obiClientNoi.length });
     }
 
-    /* ---------- PAGINA PE CARE O VEDE CLIENTUL ---------- */
-    if (pv.semnatura) {
-      return res.status(200).send(pagina({
-        titlu: 'Deja semnat',
-        corp: `<div class="card"><h1>✅ Document semnat</h1>
-          <div class="bun" style="margin-top:10px">Procesul-verbal nr. ${esc(pv.numar || '')} a fost semnat de <b>${esc(pv.numeBeneficiar || '')}</b>${pv.semnatLa ? ' la ' + esc(new Date(pv.semnatLa).toLocaleString('ro-RO')) : ''}.<br><br>Nu mai e nimic de făcut.</div>
-          <div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>${esc(company?.nume || '')}</b>${company?.telefon ? '<br>Tel: ' + esc(company.telefon) : ''}</div></div>`,
-      }));
-    }
-
     const randLucrari = (pv.lucrari || []).length
       ? pv.lucrari.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.denumire)}</td><td>${esc(l.cantitate ?? '')} ${esc(l.um || '')}</td></tr>`).join('')
       : `<tr><td colspan="3" class="mic">Conform ${pv.devizNumar ? 'devizului nr. ' + esc(pv.devizNumar) + (pv.devizData ? ' din ' + esc(pv.devizData) : '') : 'devizului'}${pv.contract ? ' și contractului nr. ' + esc(pv.contract) : ''}, aferent lucrării.</td></tr>`;
@@ -195,6 +191,46 @@ export default async function handler(req, res) {
        unde să scrie nimic — putea doar să semneze sau să nu semneze. Acum are căsuța lui:
        ce scrie aici pleacă odată cu semnătura și rămâne pe document. */
     const obiClient = '';
+
+    /* ---------- DACĂ E DEJA SEMNAT ----------
+       Înainte, aici scria doar „✅ Document semnat. Nu mai e nimic de făcut." — atât.
+       Adică omul care tocmai semnase rămânea fără NICIO dovadă a ce a semnat: dacă
+       redeschidea linkul peste o lună, sau dacă apărea o discuție despre ce se
+       consemnase, nu mai avea la ce se uita. Acum vede documentul întreg, așa cum l-a
+       semnat — inclusiv obiecțiunile pe care le-a scris el — și îl poate tipări sau
+       salva ca PDF de pe telefon. */
+    if (pv.semnatura) {
+      const detalii = `<table>
+          <tr><th style="width:38%">Executant</th><td>${esc(company?.nume || '')}</td></tr>
+          <tr><th>Beneficiar</th><td>${esc(client?.nume || pv.numeBeneficiar || '')}</td></tr>
+          <tr><th>Obiectiv</th><td>${esc(santier?.nume || '')}${santier?.adresa ? '<br><span class="mic">' + esc(santier.adresa) + '</span>' : ''}</td></tr>
+          ${pv.perioada ? `<tr><th>Perioada</th><td>${esc(pv.perioada)}</td></tr>` : ''}
+          ${pv.contract ? `<tr><th>Contract nr.</th><td>${esc(pv.contract)}</td></tr>` : ''}
+          ${pv.actAditional ? `<tr><th>Act adițional nr.</th><td>${esc(pv.actAditional)}</td></tr>` : ''}
+          ${pv.devizNumar ? `<tr><th>Deviz nr.</th><td>${esc(pv.devizNumar)}${pv.devizData ? ' din ' + esc(pv.devizData) : ''}</td></tr>` : ''}
+        </table>`;
+      return res.status(200).send(pagina({
+        titlu: 'Proces-verbal semnat',
+        corp: `<div class="card">
+          <h1>✅ Document semnat</h1>
+          <div class="bun" style="margin-top:10px">Procesul-verbal nr. ${esc(pv.numar || '')} a fost semnat de <b>${esc(pv.numeBeneficiar || '')}</b>${pv.semnatLa ? ' la ' + esc(new Date(pv.semnatLa).toLocaleString('ro-RO')) : ''}.<br>Mai jos aveți documentul așa cum l-ați semnat. Îl puteți tipări sau salva ca PDF.</div>
+        </div>
+        <div class="card">
+          <h1>Proces-verbal de recepție</h1>
+          <div class="mic">Nr. ${esc(pv.numar || '')} din ${esc(fmtData(pv.data))}</div>
+          ${detalii}
+          <div class="eticheta">Lucrări executate</div>
+          <table><tr><th style="width:12%">Nr.</th><th>Denumire</th><th style="width:26%">Cant.</th></tr>${randLucrari}</table>
+          ${randObi}
+          ${pv.observatii ? `<div class="eticheta">Alte mențiuni</div><div class="mic">${esc(pv.observatii)}</div>` : ''}
+          <div class="eticheta">Semnătura beneficiarului</div>
+          <img src="${esc(pv.semnatura)}" alt="semnătură" style="max-width:100%;background:#fff;border:1px solid #d8dee4;border-radius:10px">
+          <div class="mic" style="margin-top:6px">${esc(pv.numeBeneficiar || '')}${pv.calitate ? ' — ' + esc(pv.calitate) : ''}</div>
+          <button class="tipar" onclick="window.print()">🖨 Tipărește / salvează ca PDF</button>
+          <div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>${esc(company?.nume || '')}</b>${company?.telefon ? '<br>Tel: ' + esc(company.telefon) : ''}</div>
+        </div>`,
+      }));
+    }
 
     const corp = `
       <div class="card">
