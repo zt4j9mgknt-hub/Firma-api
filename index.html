@@ -2220,7 +2220,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.66-zi-rupta';
+const APP_VERSION = 'v03.67-de-unde-vine-costul';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -7630,7 +7630,8 @@ function SiteTimpiMortiTab({ santierId, santierNume, santier, rapoarte, company,
                         " din cele ",
                         hm(minuteLucrate),
                         " lucrate pe \u0219antier"),
-                    !isManager && ' · costul îl vede doar managerul')),
+                    !isManager && ' · costul îl vede doar managerul'),
+                isManager && costOra > 0 && React.createElement(DeUndeVineCostul, { company: company, rapoarte: rapoarte })),
             peLuna.length > 1 && (React.createElement("div", { className: "mb-4" },
                 React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-1.5", style: { color: 'var(--muted2)' } }, "Pe lun\u0103"),
                 React.createElement("div", { className: "flex items-end justify-between gap-1.5", style: { height: 70 } }, peLuna.map((L) => {
@@ -13394,6 +13395,64 @@ function TabloCalitate({ restante, santiere, setTab, setPendingSiteNav, mod, for
                             " \u00B7 lucru mediu ",
                             React.createElement("b", { style: { color: 'var(--acc1)' } }, minText(Math.round(p.timp / p.cuTimp)))) : '')))))))))))));
 }
+const VECHIME_COST_ZILE = 75;
+function DeUndeVineCostul({ company, rapoarte, setTab }) {
+    const src = useMemo(() => sursaCostOra(company, rapoarte), [company, rapoarte]);
+    if (src.fel === 'lipsa')
+        return null;
+    const vechi = src.fel === 'calculat' && src.zileVechime != null && src.zileVechime > VECHIME_COST_ZILE;
+    const cul = (src.fel === 'tastat' || vechi) ? 'var(--acc3)' : 'var(--muted2)';
+    const fond = (src.fel === 'tastat' || vechi) ? '#E9A23B12' : 'var(--panel2)';
+    return (React.createElement("div", { className: "text-[11px] mt-2 px-2.5 py-1.5 rounded-lg", style: { background: fond, color: cul, lineHeight: 1.55 } },
+        React.createElement("b", { style: { fontFamily: "'JetBrains Mono', monospace" } },
+            money(Math.round(src.valoare * 100) / 100),
+            "/or\u0103"),
+        src.fel === 'calculat' ? (React.createElement(React.Fragment, null,
+            ' ',
+            "\u2014 calculat din situa\u021Bia contabilei pe ",
+            React.createElement("b", null,
+                fmtData(src.de),
+                " \u2192 ",
+                fmtData(src.la)),
+            ' ',
+            "(",
+            money(src.costPersonal),
+            " personal + ",
+            money(src.costRegie),
+            " regie), \u00EEmp\u0103r\u021Bit\u0103 la",
+            ' ',
+            React.createElement("b", null,
+                Math.round(src.orePlatite),
+                " h"),
+            " din pontaj (",
+            src.oameni,
+            " ",
+            src.oameni === 1 ? 'om' : 'oameni',
+            ", ",
+            src.zile,
+            " ",
+            src.zile === 1 ? 'zi' : 'zile',
+            ").",
+            src.pragTarif > 0 && React.createElement(React.Fragment, null,
+                " Sub ",
+                React.createElement("b", null,
+                    money(Math.round(src.pragTarif * 100) / 100),
+                    "/or\u0103"),
+                " facturat, ie\u0219i \u00EEn pierdere."),
+            vechi && React.createElement(React.Fragment, null,
+                " ",
+                React.createElement("b", null,
+                    "\u26A0 Cifrele sunt de acum ",
+                    Math.round(src.zileVechime / 30),
+                    " luni"),
+                " \u2014 lipe\u0219te situa\u021Bia nou\u0103 \u00EEn \u2699 Firma mea, altfel profitul de mai sus e o p\u0103rere veche."))) : (React.createElement(React.Fragment, null,
+            " \u2014 ",
+            React.createElement("b", null, "tastat de m\u00E2n\u0103"),
+            " \u00EEn \u2699 Firma mea, nu calculat din situa\u021Bia contabilei. Profitul de mai sus e c\u00E2t de bun e num\u0103rul \u0103sta.")),
+        setTab && React.createElement(React.Fragment, null,
+            " ",
+            React.createElement("button", { onClick: () => setTab('firma'), style: { color: 'var(--acc1)', textDecoration: 'underline' } }, "Schimb\u0103"))));
+}
 function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPendingSiteNav, mod, format, onDeschide, analiza, onExtras }) {
     const ePagina = mod === 'pagina';
     const [deschis, setDeschis] = useState(mod === 'pagina');
@@ -13486,6 +13545,12 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
             const ziPrec = Math.min(ziAzi, new Date(dPrec.getFullYear(), dPrec.getMonth() + 1, 0).getDate());
             const etichetaDelta = lunaIncheiata ? 'față de ' + lunaPrec : 'față de 1–' + ziPrec + ' ' + lunaPrec;
             const culP = !areCeva ? 'var(--muted2)' : costOra > 0 ? (tProfit >= 0 ? 'var(--acc2)' : 'var(--acc4)') : 'var(--text)';
+            const srcCost = costOra > 0 ? sursaCostOra(company, rapoarte) : null;
+            const notaCost = !srcCost ? ''
+                : srcCost.fel === 'tastat' ? ' · cost/oră tastat de mână, nu din situația contabilei'
+                    : (srcCost.zileVechime != null && srcCost.zileVechime > VECHIME_COST_ZILE)
+                        ? ' · cost/oră din cifre vechi de ' + Math.round(srcCost.zileVechime / 30) + ' luni'
+                        : ' · cost/oră din situația contabilei ' + fmtData(srcCost.de) + '→' + fmtData(srcCost.la);
             const culPastila = verdictP ? (verdictP.fel === 'bine' ? '#2ECC80' : verdictP.fel === 'atentie' ? '#E5A43F' : '#E05B5B') : '#E5A43F';
             const textPastila = areCeva
                 ? (delta != null ? 'producție ' + (delta >= 0 ? '▲ +' : '▼ −') + Math.abs(delta) + '% ' + etichetaDelta + (marjaP != null ? ' · marjă ' + marjaP + '%' : '') : (marjaP != null ? 'marjă ' + marjaP + '%' : 'fără costul orei — valoare, nu profit'))
@@ -13495,7 +13560,7 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
                     textPastila && (React.createElement("span", { className: "inline-block text-[9.5px] font-bold px-2 py-0.5 rounded-full mt-1 mb-1", style: { color: culPastila, background: culPastila + '1c' } }, textPastila)),
                     !areCeva && React.createElement("div", { className: "text-[10px] mb-1", style: { color: 'var(--muted2)' } }, "\u00EEnc\u0103 f\u0103r\u0103 rapoarte cu ore sau materiale"),
                     React.createElement(GraficArie, { serie: pulsProfit, luniChei: ultimeleLuni(6), culoare: costOra > 0 ? (tProfit >= 0 ? '#2ECC80' : '#E05B5B') : '#4A9BE0' }),
-                    React.createElement("div", { className: "text-[9px] mt-1", style: { color: 'var(--muted2)' } }, (lunaIncheiata ? 'valoarea produsă pe 6 luni' : 'valoarea produsă pe 6 luni · ' + LUNI_BORD[aziD.getMonth()] + ' e în curs (zilele 1–' + ziAzi + ')') + (costOra > 0 ? ' · atinge o lună pentru cifra exactă' : ' · pentru profit, pune cifrele contabilei în ⚙ Firma mea')))) }));
+                    React.createElement("div", { className: "text-[9px] mt-1", style: { color: 'var(--muted2)' } }, (lunaIncheiata ? 'valoarea produsă pe 6 luni' : 'valoarea produsă pe 6 luni · ' + LUNI_BORD[aziD.getMonth()] + ' e în curs (zilele 1–' + ziAzi + ')') + (costOra > 0 ? ' · atinge o lună pentru cifra exactă' : ' · pentru profit, pune cifrele contabilei în ⚙ Firma mea') + notaCost))) }));
         }
         if (format === 'perf') {
             const STARI = { bine: ['OPTIM', '#00FF9C'], atentie: ['ATENȚIE', '#FFC048'], rau: ['CRITIC', '#FF4757'] };
@@ -13534,6 +13599,7 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
                 React.createElement("div", { className: "rounded-lg px-3 py-2", style: { background: 'var(--panel2)' } },
                     React.createElement("div", { className: "text-sm font-bold", style: { color: costOra > 0 ? (tProfit >= 0 ? 'var(--acc2)' : '#E05252') : 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } }, costOra > 0 ? money(tProfit) : '—'),
                     React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, "profit estimat"))),
+            React.createElement(DeUndeVineCostul, { company: company, rapoarte: rapoarte, setTab: setTab }),
             ePagina && santierDeschis && (() => {
                 const x = rand.find((r) => r.s.id === santierDeschis);
                 if (!x)
@@ -15661,17 +15727,32 @@ function citesteSituatiaContabila(text) {
         randuri, areCeva: (personal + regie) > 0,
     };
 }
-function costOraFolosit(company, rapoarte) {
+function sursaCostOra(company, rapoarte) {
     const de = String(company && company.costPerDe || '').trim();
     const la = String(company && company.costPerLa || '').trim();
     const cp = Number(company && company.costPersonalPer) || 0;
     const cr = Number(company && company.costRegiePer) || 0;
     if (de && la && (cp + cr) > 0) {
         const c = costOraReal({ rapoarte, de, la, costPersonal: cp, costRegie: cr, faraOre: company && company.oameniBirou });
-        if (c.areDate && c.totalPeOra > 0)
-            return c.totalPeOra;
+        if (c.areDate && c.totalPeOra > 0) {
+            let zileVechime = null;
+            try {
+                const ms = new Date(dataLocala(new Date()) + 'T00:00:00') - new Date(la + 'T00:00:00');
+                zileVechime = Math.max(0, Math.round(ms / 86400000));
+            }
+            catch (_) { }
+            return { valoare: c.totalPeOra, fel: 'calculat', de, la, zileVechime,
+                orePlatite: c.orePlatite, oameni: c.oameni, zile: c.zile,
+                costPersonal: cp, costRegie: cr, pragTarif: c.pragTarif };
+        }
     }
-    return Number(company && company.costOraMediu) || 0;
+    const manual = Number(company && company.costOraMediu) || 0;
+    if (manual > 0)
+        return { valoare: manual, fel: 'tastat' };
+    return { valoare: 0, fel: 'lipsa' };
+}
+function costOraFolosit(company, rapoarte) {
+    return sursaCostOra(company, rapoarte).valoare;
 }
 function muncaNefacturata({ rapoarte, santiere, devize, pozitiiSantier, materialeListaSantier, pana }) {
     const azi = pana || dataLocala(new Date());
