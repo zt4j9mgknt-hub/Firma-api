@@ -2220,7 +2220,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.67-de-unde-vine-costul';
+const APP_VERSION = 'v03.71-dispozitive-nu-oameni';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -3277,7 +3277,46 @@ function SiteAlertsPanel({ santierId, categorie, categorieLabel, alerte, setAler
     return (React.createElement("div", { className: "rounded-xl p-3", style: { background: alerteActive.length ? 'rgba(224,82,82,.12)' : 'var(--panel)', border: `1px solid ${alerteActive.length ? '#E0525266' : 'var(--border)'}` } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "⚠ Sesizări ", categorieLabel, alerteActive.length > 0 && React.createElement("span", { style: { color: 'var(--acc4)' } }, " (", alerteActive.length, " deschise)")), React.createElement("div", { className: "flex gap-2 mb-2 flex-wrap" }, itemOptions && itemOptions.length > 0 ? (React.createElement("select", { value: denumire, onChange: (e) => setDenumire(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "" }, "Alege..."), itemOptions.map((o) => React.createElement("option", { key: o, value: o, style: { background: 'var(--panel)' } }, o)))) : (React.createElement("input", { placeholder: "Denumire", value: denumire, onChange: (e) => setDenumire(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none w-40", style: inputStyle })), React.createElement("input", { placeholder: "Ce s-a întâmplat?", value: descriere, onChange: (e) => setDescriere(e.target.value), className: "flex-1 rounded-lg px-3 py-1.5 text-sm outline-none min-w-[140px]", style: inputStyle }), React.createElement("button", { onClick: addAlerta, className: "text-xs px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc4)' } }, "🚨 Sesizează")), alerteAici.length === 0 ? React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nicio problemă raportată.") : (React.createElement("div", { className: "space-y-1" }, alerteAici.slice().sort((a, b) => (a.status === 'Nouă' ? 0 : 1) - (b.status === 'Nouă' ? 0 : 1)).map((a) => (React.createElement("div", { key: a.id, className: "flex items-center justify-between text-xs px-2 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: a.status === 'Nouă' ? 'var(--text)' : 'var(--muted2)' } }, React.createElement("b", null, a.denumire), " — ", a.descriere, " ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "(", fmtData(a.data), ")")), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement("span", { style: { color: a.status === 'Nouă' ? 'var(--acc4)' : 'var(--acc2)' } }, a.status), a.status === 'Nouă' && React.createElement("button", { onClick: () => rezolva(a.id), className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: 'var(--acc2)' } }, "Rezolvată"), React.createElement("button", { onClick: () => delAlerta(a.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 12 }, "🗑"))))))))));
 }
 const MAX_UPLOAD_SIZE = 200 * 1024 * 1024;
-async function uploadFileToBlob(file, folder) {
+const POZA_LATURA_MAX = 2000;
+const POZA_CALITATE = 0.82;
+const POZA_PRAG = 400 * 1024;
+async function micsoreazaPoza(file) {
+    try {
+        if (!file || !/^image\//i.test(file.type || ''))
+            return file;
+        if (file.size <= POZA_PRAG)
+            return file;
+        const facBitmap = (typeof window !== 'undefined') ? window.createImageBitmap : null;
+        if (typeof facBitmap !== 'function' || typeof document === 'undefined')
+            return file;
+        const bmp = await facBitmap(file);
+        const lat = Math.max(bmp.width, bmp.height);
+        if (!lat)
+            return file;
+        const f = Math.min(1, POZA_LATURA_MAX / lat);
+        const w = Math.max(1, Math.round(bmp.width * f));
+        const h = Math.max(1, Math.round(bmp.height * f));
+        const cv = document.createElement('canvas');
+        cv.width = w;
+        cv.height = h;
+        const cx = cv.getContext('2d');
+        cx.drawImage(bmp, 0, 0, w, h);
+        try {
+            bmp.close();
+        }
+        catch (_) { }
+        const blob = await new Promise((rez) => cv.toBlob(rez, 'image/jpeg', POZA_CALITATE));
+        if (!blob || blob.size >= file.size)
+            return file;
+        const numeNou = String(file.name || 'poza').replace(/\.[^.]+$/, '') + '.jpg';
+        return new File([blob], numeNou, { type: 'image/jpeg', lastModified: Date.now() });
+    }
+    catch (_) {
+        return file;
+    }
+}
+async function uploadFileToBlob(fisierBrut, folder) {
+    const file = await micsoreazaPoza(fisierBrut);
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         throw new Error('📴 Nu ai net acum. Fișierul NU s-a încărcat — păstrează-l în telefon și încearcă iar când ai semnal.');
     }
@@ -9444,8 +9483,27 @@ function ProfileTab({ currentUser, onLogout, tema, setTema, carduri, setCarduri,
             endpointMeu = s ? s.endpoint : '';
         }
         catch (_) { }
-        const cu = lista.map((x) => ({ nume: x && x.nume, rol: (x && x.rol) || '—', eu: !!(endpointMeu && x && x.sub && x.sub.endpoint === endpointMeu) }));
-        setAbonati({ lista: cu, euSunt: cu.some((x) => x.eu), areManager: cu.some((x) => x.rol === 'Manager') });
+        /* LISTA E DE DISPOZITIVE, NU DE OAMENI. Fiecare telefon, tabletă sau browser în care
+           s-a apăsat „Activează notificările" e un rând separat. De aceea patronul, care are
+           aplicația pe iPhone și pe două browsere de pe calculator, se vedea ca „3 manageri"
+           — și era normal să se întrebe cine sunt ceilalți doi. Acum se numără OAMENII, iar
+           lângă fiecare scrie pe câte dispozitive primește. */
+        const cu = lista.map((x) => ({ nume: (x && x.nume) || '(fără nume)', rol: (x && x.rol) || '—', userId: x && x.userId, eu: !!(endpointMeu && x && x.sub && x.sub.endpoint === endpointMeu) }));
+        const peOm = new Map();
+        cu.forEach((x) => {
+            const cheie = String(x.userId || x.nume);
+            const e = peOm.get(cheie) || { nume: x.nume, rol: x.rol, dispozitive: 0, eu: false };
+            e.dispozitive += 1;
+            if (x.eu) e.eu = true;
+            peOm.set(cheie, e);
+        });
+        const oameni = Array.from(peOm.values()).sort((x, y) => (x.rol === 'Manager' ? -1 : y.rol === 'Manager' ? 1 : 0));
+        setAbonati({
+            lista: cu, oameni,
+            nrDispozitive: cu.length,
+            euSunt: cu.some((x) => x.eu),
+            areManager: cu.some((x) => x.rol === 'Manager'),
+        });
     };
     const diagnosticPush = async () => {
         setDiagPush(null);
@@ -9497,9 +9555,16 @@ function ProfileTab({ currentUser, onLogout, tema, setTema, carduri, setCarduri,
             lista = Array.isArray(d.value) ? d.value : [];
         }
         catch { }
+        /* Se numără DISPOZITIVE, nu oameni: un om cu iPhone-ul și cu două browsere pe
+           calculator apare de trei ori. Scriem limpede, ca să nu pară că firma are manageri
+           de care nu știe nimeni. */
         const nrMgr = lista.filter((x) => x && x.rol === 'Manager').length;
         const nrAng = lista.filter((x) => x && x.rol !== 'Manager').length;
-        const abonati = `Abonați pe server: ${nrMgr} manager, ${nrAng} angajați. `;
+        const oameniMgr = new Set(lista.filter((x) => x && x.rol === 'Manager').map((x) => String(x.userId || x.nume))).size;
+        const oameniAng = new Set(lista.filter((x) => x && x.rol !== 'Manager').map((x) => String(x.userId || x.nume))).size;
+        const cati = (disp, oameni, cuv1, cuvN) => disp + (disp === 1 ? ' dispozitiv' : ' dispozitive') +
+            (disp !== oameni ? ' (' + oameni + ' ' + (oameni === 1 ? cuv1 : cuvN) + ')' : '');
+        const abonati = `Înscrise: ${cati(nrMgr, oameniMgr, 'manager', 'manageri')} · ${cati(nrAng, oameniAng, 'angajat', 'angajați')}. `;
         const res = await notifica(currentUser?.id, { title: 'Test ✅', body: 'Notificările funcționează!', tag: 'test' });
         if (res && res.ok) {
             const trimise = res.data && typeof res.data.sent === 'number' ? res.data.sent : '?';
@@ -9621,7 +9686,7 @@ function ProfileTab({ currentUser, onLogout, tema, setTema, carduri, setCarduri,
             setStatus({ loading: false, error: e.message || 'A eșuat.', success: '' });
         }
     };
-    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Profilul meu"), React.createElement("p", { className: "text-xs mb-5", style: { color: 'var(--muted2)' } }, roleIcon, " ", currentUser?.nume, " · @", currentUser?.username, " · ", currentUser?.rol), !expandedForm ? (React.createElement("div", { className: "flex gap-2" }, React.createElement("button", { onClick: () => setExpandedForm(true), className: "flex items-center gap-2 text-sm px-3 py-2 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement("span", null, "🔒"), " Schimbă parola"), React.createElement("button", { onClick: onLogout, className: "flex items-center gap-2 text-sm px-3 py-2 rounded-lg font-medium", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525266' } }, React.createElement("span", null, "🚪"), " Ieși din cont"))) : (React.createElement("div", { className: "rounded-xl p-4 max-w-sm", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-3 pb-3", style: { borderBottom: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center gap-2" }, React.createElement("span", null, "🔒"), React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "Schimbă parola")), React.createElement("button", { onClick: () => { setExpandedForm(false); setOldPassword(''); setNewPassword(''); setConfirmPassword(''); setStatus({ loading: false, error: '', success: '' }); }, style: { color: 'var(--muted2)' } }, React.createElement(Icon, { size: 14 }, "✕"))), React.createElement("div", { className: "space-y-2" }, React.createElement("input", { type: showPw ? 'text' : 'password', placeholder: "Parola actuală", value: oldPassword, onChange: (e) => setOldPassword(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { type: showPw ? 'text' : 'password', placeholder: "Parola nouă", value: newPassword, onChange: (e) => setNewPassword(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { type: showPw ? 'text' : 'password', placeholder: "Confirmă parola nouă", value: confirmPassword, onChange: (e) => setConfirmPassword(e.target.value), onKeyDown: (e) => e.key === 'Enter' && submit(), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("label", { className: "flex items-center gap-1.5 text-xs", style: { color: 'var(--muted)' } }, React.createElement("input", { type: "checkbox", checked: showPw, onChange: (e) => setShowPw(e.target.checked) }), " Arată parolele"), status.error && React.createElement("p", { className: "text-xs", style: { color: 'var(--acc4)' } }, status.error), status.success && React.createElement("p", { className: "text-xs", style: { color: 'var(--acc2)' } }, status.success), React.createElement("div", { className: "flex justify-end pt-1" }, React.createElement("button", { onClick: submit, disabled: status.loading, className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc1)' } }, status.loading ? '...' : 'Salvează parola nouă'))))), React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🎨 Aspect aplicație"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Alege tema. „Automat\" urmează setarea telefonului (Zi/Noapte)."), React.createElement("div", { className: "flex gap-1.5" }, [['zi', '☀️ Zi'], ['noapte', '🌙 Noapte'], ['auto', '🌗 Automat']].map(([val, lbl]) => (React.createElement("button", { key: val, onClick: () => setTema(val), className: "flex-1 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: tema === val ? '#14181C' : 'var(--muted)', background: tema === val ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, lbl)))), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "Stilul cartelelor"), React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "„Albe\" le scoate în față peste fundal și se citesc mai bine în soare. „Închise\" e cum era înainte."), React.createElement("div", { className: "flex gap-1.5" }, [['albe', '⬜ Albe'], ['inchise', '⬛ Închise']].map(([val, lbl]) => (React.createElement("button", { key: val, onClick: () => setCarduri(val), className: "flex-1 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: carduri === val ? '#14181C' : 'var(--muted)', background: carduri === val ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, lbl))))), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "Mărimea textului"), React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "„Mărit” ridică toate scrisurile mici la o mărime care se citește pe telefon, afară, în soare. Dacă vreun ecran îți iese strâmb, pune „Normal” și spune-mi unde."), React.createElement("div", { className: "flex gap-1.5" }, [['marit', '🔎 Mărit'], ['normal', 'Aa Normal']].map(([val, lbl]) => (React.createElement("button", { key: val, onClick: () => setMarimeText(val), className: "flex-1 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: marimeText === val ? '#14181C' : 'var(--muted)', background: marimeText === val ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, lbl)))))), React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🔔 Notificări"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Primești notificări cu sunet pe telefon: raport nou, cerere de material, asignare pe șantier, concediu etc. Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo."), React.createElement("div", { className: "flex flex-wrap gap-2" }, React.createElement("button", { onClick: activeazaNotif, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🔔 Activează notificările"), React.createElement("button", { onClick: trimiteTest, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "📨 Trimite notificare de test"), React.createElement("button", { onClick: verificaAbonati, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "🔎 Cine primește notificări"), React.createElement("button", { onClick: diagnosticPush, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "🩺 De ce nu vin notificările?")), notifStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: notifStatus.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, notifStatus), testStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: testStatus.startsWith('✅') ? 'var(--acc2)' : testStatus.startsWith('⚠️') ? 'var(--acc3)' : 'var(--acc4)' } }, testStatus), diagPush && React.createElement("div", { className: "mt-3 rounded-lg p-2.5 text-xs", style: { background: 'var(--panel2)', border: '1px solid ' + (diagPush.ok ? 'var(--acc2)' : '#E0525266') } }, React.createElement("div", { className: "font-semibold mb-1", style: { color: diagPush.ok ? 'var(--acc2)' : 'var(--acc4)' } }, diagPush.ok ? '✅ Serverul e în regulă — dacă tot nu vin, e din setările telefonului.' : '⛔ Uite unde se oprește:'), (diagPush.pasi || []).map((x, i) => React.createElement("div", { key: i, style: { color: x.ok ? 'var(--text)' : 'var(--acc4)' } }, (x.ok ? '✅ ' : '⛔ ') + x.pas + (x.detaliu ? ' — ' + x.detaliu : '')))), abonati && (React.createElement("div", { className: "mt-3 rounded-lg p-2.5 text-xs", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "font-semibold mb-1", style: { color: abonati.euSunt ? 'var(--acc2)' : 'var(--acc4)' } }, abonati.euSunt ? '✅ Telefonul ăsta primește notificări.' : '⛔ Telefonul ăsta NU primește notificări — apasă „🔔 Activează notificările".'), React.createElement("div", { style: { color: 'var(--muted)' } }, "Dispozitive înscrise (", abonati.lista.length, "):"), abonati.lista.length === 0 && React.createElement("div", { style: { color: 'var(--acc4)' } }, "Niciunul — nimeni nu primește nimic."), abonati.lista.map((x, i) => (React.createElement("div", { key: i, style: { color: 'var(--text)' } }, "• ", x.nume || '(fără nume)', " ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "· ", x.rol, x.eu ? ' · acest telefon' : '')))), !abonati.areManager && React.createElement("div", { className: "mt-1", style: { color: 'var(--acc3)' } }, "⚠ Niciun Manager înscris — de aceea nu-ți vin rapoartele băieților. Activează notificările pe telefonul tău.")))), bioSuportat() && (React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🔐 Amprentă / FaceID pe acest dispozitiv"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Aplicația se deschide DIRECT, fără nicio fereastră. Doar după o pauză mai lungă de o oră (sau după delogare) ți se cere o scanare — în loc să scrii parola. Parola rămâne mereu disponibilă ca rezervă."), bioOn ? (React.createElement("div", { className: "flex flex-col gap-2 items-start" }, React.createElement("button", { onClick: refaBio, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🔄 Refă cheia Face ID"), React.createElement("p", { className: "text-xs", style: { color: 'var(--muted)' } }, "Apasă aici dacă la logare îți apare ecranul Chrome („Manager de parole”). La fereastra care se deschide, alege „Alte opțiuni” și salvează cheia pe iPhone — scanarea va porni direct."), React.createElement("button", { onClick: dezactiveazaBio, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525266' } }, "Dezactivează amprenta pe acest dispozitiv"))) : (React.createElement("button", { onClick: activeazaBio, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🔒 Activează amprenta / FaceID")), bioStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: bioStatus.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, bioStatus))), React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "\ud83e\ude7a De ce lipsesc datele"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Dac\u0103 aplica\u021bia arat\u0103 gol sau lipsesc lucruri, apas\u0103 aici. \u00ce\u021bi spune exact ce a venit de pe server \u0219i ce ascunde telefonul \u0103sta \u2014 f\u0103r\u0103 s\u0103 modifice nimic."), React.createElement("button", { onClick: faDiag, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\ud83e\ude7a Verific\u0103 acum"), diag && (React.createElement("div", { className: "mt-3 rounded-lg p-2.5 text-xs", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { style: { color: diag.token ? 'var(--acc2)' : 'var(--acc4)' } }, diag.token ? '\u2705 E\u0219ti logat (biletul de acces exist\u0103).' : '\u26d4 Nu exist\u0103 bilet de acces \u2014 ie\u0219i \u0219i intr\u0103 din nou \u00een cont.'), React.createElement("div", { style: { color: diag.nrSterse > 0 ? 'var(--acc3)' : 'var(--muted)' } }, "Registru de \u0219tergeri: ", diag.nrSterse, " \u00eenregistr\u0103ri ascunse pe telefonul \u0103sta."), React.createElement("div", { style: { color: diag.pend.length ? 'var(--acc3)' : 'var(--muted)' } }, "\u00cen a\u0219teptare (netrimise): ", diag.pend.length ? diag.pend.join(', ') : 'nimic'), React.createElement("div", { className: "mt-2 pt-2", style: { borderTop: '1px solid var(--border)', color: 'var(--muted)' } }, "cheie \u00b7 de pe server \u00b7 \u00een telefon"), diag.linii.map((l) => (React.createElement("div", { key: l.cheie, style: { color: l.esuat ? 'var(--acc4)' : (l.n > 0 ? 'var(--text)' : 'var(--muted2)') } }, l.esuat ? '\u26d4 ' : (l.n > 0 ? '\u2022 ' : '\u00b7 '), l.cheie, ": ", l.n, " \u00b7 local ", l.local < 0 ? '\u2014' : l.local, l.ascunse > 0 ? ' \u00b7 \u26a0 ' + l.ascunse + ' ascunse' : ''))))), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Repar\u0103 telefonul \u0103sta: \u0219terge copia local\u0103 veche, registrul de \u0219tergeri \u0219i ciornele GOALE, apoi aduce tot de pe server. ", React.createElement("b", null, "Nu \u0219terge nimic de pe server"), " \u0219i nu pierde munca netrimis\u0103."), React.createElement("button", { onClick: reparaAcum, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\ud83e\uddf9 Repar\u0103 \u0219i re\u00eencarc\u0103"), repStare && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc3)' } }, repStare))), currentUser?.rol === 'Manager' && (React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🛟 Recuperare date"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Dacă lipsesc șantiere/clienți create recent, apasă aici ", React.createElement("b", null, "pe dispozitivul unde le-ai creat"), ". Caută datele salvate local și le trimite pe server (nu șterge nimic, doar adaugă)."), React.createElement("button", { onClick: recupereaza, disabled: recLoading, className: "text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc2)' } }, recLoading ? 'Se recuperează...' : '🛟 Recuperează datele locale'), recStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: recStatus.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, recStatus), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Salvează într-un singur fișier TOATĂ baza firmei (clienți, șantiere, facturi, rapoarte, restanțe etc.) — plasă de siguranță. Păstrează-l pe calculator sau pe mail. Fă-l din când în când."), React.createElement("button", { onClick: onBackup, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "⬇️ Descarcă backup (toate datele)"), backupStare && React.createElement("p", { className: "text-xs mt-2", style: { color: backupStare.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, backupStare)), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Verifică dacă asistentul AI e pornit pe server. Îți spune exact ce lipsește, dacă lipsește ceva."), React.createElement("button", { onClick: verificaAI, disabled: aiCheck === '...', className: "text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, aiCheck === '...' ? 'Verific…' : '✨ Testează AI'), aiCheck && aiCheck !== '...' && React.createElement("p", { className: "text-xs mt-2", style: { color: aiCheck.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, aiCheck)), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Telefonul ăsta ține minte ce ai șters, ca lucrurile șterse să nu reapară singure. Dacă bănuiești că ascunde ceva ce n-ai șters tu, golește registrul de aici."), React.createElement("button", { onClick: () => { golesteRegistrulSterse(); window.location.reload(); }, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc2)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "♻️ Golește registrul de ștergeri")), React.createElement(JurnalModificari, null), React.createElement(CatLocOcupa, null), React.createElement(CopiiSiguranta, null), React.createElement(PornireDeLaZero, null)))));
+    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Profilul meu"), React.createElement("p", { className: "text-xs mb-5", style: { color: 'var(--muted2)' } }, roleIcon, " ", currentUser?.nume, " · @", currentUser?.username, " · ", currentUser?.rol), !expandedForm ? (React.createElement("div", { className: "flex gap-2" }, React.createElement("button", { onClick: () => setExpandedForm(true), className: "flex items-center gap-2 text-sm px-3 py-2 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement("span", null, "🔒"), " Schimbă parola"), React.createElement("button", { onClick: onLogout, className: "flex items-center gap-2 text-sm px-3 py-2 rounded-lg font-medium", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525266' } }, React.createElement("span", null, "🚪"), " Ieși din cont"))) : (React.createElement("div", { className: "rounded-xl p-4 max-w-sm", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-3 pb-3", style: { borderBottom: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center gap-2" }, React.createElement("span", null, "🔒"), React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "Schimbă parola")), React.createElement("button", { onClick: () => { setExpandedForm(false); setOldPassword(''); setNewPassword(''); setConfirmPassword(''); setStatus({ loading: false, error: '', success: '' }); }, style: { color: 'var(--muted2)' } }, React.createElement(Icon, { size: 14 }, "✕"))), React.createElement("div", { className: "space-y-2" }, React.createElement("input", { type: showPw ? 'text' : 'password', placeholder: "Parola actuală", value: oldPassword, onChange: (e) => setOldPassword(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { type: showPw ? 'text' : 'password', placeholder: "Parola nouă", value: newPassword, onChange: (e) => setNewPassword(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("input", { type: showPw ? 'text' : 'password', placeholder: "Confirmă parola nouă", value: confirmPassword, onChange: (e) => setConfirmPassword(e.target.value), onKeyDown: (e) => e.key === 'Enter' && submit(), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("label", { className: "flex items-center gap-1.5 text-xs", style: { color: 'var(--muted)' } }, React.createElement("input", { type: "checkbox", checked: showPw, onChange: (e) => setShowPw(e.target.checked) }), " Arată parolele"), status.error && React.createElement("p", { className: "text-xs", style: { color: 'var(--acc4)' } }, status.error), status.success && React.createElement("p", { className: "text-xs", style: { color: 'var(--acc2)' } }, status.success), React.createElement("div", { className: "flex justify-end pt-1" }, React.createElement("button", { onClick: submit, disabled: status.loading, className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc1)' } }, status.loading ? '...' : 'Salvează parola nouă'))))), React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🎨 Aspect aplicație"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Alege tema. „Automat\" urmează setarea telefonului (Zi/Noapte)."), React.createElement("div", { className: "flex gap-1.5" }, [['zi', '☀️ Zi'], ['noapte', '🌙 Noapte'], ['auto', '🌗 Automat']].map(([val, lbl]) => (React.createElement("button", { key: val, onClick: () => setTema(val), className: "flex-1 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: tema === val ? '#14181C' : 'var(--muted)', background: tema === val ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, lbl)))), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "Stilul cartelelor"), React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "„Albe\" le scoate în față peste fundal și se citesc mai bine în soare. „Închise\" e cum era înainte."), React.createElement("div", { className: "flex gap-1.5" }, [['albe', '⬜ Albe'], ['inchise', '⬛ Închise']].map(([val, lbl]) => (React.createElement("button", { key: val, onClick: () => setCarduri(val), className: "flex-1 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: carduri === val ? '#14181C' : 'var(--muted)', background: carduri === val ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, lbl))))), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "Mărimea textului"), React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "„Mărit” ridică toate scrisurile mici la o mărime care se citește pe telefon, afară, în soare. Dacă vreun ecran îți iese strâmb, pune „Normal” și spune-mi unde."), React.createElement("div", { className: "flex gap-1.5" }, [['marit', '🔎 Mărit'], ['normal', 'Aa Normal']].map(([val, lbl]) => (React.createElement("button", { key: val, onClick: () => setMarimeText(val), className: "flex-1 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: marimeText === val ? '#14181C' : 'var(--muted)', background: marimeText === val ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, lbl)))))), React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🔔 Notificări"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Primești notificări cu sunet pe telefon: raport nou, cerere de material, asignare pe șantier, concediu etc. Pe iPhone: adaugă întâi aplicația pe ecranul de start și deschide-o de acolo."), React.createElement("div", { className: "flex flex-wrap gap-2" }, React.createElement("button", { onClick: activeazaNotif, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🔔 Activează notificările"), React.createElement("button", { onClick: trimiteTest, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "📨 Trimite notificare de test"), React.createElement("button", { onClick: verificaAbonati, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "🔎 Cine primește notificări"), React.createElement("button", { onClick: diagnosticPush, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "🩺 De ce nu vin notificările?")), notifStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: notifStatus.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, notifStatus), testStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: testStatus.startsWith('✅') ? 'var(--acc2)' : testStatus.startsWith('⚠️') ? 'var(--acc3)' : 'var(--acc4)' } }, testStatus), diagPush && React.createElement("div", { className: "mt-3 rounded-lg p-2.5 text-xs", style: { background: 'var(--panel2)', border: '1px solid ' + (diagPush.ok ? 'var(--acc2)' : '#E0525266') } }, React.createElement("div", { className: "font-semibold mb-1", style: { color: diagPush.ok ? 'var(--acc2)' : 'var(--acc4)' } }, diagPush.ok ? '✅ Serverul e în regulă — dacă tot nu vin, e din setările telefonului.' : '⛔ Uite unde se oprește:'), (diagPush.pasi || []).map((x, i) => React.createElement("div", { key: i, style: { color: x.ok ? 'var(--text)' : 'var(--acc4)' } }, (x.ok ? '✅ ' : '⛔ ') + x.pas + (x.detaliu ? ' — ' + x.detaliu : '')))), abonati && (React.createElement("div", { className: "mt-3 rounded-lg p-2.5 text-xs", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "font-semibold mb-1", style: { color: abonati.euSunt ? 'var(--acc2)' : 'var(--acc4)' } }, abonati.euSunt ? '✅ Telefonul ăsta primește notificări.' : '⛔ Telefonul ăsta NU primește notificări — apasă „🔔 Activează notificările".'), React.createElement("div", { style: { color: 'var(--muted)' } }, "Primesc notificări (", (abonati.oameni || []).length, (abonati.oameni || []).length === 1 ? " om" : " oameni", ", pe ", abonati.nrDispozitive, abonati.nrDispozitive === 1 ? " dispozitiv" : " dispozitive", "):"), abonati.nrDispozitive === 0 && React.createElement("div", { style: { color: 'var(--acc4)' } }, "Niciunul — nimeni nu primește nimic."), (abonati.oameni || []).map((x, i) => (React.createElement("div", { key: i, style: { color: 'var(--text)' } }, "• ", x.nume, " ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "· ", x.rol, x.dispozitive > 1 ? ' · pe ' + x.dispozitive + ' dispozitive' : '', x.eu ? ' · și pe ăsta' : '')))), abonati.nrDispozitive > (abonati.oameni || []).length && React.createElement("div", { className: "mt-1", style: { color: 'var(--muted2)' } }, "Un om apare o singură dată, chiar dacă are aplicația pe telefon ȘI pe calculator — fiecare browser se înscrie separat."), !abonati.areManager && React.createElement("div", { className: "mt-1", style: { color: 'var(--acc3)' } }, "⚠ Niciun Manager înscris — de aceea nu-ți vin rapoartele băieților. Activează notificările pe telefonul tău.")))), bioSuportat() && (React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🔐 Amprentă / FaceID pe acest dispozitiv"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Aplicația se deschide DIRECT, fără nicio fereastră. Doar după o pauză mai lungă de o oră (sau după delogare) ți se cere o scanare — în loc să scrii parola. Parola rămâne mereu disponibilă ca rezervă."), bioOn ? (React.createElement("div", { className: "flex flex-col gap-2 items-start" }, React.createElement("button", { onClick: refaBio, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🔄 Refă cheia Face ID"), React.createElement("p", { className: "text-xs", style: { color: 'var(--muted)' } }, "Apasă aici dacă la logare îți apare ecranul Chrome („Manager de parole”). La fereastra care se deschide, alege „Alte opțiuni” și salvează cheia pe iPhone — scanarea va porni direct."), React.createElement("button", { onClick: dezactiveazaBio, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525266' } }, "Dezactivează amprenta pe acest dispozitiv"))) : (React.createElement("button", { onClick: activeazaBio, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🔒 Activează amprenta / FaceID")), bioStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: bioStatus.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, bioStatus))), React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "\ud83e\ude7a De ce lipsesc datele"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Dac\u0103 aplica\u021bia arat\u0103 gol sau lipsesc lucruri, apas\u0103 aici. \u00ce\u021bi spune exact ce a venit de pe server \u0219i ce ascunde telefonul \u0103sta \u2014 f\u0103r\u0103 s\u0103 modifice nimic."), React.createElement("button", { onClick: faDiag, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\ud83e\ude7a Verific\u0103 acum"), diag && (React.createElement("div", { className: "mt-3 rounded-lg p-2.5 text-xs", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { style: { color: diag.token ? 'var(--acc2)' : 'var(--acc4)' } }, diag.token ? '\u2705 E\u0219ti logat (biletul de acces exist\u0103).' : '\u26d4 Nu exist\u0103 bilet de acces \u2014 ie\u0219i \u0219i intr\u0103 din nou \u00een cont.'), React.createElement("div", { style: { color: diag.nrSterse > 0 ? 'var(--acc3)' : 'var(--muted)' } }, "Registru de \u0219tergeri: ", diag.nrSterse, " \u00eenregistr\u0103ri ascunse pe telefonul \u0103sta."), React.createElement("div", { style: { color: diag.pend.length ? 'var(--acc3)' : 'var(--muted)' } }, "\u00cen a\u0219teptare (netrimise): ", diag.pend.length ? diag.pend.join(', ') : 'nimic'), React.createElement("div", { className: "mt-2 pt-2", style: { borderTop: '1px solid var(--border)', color: 'var(--muted)' } }, "cheie \u00b7 de pe server \u00b7 \u00een telefon"), diag.linii.map((l) => (React.createElement("div", { key: l.cheie, style: { color: l.esuat ? 'var(--acc4)' : (l.n > 0 ? 'var(--text)' : 'var(--muted2)') } }, l.esuat ? '\u26d4 ' : (l.n > 0 ? '\u2022 ' : '\u00b7 '), l.cheie, ": ", l.n, " \u00b7 local ", l.local < 0 ? '\u2014' : l.local, l.ascunse > 0 ? ' \u00b7 \u26a0 ' + l.ascunse + ' ascunse' : ''))))), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Repar\u0103 telefonul \u0103sta: \u0219terge copia local\u0103 veche, registrul de \u0219tergeri \u0219i ciornele GOALE, apoi aduce tot de pe server. ", React.createElement("b", null, "Nu \u0219terge nimic de pe server"), " \u0219i nu pierde munca netrimis\u0103."), React.createElement("button", { onClick: reparaAcum, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\ud83e\uddf9 Repar\u0103 \u0219i re\u00eencarc\u0103"), repStare && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc3)' } }, repStare))), currentUser?.rol === 'Manager' && (React.createElement("div", { className: "mt-5 rounded-xl p-4 max-w-md", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--text)' } }, "🛟 Recuperare date"), React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Dacă lipsesc șantiere/clienți create recent, apasă aici ", React.createElement("b", null, "pe dispozitivul unde le-ai creat"), ". Caută datele salvate local și le trimite pe server (nu șterge nimic, doar adaugă)."), React.createElement("button", { onClick: recupereaza, disabled: recLoading, className: "text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc2)' } }, recLoading ? 'Se recuperează...' : '🛟 Recuperează datele locale'), recStatus && React.createElement("p", { className: "text-xs mt-2", style: { color: recStatus.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, recStatus), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Salvează într-un singur fișier TOATĂ baza firmei (clienți, șantiere, facturi, rapoarte, restanțe etc.) — plasă de siguranță. Păstrează-l pe calculator sau pe mail. Fă-l din când în când."), React.createElement("button", { onClick: onBackup, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "⬇️ Descarcă backup (toate datele)"), backupStare && React.createElement("p", { className: "text-xs mt-2", style: { color: backupStare.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, backupStare)), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Verifică dacă asistentul AI e pornit pe server. Îți spune exact ce lipsește, dacă lipsește ceva."), React.createElement("button", { onClick: verificaAI, disabled: aiCheck === '...', className: "text-sm px-3 py-2 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#C08CE0' } }, aiCheck === '...' ? 'Verific…' : '✨ Testează AI'), aiCheck && aiCheck !== '...' && React.createElement("p", { className: "text-xs mt-2", style: { color: aiCheck.startsWith('✅') ? 'var(--acc2)' : 'var(--acc3)' } }, aiCheck)), React.createElement("div", { className: "mt-3 pt-3", style: { borderTop: '1px solid var(--border)' } }, React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Telefonul ăsta ține minte ce ai șters, ca lucrurile șterse să nu reapară singure. Dacă bănuiești că ascunde ceva ce n-ai șters tu, golește registrul de aici."), React.createElement("button", { onClick: () => { golesteRegistrulSterse(); window.location.reload(); }, className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc2)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "♻️ Golește registrul de ștergeri")), React.createElement(JurnalModificari, null), React.createElement(CatLocOcupa, null), React.createElement(CopiiSiguranta, null), React.createElement(PornireDeLaZero, null)))));
 }
 const SARBATORI_LEGALE = {
     2026: [
@@ -16693,6 +16758,103 @@ function CopiiSiguranta() {
     const [versiuneRuta, setVersiuneRuta] = useState(null);
     const [proba, setProba] = useState(null);
     const [testBlob, setTestBlob] = useState(null);
+    const [od, setOd] = useState(null);
+    const [odCriptat, setOdCriptat] = useState(false);
+    const odCiteste = async (r) => {
+        const text = await r.text();
+        try {
+            return JSON.parse(text);
+        }
+        catch (_) {
+            if (r.status === 404 || /<!doctype|<html/i.test(text)) {
+                throw new Error('Fișierul „api/onedrive.js" nu e pe server. Urcă-l în folderul „api", lângă backup.js.');
+            }
+            throw new Error('Serverul a răspuns ceva neașteptat (cod ' + r.status + ').');
+        }
+    };
+    const [odSpatiu, setOdSpatiu] = useState(null);
+    const odStare = async () => {
+        try {
+            const r = await authFetch('/api/onedrive?action=stare');
+            const d = await odCiteste(r);
+            setOd(d);
+            if (d && d.legat) {
+                try {
+                    setOdSpatiu(await (await authFetch('/api/onedrive?action=spatiu')).json());
+                }
+                catch (_) { }
+            }
+        }
+        catch (e) {
+            setOd({ eroareRuta: (e && e.message) || 'Eroare.' });
+        }
+    };
+    const gb = (o) => (Number(o) / 1073741824).toFixed(o < 1073741824 ? 2 : 1) + ' GB';
+    useEffect(() => { odStare(); }, []);
+    const odLeaga = async () => {
+        setStare('');
+        setOcupat('od');
+        try {
+            const r = await authFetch('/api/onedrive?action=start');
+            const d = await odCiteste(r);
+            if (!r.ok || !d.url)
+                throw new Error(d.error || 'Nu am putut începe legătura.');
+            window.location.href = d.url;
+            return;
+        }
+        catch (e) {
+            setStare('⚠ ' + ((e && e.message) || 'Eroare.'));
+        }
+        setOcupat('');
+    };
+    const odTrimite = async () => {
+        setStare('');
+        setOcupat('od-urc');
+        try {
+            const r = await authFetch('/api/onedrive?action=urca' + (odCriptat ? '&criptat=1' : ''));
+            const d = await odCiteste(r);
+            if (d.ok)
+                setStare('✅ A plecat în OneDrive: ' + d.nume + ' (' + Math.round((d.octeti || 0) / 1024) + ' KB).');
+            else
+                setStare('⚠ ' + (d.eroare || d.motiv || d.error || 'N-a plecat.'));
+        }
+        catch (e) {
+            setStare('⚠ ' + ((e && e.message) || 'Eroare.'));
+        }
+        await odStare();
+        setOcupat('');
+    };
+    const odTabele = async () => {
+        setStare('');
+        setOcupat('od-tab');
+        try {
+            const r = await authFetch('/api/onedrive?action=tabele');
+            const d = await odCiteste(r);
+            if (d.ok) {
+                const bune = (d.fisiere || []).filter((x) => !x.eroare);
+                const stricate = (d.fisiere || []).filter((x) => x.eroare);
+                setStare(stricate.length
+                    ? '⚠ ' + bune.length + ' fișiere au plecat, ' + stricate.length + ' nu: ' + stricate[0].eroare
+                    : '✅ ' + bune.length + ' tabele în OneDrive (rapoarte pe lună, facturi pe an, liste de devize și oferte).');
+            }
+            else
+                setStare('⚠ ' + (d.eroare || d.error || 'N-au plecat.'));
+        }
+        catch (e) { setStare('⚠ ' + ((e && e.message) || 'Eroare.')); }
+        await odStare();
+        setOcupat('');
+    };
+    const odRupe = async () => {
+        if (!window.confirm('Rupi legătura cu OneDrive? Copiile deja urcate rămân acolo — doar nu mai pleacă altele noi.'))
+            return;
+        setOcupat('od');
+        try {
+            await authFetch('/api/onedrive?action=deconecteaza');
+        }
+        catch (_) { }
+        await odStare();
+        setOcupat('');
+    };
     const incarca = async () => {
         setStare('');
         setOcupat('lista');
@@ -16837,6 +16999,102 @@ function CopiiSiguranta() {
                 p.ok ? '✅ ' : '⛔ ',
                 p.pas,
                 p.detaliu ? ' — ' + p.detaliu : '')))))),
+        React.createElement("div", { className: "rounded-lg px-2.5 py-2 mb-2 text-xs", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, od && od.eroareRuta ? (React.createElement("div", { style: { color: 'var(--acc3)' } },
+            "\u26A0 Copia 3 (OneDrive): ",
+            od.eroareRuta)) : !od ? (React.createElement("div", { style: { color: 'var(--muted2)' } }, "\u2601 Copia 3 \u2014 verific OneDrive\u2026")) : !od.configurat ? (React.createElement("div", { style: { color: 'var(--acc3)' } },
+            "\u2601 ",
+            React.createElement("b", null, "Copia 3 \u2014 \u00EEn OneDrive-ul t\u0103u"),
+            " \u2014 nu e preg\u0103tit\u0103 \u00EEnc\u0103. Trebuie pus\u0103 o singur\u0103 dat\u0103, pe Vercel, setarea ",
+            React.createElement("b", null, "MS_CLIENT_ID"),
+            " (num\u0103rul cu care se prezint\u0103 aplica\u021Bia la Microsoft). \u021Ai-am scris pa\u0219ii exac\u021Bi \u00EEn fi\u0219ierul ",
+            React.createElement("b", null, "ONEDRIVE.md"),
+            " \u2014 dureaz\u0103 vreo 10 minute, o singur\u0103 dat\u0103.")) : !od.legat ? (React.createElement(React.Fragment, null,
+            React.createElement("div", { style: { color: 'var(--acc3)' } },
+                "\u2601 ",
+                React.createElement("b", null, "Copia 3 \u2014 \u00EEn OneDrive-ul t\u0103u"),
+                " \u2014 \u00EEnc\u0103 nelegat\u0103."),
+            React.createElement("div", { className: "mt-1", style: { color: 'var(--muted2)' } },
+                "Te loghezi O SINGUR\u0102 DAT\u0102 cu contul t\u0103u Microsoft. De atunci, \u00EEn fiecare zi \u00EEn care intri \u00EEn aplica\u021Bie, o copie complet\u0103 a datelor pleac\u0103 singur\u0103 \u00EEn OneDrive, \u00EEn dosarul",
+                React.createElement("b", null, " Aplica\u021Bii \u203A SC SMART ELECTROCONECT"),
+                "."),
+            React.createElement("button", { onClick: odLeaga, disabled: !!ocupat, className: "mt-2 text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc1)' } }, ocupat === 'od' ? 'Te duc la Microsoft…' : '🔗 Leagă OneDrive'))) : (React.createElement(React.Fragment, null,
+            React.createElement("div", { style: { color: od.ultimaUrcare ? 'var(--acc2)' : 'var(--acc3)' } },
+                od.ultimaUrcare ? '✅' : '⚠',
+                " ",
+                React.createElement("b", null, "Copia 3 \u2014 \u00EEn OneDrive-ul t\u0103u"),
+                od.email ? ' (' + od.email + ')' : '',
+                od.ultimaUrcare
+                    ? ' · ultima: ' + cand(od.ultimaUrcare) + (od.ultimiiOcteti ? ' · ' + Math.round(od.ultimiiOcteti / 1024) + ' KB' : '')
+                    : ' · legat, dar încă n-a plecat niciuna'),
+            od.ultimulFisier && (React.createElement("div", { className: "mt-0.5", style: { color: 'var(--muted2)' } },
+                "\uD83D\uDCC4 ",
+                od.ultimulFisier,
+                od.ultimulLink && React.createElement(React.Fragment, null,
+                    " \u00B7 ",
+                    React.createElement("a", { href: od.ultimulLink, target: "_blank", rel: "noopener noreferrer", style: { color: 'var(--acc1)' } }, "deschide \u00EEn OneDrive")))),
+            od.ultimaEroare && (React.createElement("div", { className: "mt-1 rounded px-2 py-1", style: { color: 'var(--acc4)', background: '#E0525214' } },
+                "\u26D4 Ultima \u00EEncercare a e\u0219uat: ",
+                od.ultimaEroare)),
+            odSpatiu && odSpatiu.legat && !odSpatiu.eroare && odSpatiu.total > 0 && (() => {
+                const proc = odSpatiu.procent || 0;
+                const stransoare = odSpatiu.ramas < 1073741824;
+                const cul = stransoare ? 'var(--acc4)' : proc >= 80 ? 'var(--acc3)' : 'var(--muted2)';
+                return (React.createElement("div", { className: "mt-2" },
+                    React.createElement("div", { style: { color: cul } },
+                        "\uD83D\uDCBE OneDrive: ",
+                        React.createElement("b", null, gb(odSpatiu.folosit)),
+                        " folosi\u021Bi din ",
+                        gb(odSpatiu.total),
+                        " \u00B7 au mai r\u0103mas ",
+                        React.createElement("b", null, gb(odSpatiu.ramas))),
+                    React.createElement("span", { style: { display: 'block', height: 6, borderRadius: 3, background: 'var(--panel)', overflow: 'hidden', marginTop: 4 } },
+                        React.createElement("span", { style: { display: 'block', width: Math.min(100, proc) + '%', height: '100%', background: stransoare ? '#E05252' : proc >= 80 ? '#E9A23B' : '#4CAF7D' } })),
+                    stransoare && (React.createElement("div", { className: "mt-1", style: { color: 'var(--acc4)' } },
+                        "\u26D4 Sub 1 GB liber. C\u00E2nd se umple, ",
+                        React.createElement("b", null, "se opre\u0219te \u0219i copia zilnic\u0103 de siguran\u021B\u0103"),
+                        ". F\u0103 loc \u00EEn OneDrive sau treci pe un cont cu 1 TB."))));
+            })(),
+            odSpatiu && odSpatiu.eroare && (React.createElement("div", { className: "mt-1", style: { color: 'var(--acc3)' } },
+                "Nu am putut citi c\u00E2t loc a mai r\u0103mas: ",
+                odSpatiu.eroare)),
+            React.createElement("label", { className: "flex items-start gap-2 mt-2 cursor-pointer", style: { color: 'var(--muted2)' } },
+                React.createElement("input", { type: "checkbox", checked: odCriptat, onChange: (e) => setOdCriptat(e.target.checked), className: "mt-0.5" }),
+                React.createElement("span", null,
+                    "Fi\u0219ierul din OneDrive s\u0103 fie ",
+                    React.createElement("b", null, "criptat"),
+                    ".",
+                    odCriptat
+                        ? ' Nimeni nu-l poate citi fără aplicație — nici tu. Se pune înapoi doar din aplicație.'
+                        : ' Acum e CITIBIL: îl deschizi cu ochii tăi, dar cine intră în OneDrive-ul tău vede toate datele firmei.')),
+            /* DEVIZE, OFERTE, FACTURI, RAPOARTE — ce-l interesează pe patron cel mai mult.
+               PDF-urile pleacă din fereastra de tipărire, cu butonul „☁ În OneDrive".
+               Tabelele pleacă singure, odată cu copia zilnică. */
+            React.createElement("div", { className: "mt-2 rounded-lg px-2.5 py-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                React.createElement("div", { style: { color: 'var(--text)', fontWeight: 600 } }, "\uD83D\uDCC1 Documentele firmei"),
+                React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--muted2)' } },
+                    "C\u00e2nd deschizi un ",
+                    React.createElement("b", null, "deviz"), ", o ",
+                    React.createElement("b", null, "ofert\u0103"), " sau un ",
+                    React.createElement("b", null, "proces-verbal"),
+                    ", \u00een bara de sus, l\u00e2ng\u0103 \u201e\uD83D\uDCBE Salveaz\u0103 PDF\u201d, ai acum ",
+                    React.createElement("b", null, "\u201e\u2601 \u00cen OneDrive\u201d"),
+                    ". Documentul se a\u0219az\u0103 singur \u00een dosarul lui: ",
+                    React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace" } },
+                        " Devize \u203a " + new Date().toISOString().slice(0, 7) + " \u203a \u2026")),
+                React.createElement("div", { className: "text-[11px] mt-1", style: { color: 'var(--muted2)' } },
+                    React.createElement("b", null, "Rapoartele"), " (o fil\u0103 pe lun\u0103) \u0219i ",
+                    React.createElement("b", null, "facturile"), " (o fil\u0103 pe an) pleac\u0103 singure ca tabele Excel, odat\u0103 cu copia zilnic\u0103.",
+                    od.ultimeleTabele ? ' Ultima dat\u0103: ' + cand(od.ultimeleTabele) + ' \u00b7 ' + od.nrTabele + ' fi\u0219iere.' : ' \u00cenc\u0103 n-au plecat.'),
+                (od.documente || []).length > 0 && React.createElement("div", { className: "mt-2 space-y-0.5" },
+                    (od.documente || []).slice(0, 5).map((d, i) => React.createElement("div", { key: i, className: "flex items-center justify-between gap-2" },
+                        React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--muted)' } }, "\uD83D\uDCC4 " + d.cale),
+                        React.createElement("span", { className: "shrink-0", style: { color: 'var(--muted2)' } }, Math.round((d.octeti || 0) / 1024) + " KB"))),
+                    od.nrDocumente > 5 && React.createElement("div", { style: { color: 'var(--muted2)' } }, "\u2026\u0219i \u00eenc\u0103 " + (od.nrDocumente - 5))),
+                React.createElement("button", { onClick: odTabele, disabled: !!ocupat, className: "mt-2 text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                    ocupat === 'od-tab' ? 'Trimit\u2026' : '\uD83D\uDCCA Trimite tabelele acum')),
+            React.createElement("div", { className: "flex flex-wrap gap-2 mt-2" },
+                React.createElement("button", { onClick: odTrimite, disabled: !!ocupat, className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: 'var(--acc2)' } }, ocupat === 'od-urc' ? 'Urc…' : '☁ Trimite o copie acum'),
+                React.createElement("button", { onClick: odRupe, disabled: !!ocupat, className: "text-xs px-2.5 py-1.5 rounded-lg disabled:opacity-50", style: { color: 'var(--acc4)', background: 'var(--panel)', border: '1px solid #E0525244' } }, "Rupe leg\u0103tura"))))),
         proba && (React.createElement("div", { className: "rounded-lg px-2.5 py-2 mb-2 text-xs", style: { background: 'var(--panel2)', border: '1px solid ' + (proba.ok ? 'var(--acc2)' : '#E0525266') } },
             React.createElement("div", { className: "font-semibold mb-1", style: { color: proba.ok ? 'var(--acc2)' : 'var(--acc4)' } }, proba.ok ? '✅ Copia se desface — datele sunt recuperabile.' : '⛔ Copia NU se desface. Sună-mă.'),
             React.createElement("div", { style: { color: 'var(--muted)' } },
@@ -17332,6 +17590,83 @@ const MOTOR_PDF_JS = `
     }
     return pdf.output('blob');
   };
+  /* ☁ PUNE ÎN ONEDRIVE. Acelasi PDF care se descarca, dar urcat DIRECT la Microsoft.
+     Serverul nostru nu-l vede: ii cerem doar o adresa de incarcare semnata, iar fereastra
+     asta urca fisierul acolo, in felii. Asa nu ne lovim de limita de 4,5 MB pe cerere.
+     ATENTIE la felii: pe adresa semnata NU se trimite antetul „Authorization" — cu el,
+     Microsoft raspunde 401. */
+  var FELIE_OD = 5 * 1024 * 1024;   // multiplu de 320 KiB, cum cere Microsoft
+  /* DOSARUL se afla din TITLUL documentului, nu din fiecare loc care tipareste. Asa nu am
+     avut de umblat prin opt functii de tiparire, si un document nou nimereste singur intr-un
+     dosar cu nume omenesc. Daca vreodata vrem altul, se scrie window.__ODdosar inainte. */
+  window.__ODdosar = '';
+  function dosarDupaTitlu(t){
+    var x = String(t || '').toLowerCase();
+    var acum = new Date();
+    var luna = acum.getFullYear() + '-' + String(acum.getMonth() + 1).padStart(2, '0');
+    var tip = 'Documente';
+    if (x.indexOf('deviz') === 0 || x.indexOf('deviz') > -1) tip = 'Devize';
+    else if (x.indexOf('oferta') > -1 || x.indexOf('ofert') > -1) tip = 'Oferte';
+    else if (x.indexOf('factur') > -1) tip = 'Facturi';
+    else if (x.indexOf('proces-verbal') > -1 || x.indexOf('proces verbal') > -1) tip = 'Procese-verbale';
+    else if (x.indexOf('pontaj') > -1) tip = 'Pontaj';
+    else if (x.indexOf('concediu') > -1) tip = 'Concedii';
+    else if (x.indexOf('adeverin') > -1) tip = 'Adeverinte';
+    else if (x.indexOf('predare') > -1) tip = 'Predari';
+    else if (x.indexOf('timpi morti') > -1 || x.indexOf('timp mort') > -1) tip = 'Timpi morti';
+    else if (x.indexOf('materiale') > -1) tip = 'Cereri materiale';
+    return tip + '/' + luna;
+  }
+  window.__pdfInOneDrive = async function(nume, buton){
+    var vechi = buton ? buton.textContent : '';
+    function spune(t){ if (buton) buton.textContent = t; }
+    try {
+      if (buton) buton.disabled = true;
+      spune('Fac PDF-ul...');
+      var blob = await window.__faPdf();
+      spune('Urc in OneDrive...');
+      var bilet = '';
+      try { bilet = localStorage.getItem('authToken') || ''; } catch (e) {}
+      var r = await fetch('/api/onedrive?action=sesiune-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + bilet },
+        body: JSON.stringify({ dosar: window.__ODdosar || dosarDupaTitlu(document.title || nume), nume: nume }),
+      });
+      var d = {};
+      try { d = await r.json(); } catch (e) { throw new Error('Serverul a raspuns ceva neasteptat (cod ' + r.status + ').'); }
+      if (!d.ok || !d.uploadUrl) throw new Error(d.eroare || d.error || 'Nu am primit adresa de incarcare.');
+      var buf = new Uint8Array(await blob.arrayBuffer());
+      var ultim = null;
+      for (var de = 0; de < buf.length; de += FELIE_OD) {
+        var la = Math.min(de + FELIE_OD, buf.length);
+        spune('Urc ' + Math.round(la / buf.length * 100) + '%');
+        var rr = await fetch(d.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Range': 'bytes ' + de + '-' + (la - 1) + '/' + buf.length },
+          body: buf.subarray(de, la),
+        });
+        if (rr.status !== 200 && rr.status !== 201 && rr.status !== 202) {
+          var t = await rr.text();
+          throw new Error('Microsoft a refuzat bucata (' + rr.status + '): ' + String(t).slice(0, 160));
+        }
+        try { var j = await rr.json(); if (j && j.id) ultim = j; } catch (e) {}
+      }
+      try {
+        await fetch('/api/onedrive?action=noteaza-document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + bilet },
+          body: JSON.stringify({ cale: d.cale, octeti: buf.length, webUrl: ultim && ultim.webUrl }),
+        });
+      } catch (e) {}
+      spune('✅ In OneDrive');
+      setTimeout(function(){ if (buton) { buton.textContent = vechi; buton.disabled = false; } }, 4000);
+      return;
+    } catch (e) {
+      window.alert('Nu am putut pune documentul in OneDrive.\n\n' + ((e && e.message) || e) +
+        '\n\nDocumentul NU s-a pierdut: apasa „Salveaza PDF" si il ai pe telefon.');
+    }
+    if (buton) { buton.disabled = false; buton.textContent = vechi; }
+  };
   window.__descarcaPdf = async function(nume, buton){
     var vechi = buton ? buton.textContent : '';
     try {
@@ -17350,7 +17685,7 @@ const MOTOR_PDF_JS = `
   };
 })();
 `;
-const PRINT_TOOLBAR = '<style>@media print{.doc-toolbar{display:none!important}}</style><div class="doc-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;gap:8px;justify-content:space-between;align-items:center;background:#14181C;padding:10px 14px;border-bottom:1px solid #2A323B;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"><button onclick="window.close()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">← Închide</button><div style="display:flex;gap:8px;"><button onclick="window.print()" title="Trimite la imprimantă" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">🖨 Printează</button><button onclick="window.__descarcaPdf(document.title.replace(/[\\\\/:*?&quot;&lt;&gt;|]/g,&quot; &quot;).trim()+&quot;.pdf&quot;, this)" title="Face fișierul PDF și îl salvează pe telefon sau pe calculator" style="background:#2E8BD1;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">💾 Salvează PDF</button></div></div><div class="doc-toolbar" style="position:sticky;top:56px;z-index:9998;display:block;background:#1b222a;color:#9fb0bf;padding:7px 14px;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;border-bottom:1px solid #2A323B;">ℹ️ Se deschide direct fereastra de printare. Dacă la „Destinație" scrie <b>Salvează ca PDF</b>, schimb-o în <b>imprimanta ta</b> — browserul o reține data viitoare. <b>💾 Salvează PDF</b> face în schimb fișierul pe loc, fără fereastra de printare. Dacă la print apare jos adresa site-ului sau data, oprește <b>Antete și subsoluri</b> în fereastra de printare — e o setare a telefonului.</div>' + '<script>' + MOTOR_PDF_JS + '<\/script>' + '<script>(function(){var done=false;function go(){if(done)return;done=true;try{window.focus();}catch(e){}try{window.print();}catch(e){}}if(document.readyState==="complete"){setTimeout(go,350);}else{window.addEventListener("load",function(){setTimeout(go,350);});}})();<\/script>';
+const PRINT_TOOLBAR = '<style>@media print{.doc-toolbar{display:none!important}}</style><div class="doc-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;gap:8px;justify-content:space-between;align-items:center;background:#14181C;padding:10px 14px;border-bottom:1px solid #2A323B;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"><button onclick="window.close()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">← Închide</button><div style="display:flex;gap:8px;"><button onclick="window.print()" title="Trimite la imprimantă" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">🖨 Printează</button><button onclick="window.__descarcaPdf(document.title.replace(/[\\\\/:*?&quot;&lt;&gt;|]/g,&quot; &quot;).trim()+&quot;.pdf&quot;, this)" title="Face fișierul PDF și îl salvează pe telefon sau pe calculator" style="background:#2E8BD1;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">💾 Salvează PDF</button><button onclick="window.__pdfInOneDrive(document.title.replace(/[\\\\/:*?&quot;&lt;&gt;|]/g,&quot; &quot;).trim()+&quot;.pdf&quot;, this)" title="Pune același PDF în OneDrive-ul firmei, în dosarul lui" style="background:#0F6CBD;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">☁ În OneDrive</button></div></div><div class="doc-toolbar" style="position:sticky;top:56px;z-index:9998;display:block;background:#1b222a;color:#9fb0bf;padding:7px 14px;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;border-bottom:1px solid #2A323B;">ℹ️ Se deschide direct fereastra de printare. Dacă la „Destinație" scrie <b>Salvează ca PDF</b>, schimb-o în <b>imprimanta ta</b> — browserul o reține data viitoare. <b>💾 Salvează PDF</b> face în schimb fișierul pe loc, fără fereastra de printare. Dacă la print apare jos adresa site-ului sau data, oprește <b>Antete și subsoluri</b> în fereastra de printare — e o setare a telefonului.</div>' + '<script>' + MOTOR_PDF_JS + '<\/script>' + '<script>(function(){var done=false;function go(){if(done)return;done=true;try{window.focus();}catch(e){}try{window.print();}catch(e){}}if(document.readyState==="complete"){setTimeout(go,350);}else{window.addEventListener("load",function(){setTimeout(go,350);});}})();<\/script>';
 function sectiuniOferta(doc) {
     const S = doc && doc.sistem;
     if (!S || !S.id)
@@ -21945,7 +22280,12 @@ function App() {
             localStorage.setItem('copieCerutaLa', azi);
         }
         catch (_) { }
-        const t = setTimeout(() => { authFetch('/api/backup?action=zilnic').catch(() => { }); }, 6000);
+        const t = setTimeout(() => {
+            authFetch('/api/backup?action=zilnic').catch(() => { });
+            if (currentUser && currentUser.rol === 'Manager') {
+                authFetch('/api/onedrive?action=zilnic').catch(() => { });
+            }
+        }, 6000);
         return () => clearTimeout(t);
     }, [dateIncarcate, currentUser]);
     useEffect(() => { if (currentUser && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
