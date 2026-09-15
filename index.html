@@ -2220,7 +2220,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.72-luna-si-faceid';
+const APP_VERSION = 'v03.74-banca-apoi-concediu';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -10455,6 +10455,11 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii, sold) {
     else {
         bugetRamasMin = bugetCOStartAnMin(nume, an, rapoarte, concedii, sold);
     }
+    /* BANCA DE ORE. Ce lucrează omul PESTE 8 ore nu se plătește: se strânge aici și se
+       recuperează cu timp liber. Iar o zi mai scurtă mănâncă ÎNTÂI din orele strânse și abia
+       ce rămâne peste se ia din concediu. Altfel contorul ar crește la nesfârșit și n-ar
+       folosi nimănui: omul cu 10 ore puse deoparte ar pierde tot din concediu. */
+    let bancaMin = 0;
     const rezultat = {};
     for (let luna = 0; luna < 12; luna++) {
         const nrZileLuna = new Date(an, luna + 1, 0).getDate();
@@ -10462,6 +10467,7 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii, sold) {
             const dataStr = `${an}-${String(luna + 1).padStart(2, '0')}-${String(zi).padStart(2, '0')}`;
             if (dataStr > dataLimita) {
                 rezultat.__ramasFinal = bugetRamasMin;
+                rezultat.__banca = bancaMin;
                 return rezultat;
             }
             if (!primaZiCuDate || dataStr < primaZiCuDate)
@@ -10485,30 +10491,56 @@ function calculPontajAnual(nume, an, panaLaLuna, rapoarte, concedii, sold) {
             const minLucrate = minuteLucratePeZi[dataStr] || 0;
             const diferenta = 480 - minLucrate;
             if (diferenta <= 0) {
-                rezultat[dataStr] = { status: 'lucrat', minuteLucrate: minLucrate, suplimentar: -diferenta };
+                const peste = -diferenta;
+                bancaMin += peste;              // orele peste program se strâng, nu se plătesc
+                rezultat[dataStr] = { status: 'lucrat', minuteLucrate: minLucrate, suplimentar: peste, banca: bancaMin };
             }
             else {
-                let codAuto;
+                /* ORDINEA CERUTĂ DE PATRON, pentru o zi care nu iese la 8 ore:
+                     1) ÎNVOIREA APROBATĂ acoperă ce acoperă — aia are hârtie, e cererea lui;
+                     2) restul se scade din ORELE STRÂNSE în bancă, dacă are;
+                     3) dacă banca s-a golit, se scade din CONCEDIUL DE ODIHNĂ, ca înainte;
+                     4) iar dacă s-a terminat și concediul, ziua trece pe „fără plată" (I).
+                   Noutatea față de cum era: pasul 2. Înainte se sărea direct la concediu, deci
+                   un om cu zece ore strânse peste program tot din concediu pierdea. Acum își
+                   cheltuie întâi orele lui. */
                 const invoire = concediiPeOre.find((c) => c.dataInceput === dataStr);
-                const codInvoire = invoire ? codPentruTip(invoire.tip) : null;
-                if (codInvoire && codInvoire !== 'CO') {
-                    codAuto = codInvoire;
+                const minInvoire = invoire
+                    ? Math.min(diferenta, calcOreDinInterval(invoire.oraInceput, invoire.oraSfarsit) || 0)
+                    : 0;
+                const codAuto = minInvoire > 0 ? codPentruTip(invoire.tip) : null;
+                if (codAuto === 'CO' && poateScade)
+                    bugetRamasMin = Math.max(0, bugetRamasMin - minInvoire);
+                let ramas = diferenta - minInvoire;
+                /* Banca se atinge DOAR pentru o zi care are raport și a ieșit mai scurtă. O zi
+                   fără niciun raport e o absență (sau o hârtie neintrată încă), nu o plecare mai
+                   devreme — aia merge pe concediu, exact ca înainte de banca de ore. Altfel o
+                   simplă întârziere la completat ar șterge orele strânse, fără ca omul să afle. */
+                const areRaport = minuteLucratePeZi[dataStr] !== undefined;
+                const dinBanca = areRaport ? Math.min(bancaMin, ramas) : 0;
+                bancaMin -= dinBanca;
+                ramas -= dinBanca;
+                let codCO = null;
+                const minuteCO = ramas;
+                if (ramas > 0) {
+                    if (bugetRamasMin >= ramas) {
+                        codCO = 'CO';
+                        if (poateScade)
+                            bugetRamasMin -= ramas;
+                    }
+                    else {
+                        codCO = 'I';
+                        if (poateScade)
+                            bugetRamasMin = 0;
+                    }
                 }
-                else if (bugetRamasMin >= diferenta) {
-                    codAuto = 'CO';
-                    if (poateScade)
-                        bugetRamasMin -= diferenta;
-                }
-                else {
-                    codAuto = 'I';
-                    if (poateScade)
-                        bugetRamasMin = 0;
-                }
-                rezultat[dataStr] = { status: minLucrate > 0 ? 'partial' : 'absent', minuteLucrate: minLucrate, minuteAuto: diferenta, codAuto };
+                rezultat[dataStr] = { status: minLucrate > 0 ? 'partial' : 'absent', minuteLucrate: minLucrate,
+                    minuteAuto: minInvoire, codAuto, dinBanca, minuteCO, codCO, lipsa: 0, banca: bancaMin };
             }
         }
     }
     rezultat.__ramasFinal = bugetRamasMin;
+    rezultat.__banca = bancaMin;
     return rezultat;
 }
 function bugetCORamas(nume, dataStr, rapoarte, concedii, sold) {
@@ -10534,8 +10566,11 @@ function bugetCORamas(nume, dataStr, rapoarte, concedii, sold) {
             if (info.cod === 'CO')
                 folosit += 480;
         }
-        else if (info.codAuto === 'CO')
-            folosit += (info.minuteAuto || 0);
+        else {
+            // și învoirea aprobată, și ce s-a luat automat după ce s-a golit banca
+            if (info.codAuto === 'CO') folosit += (info.minuteAuto || 0);
+            if (info.codCO === 'CO') folosit += (info.minuteCO || 0);
+        }
     });
     return Math.max(0, start - folosit);
 }
@@ -10604,8 +10639,27 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
     }
     const corectiiLuna = (pontajCorectii || []).filter((c) => c.luna === luna);
     const corectiePersoana = (nume) => corectiiLuna.filter((c) => numeCheie(c.nume) === numeCheie(nume)).reduce((s, c) => s + c.minuteAjustare, 0);
+    /* BANCA DE ORE, pe om. Se socotește din rapoarte, zi cu zi, de la începutul anului:
+       ce a lucrat peste 8 ore se strânge, ce a lipsit se scade întâi de aici. Nu e un număr
+       scris de mână de nimeni — de aia nu poate fi nici uitat, nici umflat. */
+    const bancaPersoana = (nume) => {
+        try {
+            const an = String(luna).slice(0, 4);
+            const anual = calculPontajAnual(nume, an, luna, rapoarte, concedii);
+            let strans = 0, folosit = 0, dinConcediu = 0;
+            Object.keys(anual).forEach((d) => {
+                if (d.length !== 10 || !d.startsWith(luna)) return;
+                const x = anual[d] || {};
+                strans += Number(x.suplimentar) || 0;
+                folosit += Number(x.dinBanca) || 0;
+                if (x.codCO) dinConcediu += Number(x.minuteCO) || 0;
+            });
+            return { sold: Number(anual.__banca) || 0, strans, folosit, dinConcediu };
+        }
+        catch (_) { return { sold: 0, strans: 0, folosit: 0, dinConcediu: 0 }; }
+    };
     const lista = Object.values(perPersoana)
-        .map((p) => ({ ...p, corectieMin: corectiePersoana(p.nume), totalFinal: p.totalMin + corectiePersoana(p.nume), zileLibere: zileLibereLuna(p.nume) }))
+        .map((p) => ({ ...p, corectieMin: corectiePersoana(p.nume), totalFinal: p.totalMin + corectiePersoana(p.nume), zileLibere: zileLibereLuna(p.nume), banca: bancaPersoana(p.nume) }))
         .sort((a, b) => b.totalFinal - a.totalFinal);
     const totalGeneral = lista.reduce((s, p) => s + p.totalFinal, 0);
     const startEdit = (p) => { setEditState(p.nume); setEditValue(minutesToHM(p.totalFinal)); };
@@ -10665,13 +10719,18 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
                 const raport = rapoarteSantierLuna.find((r) => r.data === zi.dataStr);
                 const persoana = raport?.persoane?.find((p) => p.nume === nume);
                 if (persoana) {
-                    const supl = info?.suplimentar > 0 ? ` (+${minutesToHM(info.suplimentar)} supl.)` : '';
-                    const auto = (info?.status === 'partial' && info?.minuteAuto > 0) ? ` (+${minutesToHM(info.minuteAuto)} ${info.codAuto})` : '';
                     const zizi = minutePersoanaZi(rapoarte, nume, zi.dataStr);
-                    return { start: persoana.oraInceput || '', sfarsit: persoana.oraSfarsit || '', pauza: zizi.pauza ? minutesToHM(zizi.pauza) : '—', ore: minutesToHM(zizi.net) + supl + auto };
+                    const deTrecut = oreInFoaie(info, zizi.net);
+                    const auto = codurileZilei(info);
+                    const sf = sfarsitPeMasura(persoana.oraInceput, deTrecut, zizi.pauza) || persoana.oraSfarsit || '';
+                    return { start: persoana.oraInceput || '', sfarsit: sf, pauza: zizi.pauza ? minutesToHM(zizi.pauza) : '—', ore: minutesToHM(deTrecut) + auto };
                 }
-                if (info?.status === 'absent')
-                    return { start: info.codAuto, sfarsit: info.codAuto, pauza: info.codAuto, ore: info.codAuto };
+                if (info?.status === 'absent') {
+                    const c = info.codCO || info.codAuto;
+                    return c
+                        ? { start: c, sfarsit: c, pauza: c, ore: c }
+                        : { start: '', sfarsit: '', pauza: '', ore: '' };
+                }
                 return { start: '', sfarsit: '', pauza: '', ore: '' };
             });
             return { nume, celule };
@@ -10908,12 +10967,17 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
                 const zizi = minutePersoanaZi(rapoarte, nume, zi.dataStr);
                 if (zizi.net > 0 || info?.status === 'partial') {
                     const { inc, sf } = ceasZi(nume, zi.dataStr);
-                    const supl = info?.suplimentar > 0 ? ` (+${minutesToHM(info.suplimentar)} supl.)` : '';
-                    const auto = (info?.status === 'partial' && info?.minuteAuto > 0) ? ` (+${minutesToHM(info.minuteAuto)} ${info.codAuto})` : '';
-                    return { start: inc || '', sfarsit: sf || '', pauza: zizi.pauza ? minutesToHM(zizi.pauza) : '—', ore: minutesToHM(zizi.net) + supl + auto };
+                    const deTrecut = oreInFoaie(info, zizi.net);
+                    const auto = codurileZilei(info);
+                    const sfFoaie = sfarsitPeMasura(inc, deTrecut, zizi.pauza) || sf || '';
+                    return { start: inc || '', sfarsit: sfFoaie, pauza: zizi.pauza ? minutesToHM(zizi.pauza) : '—', ore: minutesToHM(deTrecut) + auto };
                 }
-                if (info?.status === 'absent')
-                    return { start: info.codAuto, sfarsit: info.codAuto, pauza: info.codAuto, ore: info.codAuto };
+                if (info?.status === 'absent') {
+                    const c = info.codCO || info.codAuto;
+                    return c
+                        ? { start: c, sfarsit: c, pauza: c, ore: c }
+                        : { start: '', sfarsit: '', pauza: '', ore: '' };
+                }
                 return { start: '', sfarsit: '', pauza: '', ore: '' };
             });
             return { nume, celule };
@@ -11033,7 +11097,34 @@ function PontajTab({ rapoarte, santiere, currentUser, pontajCorectii, setPontajC
         w.document.close();
         w.focus();
     };
-    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "🕐 Pontaj"), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Total de ore și zile libere pe fiecare angajat (din toate șantierele). Pentru detaliu pe un șantier anume, alege-l din listă."), React.createElement("div", { className: "flex items-center gap-2 mb-2 flex-wrap" }, React.createElement(RoLunaPicker, { value: luna, onChange: setLuna }), isManager && (React.createElement("select", { value: santierFiltru, onChange: (e) => setSantierFiltru(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "Toate șantierele (total pe om)"), santiere.map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, "Rezumat: ", s.nume)))), isManager && lista.length > 0 && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: exportPontajExcel, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "📊 Excel (rezumat)"), React.createElement("button", { onClick: exportPontajPDF, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "🖨 PDF (rezumat)")))), isManager && (React.createElement("div", { className: "mb-3 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--acc2)' } }, React.createElement("div", { className: "text-sm font-semibold mb-0.5", style: { color: 'var(--text)' } }, "📋 Pentru contabilă — o singură foaie, toată firma"), React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Toate șantierele contopite într-o singură foaie: fiecare angajat o dată, cu orele pe zi (adunate de pe toate șantierele) și concediile (CO, SL, I…). Formatul pe care îl trimiți contabilei."), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("button", { onClick: exportFoaieFirmaExcel, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "📊 Excel (o foaie)"), React.createElement("button", { onClick: exportFoaieFirmaPDF, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🖨 PDF (o foaie)")))), isManager && (React.createElement("div", { className: "mb-4 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Foaie colectivă de prezență, defalcată pe fiecare șantier (zi cu zi) — alege unul, mai multe, sau toate șantierele:"), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, React.createElement("button", { onClick: () => setSantiereExport(santiere.map((s) => s.id)), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' } }, "Selectează toate"), santiereExport.length > 0 && React.createElement("button", { onClick: () => setSantiereExport([]), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Deselectează"), santiere.map((s) => {
+    return (React.createElement("div", null, React.createElement("h2", { className: "text-lg mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "🕐 Pontaj"), React.createElement("p", { className: "text-xs mb-4", style: { color: 'var(--muted2)' } }, "Total de ore și zile libere pe fiecare angajat (din toate șantierele). Pentru detaliu pe un șantier anume, alege-l din listă."), React.createElement("div", { className: "flex items-center gap-2 mb-2 flex-wrap" }, React.createElement(RoLunaPicker, { value: luna, onChange: setLuna }), isManager && (React.createElement("select", { value: santierFiltru, onChange: (e) => setSantierFiltru(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "Toate șantierele (total pe om)"), santiere.map((s) => React.createElement("option", { key: s.id, value: s.id, style: { background: 'var(--panel)' } }, "Rezumat: ", s.nume)))), isManager && lista.length > 0 && (React.createElement(React.Fragment, null, React.createElement("button", { onClick: exportPontajExcel, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "📊 Excel (rezumat)"), React.createElement("button", { onClick: exportPontajPDF, className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "🖨 PDF (rezumat)")))),
+        /* ═══ BANCA DE ORE ═══════════════════════════════════════════════════════════════
+           Regula, scrisă o dată aici ca s-o poată citi oricine: în foaia de pontaj stau 8
+           ore, nu 11. Ce s-a lucrat peste program se strânge aici și se recuperează cu timp
+           liber. O zi mai scurtă se acoperă ÎNTÂI din orele strânse; abia dacă banca s-a
+           golit se scade din concediul de odihnă, iar dacă s-a terminat și el, ziua trece
+           pe „fără plată". Ordinea asta e cerută explicit de patron. */
+        isManager && lista.length > 0 && (React.createElement("div", { className: "mb-3 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--acc1)' } },
+            React.createElement("div", { className: "text-sm font-semibold mb-0.5", style: { color: 'var(--text)' } }, "\uD83C\uDFE6 Banca de ore \u2014 peste program \u0219i de recuperat"),
+            React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } },
+                "\u00cen foaia de pontaj stau 8 ore pe zi. Ce s-a lucrat peste se str\u00e2nge aici \u0219i se recupereaz\u0103 cu timp liber \u2014 nu se pl\u0103te\u0219te. O zi mai scurt\u0103 se acoper\u0103 \u00ceNT\u00c2I din orele str\u00e2nse; abia dac\u0103 banca e goal\u0103 se scade din concediul de odihn\u0103 (\u0219i, dac\u0103 s-a terminat \u0219i \u0103la, trece pe \u201ef\u0103r\u0103 plat\u0103\u201d)."),
+            React.createElement("div", { className: "space-y-1" }, lista.map((p) => {
+                const b = p.banca || {};
+                const sold = Number(b.sold) || 0;
+                const cul = sold > 0 ? 'var(--acc2)' : sold < 0 ? 'var(--acc4)' : 'var(--muted2)';
+                return React.createElement("div", { key: p.nume, className: "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5", style: { background: 'var(--panel2)' } },
+                    React.createElement("span", { className: "text-xs min-w-0 truncate", style: { color: 'var(--text)' } }, "\uD83D\uDC77 " + p.nume),
+                    React.createElement("span", { className: "text-[11px] shrink-0 text-right", style: { color: 'var(--muted2)' } },
+                        (b.strans > 0 ? '+' + minutesToHM(b.strans) + ' peste' : ''),
+                        (b.strans > 0 && b.folosit > 0 ? ' \u00b7 ' : ''),
+                        (b.folosit > 0 ? '\u2212' + minutesToHM(b.folosit) + ' recuperate' : ''),
+                        (b.dinConcediu > 0 ? (b.strans > 0 || b.folosit > 0 ? ' \u00b7 ' : '') + minutesToHM(b.dinConcediu) + ' din concediu' : '')),
+                    React.createElement("span", { className: "text-xs shrink-0 font-bold", style: { color: cul, fontFamily: "'JetBrains Mono', monospace", minWidth: 74, textAlign: 'right' } },
+                        (sold > 0 ? '+' : sold < 0 ? '\u2212' : '') + minutesToHM(Math.abs(sold)) + ' h'));
+            })),
+            React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--muted2)' } },
+                "Soldul e socotit din rapoarte, zi cu zi, de la \u00eenceputul anului \u2014 nu-l scrie nimeni de m\u00e2n\u0103, deci nu poate fi nici uitat, nici umflat. Verde = are ore de recuperat \u00een favoarea lui."))),
+        isManager && (React.createElement("div", { className: "mb-3 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--acc2)' } }, React.createElement("div", { className: "text-sm font-semibold mb-0.5", style: { color: 'var(--text)' } }, "📋 Pentru contabilă — o singură foaie, toată firma"), React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Toate șantierele contopite într-o singură foaie: fiecare angajat o dată, cu orele pe zi (adunate de pe toate șantierele) și concediile (CO, SL, I…). Formatul pe care îl trimiți contabilei."), React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("button", { onClick: exportFoaieFirmaExcel, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "📊 Excel (o foaie)"), React.createElement("button", { onClick: exportFoaieFirmaPDF, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "🖨 PDF (o foaie)")))), isManager && (React.createElement("div", { className: "mb-4 rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Foaie colectivă de prezență, defalcată pe fiecare șantier (zi cu zi) — alege unul, mai multe, sau toate șantierele:"), React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, React.createElement("button", { onClick: () => setSantiereExport(santiere.map((s) => s.id)), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' } }, "Selectează toate"), santiereExport.length > 0 && React.createElement("button", { onClick: () => setSantiereExport([]), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Deselectează"), santiere.map((s) => {
         const activ = santiereExport.includes(s.id);
         return (React.createElement("button", { key: s.id, onClick: () => setSantiereExport(activ ? santiereExport.filter((id) => id !== s.id) : [...santiereExport, s.id]), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: activ ? '#14181C' : 'var(--muted)', background: activ ? 'var(--acc2)' : 'var(--panel2)' } }, s.nume));
     })), React.createElement("div", { className: "flex items-center gap-2" }, React.createElement("button", { onClick: exportFoaiePrezentaExcel, disabled: santiereExport.length === 0, className: "text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "📊 Excel ", santiereExport.length > 1 && `(${santiereExport.length} foi)`), React.createElement("button", { onClick: exportFoaiePrezentaPDF, disabled: santiereExport.length === 0, className: "text-sm px-3 py-1.5 rounded-lg font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "🖨 PDF ", santiereExport.length > 1 && `(${santiereExport.length} pagini)`)))), lista.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio oră înregistrată în luna selectată.")) : (React.createElement(React.Fragment, null, isManager && (React.createElement("div", { className: "flex justify-between items-center mb-2 text-sm", style: { color: 'var(--muted)' } }, React.createElement("span", null, santierFiltru ? `Rezumat: ${santiere.find((s) => s.id === santierFiltru)?.nume || ''}` : 'Total pe fiecare angajat'), React.createElement("span", null, "Total ore: ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(totalGeneral))))), React.createElement("div", { className: "space-y-2" }, lista.map((p) => (React.createElement("div", { key: p.nume, className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between gap-2" }, React.createElement("span", { className: "text-sm", style: { color: 'var(--text)' } }, p.nume), editState === p.nume ? (React.createElement("div", { className: "flex items-center gap-1.5 shrink-0" }, React.createElement("input", { value: editValue, onChange: (e) => setEditValue(e.target.value), placeholder: "H:MM", className: "w-20 rounded-lg px-2 py-1 text-xs outline-none text-center", style: { ...inputStyle, fontFamily: "'JetBrains Mono', monospace" } }), React.createElement("button", { onClick: () => confirmEdit(p), className: "px-2 py-1 rounded-lg text-xs", style: { color: '#14181C', background: 'var(--acc2)' } }, "✓"), React.createElement("button", { onClick: () => setEditState(null), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "✕"))) : (React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, p.zileLibere > 0 && React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-lg", style: { color: 'var(--acc3)', background: 'var(--panel2)' } }, p.zileLibere, " ", p.zileLibere === 1 ? 'zi liberă' : 'zile libere'), React.createElement("span", { className: "text-sm", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(p.totalFinal)), React.createElement("button", { onClick: () => setExpandedPerson(expandedPerson === p.nume ? null : p.nume), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, expandedPerson === p.nume ? 'Ascunde' : '👁 Zi cu zi'), isManager && React.createElement("button", { onClick: () => startEdit(p), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "✎ Edit")))), expandedPerson === p.nume && (React.createElement("div", { className: "mt-2 pt-2 space-y-1", style: { borderTop: '1px solid var(--border)' } }, zileDetaliu(p.nume).length === 0 ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Nicio zi lucrată luna asta.")) : zileDetaliu(p.nume).map((z) => (React.createElement("div", { key: z.data, className: "flex items-center justify-between text-xs", style: { color: 'var(--muted)' } }, React.createElement("span", null, fmtData(z.data), " — ", z.santierNume), React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(z.min))))))), p.corectieMin !== 0 && (React.createElement("div", { className: "mt-1.5 flex items-center justify-between text-xs", style: { color: 'var(--acc3)' } }, React.createElement("span", null, "✎ Corecție manuală"), React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace" } }, p.corectieMin > 0 ? '+' : '−', minutesToHM(Math.abs(p.corectieMin)))))))))))));
@@ -11159,10 +11250,10 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
         let coFolositMin = 0, faraPlataMin = 0;
         Object.values(anual).forEach((info) => {
             if (info.status === 'partial' || info.status === 'absent') {
-                if (info.codAuto === 'CO')
-                    coFolositMin += info.minuteAuto;
-                else
-                    faraPlataMin += info.minuteAuto;
+                if (info.codAuto === 'CO') coFolositMin += (info.minuteAuto || 0);
+                else if (info.codAuto) faraPlataMin += (info.minuteAuto || 0);
+                if (info.codCO === 'CO') coFolositMin += (info.minuteCO || 0);
+                else if (info.codCO) faraPlataMin += (info.minuteCO || 0);
             }
             else if (info.status === 'aprobat') {
                 if (info.cod === 'CO')
@@ -11373,6 +11464,37 @@ const memMoment = (m) => `${m.data || ''}T${m.ora || '09:00'}`;
 function dataLocala(d) {
     const p = (x) => String(x).padStart(2, '0');
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+/* CÂTE ORE SE TREC ÎN FOAIA DE PONTAJ.
+   Regula patronului: în foaie stau 8 ore, nu 11. Ce a lucrat peste program se strânge în
+   banca de ore și se recuperează cu timp liber — nu se plătește, deci n-are ce căuta în
+   foaia care ajunge la contabilă. Iar o zi mai scurtă, acoperită din orele strânse, tot 8
+   ore face: omul și-a plătit singur diferența, din ce avea pus deoparte. */
+const NORMA_FOAIE_MIN = 8 * 60;
+/* Ce se scrie în paranteză lângă ore: învoirea aprobată și/sau ce s-a luat din concediu.
+   Orele luate din BANCĂ nu se scriu — ele sunt ore muncite, doar în altă zi; ziua iese oricum
+   la 8 și n-are rost să încarce foaia. */
+function codurileZilei(info) {
+    if (!info) return '';
+    const b = [];
+    if (info.minuteAuto > 0 && info.codAuto) b.push('+' + minutesToHM(info.minuteAuto) + ' ' + info.codAuto);
+    if (info.minuteCO > 0 && info.codCO) b.push('+' + minutesToHM(info.minuteCO) + ' ' + info.codCO);
+    return b.length ? ' (' + b.join(', ') + ')' : '';
+}
+function oreInFoaie(info, minuteLucrate) {
+    if (!info) return Math.min(NORMA_FOAIE_MIN, minuteLucrate || 0);
+    if (info.status === 'lucrat') return NORMA_FOAIE_MIN;          // plafonat la normă
+    const lucrate = Number(info.minuteLucrate) || 0;
+    return Math.min(NORMA_FOAIE_MIN, lucrate + (Number(info.dinBanca) || 0));
+}
+/* Dacă în foaie scriu 8 ore, ora de sfârșit trebuie să fie pe măsură. Altfel ar scrie
+   „08:00–19:00 · 8h" — o hârtie care se contrazice singură sub ochii unui control. */
+function sfarsitPeMasura(inceput, minuteFoaie, minutePauza) {
+    if (!inceput || !/^\d{1,2}:\d{2}$/.test(String(inceput))) return '';
+    const [h, m] = String(inceput).split(':').map(Number);
+    const total = h * 60 + m + (Number(minuteFoaie) || 0) + (Number(minutePauza) || 0);
+    const hh = Math.floor((total % 1440) / 60), mm = total % 60;
+    return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
 }
 function lunaLocala(d) {
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
