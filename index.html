@@ -2430,7 +2430,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.99-timpi-pe-om';
+const APP_VERSION = 'v04.00-fisa-pe-om';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -6358,55 +6358,87 @@ function santiereCuTimpMortMare({ rapoarte, santiere, company, costOra }) {
         && (santiere || []).some((s) => s.id === x.santierId && s.status !== 'Finalizat'));
 }
 function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone }) {
-    /* REFĂCUT LA CERERE. Cuvintele patronului: „vreau să fie la fiecare persoană să poți
-       selecta ora și minutul, și rubricile unde s-au dus timpi mult mai intuitive, se
-       descurcă greu în varianta de acum."
+    /* REFĂCUT LA CERERE, ÎN TREI RÂNDURI. Cuvintele patronului, pe rând:
+       1. „vreau să fie la fiecare persoană să poți selecta ora (de la 0 la 24) și la minut
+          (de la 0 la 60) și rubricile unde s-au dus timpi mult mai intuitive, se descurcă
+          greu în varianta de acum";
+       2. „trebuie să pui și persoanele să fie selectate, și opțiunea de adaugă dacă persoane
+          diferite au făcut lucruri diferite";
+       3. „la fiecare persoană în parte îi pui selecția timpului, unde s-a pierdut timpul și
+          explicație, și unde este pe etaje și etc să se poată selecta și asta".
 
-       CE ERA GREU:
-       • rubrica se alegea dintr-o listă derulantă cu 11 rânduri care arătau toate la fel,
-         fără poze, fără explicații — trebuia să le citești pe toate ca să nimerești;
-       • durata era UNA SINGURĂ pentru tot rândul, pusă din niște pastile fixe (15/30/45/60),
-         aceeași pentru toți cei bifați — deși de multe ori unul a stat o oră și altul un
-         sfert de oră;
-       • erau trei pași separați: alege rubrica, bifează cine, pune durata.
+       Asta a schimbat forma din temelii, și bine a făcut. Înainte un rând era „o rubrică, o
+       durată, mai mulți oameni" — adică presupunea că toți au făcut același lucru, același
+       timp. Pe șantier nu e așa aproape niciodată: doi au fost după marfă o oră, unul a
+       așteptat frontul două ore la etajul 3.
 
-       CUM E ACUM:
-       • rubrica se alege dintr-un buton mare care se desface (cum a cerut: „un fel de
-         hamburger și când apeși apar toate și selectezi ce te interesează"), cu poză, nume
-         și explicație la fiecare;
-       • fiecare om are ORA lui și MINUTUL lui, alese din două liste (0–24 și 0–59);
-       • bifatul a dispărut cu totul: cine are timp pus, ăla intră. Zero ore și zero minute
-         înseamnă că omul n-a pierdut nimic. Un pas mai puțin, și nimic de ținut minte. */
+       ACUM FIECARE OM E O FIȘĂ ÎNTREAGĂ: bifezi cine a pierdut timp, iar fiecare bifat își
+       primește cartonașul lui, cu tot ce ține de el — unde s-a dus timpul (rubrica), cât
+       (ora și minutul lui), la ce etaj și explicația. Apeși o dată „Adaugă" și se trece câte
+       un rând pentru fiecare, fiecare cu ale lui.
+
+       Ca să nu fie de lucru degeaba în cazul obișnuit, rubrica și etajul unui cartonaș nou
+       pornesc de la ce ai pus pe cartonașul dinainte. Se văd pe cartonaș, deci nu se strecoară
+       nimic pe ascuns — le schimbi unde e altfel. Ceasul pornește tot timpul de la zero:
+       o durată ghicită de aplicație ar fi o oră plătită scrisă de mine, nu de om. */
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
     const lista = timpi || [];
     const numePersoane = (persoane || []).map((p) => String(p?.nume || '').trim()).filter(Boolean);
     const CATEG = toateCategoriileTimp().filter((c) => !c.inactiv);
-    const [cat, setCat] = useState(CATEGORII_TIMP[0].id);
-    const [catDeschis, setCatDeschis] = useState(false);
-    const [oreOm, setOreOm] = useState({});
-    const [notaNoua, setNotaNoua] = useState('');
-    const [zonaNoua, setZonaNoua] = useState('');
     const ZONE = (Array.isArray(zone) ? zone : []).filter(Boolean);
+    const [sel, setSel] = useState([]);
+    const [fise, setFise] = useState({});
+    const [catDeschisLa, setCatDeschisLa] = useState(null);
     const [deschis, setDeschis] = useState(null);
-    const catAleasa = CATEG.find((c) => c.id === cat) || CATEG[0] || { icon: '❓', nume: 'Altceva', ajutor: '' };
-    const min0 = (n) => Number(oreOm[n]) || 0;
-    const cuTimp = numePersoane.filter((n) => min0(n) > 0);
-    const totalNou = cuTimp.reduce((s, n) => s + min0(n), 0);
     const hm = (m) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, '0')}`;
+    const fisa = (n) => fise[n] || { cat: CATEGORII_TIMP[0].id, minute: 0, zona: '', nota: '' };
+    const alesi = numePersoane.filter((n) => sel.includes(n));
+    const faraTimp = alesi.filter((n) => (Number(fisa(n).minute) || 0) <= 0);
+    const totalNou = alesi.reduce((s, n) => s + (Number(fisa(n).minute) || 0), 0);
+    const totiBifati = numePersoane.length > 0 && alesi.length === numePersoane.length;
     const update = (id, camp, val) => setTimpi(lista.map((t) => t.id === id ? { ...t, [camp]: val } : t));
     const sterge = (id) => setTimpi(lista.filter((t) => t.id !== id));
-    const puneOm = (n, minute) => setOreOm((s) => ({ ...s, [n]: minute }));
-    const adauga = () => {
-        if (!cuTimp.length)
+    const puneFisa = (n, camp, val) => setFise((s) => ({ ...s, [n]: { ...(s[n] || { cat: CATEGORII_TIMP[0].id, minute: 0, zona: '', nota: '' }), [camp]: val } }));
+    const bifeaza = (n) => {
+        if (sel.includes(n)) {
+            setSel(sel.filter((x) => x !== n));
             return;
-        const minutePers = Object.fromEntries(cuTimp.map((n) => [n, min0(n)]));
-        setTimpi([...lista, { id: uid(), categorie: cat, minute: min0(cuTimp[0]), minutePers,
-                persoane: cuTimp.slice(), intervale: {}, nota: notaNoua.trim(), zona: zonaNoua }]);
-        setOreOm({});
-        setNotaNoua('');
-        setZonaNoua('');
-        setCat(CATEGORII_TIMP[0].id);
-        setCatDeschis(false);
+        }
+        const ultim = alesi.length ? fisa(alesi[alesi.length - 1]) : null;
+        setSel([...sel, n]);
+        if (!fise[n])
+            setFise((s) => ({ ...s, [n]: { cat: ultim ? ultim.cat : CATEGORII_TIMP[0].id, minute: 0, zona: ultim ? ultim.zona : '', nota: '' } }));
+    };
+    const bifeazaToti = () => {
+        if (totiBifati) {
+            setSel([]);
+            return;
+        }
+        const ultim = alesi.length ? fisa(alesi[alesi.length - 1]) : null;
+        const noi = { ...fise };
+        numePersoane.forEach((n) => {
+            if (!noi[n])
+                noi[n] = { cat: ultim ? ultim.cat : CATEGORII_TIMP[0].id, minute: 0, zona: ultim ? ultim.zona : '', nota: '' };
+        });
+        setFise(noi);
+        setSel(numePersoane.slice());
+    };
+    const adauga = () => {
+        if (!alesi.length || faraTimp.length)
+            return;
+        /* Câte un rând pentru fiecare om. Așa, doi oameni cu rubrici diferite ies două rânduri
+           diferite în raport și în socoteala pe categorii — nu unul singur, cu o rubrică
+           aleasă de mine în locul lor. */
+        const randuriNoi = alesi.map((n) => {
+            const f = fisa(n);
+            return { id: uid(), categorie: f.cat, minute: Number(f.minute) || 0,
+                minutePers: { [n]: Number(f.minute) || 0 }, persoane: [n], intervale: {},
+                nota: String(f.nota || '').trim(), zona: f.zona || '' };
+        });
+        setTimpi([...lista, ...randuriNoi]);
+        setSel([]);
+        setFise({});
+        setCatDeschisLa(null);
     };
     /* Cele două liste, ora și minutul. Le fac cu <select> dinadins: pe telefon browserul
        deschide roata lui, mare, de sistem — mai ușor de nimerit cu degetul decât orice
@@ -6425,10 +6457,9 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone }) {
                 MINUTE.map((x) => React.createElement("option", { key: x, value: x }, String(x).padStart(2, '0')))),
             React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "min")));
     };
-    const randOm = (nume, minute, seteaza, cheie) => (React.createElement("div", { key: cheie, className: "flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 flex-wrap",
-        style: { background: minute > 0 ? '#E9A23B14' : 'var(--panel2)', border: '1px solid ' + (minute > 0 ? '#E9A23B66' : 'var(--border)') } },
-        React.createElement("span", { className: "text-sm min-w-0 flex-1 truncate", style: { color: minute > 0 ? 'var(--text)' : 'var(--muted)', fontWeight: minute > 0 ? 600 : 400 } }, nume),
-        alegeTimp(minute, seteaza, cheie)));
+    const chip = (eticheta, on, apasa, cheie) => (React.createElement("button", { key: cheie, type: "button", onClick: apasa, className: "text-xs px-3 py-2 rounded-lg font-semibold",
+        style: { color: on ? '#14181C' : 'var(--muted)', background: on ? 'var(--acc3)' : 'var(--panel2)', border: '1px solid ' + (on ? 'var(--acc3)' : 'var(--border)') } },
+        (on ? '✓ ' : '') + eticheta));
     const panouCategorii = (idAles, alege) => (React.createElement("div", { className: "grid grid-cols-2 gap-1.5 mt-1.5" }, CATEG.map((c) => {
         const on = c.id === idAles;
         return (React.createElement("button", { key: c.id, type: "button", onClick: () => alege(c.id), className: "text-left rounded-lg px-2.5 py-2",
@@ -6437,45 +6468,103 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone }) {
             React.createElement("div", { className: "text-[12px] font-semibold mt-0.5", style: { lineHeight: 1.25 } }, c.nume),
             c.ajutor && React.createElement("div", { className: "text-[10px] mt-0.5", style: { color: on ? '#14181Ccc' : 'var(--muted2)', lineHeight: 1.3 } }, c.ajutor)));
     })));
+    const butonCategorie = (idAles, deschisAcum, comuta, mic) => {
+        const c = CATEG.find((x) => x.id === idAles) || { icon: '❓', nume: 'Altceva', ajutor: '' };
+        return (React.createElement("button", { type: "button", onClick: comuta, className: "w-full text-left rounded-lg px-2.5 py-2 flex items-center gap-2",
+            style: { background: 'var(--panel)', border: '1px solid ' + (deschisAcum ? 'var(--acc3)' : 'var(--border)') } },
+            React.createElement("span", { style: { fontSize: mic ? 16 : 20, lineHeight: 1 } }, c.icon),
+            React.createElement("span", { className: "min-w-0 flex-1" },
+                React.createElement("span", { className: "text-[13px] font-semibold block truncate", style: { color: 'var(--text)' } }, c.nume),
+                c.ajutor && React.createElement("span", { className: "text-[10px] block truncate", style: { color: 'var(--muted2)' } }, c.ajutor)),
+            React.createElement("span", { className: "text-[11px] shrink-0", style: { color: 'var(--acc3)', fontWeight: 700 } }, deschisAcum ? '▲ închide' : '▼ schimbă')));
+    };
+    const cartonas = (n) => {
+        const f = fisa(n);
+        const min = Number(f.minute) || 0;
+        const deschisAcum = catDeschisLa === n;
+        return (React.createElement("div", { key: 'fisa-' + n, className: "rounded-xl p-2.5 space-y-1.5",
+            style: { background: 'var(--panel2)', border: '1px solid ' + (min > 0 ? '#E9A23B66' : '#E0525255') } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2" },
+                React.createElement("span", { className: "text-sm font-bold min-w-0 truncate", style: { color: 'var(--text)' } }, "👷 ", n),
+                React.createElement("button", { type: "button", onClick: () => bifeaza(n), className: "text-[11px] shrink-0 px-2 py-1 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel)' } }, "✕ scoate")),
+            React.createElement("div", { className: "flex items-center justify-between gap-2" },
+                React.createElement("span", { className: "text-[10px] font-semibold", style: { color: 'var(--muted)' } }, "Unde s-a dus timpul"),
+                /* Scurtătura pentru cazul obișnuit: toată echipa a așteptat același lucru, în
+                   același loc. Pui o dată pe cartonașul unuia și apeși aici. NU se întâmplă
+                   de la sine — o apeși tu, și vezi pe fiecare cartonaș ce s-a pus. Ceasul NU
+                   se copiază: orele sunt ale fiecăruia, nu le scriu eu în locul lor. */
+                alesi.length > 1 && React.createElement("button", { type: "button", onClick: () => setFise((s) => {
+                        const noi = { ...s };
+                        alesi.forEach((alt) => { noi[alt] = { ...(noi[alt] || { minute: 0, nota: '' }), cat: f.cat, zona: f.zona || '' }; });
+                        return noi;
+                    }), className: "text-[10px] px-2 py-1 rounded-lg shrink-0", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid #2E8BD155' } }, "\u21A7 la fel la to\u021Bi")),
+            butonCategorie(f.cat, deschisAcum, () => setCatDeschisLa(deschisAcum ? null : n), true),
+            deschisAcum && panouCategorii(f.cat, (id) => { puneFisa(n, 'cat', id); setCatDeschisLa(null); }),
+            React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap" },
+                React.createElement("span", { className: "text-[10px] font-semibold", style: { color: 'var(--muted)' } }, "Cât a pierdut"),
+                alegeTimp(min, (v) => puneFisa(n, 'minute', v), 'nou-' + n)),
+            ZONE.length > 0 && React.createElement("select", { value: f.zona || '', onChange: (e) => puneFisa(n, 'zona', e.target.value), className: "w-full rounded-lg px-2.5 py-1.5 text-xs outline-none", style: inputStyle },
+                React.createElement("option", { value: "" }, "📍 Unde anume? (etaj / apartament) — opțional"),
+                ZONE.map((z) => React.createElement("option", { key: z, value: z }, "📍 ", z))),
+            React.createElement("input", { value: f.nota || '', onChange: (e) => puneFisa(n, 'nota', e.target.value), placeholder: "Explicație (opțional): ce anume s-a întâmplat", className: "w-full rounded-lg px-2.5 py-1.5 text-xs outline-none", style: inputStyle })));
+    };
     return (React.createElement("div", { className: "space-y-2" },
         React.createElement("div", { className: "rounded-xl p-2.5 space-y-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-            React.createElement("div", { className: "text-[11px] font-semibold", style: { color: 'var(--muted)' } }, "1 · Ce s-a întâmplat?"),
-            React.createElement("button", { type: "button", onClick: () => setCatDeschis(!catDeschis), className: "w-full text-left rounded-lg px-3 py-2.5 flex items-center gap-2",
-                style: { background: 'var(--panel2)', border: '1px solid ' + (catDeschis ? 'var(--acc3)' : 'var(--border)') } },
-                React.createElement("span", { style: { fontSize: 20, lineHeight: 1 } }, catAleasa.icon),
-                React.createElement("span", { className: "min-w-0 flex-1" },
-                    React.createElement("span", { className: "text-sm font-semibold block truncate", style: { color: 'var(--text)' } }, catAleasa.nume),
-                    catAleasa.ajutor && React.createElement("span", { className: "text-[10px] block truncate", style: { color: 'var(--muted2)' } }, catAleasa.ajutor)),
-                React.createElement("span", { className: "text-xs shrink-0", style: { color: 'var(--acc3)', fontWeight: 700 } }, catDeschis ? '▲ închide' : '▼ schimbă')),
-            catDeschis && panouCategorii(cat, (id) => { setCat(id); setCatDeschis(false); }),
-            ZONE.length > 0 && (React.createElement("select", { value: zonaNoua, onChange: (e) => setZonaNoua(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle },
-                React.createElement("option", { value: "" }, "📍 Unde? (etaj / apartament) — opțional"),
-                ZONE.map((z) => React.createElement("option", { key: z, value: z }, "📍 ", z)))),
-            React.createElement("div", { className: "text-[11px] font-semibold pt-1", style: { color: 'var(--muted)' } },
-                "2 · Cine și cât a pierdut?",
-                React.createElement("span", { className: "font-normal", style: { color: 'var(--muted2)' } }, " — lasă pe 0 pe cine a lucrat normal")),
+            React.createElement("div", { className: "text-[11px] font-semibold", style: { color: 'var(--muted)' } },
+                "1 · Cine a pierdut timp?",
+                React.createElement("span", { className: "font-normal", style: { color: 'var(--muted2)' } }, " — bifează doar pe cei implicați")),
             numePersoane.length === 0
                 ? React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Întâi treci oamenii care au lucrat azi, sus în raport.")
-                : React.createElement("div", { className: "space-y-1" }, numePersoane.map((n) => randOm(n, min0(n), (v) => puneOm(n, v), 'nou-' + n))),
-            React.createElement("input", { value: notaNoua, onChange: (e) => setNotaNoua(e.target.value), placeholder: "Detaliu (opțional): ce anume s-a întâmplat", className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }),
-            React.createElement("button", { type: "button", onClick: adauga, disabled: !cuTimp.length, className: "w-full text-sm px-3 py-2.5 rounded-lg font-bold disabled:opacity-50",
-                style: { color: '#14181C', background: cuTimp.length ? 'var(--acc3)' : 'var(--panel2)' } },
-                cuTimp.length === 0
-                    ? 'Pune ora și minutul la cine a pierdut timp'
-                    : `+ Trece ${hm(totalNou)} h pierdute (${cuTimp.length} ${cuTimp.length === 1 ? 'om' : 'oameni'})`)),
+                : React.createElement("div", { className: "flex flex-wrap gap-1.5" },
+                    numePersoane.map((n) => chip(n, sel.includes(n), () => bifeaza(n), 'chip-' + n)),
+                    numePersoane.length > 1 && chip('👥 Toată echipa', totiBifati, bifeazaToti, 'chip-toti')),
+            alesi.length > 0 && React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "text-[11px] font-semibold pt-1", style: { color: 'var(--muted)' } },
+                    "2 · Pentru fiecare în parte",
+                    React.createElement("span", { className: "font-normal", style: { color: 'var(--muted2)' } }, " — poate fi cu totul altceva de la om la om")),
+                React.createElement("div", { className: "space-y-1.5" }, alesi.map((n) => cartonas(n)))),
+            /* Dacă ai bifat pe cineva și i-ai lăsat ceasul pe zero, NU-l las să plece în
+               tăcere din rând — îi scriu numele. Un om care dispare fără să spui nimic e
+               felul în care se pierd orele pe nesimțite. */
+            faraTimp.length > 0 && React.createElement("div", { className: "text-[11px] rounded-lg px-2.5 py-1.5", style: { background: '#E0525214', border: '1px solid #E0525255', color: 'var(--acc4)' } },
+                "⚠ N-ai pus cât a pierdut: ", React.createElement("b", null, faraTimp.join(', ')), ". Pune-i ora și minutul, ori scoate-l."),
+            React.createElement("button", { type: "button", onClick: adauga, disabled: !alesi.length || faraTimp.length > 0, className: "w-full text-sm px-3 py-2.5 rounded-lg font-bold disabled:opacity-50",
+                style: { color: '#14181C', background: (alesi.length && !faraTimp.length) ? 'var(--acc3)' : 'var(--panel2)' } },
+                alesi.length === 0
+                    ? 'Bifează cine a pierdut timp'
+                    : faraTimp.length > 0
+                        ? 'Pune ora și minutul la toți cei bifați'
+                        : `➕ Adaugă — ${hm(totalNou)} h pierdute (${alesi.length} ${alesi.length === 1 ? 'rând' : 'rânduri'})`),
+            React.createElement("div", { className: "text-[11px] rounded-lg px-2.5 py-1.5", style: { background: '#2E8BD114', border: '1px solid #2E8BD155', color: 'var(--acc1)' } },
+                "➕ Poți adăuga de câte ori vrei într-o zi. Fiecare om bifat intră cu rândul LUI, cu rubrica, ora, etajul și explicația lui — deci doi oameni care au făcut lucruri diferite nu mai trebuie trecuți în două reprize.")),
         lista.length === 0
             ? React.createElement("div", { className: "text-xs text-center py-2", style: { color: 'var(--muted2)' } }, "Nimic trecut încă. Dacă ziua a mers din plin, lasă gol.")
             : React.createElement("div", { className: "space-y-1" }, lista.map((t) => {
                 const pers = (t.persoane || []).filter(Boolean);
                 const desch = deschis === t.id;
                 const c = CATEG.find((x) => x.id === t.categorie) || { icon: iconCategorieTimp(t.categorie), nume: numeCategorieTimp(t.categorie) };
+                const comutaOmRand = (nume) => {
+                    const mp = { ...(t.minutePers || {}) };
+                    const ivNoi = { ...(t.intervale || {}) };
+                    delete ivNoi[nume];
+                    let persNoi;
+                    if (pers.includes(nume)) {
+                        persNoi = pers.filter((x) => x !== nume);
+                        delete mp[nume];
+                    }
+                    else {
+                        persNoi = [...pers, nume];
+                        if (mp[nume] === undefined)
+                            mp[nume] = 0;
+                    }
+                    setTimpi(lista.map((x) => x.id === t.id ? { ...x, minutePers: mp, persoane: persNoi, intervale: ivNoi } : x));
+                };
                 const puneOmulRand = (nume, minute) => {
                     const mp = { ...(t.minutePers || {}) };
                     const ivNoi = { ...(t.intervale || {}) };
                     delete ivNoi[nume];
                     mp[nume] = minute;
-                    const persNoi = minute > 0 ? (pers.includes(nume) ? pers : [...pers, nume]) : pers.filter((x) => x !== nume);
-                    setTimpi(lista.map((x) => x.id === t.id ? { ...x, minutePers: mp, persoane: persNoi, intervale: ivNoi } : x));
+                    setTimpi(lista.map((x) => x.id === t.id ? { ...x, minutePers: mp, intervale: ivNoi } : x));
                 };
                 return (React.createElement("div", { key: t.id, className: "rounded-lg", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
                     React.createElement("div", { className: "flex items-center gap-2 px-2.5 py-2" },
@@ -6488,21 +6577,28 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone }) {
                         React.createElement("span", { className: "text-[11px] shrink-0", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 } }, hm(minutePierduteRand(t))),
                         React.createElement("button", { type: "button", onClick: () => sterge(t.id), className: "shrink-0 opacity-70", style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "🗑"))),
                     desch && React.createElement("div", { className: "px-2.5 pb-2.5 space-y-1.5" },
-                        React.createElement("div", { className: "text-[10px] font-semibold", style: { color: 'var(--muted)' } }, "Ce s-a întâmplat"),
-                        panouCategorii(t.categorie, (id) => update(t.id, 'categorie', id)),
-                        React.createElement("div", { className: "text-[10px] font-semibold pt-1", style: { color: 'var(--muted)' } }, "Cine și cât"),
-                        React.createElement("div", { className: "space-y-1" }, numePersoane.map((n) => randOm(n, minutePersoanaTimp(t, n) * (pers.includes(n) ? 1 : 0), (v) => puneOmulRand(n, v), t.id + '-' + n))),
-                        React.createElement("input", { value: t.nota || '', onChange: (e) => update(t.id, 'nota', e.target.value), placeholder: "Detaliu (opțional)", className: "w-full rounded-lg px-2.5 py-1.5 text-xs outline-none", style: inputStyle }),
+                        React.createElement("div", { className: "text-[10px] font-semibold", style: { color: 'var(--muted)' } }, "Unde s-a dus timpul"),
+                        butonCategorie(t.categorie, catDeschisLa === t.id, () => setCatDeschisLa(catDeschisLa === t.id ? null : t.id), true),
+                        catDeschisLa === t.id && panouCategorii(t.categorie, (id) => { update(t.id, 'categorie', id); setCatDeschisLa(null); }),
+                        React.createElement("div", { className: "text-[10px] font-semibold pt-1", style: { color: 'var(--muted)' } }, "Cine"),
+                        React.createElement("div", { className: "flex flex-wrap gap-1.5" }, numePersoane.map((n) => chip(n, pers.includes(n), () => comutaOmRand(n), t.id + '-chip-' + n))),
+                        pers.length > 0 && React.createElement(React.Fragment, null,
+                            React.createElement("div", { className: "text-[10px] font-semibold pt-1", style: { color: 'var(--muted)' } }, "Cât a pierdut fiecare"),
+                            React.createElement("div", { className: "space-y-1" }, pers.map((n) => (React.createElement("div", { key: t.id + '-' + n, className: "flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 flex-wrap", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                                React.createElement("span", { className: "text-sm min-w-0 flex-1 truncate", style: { color: 'var(--text)', fontWeight: 600 } }, n),
+                                alegeTimp(minutePersoanaTimp(t, n), (v) => puneOmulRand(n, v), t.id + '-' + n)))))),
                         ZONE.length > 0 && React.createElement("select", { value: t.zona || '', onChange: (e) => update(t.id, 'zona', e.target.value), className: "w-full rounded-lg px-2.5 py-1.5 text-xs outline-none", style: inputStyle },
-                            React.createElement("option", { value: "" }, "📍 Unde? — opțional"),
-                            ZONE.map((z) => React.createElement("option", { key: z, value: z }, "📍 ", z))))));
+                            React.createElement("option", { value: "" }, "📍 Unde anume? (etaj / apartament) — opțional"),
+                            ZONE.map((z) => React.createElement("option", { key: z, value: z }, "📍 ", z))),
+                        React.createElement("input", { value: t.nota || '', onChange: (e) => update(t.id, 'nota', e.target.value), placeholder: "Explicație (opțional)", className: "w-full rounded-lg px-2.5 py-1.5 text-xs outline-none", style: inputStyle }))));
             })),
         lista.length > 0 && (React.createElement("div", { className: "rounded-lg p-2.5", style: { background: 'var(--panel)', border: '1px dashed var(--acc3)' } },
             React.createElement("div", { className: "text-[10px] font-bold uppercase tracking-wider mb-1", style: { color: 'var(--acc3)' } }, "📋 Pe scurt — așa intră în raport"),
             lista.filter((t) => minutePierduteRand(t) > 0).map((t) => (React.createElement("div", { key: t.id, className: "text-xs py-0.5 flex items-center gap-2" },
                 React.createElement("span", { className: "min-w-0 flex-1 truncate", style: { color: 'var(--text)' } },
                     iconCategorieTimp(t.categorie), ' ', numeCategorieTimp(t.categorie),
-                    (t.persoane || []).length > 0 ? ' — ' + (t.persoane || []).join(', ') : ''),
+                    (t.persoane || []).length > 0 ? ' — ' + (t.persoane || []).join(', ') : '',
+                    t.zona ? ' · 📍' + t.zona : ''),
                 React.createElement("b", { className: "shrink-0", style: { color: 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } }, hm(minutePierduteRand(t)), " h")))),
             React.createElement("div", { className: "text-xs pt-1.5 mt-1 flex items-center gap-2", style: { borderTop: '1px solid var(--border)' } },
                 React.createElement("span", { className: "flex-1", style: { color: 'var(--muted)' } }, "Total manoperă plătită care nu s-a dus în lucrare"),
@@ -16207,6 +16303,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'fisa-pe-om-v1', aud: 'manager', data: '15.09.2026', titlu: '👷 Timpul pierdut: fiecare om are fișa LUI — rubrică, ore, etaj, explicație',
+        text: 'Patronul, după ce a văzut varianta dinainte: „trebuie să pui și persoanele să fie selectate, și opțiunea de adaugă dacă persoane diferite au făcut lucruri diferite" și „la fiecare persoană în parte îi pui selecția timpului, unde s-a pierdut timpul și explicație, și unde este pe etaje și etc să se poată selecta și asta."\n\nAVEA DREPTATE PE AMÂNDOUĂ. Scosesem bifarea oamenilor ca să scurtez drumul — greșit: pe un șantier cu opt oameni, opt rânduri cu ceasuri sunt mai greu de citit decât să bifezi întâi cei doi care chiar au stat. Și, mai important, un rând însemna „o rubrică, o durată, mai mulți oameni" — adică presupunea că toți au făcut același lucru. Pe șantier nu e așa aproape niciodată.\n\nCUM MERGE ACUM:\n\n1️⃣ BIFEZI cine a pierdut timp (sau „👥 Toată echipa" dintr-o apăsare).\n\n2️⃣ FIECARE BIFAT ÎȘI PRIMEȘTE CARTONAȘUL LUI, cu tot ce ține de el: unde s-a dus timpul (rubrica, din plăcuțele cu poză și explicație), cât a pierdut (ora și minutul lui, 0–24 și 0–59), la ce ETAJ / apartament, și explicația în cuvintele lui.\n\n3️⃣ APEȘI ADAUGĂ O SINGURĂ DATĂ și se trece câte un rând pentru fiecare. Doi oameni la aprovizionare o oră și unul care a așteptat frontul două ore la etajul 3 intră dintr-o mișcare, fiecare cu ale lui — nu în trei reprize, și nu toți sub o rubrică aleasă de aplicație.\n\n↧ SCURTĂTURA „LA FEL LA TOȚI": dacă toată echipa a pățit același lucru, pui rubrica și etajul pe un cartonaș și apeși butonul — se duc pe toate. ORELE NU se copiază niciodată: alea sunt ale fiecăruia, și aplicația n-are voie să scrie o oră plătită în locul omului.\n\n⚠ ȘI NU TE LASĂ SĂ PIERZI PE NIMENI: dacă ai bifat pe cineva și i-ai lăsat ceasul pe zero, îți scrie numele lui și nu te lasă să adaugi până nu îl pui sau îl scoți. Un om care dispare în tăcere dintr-un rând e felul în care se pierd orele pe nesimțite.\n\nCE NU S-A ATINS: tot ce s-a scris înainte arată exact aceleași minute ca până acum, inclusiv rândurile puse cu ceasul „de la — până la". Probele verifică fix asta, pe rânduri vechi adevărate.\n\n18 pași de verificare înainte de livrare. Pentru ăsta am apăsat butoanele ca un om, în probă: am bifat doi oameni, le-am dat rubrici diferite, etaje diferite și ore diferite, și am verificat că ies două rânduri cu datele corecte.' },
     { id: 'timpi-pe-om-v1', aud: 'manager', data: '15.09.2026', titlu: '⏱ Timpul care nu s-a dus în lucrare: ora și minutul la FIECARE om, rubricile se desfac',
         text: 'Patronul: „vreau să faci la timp care nu s-au dus în lucrare mai intuitiv […] se descurcă greu în varianta de acum."\n\nCE ERA GREU:\n• rubrica se alegea dintr-o listă derulantă cu 11 rânduri care arătau toate la fel, fără poze și fără explicații — trebuia să le citești pe toate ca să nimerești;\n• durata era UNA SINGURĂ pentru tot rândul, aleasă din pastile fixe (15/30/45/60), aceeași pentru toți cei bifați — deși de multe ori unul a stat o oră și altul un sfert;\n• erau trei pași: alege rubrica, bifează cine, pune durata.\n\nCUM E ACUM:\n\n📋 RUBRICILE SE DESFAC LA O APĂSARE, cum a cerut patronul. Butonul de sus arată ce ai ales acum; apeși și apar TOATE deodată, ca plăcuțe mari cu poză, nume și explicație dedesubt. Apeși pe una și se închide singur.\n\n⏱ FIECARE OM ARE ORA LUI ȘI MINUTUL LUI — două liste, ore de la 0 la 24 și minute de la 0 la 59, în dreptul fiecărui nume. Dacă Ion a așteptat o oră și jumătate și Vasile un sfert de oră, așa se și trece. Până acum ambii ieșeau cu aceeași cifră.\n\n✅ BIFATUL A DISPĂRUT. Cine are timp pus, ăla intră. Zero ore și zero minute înseamnă că omul a lucrat normal. Un pas mai puțin și nimic de ținut minte.\n\n➕ TREI RUBRICI NOI, fiindcă se treceau toate la „Altceva", unde nu mai știi ce s-a întâmplat: 🌧 Vreme rea · 🔌 Fără curent / apă pe șantier · 🔑 N-am putut intra (apartament încuiat, n-a venit beneficiarul).\n\n👷 ȘI ÎN RAPORTUL TĂU: unde timpii diferă de la om la om, scrie în dreptul fiecăruia cât a pierdut — „Ion 1:30 · Gheorghe 2:00" — nu doar numele înșirate cu un total în dreapta.\n\nCE NU S-A ATINS: tot ce s-a scris ÎNAINTE arată exact aceleași minute ca până acum, inclusiv rândurile puse cu ceasul „de la — până la". Probele verifică fix asta, pe rânduri vechi adevărate: o schimbare de formular n-are voie să rescrie istoria orelor plătite.\n\nCe a plecat: alegerea cu ceasul „de la ora — până la ora" la introducere. Am scos-o ca să rămână un singur fel de a scrie durata. Dacă îți lipsește, spune și o pun la loc.\n\n18 pași de verificare înainte de livrare.' },
     { id: 'buton-in-afara-ecranului-v1', aud: 'manager', data: '15.09.2026', titlu: '🏗 Colegii POT face șantiere — butonul le ieșise în afara ecranului',
