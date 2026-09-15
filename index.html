@@ -1260,6 +1260,45 @@ function minuteLucrate(p) {
 function minuteFacturabile(toateRapoartele, r, p) {
     return minuteLucrate(p);
 }
+/* LUCRĂRILE MICI = CASH. Patronul le face pe bani gheață, nu pe factură. Valoarea lor nu
+   se scrie de mână nicăieri: se calculează din rapoartele zilnice, la fel ca peste tot în
+   aplicație — orele băieților × tariful șantierului, plus materialele trecute de ei la preț
+   de vânzare. Așa rubrica de cash se umple singură, fără muncă în plus. */
+const E_LUCRARE_MICA = (s) => String((s && (s.modFacturare || s.tipFacturare)) || '') === 'lucrare_mica';
+function valoareLucrariMici(santiere, rapoarte, materials, company, deLa, panaLa) {
+    const adaos = (company && company.adaosMaterial !== undefined && company.adaosMaterial !== '') ? (Number(company.adaosMaterial) || 0) : 15;
+    const norm = (x) => String(x == null ? '' : x).toLowerCase().replace(/\s+/g, ' ').trim();
+    const costMaterial = (den) => { const m = (materials || []).find((x) => norm(x.denumire) === norm(den)); return m ? (Number(m.pret) || 0) : 0; };
+    const unif = unificaRapoarte(rapoarte || []);
+    const inInterval = (d) => {
+        const z = String(d || '');
+        if (deLa && z < deLa)
+            return false;
+        if (panaLa && z > panaLa)
+            return false;
+        return true;
+    };
+    const peSantier = (santiere || []).filter(E_LUCRARE_MICA).map((s) => {
+        const rapS = unif.filter((r) => r.santierId === s.id && inInterval(r.data));
+        const minute = rapS.reduce((acc, r) => acc + (r.persoane || []).filter((p) => p.nume && String(p.nume).trim())
+            .reduce((a, p) => a + minuteFacturabile(rapoarte, r, p), 0), 0);
+        const ore = minute / 60;
+        const tarif = Number(s.tarifOrar) || 0;
+        const manopera = ore * tarif;
+        const materialeCost = rapS.reduce((acc, r) => acc + (r.materialeFolosite || []).reduce((a, m) => a + (Number(m.cantitate) || 0) * costMaterial(m.denumire), 0), 0);
+        const materiale = materialeCost * (1 + adaos / 100);
+        /* Dacă ai scris lucrările pe bucăți și prețuri, aia e valoarea — nu estimarea din
+           ore. Estimarea rămâne pentru lucrările la care n-ai apucat să scrii nimic. */
+        const scris = totalLucrari([s], deLa, panaLa);
+        const dinOre = manopera + materiale;
+        return { s, ore, tarif, manopera, materiale, nrRap: rapS.length,
+            scrisDeMana: scris.total > 0, nrLucrari: scris.nr,
+            valoare: scris.total > 0 ? scris.total : dinOre, valoareDinOre: dinOre };
+    }).filter((x) => x.nrRap > 0 || x.valoare > 0);
+    const total = peSantier.reduce((a, x) => a + x.valoare, 0);
+    const faraTarif = peSantier.filter((x) => x.ore > 0 && !x.tarif && !x.scrisDeMana).map((x) => x.s.nume);
+    return { peSantier: peSantier.sort((a, b) => b.valoare - a.valoare), total, faraTarif };
+}
 function minutePersoanaZi(rapoarte, nume, data) {
     return intervalePersoanaZi(unificaRapoarte(rapoarte), nume, data);
 }
@@ -1554,6 +1593,80 @@ function echipaNormalizata(echipa) {
 }
 const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e) => e.userId);
 const inEchipa = (echipa, userId) => echipaUserIds(echipa).includes(userId);
+/* ═══ ÎNCASĂRI: cât a intrat în numerar și cât pe factură ═════════════════════════════
+   Banii încasați se scriu pe șantier, rând cu rând: dată, sumă, fel, notă. Nu e o
+   contabilitate — e evidența ta, ca să știi dintr-o privire cât ai luat pe mână și cât
+   stă în facturi neplătite. Datele rămân întregi în copiile de siguranță și în exportul
+   pentru contabilă; ce se poate ascunde e ECRANUL, nu evidența. */
+const FELURI_INCASARE = [
+    { id: 'numerar', label: 'Numerar', icon: '💵', culoare: '#4CAF7D' },
+    { id: 'transfer', label: 'Transfer bancar', icon: '🏦', culoare: '#2E8BD1' },
+    { id: 'factura', label: 'Pe factură', icon: '🧾', culoare: '#E9A23B' },
+];
+const felIncasare = (id) => FELURI_INCASARE.find((f) => f.id === id) || FELURI_INCASARE[0];
+const dataRo = (iso) => (String(iso || '').length === 10 ? String(iso).split('-').reverse().join('.') : String(iso || ''));
+const incasariSantier = (s) => (Array.isArray(s && s.incasari) ? s.incasari : []).filter((x) => x && !x.sters);
+/* LISTA DE LUCRĂRI de pe o lucrare mică: ce s-a făcut, câte bucăți, cât costă bucata.
+   E socoteala pe care i-o spui clientului. Când există, ea bate calculul din ore — că
+   el e o estimare, iar asta e prețul cerut. */
+const UM_LUCRARE = ['buc', 'm', 'ml', 'mp', 'h', 'set'];
+const lucrariSantier = (s) => (Array.isArray(s && s.lucrariMici) ? s.lucrariMici : []).filter((x) => x && !x.sters);
+const randTotal = (l) => (Number(l && l.cantitate) || 0) * (Number(l && l.pret) || 0);
+function totalLucrari(santiere, deLa, panaLa) {
+    let total = 0, nr = 0;
+    (santiere || []).forEach((s) => lucrariSantier(s).forEach((l) => {
+        const d = String(l.data || '');
+        if (deLa && d < deLa)
+            return;
+        if (panaLa && d > panaLa)
+            return;
+        total += randTotal(l);
+        nr++;
+    }));
+    return { total, nr };
+}
+/* BANII CHIAR INTRAȚI, pe o perioadă. Nu ce ai lucrat, nu ce ai facturat — ce ai luat.
+   Două izvoare: încasările scrise de tine pe șantiere (numerar sau transfer) și facturile
+   marcate „Încasată". Pentru facturi ne uităm la ziua în care le-ai bifat încasate
+   („incasataLa"); cele vechi, dinainte să ținem minte asta, cad pe data emiterii — de aia
+   se numără separat, ca să știi câtă parte din cifră e aproximată. */
+function baniIntrati(santiere, invoices, deLa, panaLa) {
+    const t = totalIncasari(santiere, deLa, panaLa);
+    let peFactura = 0, nrFacturi = 0, dupaEmitere = 0, nrDupaEmitere = 0;
+    (invoices || []).forEach((i) => {
+        if (!eIncasata(i))
+            return;
+        const stampila = String(i.incasataLa || '');
+        const zi = stampila || String(i.data || '');
+        if (!zi || (deLa && zi < deLa) || (panaLa && zi > panaLa))
+            return;
+        const v = calcSubtotal(i.items || []) * (1 + (Number(i.tva) || 0) / 100);
+        peFactura += v;
+        nrFacturi++;
+        if (!stampila) {
+            dupaEmitere += v;
+            nrDupaEmitere++;
+        }
+    });
+    const inMana = t.numerar;
+    return { inMana, peCont: t.transfer, peFactura, nrFacturi, dupaEmitere, nrDupaEmitere,
+        cash: inMana + t.transfer, total: inMana + t.transfer + peFactura, nrIncasari: t.nr };
+}
+function totalIncasari(santiere, deLa, panaLa) {
+    const t = { numerar: 0, transfer: 0, factura: 0, total: 0, nr: 0 };
+    (santiere || []).forEach((s) => incasariSantier(s).forEach((i) => {
+        const d = String(i.data || '');
+        if (deLa && d < deLa)
+            return;
+        if (panaLa && d > panaLa)
+            return;
+        const v = Number(i.suma) || 0;
+        t[felIncasare(i.fel).id] += v;
+        t.total += v;
+        t.nr++;
+    }));
+    return t;
+}
 const lucreazaInEchipa = (echipa, userId) => echipaNormalizata(echipa).some((e) => e.userId === userId && e.status !== 'pauza');
 const iSeCereRaport = (echipa, userId, zi) => echipaNormalizata(echipa).some((e) => e.userId === userId && e.status !== 'pauza' && (!e.dataModificare || e.dataModificare < zi));
 const concediuEAprobat = (c) => !!c && (c.status === 'Aprobat' || c.status === 'Aprobată');
@@ -2220,7 +2333,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.74-banca-apoi-concediu';
+const APP_VERSION = 'v03.80-profit-pe-perioada';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -3761,7 +3874,7 @@ function GhidTab({ isManager }) {
     const fromHelp = (icon, title, key) => renderSec(icon, title, (HELP[key] && HELP[key].text) || '', (HELP[key] && HELP[key].mgr) || '');
     return (React.createElement("div", { className: "max-w-2xl" }, ales
         ? React.createElement("button", { onClick: () => setAles(null), className: "btn3d text-xs font-semibold px-3 py-2 mb-3", style: { color: 'var(--acc1)' } }, "\u2039 Toate capitolele")
-        : React.createElement("h2", { className: "text-xl mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "📖 Ghid de utilizare"), !ales && React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută în ghid (ex: concediu, deviz, raport)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-2 mb-1", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), !ales && cauta.trim() && React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, "Se arată doar capitolele care conțin „", cauta, "\". Apasă pe unul ca să-l deschizi."), !ales && React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Ghid simplu, pas cu pas, scris pe înțelesul oricui. Ia-l de sus în jos. Nu ai cum să strici nimic — orice greșeală se poate șterge sau modifica. Exact aceleași explicații le găsești și la butonul „ℹ️ Cum se folosește\" din fiecare ecran.", isManager ? ' Ca manager vezi în plus secțiunea de administrare, jos.' : ''), React.createElement(Titlu, { sub: "Pentru toți — citește o dată, de sus în jos" }, "Ghid pas cu pas"), React.createElement(Sec, { icon: "📱", title: "1. Prima dată (fă o singură dată)" }, 'Prima oară când folosești aplicația, urmează acești pași:\n1) Deschizi aplicația apăsând pe iconița ei de pe telefon.\n2) Scrii numele de utilizator și parola pe care ți le-a dat șeful, apoi apeși pe „Intră".\n3) Mergi în meniu la „👤 Profilul meu" și apeși pe „🔔 Activează notificările". Când telefonul te întreabă, apeși pe „Permite" (sau „Allow").\n4) Gata. De acum primești pe telefon tot ce te privește.\n\nDacă ai iPhone, prima dată deschide aplicația în Safari, apeși pe butonul „Distribuie" (pătratul cu săgeata în sus) și alegi „Adaugă pe ecranul principal". După aceea deschide-o mereu de pe ecranul principal.\n\nEste bine de știut că aplicația îți cere parola de fiecare dată când o deschizi, pentru siguranță. Ca să nu mai scrii parola, poți porni Amprenta sau FaceID din Profil.'), React.createElement(Sec, { icon: "🏠", title: "2. De unde începi în fiecare zi (Activitatea mea)" }, 'Aceasta este prima pagină pe care o vezi când deschizi aplicația, iar aici ai adunat tot ce te privește, ca să nu cauți prin meniu.\n• Sus scrie la ce șantier lucrezi astăzi. Începând cu ora 16:30, îți apare și unde vei lucra mâine.\n• Dacă nu ai trimis raportul, îți apare un rând pentru asta; apeși pe el și te duce direct să-l completezi.\n• Tot ce este scris cu ROȘU înseamnă ceva de rezolvat (de exemplu, un material pe care șeful ți l-a respins).\n• Tot aici îți apare și rubrica „🚀 Noutăți", unde îți explic pe scurt fiecare lucru nou adăugat în aplicație.\n• Regula este simplă: apeși pe orice rând de aici și te duce fix unde trebuie, fără să știi pe unde este prin aplicație.'), fromHelp('📋', '3. Rapoarte zilnice (cel mai important)', 'rapoarte'), fromHelp('📦', '4. Materiale (cererile de materiale)', 'materiale'), React.createElement(Sec, { icon: "🏗", title: "5. Cum intri pe un șantier" }, '• În „🏗 Șantiere" vezi lista șantierelor. Poți intra doar în cele unde ești pus tu; restul au un lacăt 🔒.\n• Apeși pe un șantier ca să intri în el.\n• Sus, dacă apeși pe adresă, ți se pornește harta cu navigația. Dacă apeși pe 📞, îl suni pe responsabilul de la client.\n• Dedesubt sunt butoanele: Rapoarte, Materiale, Scule, Planșe, Foto/Video, Checklist și Echipă. Apeși pe unul ca să-l deschizi și apeși din nou ca să-l închizi.\n• Butonul „← Înapoi" te scoate din șantier, înapoi la listă.'), fromHelp('🔧', '6. Scule', 'scule'), fromHelp('📐', '7. Planșe (planurile PDF)', 'planse'), fromHelp('📸', '8. Foto / Video', 'media'), fromHelp('✅', '9. Checklist (la început și la sfârșit)', 'checklist'), fromHelp('👥', '10. Echipă', 'echipa'), fromHelp('❓', '11. Întrebări și probleme (pe șantier)', 'probleme'), fromHelp('🤖', '12. Asistentul cu răspunsuri (din meniu)', 'asistent'), React.createElement(Sec, { icon: "🧮", title: "13. Calculator (calcule electrice)" }, 'Calculatorul te ajută să faci pe loc calculele electrice de pe teren, cum ar fi amperajul, secțiunea de cablu sau alegerea disjunctorului.\n1) Îl deschizi din meniu, de la „🧮 Calculator".\n2) Sus ai „⭐ Cele mai folosite", sau poți căuta ce calcul vrei (de exemplu „cablu" sau „disjunctor").\n3) Apeși pe calculul dorit și îți apare formula.\n4) Completezi datele cerute, iar rezultatul apare singur.\n\nToate valorile sunt orientative, așa că verifică-le mereu cu normativul I7.'), React.createElement(Sec, { icon: "📘", title: "14. Normativ I7" }, 'Aici ai tot normativul I7 pentru instalații electrice, cu modificările din 2023 incluse.\n1) Îl deschizi din meniu, de la „📘 Normativ I7".\n2) Scrii ce cauți (de exemplu „spital" sau „legare la pământ") sau apeși pe o etichetă gata pusă. Poți scrie și un număr de pagină (de exemplu 478) ca să sari direct la ea.\n3) Aplicația îți arată paginile unde apare cuvântul căutat.\n4) Apeși pe un rezultat și se deschide fix la pagina aceea. Te muți între pagini cu săgețile ‹ ›, iar cu două degete mărești.\n\nCa să se poată deschide paginile, managerul trebuie să încarce o singură dată fișierul PDF al normativului (din pagina „📘 Normativ I7").'), fromHelp('🔔', '15. Memento (sa nu uiti nimic)', 'memento'), fromHelp('🕐', '16. Pontaj (orele tale)', 'pontaj'), fromHelp('🏖', '17. Concediu', 'concedii'), React.createElement(Sec, { icon: "🔔", title: "18. Notificări (înștiințările pe telefon)" }, 'Notificările sunt înștiințările care îți vin pe telefon.\n• Le pornești o singură dată: intri la „👤 Profilul meu", apeși pe „🔔 Activează notificările" și apoi pe „Permite".\n• Primești pe telefon, cu sunet, doar ce te privește (ai fost pus pe un șantier, ți s-a aprobat sau respins un material, ai primit răspuns la concediu sau la o întrebare).\n• Pe iconița aplicației apare o bulină cu numărul de lucruri pe care le ai de rezolvat; ea dispare când le rezolvi.\n• Când șeful îți respinge ceva, îți apare cu ROȘU în „Activitatea mea"; apeși pe „Am văzut" ca să dispară.\n• Dacă vrei să verifici că funcționează, apeși pe „📨 Trimite notificare de test" din Profil.'), fromHelp('👤', '19. Profil (parolă, amprentă, aspect)', 'profil'), isManager && (React.createElement(React.Fragment, null, React.createElement(Titlu, { sub: "Vizibil doar pentru Manager" }, "Ghid Manager (administrare)"), React.createElement(Sec, { icon: "🏗", title: "Administrarea șantierului" }, 'Aici creezi și modifici șantierele.\n• Când faci un șantier nou, treci numele, adresa, beneficiarul (clientul), numărul de contract, eventualul act adițional și responsabilul de la client cu numărul lui de telefon.\n• La „Raport zilnic cerut începând de:" alegi Azi, De mâine sau o anumită dată. Până la data aleasă, echipa nu primește memento de raport. În mod normal este pus „de mâine", ca să nu ceri raport chiar în ziua în care ai făcut șantierul.\n• La „Descrierea lucrărilor de efectuat" scrii ce este de făcut; textul apare cu albastru, sus pe șantier, și îl vede toată echipa.\n• Alegi felul de facturare al șantierului (vezi secțiunea Devize). Pentru lucrări mărunte, fără planuri, folosești tipul „🔧 Lucrare mică (fără planuri)", care se facturează pe ore.\n• Tot de aici pui sau scoți colegi din echipă și le dai starea Activ sau Pauză; când pui un coleg pe șantier, el primește o înștiințare.\n• Șantierul îl marchezi „Finalizat" din Checklist, după ce totul este bifat și confirmat.'), fromHelp('🧾', 'Devize (lista devizelor)', 'devize'), React.createElement(Sec, { icon: "🏢", title: "Structură etaje & Poziții / Materiale" }, 'Acestea sunt două unelte pentru pregătirea devizelor.\n• La „Structură — etaje" definești etajele și apartamentele clădirii; ele se folosesc apoi la „Lucrări pe apartamente" din rapoarte.\n• La „Poziții / Materiale" imporți dintr-un fișier Excel lista de poziții (manoperă) și lista de materiale cu prețuri, care se folosesc la devize. Aplicația recunoaște mai multe formate de fișier și te lasă să alegi din ce foaie să ia datele.'), fromHelp('📄', 'Oferte', 'oferte'), fromHelp('🧾', 'Facturi', 'facturi'), fromHelp('👥', 'Clienți', 'clienti'), fromHelp('📝', 'Notițe (carnetul tău)', 'notite'), fromHelp('📁', 'Proiecte (arhiva pe clienți)', 'proiecte'), fromHelp('🗂', 'Gestiune (materialele firmei)', 'gestiune'), fromHelp('📈', 'Stocuri (istoricul stocului)', 'stocuri'), fromHelp('🛒', 'Achiziții', 'achizitii'), fromHelp('📄', 'Adeverințe (ștampilate)', 'adeverinte'), fromHelp('🔑', 'Utilizatori (angajații)', 'utilizatori'), fromHelp('⚙', 'Firma mea', 'firma'), React.createElement(Sec, { icon: "💰", title: "Prețuri & confidențialitate" }, '• Toate prețurile (tariful pe oră, prețurile materialelor, devizele) sunt vizibile DOAR pentru manager, peste tot în aplicație.\n• Angajații văd cantitățile, orele și lucrările, dar nu văd prețurile.'))), React.createElement("p", { className: "text-xs mt-3 mb-6", style: { color: 'var(--muted2)' } }, "Ghidul se completează automat pe măsură ce apar funcții noi. Dacă ceva nu e clar, spune-i managerului.")));
+        : React.createElement("h2", { className: "text-xl mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "📖 Ghid de utilizare"), !ales && React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută în ghid (ex: concediu, deviz, raport)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-2 mb-1", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), !ales && cauta.trim() && React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, "Se arată doar capitolele care conțin „", cauta, "\". Apasă pe unul ca să-l deschizi."), !ales && React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Ghid simplu, pas cu pas, scris pe înțelesul oricui. Ia-l de sus în jos. Nu ai cum să strici nimic — orice greșeală se poate șterge sau modifica. Exact aceleași explicații le găsești și la butonul „ℹ️ Cum se folosește\" din fiecare ecran.", isManager ? ' Ca manager vezi în plus secțiunea de administrare, jos.' : ''), React.createElement(Titlu, { sub: "Pentru toți — citește o dată, de sus în jos" }, "Ghid pas cu pas"), React.createElement(Sec, { icon: "📱", title: "1. Prima dată (fă o singură dată)" }, 'Prima oară când folosești aplicația, urmează acești pași:\n1) Deschizi aplicația apăsând pe iconița ei de pe telefon.\n2) Scrii numele de utilizator și parola pe care ți le-a dat șeful, apoi apeși pe „Intră".\n3) Mergi în meniu la „👤 Profilul meu" și apeși pe „🔔 Activează notificările". Când telefonul te întreabă, apeși pe „Permite" (sau „Allow").\n4) Gata. De acum primești pe telefon tot ce te privește.\n\nDacă ai iPhone, prima dată deschide aplicația în Safari, apeși pe butonul „Distribuie" (pătratul cu săgeata în sus) și alegi „Adaugă pe ecranul principal". După aceea deschide-o mereu de pe ecranul principal.\n\nEste bine de știut că aplicația îți cere parola de fiecare dată când o deschizi, pentru siguranță. Ca să nu mai scrii parola, poți porni Amprenta sau FaceID din Profil.'), React.createElement(Sec, { icon: "🏠", title: "2. De unde începi în fiecare zi (Activitatea mea)" }, 'Aceasta este prima pagină pe care o vezi când deschizi aplicația, iar aici ai adunat tot ce te privește, ca să nu cauți prin meniu.\n• Sus scrie la ce șantier lucrezi astăzi. Începând cu ora 16:30, îți apare și unde vei lucra mâine.\n• Dacă nu ai trimis raportul, îți apare un rând pentru asta; apeși pe el și te duce direct să-l completezi.\n• Tot ce este scris cu ROȘU înseamnă ceva de rezolvat (de exemplu, un material pe care șeful ți l-a respins).\n• Tot aici îți apare și rubrica „🚀 Noutăți", unde îți explic pe scurt fiecare lucru nou adăugat în aplicație.\n• Regula este simplă: apeși pe orice rând de aici și te duce fix unde trebuie, fără să știi pe unde este prin aplicație.'), fromHelp('📋', '3. Rapoarte zilnice (cel mai important)', 'rapoarte'), fromHelp('📦', '4. Materiale (cererile de materiale)', 'materiale'), React.createElement(Sec, { icon: "🏗", title: "5. Cum intri pe un șantier" }, '• În „🏗 Șantiere" vezi lista șantierelor. Poți intra doar în cele unde ești pus tu; restul au un lacăt 🔒.\n• Apeși pe un șantier ca să intri în el.\n• Sus, dacă apeși pe adresă, ți se pornește harta cu navigația. Dacă apeși pe 📞, îl suni pe responsabilul de la client.\n• Dedesubt sunt butoanele: Rapoarte, Materiale, Scule, Planșe, Foto/Video, Checklist și Echipă. Apeși pe unul ca să-l deschizi și apeși din nou ca să-l închizi.\n• Butonul „← Înapoi" te scoate din șantier, înapoi la listă.'), fromHelp('🔧', '6. Scule', 'scule'), fromHelp('📐', '7. Planșe (planurile PDF)', 'planse'), fromHelp('📸', '8. Foto / Video', 'media'), fromHelp('✅', '9. Checklist (la început și la sfârșit)', 'checklist'), fromHelp('👥', '10. Echipă', 'echipa'), fromHelp('❓', '11. Întrebări și probleme (pe șantier)', 'probleme'), fromHelp('🤖', '12. Asistentul cu răspunsuri (din meniu)', 'asistent'), React.createElement(Sec, { icon: "🧮", title: "13. Calculator (calcule electrice)" }, 'Calculatorul te ajută să faci pe loc calculele electrice de pe teren, cum ar fi amperajul, secțiunea de cablu sau alegerea disjunctorului.\n1) Îl deschizi din meniu, de la „🧮 Calculator".\n2) Sus ai „⭐ Cele mai folosite", sau poți căuta ce calcul vrei (de exemplu „cablu" sau „disjunctor").\n3) Apeși pe calculul dorit și îți apare formula.\n4) Completezi datele cerute, iar rezultatul apare singur.\n\nToate valorile sunt orientative, așa că verifică-le mereu cu normativul I7.'), React.createElement(Sec, { icon: "📘", title: "14. Normativ I7" }, 'Aici ai tot normativul I7 pentru instalații electrice, cu modificările din 2023 incluse.\n1) Îl deschizi din meniu, de la „📘 Normativ I7".\n2) Scrii ce cauți (de exemplu „spital" sau „legare la pământ") sau apeși pe o etichetă gata pusă. Poți scrie și un număr de pagină (de exemplu 478) ca să sari direct la ea.\n3) Aplicația îți arată paginile unde apare cuvântul căutat.\n4) Apeși pe un rezultat și se deschide fix la pagina aceea. Te muți între pagini cu săgețile ‹ ›, iar cu două degete mărești.\n\nCa să se poată deschide paginile, managerul trebuie să încarce o singură dată fișierul PDF al normativului (din pagina „📘 Normativ I7").'), fromHelp('🔔', '15. Memento (sa nu uiti nimic)', 'memento'), fromHelp('🕐', '16. Pontaj (orele tale)', 'pontaj'), fromHelp('🏖', '17. Concediu', 'concedii'), React.createElement(Sec, { icon: "🔔", title: "18. Notificări (înștiințările pe telefon)" }, 'Notificările sunt înștiințările care îți vin pe telefon.\n• Le pornești o singură dată: intri la „👤 Profilul meu", apeși pe „🔔 Activează notificările" și apoi pe „Permite".\n• Primești pe telefon, cu sunet, doar ce te privește (ai fost pus pe un șantier, ți s-a aprobat sau respins un material, ai primit răspuns la concediu sau la o întrebare).\n• Pe iconița aplicației apare o bulină cu numărul de lucruri pe care le ai de rezolvat; ea dispare când le rezolvi.\n• Când șeful îți respinge ceva, îți apare cu ROȘU în „Activitatea mea"; apeși pe „Am văzut" ca să dispară.\n• Dacă vrei să verifici că funcționează, apeși pe „📨 Trimite notificare de test" din Profil.'), fromHelp('👤', '19. Profil (parolă, amprentă, aspect)', 'profil'), isManager && (React.createElement(React.Fragment, null, React.createElement(Titlu, { sub: "Vizibil doar pentru Manager" }, "Ghid Manager (administrare)"), React.createElement(Sec, { icon: "🏗", title: "Administrarea șantierului" }, 'Aici creezi și modifici șantierele.\n• Când faci un șantier nou, treci numele, adresa, beneficiarul (clientul), numărul de contract, eventualul act adițional și responsabilul de la client cu numărul lui de telefon.\n• La „Raport zilnic cerut începând de:" alegi Azi, De mâine sau o anumită dată. Până la data aleasă, echipa nu primește memento de raport. În mod normal este pus „de mâine", ca să nu ceri raport chiar în ziua în care ai făcut șantierul.\n• La „Descrierea lucrărilor de efectuat" scrii ce este de făcut; textul apare cu albastru, sus pe șantier, și îl vede toată echipa.\n• Alegi felul de facturare al șantierului (vezi secțiunea Devize). Pentru lucrări mărunte, fără planuri, folosești tipul „🔧 Lucrare mică (fără planuri)", care se facturează pe ore.\n• Tot de aici pui sau scoți colegi din echipă și le dai starea Activ sau Pauză; când pui un coleg pe șantier, el primește o înștiințare.\n• Șantierul îl marchezi „Finalizat" din Checklist, după ce totul este bifat și confirmat.'), fromHelp('🧾', 'Devize (lista devizelor)', 'devize'), React.createElement(Sec, { icon: "🏢", title: "Structură etaje & Poziții / Materiale" }, 'Acestea sunt două unelte pentru pregătirea devizelor.\n• La „Structură — etaje" definești etajele și apartamentele clădirii; ele se folosesc apoi la „Lucrări pe apartamente" din rapoarte.\n• La „Poziții / Materiale" imporți dintr-un fișier Excel lista de poziții (manoperă) și lista de materiale cu prețuri, care se folosesc la devize. Aplicația recunoaște mai multe formate de fișier și te lasă să alegi din ce foaie să ia datele.'), fromHelp('📄', 'Oferte', 'oferte'), fromHelp('🧾', 'Facturi', 'facturi'), fromHelp('👥', 'Clienți', 'clienti'), fromHelp('📝', 'Notițe (carnetul tău)', 'notite'), fromHelp('📁', 'Proiecte (arhiva pe clienți)', 'proiecte'), fromHelp('🗂', 'Gestiune (materialele firmei)', 'gestiune'), fromHelp('📈', 'Stocuri (istoricul stocului)', 'stocuri'), fromHelp('🛒', 'Achiziții', 'achizitii'), fromHelp('📄', 'Adeverințe (ștampilate)', 'adeverinte'), fromHelp('🔑', 'Utilizatori (angajații)', 'utilizatori'), fromHelp('⚙', 'Firma mea', 'firma'), React.createElement(Sec, { icon: "💰", title: "Prețuri & confidențialitate" }, '• Toate prețurile (tariful pe oră, prețurile materialelor, devizele) sunt vizibile DOAR pentru manager, peste tot în aplicație.\n• Angajații văd cantitățile, orele și lucrările, dar nu văd prețurile.\n\nÎNCASĂRI (numerar / factură). Pe fiecare șantier ai rubrica „💵 Încasări", unde scrii rând cu rând ce a intrat: data, suma, felul (numerar, transfer bancar sau pe factură) și o notă. Totalurile se adună singure. Rubrica o vezi doar tu, ca toate prețurile din aplicație.\n\nCASH VS. FACTURAT (în tabloul de bord). Lângă donutul de Cashflow ai acum al doilea donut, „Bani intrați", pe aceeași lună. El numără DOAR banii care au intrat efectiv, nu ce ai lucrat și nu ce ai emis:\n• CASH (verde) = numerarul și transferurile pe care le-ai scris tu la „💵 Încasări" pe șantiere.\n• PE FACTURĂ (portocaliu) = facturile bifate „Încasată". O factură se socotește în luna în care ai bifat-o încasată, nu în luna în care ai emis-o — o factură din iulie plătită în septembrie e bani de septembrie. Facturile bifate înainte de versiunea asta n-au ziua plății reținută; pentru ele se folosește data emiterii, iar suma respectivă ți se arată separat, ca să știi cât e aproximat.\n• În mijloc scrie cât la sută din banii intrați e cash.\n\nCE AI MUNCIT vs. CE AI ÎNCASAT. Tot în rubrica asta, mai jos, vezi cât ai muncit pe lucrări mici (calculat din rapoarte) față de cât ai trecut ca numerar încasat. Dacă rămâne o diferență, ți-o scrie — dar nu trece nimic de la sine: banii îi treci tu, când i-ai luat.\n\nCE S-A FĂCUT (bucata × preț). În rubrica „💵 Încasări" de pe șantier ai sus „🔧 Ce s-a făcut": scrii tipul lucrării, câte bucăți, unitatea (buc, m, ml, mp, h, set) și prețul pe bucată. Totalul pe rând și totalul general se fac singure. Un buton verde îți pune totalul general direct la încasări, ca numerar, ca să nu-l scrii de două ori. Dacă ai scris lucrările așa, ELE dau valoarea lucrării — estimarea din ore rămâne doar de referință, și nu mai contează dacă șantierul n-are tarif orar completat.\n\nPROFIT PE ȘANTIER — PE PERIOADA PE CARE O ALEGI TU. Rubrica „💶 Profitabilitate pe șantier" arată ce s-a lucrat într-o perioadă anume, nu tot ce s-a lucrat vreodată.\n• Ai cinci butoane: ZI, SĂPTĂMÂNĂ, LUNĂ, AN și PERIOADĂ. Implicit e luna curentă.\n• Cu săgețile ‹ › te plimbi înainte și înapoi cu un pas: o zi, o săptămână, o lună sau un an, după ce ai ales. Butonul „Acum" te aduce înapoi la ziua de azi.\n• Săptămâna începe LUNI și se termină duminica, ca la noi.\n• La „PERIOADĂ" îți apar două căsuțe de dată — de la / până la — și socotește fix între ele. Dacă le pui invers, le întoarce el.\n• Perioada aleasă scrie lângă titlu, ca să știi mereu ce cifră te uiți.\nÎn listă, lucrările mici sunt însemnate cu 🔧 și scrie „cash" pe rândul lor, iar deasupra ai două casete: cât e cash și cât e pe factură în perioada aleasă. Fiecare lucrare rămâne pe rândul ei.\n\nCa să meargă socoteala, o lucrare pe bani gheață o faci de tipul „🔧 Lucrare mică (fără planuri)" la felul de facturare. Restul șantierelor rămân cum sunt.'))), React.createElement("p", { className: "text-xs mt-3 mb-6", style: { color: 'var(--muted2)' } }, "Ghidul se completează automat pe măsură ce apar funcții noi. Dacă ceva nu e clar, spune-i managerului.")));
 }
 function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier, persist, currentUser }) {
     const redenumeste = (id, nume) => { const next = (planseSantier || []).map((x) => x.id === id ? { ...x, nume } : x); setPlanseSantier(next); persist('planseSantier', next); };
@@ -5092,6 +5205,134 @@ function SiteMaterialsTab({ santierId, santierNume, company, materials, cereriSa
         return (React.createElement("div", { key: grup.grupId, className: "rounded-lg p-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-1.5" }, React.createElement("span", { className: "text-[11px] font-semibold", style: { color: 'var(--muted)' } }, "📋 Cerere · ", items.length, " materiale", cerutDe ? ` · ${cerutDe}` : ''), isMgr && auInAsteptare && (React.createElement("div", { className: "flex gap-1.5" }, React.createElement("button", { onClick: () => setGrupStatus(items, 'Aprobată'), className: "text-xs px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)', minHeight: 40 } }, "✓ Aprobă toate"), React.createElement("button", { onClick: () => setGrupStatus(items, 'Respinsă'), className: "text-xs px-3 py-2 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid #E0525266', minHeight: 40 } }, "✕ Respinge toate")))), React.createElement("div", { className: "space-y-1" }, items.map((c) => linie(c)))));
     })))))))), React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-2 flex-wrap gap-2" }, React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "📦 Stoc materiale la șantier"), React.createElement("div", { className: "flex items-center gap-1.5" }, currentUser?.rol === 'Manager' && consumList.length > 0 && React.createElement("button", { onClick: trimiteConsumInDeviz, className: "text-xs px-2 py-1 rounded-lg", style: { color: '#14181C', background: 'var(--acc1)' } }, "🧾 Exportă consum în Deviz"), stocList.length > 0 && React.createElement("button", { onClick: () => setStocShowAllSantier(!stocShowAllSantier), className: "text-xs px-2.5 py-1 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, stocShowAllSantier ? 'Ascunde' : '👁 Vezi tot stocul'))), stocList.length === 0 ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun material adus încă la șantier.")) : !stocShowAllSantier ? (React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Apasă „Vezi tot stocul\" ca să vezi lista.")) : (React.createElement("div", { className: "space-y-1" }, stocList.map((m) => (React.createElement("div", { key: m.denumire, className: "text-xs px-2 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "flex items-center justify-between gap-2" }, React.createElement("span", { style: { color: 'var(--text)' } }, m.denumire, " ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, m.stoc, " ", m.um)), editStocState === m.denumire ? (React.createElement("div", { className: "flex items-center gap-1" }, React.createElement("input", { type: "number", value: editStocValue, onChange: (e) => setEditStocValue(e.target.value), className: "w-16 rounded-lg px-2 py-1 text-xs outline-none", style: inputStyle }), React.createElement("button", { onClick: () => confirmEditStoc(m), className: "px-2 py-1 rounded-lg", style: { color: '#14181C', background: 'var(--acc2)' } }, "✓"), React.createElement("button", { onClick: () => setEditStocState(null), className: "px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)' } }, "✕"))) : consumState === m.denumire ? (React.createElement(MoveInput, { tip: "iesire", onConfirm: (cant) => confirmConsum(m.denumire, m.um, cant), onCancel: () => setConsumState(null) })) : returnMatState !== m.denumire ? (React.createElement("div", { className: "flex items-center gap-1 shrink-0" }, React.createElement("button", { onClick: () => { setEditStocState(m.denumire); setEditStocValue(m.stoc); }, className: "px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)' } }, "✎"), React.createElement("button", { onClick: () => setConsumState(m.denumire), className: "px-2 py-1 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel)' } }, "− Consum"), React.createElement("button", { onClick: () => { setReturnMatState(m.denumire); setReturnMatQty(m.stoc); }, className: "px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)' } }, "↩ Trimite"))) : null), returnMatState === m.denumire && (React.createElement("div", { className: "flex items-center gap-1 flex-wrap mt-2 pt-2", style: { borderTop: '1px solid var(--border)' } }, React.createElement("span", { className: "text-[10px]", style: { color: 'var(--muted)' } }, "Trimite"), React.createElement("input", { type: "number", value: returnMatQty, onChange: (e) => setReturnMatQty(e.target.value), className: "w-14 rounded-lg px-2 py-1 text-xs outline-none text-center", style: inputStyle }), React.createElement("span", { className: "text-[10px]", style: { color: 'var(--muted)' } }, m.um, " la:"), React.createElement("button", { onClick: () => confirmReturnMat(m, 'Depozit'), className: "px-2 py-1 rounded font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "🏠 Depozit"), React.createElement("button", { onClick: () => confirmReturnMat(m, 'Alt șantier'), className: "px-2 py-1 rounded font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "🏗 Alt șantier"), React.createElement("button", { onClick: () => confirmReturnMat(m, 'Furnizor'), className: "px-2 py-1 rounded font-medium", style: { color: '#14181C', background: 'var(--acc3)' } }, "🏭 Furnizor"), React.createElement("button", { onClick: () => setReturnMatState(null), className: "px-2 py-1", style: { color: 'var(--muted)' } }, "Anulează")))))))))));
 }
+/* ═══ ÎNCASĂRI PE ȘANTIER ════════════════════════════════════════════════════════════
+   Rând cu rând: când, cât, cum. Atât. Totalurile se adună singure, iar dashboard-ul le
+   citește de aici. */
+function IncasariSantier({ santier, onSchimba, onSchimbaLucrari, currentUser }) {
+    const [data, setData] = useState(dataLocala(new Date()));
+    const [lData, setLData] = useState(dataLocala(new Date()));
+    const [lDen, setLDen] = useState('');
+    const [lCant, setLCant] = useState('1');
+    const [lUm, setLUm] = useState('buc');
+    const [lPret, setLPret] = useState('');
+    const [suma, setSuma] = useState('');
+    const [fel, setFel] = useState('numerar');
+    const [nota, setNota] = useState('');
+    const lista = incasariSantier(santier).slice().sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+    const tot = totalIncasari([santier]);
+    const adauga = () => {
+        const v = Number(String(suma).replace(',', '.')) || 0;
+        if (!(v > 0)) {
+            window.alert('Scrie suma încasată.');
+            return;
+        }
+        const rand = { id: uid(), data: data || dataLocala(new Date()), suma: v, fel, nota: String(nota || '').trim(),
+            deCine: currentUser?.nume || '', laData: new Date().toISOString() };
+        onSchimba([...(santier.incasari || []), rand]);
+        setSuma('');
+        setNota('');
+    };
+    const sterge = (id) => {
+        if (!window.confirm('Ștergi rândul ăsta din încasări?'))
+            return;
+        onSchimba((santier.incasari || []).filter((x) => x.id !== id));
+    };
+    const cifra = (v) => money(v);
+    return React.createElement("div", { className: "space-y-3" },
+        React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2 mb-2 flex-wrap" },
+                React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "💵 Ce a intrat pe șantierul ăsta")),
+            React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" }, FELURI_INCASARE.map((f) => React.createElement("div", { key: f.id, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel)' } },
+                React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, f.icon + ' ' + f.label),
+                React.createElement("div", { className: "text-sm font-bold", style: { color: f.culoare, fontFamily: "'JetBrains Mono', monospace" } }, cifra(tot[f.id])))).concat([
+                React.createElement("div", { key: 'tot', className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel)' } },
+                    React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, "Total"),
+                    React.createElement("div", { className: "text-sm font-bold", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, cifra(tot.total)))
+            ]))),
+        (() => {
+            /* CE S-A FĂCUT: tip de lucrare, bucăți, preț unitar, total pe rând și total
+               general. Asta e hârtia pe care i-o spui clientului; tot de aici iei totalul
+               și-l treci ca încasare, dintr-o apăsare, ca să nu-l scrii de două ori. */
+            const lista = lucrariSantier(santier).slice().sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+            const totalGen = lista.reduce((a, l) => a + randTotal(l), 0);
+            const sugestii = Array.from(new Set(lista.map((l) => l.denumire).filter(Boolean))).map((x) => ({ key: x, label: x }));
+            const adaugaL = () => {
+                const den = String(lDen || '').trim();
+                const cant = Number(String(lCant).replace(',', '.')) || 0;
+                const pret = Number(String(lPret).replace(',', '.')) || 0;
+                if (!den) {
+                    window.alert('Scrie ce s-a făcut.');
+                    return;
+                }
+                if (!(cant > 0)) {
+                    window.alert('Scrie câte bucăți.');
+                    return;
+                }
+                onSchimbaLucrari([...(santier.lucrariMici || []), { id: uid(), data: lData || dataLocala(new Date()),
+                    denumire: den, cantitate: cant, um: lUm, pret: pret, deCine: currentUser?.nume || '' }]);
+                setLDen('');
+                setLCant('1');
+                setLPret('');
+            };
+            const stergeL = (id) => {
+                if (!window.confirm('Ștergi rândul ăsta din lucrări?'))
+                    return;
+                onSchimbaLucrari((santier.lucrariMici || []).filter((x) => x.id !== id));
+            };
+            return React.createElement("div", { className: "rounded-xl p-3 space-y-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap" },
+                    React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "🔧 Ce s-a făcut"),
+                    totalGen > 0 && React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--acc2)', fontFamily: "'JetBrains Mono', monospace" } }, "Total: " + money(totalGen))),
+                React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Tip de lucrare, câte bucăți și cât costă bucata. Totalul pe rând se face singur."),
+                lista.length > 0 && React.createElement("div", { className: "space-y-1" }, lista.map((l) => React.createElement("div", { key: l.id, className: "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5", style: { background: 'var(--panel2)' } },
+                    React.createElement("span", { className: "min-w-0 flex-1" },
+                        React.createElement("span", { className: "text-xs block truncate", style: { color: 'var(--text)' } }, l.denumire),
+                        React.createElement("span", { className: "text-[10px]", style: { color: 'var(--muted2)' } },
+                            dataRo(l.data) + ' · ' + (Number(l.cantitate) || 0) + ' ' + (l.um || 'buc') + ' × ' + money(Number(l.pret) || 0))),
+                    React.createElement("span", { className: "text-sm font-bold shrink-0", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, money(randTotal(l))),
+                    React.createElement("button", { onClick: () => stergeL(l.id), className: "text-[11px] px-2 py-1 rounded-lg shrink-0", style: { color: 'var(--acc4)', background: 'var(--panel)' } }, "Șterge")))),
+                React.createElement("div", { className: "flex gap-2 flex-wrap items-center pt-1", style: { borderTop: '1px solid var(--border)' } },
+                    React.createElement(RoDatePicker, { value: lData, onChange: setLData }),
+                    React.createElement(AutocompleteInput, { value: lDen, onChange: setLDen, onPick: (o) => setLDen(o && o.label ? o.label : ''), options: sugestii, placeholder: "Ce s-a făcut (ex: priză montată)", minWidth: 190 })),
+                React.createElement("div", { className: "flex gap-2 flex-wrap items-center" },
+                    React.createElement("input", { type: "number", inputMode: "decimal", placeholder: "Câte", value: lCant, onChange: (e) => setLCant(e.target.value),
+                        className: "rounded-lg px-3 py-2 text-sm outline-none", style: { width: 84, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                    React.createElement("select", { value: lUm, onChange: (e) => setLUm(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none",
+                        style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }, UM_LUCRARE.map((u) => React.createElement("option", { key: u, value: u, style: { background: 'var(--panel)' } }, u))),
+                    React.createElement("input", { type: "number", inputMode: "decimal", placeholder: "Preț/bucată", value: lPret, onChange: (e) => setLPret(e.target.value),
+                        className: "rounded-lg px-3 py-2 text-sm outline-none", style: { width: 130, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                    React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } },
+                        '= ' + money((Number(String(lCant).replace(',', '.')) || 0) * (Number(String(lPret).replace(',', '.')) || 0))),
+                    React.createElement("button", { onClick: adaugaL, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "Adaugă")),
+                totalGen > 0 && React.createElement("button", { onClick: () => { setSuma(String(Math.round(totalGen * 100) / 100)); setFel('numerar'); },
+                    className: "w-full text-xs px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } },
+                    "💵 Pune " + money(totalGen) + " la încasări, ca numerar"));
+        })(),
+        React.createElement("div", { className: "rounded-xl p-3 space-y-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "text-xs font-semibold", style: { color: 'var(--muted)' } }, "➕ Adaugă o încasare"),
+            React.createElement("div", { className: "flex gap-2 flex-wrap items-center" },
+                React.createElement(RoDatePicker, { value: data, onChange: setData }),
+                React.createElement("input", { type: "number", inputMode: "decimal", placeholder: "Suma (lei)", value: suma, onChange: (e) => setSuma(e.target.value),
+                    className: "rounded-lg px-3 py-2 text-sm outline-none", style: { width: 130, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                React.createElement("select", { value: fel, onChange: (e) => setFel(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none",
+                    style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }, FELURI_INCASARE.map((f) => React.createElement("option", { key: f.id, value: f.id, style: { background: 'var(--panel)' } }, f.icon + ' ' + f.label)))),
+            React.createElement("input", { placeholder: "Notă (de la cine, pentru ce) — opțional", value: nota, onChange: (e) => setNota(e.target.value),
+                className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+            React.createElement("div", { className: "flex justify-end" }, React.createElement("button", { onClick: adauga, className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "Adaugă"))),
+        lista.length === 0
+            ? React.createElement("div", { className: "text-xs text-center py-6", style: { color: 'var(--muted2)' } }, "Nicio încasare scrisă încă pe șantierul ăsta.")
+            : React.createElement("div", { className: "space-y-1.5" }, lista.map((i) => {
+                const f = felIncasare(i.fel);
+                return React.createElement("div", { key: i.id, className: "flex items-center justify-between gap-2 rounded-lg px-3 py-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                    React.createElement("span", { className: "min-w-0 flex-1" },
+                        React.createElement("span", { className: "text-xs block truncate", style: { color: 'var(--text)' } }, f.icon + ' ' + dataRo(i.data) + (i.nota ? ' — ' + i.nota : '')),
+                        React.createElement("span", { className: "text-[10px]", style: { color: 'var(--muted2)' } }, f.label + (i.deCine ? ' · scris de ' + i.deCine : ''))),
+                    React.createElement("span", { className: "text-sm font-bold shrink-0", style: { color: f.culoare, fontFamily: "'JetBrains Mono', monospace" } }, cifra(i.suma)),
+                    React.createElement("button", { onClick: () => sterge(i.id), className: "text-[11px] px-2 py-1 rounded-lg shrink-0", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "Șterge"));
+            })),
+        React.createElement("div", { className: "text-[11px] rounded-lg px-3 py-2", style: { background: 'var(--panel2)', color: 'var(--muted2)', border: '1px solid var(--border)' } },
+            "Rândurile astea le vezi doar tu, ca managerul firmei. Rămân însă întregi în copiile de siguranță și în extrasul pentru contabilă — se ascunde ecranul, nu evidența."));
+}
 function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, setStructuraSantier, persist }) {
     const _maine = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return dataLocala(d); })();
     const _azi = dataLocala(new Date());
@@ -5142,7 +5383,8 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
     ].map(([m, label, desc]) => {
         const on = modCurent === m;
         return (React.createElement("button", { key: m, type: "button", onClick: () => setMod(m), className: "w-full text-left px-3 py-2 rounded-lg", style: { background: on ? '#1d4e78' : 'var(--panel)', border: '1px solid ' + (on ? 'var(--acc1)' : 'var(--border)') } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: on ? '#fff' : 'var(--text)' } }, label), React.createElement("div", { className: "text-[11px]", style: { color: on ? '#cfe4f5' : 'var(--muted2)' } }, desc)));
-    }))), (modCurent === 'orar' || modCurent === 'orar_lucrari' || modCurent === 'lucrare_mica') && (React.createElement("div", null, React.createElement("div", { className: "text-xs mb-1.5", style: { color: 'var(--muted)' } }, "Preț pe oră (lei, fără TVA):"), React.createElement("input", { type: "number", inputMode: "decimal", placeholder: "75", value: form.tarifOrar, onChange: (e) => setForm({ ...form, tarifOrar: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), (modCurent === 'pozitie_propriu' || modCurent === 'pozitie_client' || modCurent === 'real_executat') && (React.createElement("div", { className: "text-[11px] rounded-lg px-3 py-2", style: { background: 'var(--panel2)', color: 'var(--muted)', border: '1px solid var(--border)' } }, "📥 ", modCurent === 'real_executat' ? 'Lista de materiale/operațiuni cu prețul de manoperă' : 'Lista de poziții și materiale (cu prețuri)', " se importă din Excel la ", React.createElement("b", null, "„📋 Poziții/Materiale\""), " pe șantier. Prețurile le vezi doar tu.")), React.createElement("div", { className: "pt-1", style: { borderTop: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-1.5 mt-2 font-semibold", style: { color: 'var(--muted)' } }, "BENEFICIAR (apare pe deviz/factură)"), React.createElement("div", { className: "space-y-2" }, React.createElement("div", null, React.createElement("input", { list: "clienti-catalog", placeholder: "🔍 Alege client din listă (după nume sau CUI)", value: form.benefPicker || '', onChange: (e) => {
+    }))), (modCurent === 'orar' || modCurent === 'orar_lucrari' || modCurent === 'lucrare_mica') && (React.createElement("div", null, React.createElement("div", { className: "text-xs mb-1.5", style: { color: 'var(--muted)' } }, "Preț pe oră (lei, fără TVA):"), React.createElement("input", { type: "number", inputMode: "decimal", placeholder: "75", value: form.tarifOrar, onChange: (e) => setForm({ ...form, tarifOrar: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), (modCurent === 'pozitie_propriu' || modCurent === 'pozitie_client' || modCurent === 'real_executat') && (React.createElement("div", { className: "text-[11px] rounded-lg px-3 py-2", style: { background: 'var(--panel2)', color: 'var(--muted)', border: '1px solid var(--border)' } }, "📥 ", modCurent === 'real_executat' ? 'Lista de materiale/operațiuni cu prețul de manoperă' : 'Lista de poziții și materiale (cu prețuri)', " se importă din Excel la ", React.createElement("b", null, "„📋 Poziții/Materiale\""), " pe șantier. Prețurile le vezi doar tu.")), React.createElement("div", { className: "pt-1", style: { borderTop: '1px solid var(--border)' } },
+        React.createElement("div", { className: "text-xs mb-1.5 mt-2 font-semibold", style: { color: 'var(--muted)' } }, "BENEFICIAR (apare pe deviz/factură)"), React.createElement("div", { className: "space-y-2" }, React.createElement("div", null, React.createElement("input", { list: "clienti-catalog", placeholder: "🔍 Alege client din listă (după nume sau CUI)", value: form.benefPicker || '', onChange: (e) => {
             const val = e.target.value;
             const c = (clients || []).find((x) => `${x.nume} — ${x.cui || ''}` === val || x.nume === val || (x.cui && x.cui === val));
             if (c) {
@@ -7818,7 +8060,6 @@ function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, s
     const [etapaTab, setEtapaTab] = useState('toate');
     const [etapaNoua, setEtapaNoua] = useState('');
     const [siteSearch, setSiteSearch] = useState('');
-    const [grupAles, setGrupAles] = useState(null);
     const [siteView, setSiteView] = useState('__closed__');
     useEffect(() => {
         if (onSiteView)
@@ -8059,7 +8300,9 @@ function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, s
     };
     const saveSantier = (s) => {
         const vechi = santiere.find((x) => x.id === s.id) || null;
-        const CAMPURI_DIN_AFARA = ['ultimNrDeviz', 'lat', 'lng', 'locatieLa', 'finalizatDe', 'finalizatLa', 'statusSchimbatLa'];
+        /* „incasari" se scriu din ecranul șantierului, nu din formularul ăsta. Dacă n-ar fi
+           trecute aici, o simplă editare a numelui le-ar șterge pe toate, fără un cuvânt. */
+        const CAMPURI_DIN_AFARA = ['ultimNrDeviz', 'lat', 'lng', 'locatieLa', 'finalizatDe', 'finalizatLa', 'statusSchimbatLa', 'incasari', 'lucrariMici'];
         const dinAfara = {};
         if (vechi)
             CAMPURI_DIN_AFARA.forEach((k) => {
@@ -8130,6 +8373,16 @@ function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, s
         setCereriAlocare(nextC);
         persist('cereriAlocare', nextC);
         notifica(cerere.userId, { title: '⛔ Alocare respinsă', body: `Cererea pentru „${s?.nume || 'șantier'}" a fost respinsă.`, tag: 'aloc-raspuns' }, currentUser?.id);
+    };
+    const setIncasariSantier = (id, incasari) => {
+        const next = santiere.map((s) => s.id === id ? { ...s, incasari } : s);
+        setSantiere(next);
+        persist('santiere', next);
+    };
+    const setLucrariSantierMic = (id, lucrariMici) => {
+        const next = santiere.map((s) => s.id === id ? { ...s, lucrariMici } : s);
+        setSantiere(next);
+        persist('santiere', next);
     };
     const setSantierLocatie = (id, lat, lng) => {
         const next = santiere.map((s) => s.id === id ? { ...s, lat, lng } : s);
@@ -8589,7 +8842,7 @@ function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, s
         })), teamPickerOpen && (React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-2", style: { borderTop: '1px solid var(--border)' } }, allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Toți electricienii sunt deja asignați (sau nu există niciunul înregistrat).")) : allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).map((u) => (React.createElement("button", { key: u.id, onClick: () => addToEchipa(santier.id, u.id), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "+ 👷 ", u.nume))))))) : (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "Colegi asignați la acest șantier"), React.createElement("div", { className: "space-y-1" }, echipaNormalizata(santier?.echipa).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun coleg asignat.")) : echipaNormalizata(santier?.echipa).map((e) => {
             const u = allUsers.find((x) => x.id === e.userId);
             return (React.createElement("div", { key: e.userId, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, "👷 ", u?.nume || '(cont șters)', e.userId === currentUser?.id && React.createElement("span", { style: { color: 'var(--muted2)' } }, " (tu)")), React.createElement("div", { className: "flex items-center gap-2" }, u?.telefon && e.userId !== currentUser?.id && React.createElement("a", { href: `tel:${String(u.telefon).replace(/\s/g, '')}`, className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "📞 ", u.telefon), (() => { const cc = concediuActiv(concedii, { userId: e.userId, nume: u?.nume }, dataLocala(new Date())); return React.createElement("span", { className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: cc ? '#C08CE0' : (e.status === 'pauza' ? 'var(--acc3)' : 'var(--acc2)') } }, cc ? '🏖 Concediu' : (e.status === 'pauza' ? 'Pauză' : 'Activ')); })())));
-        }))))), accHeader('structura', '🏢', 'Structură — etaje', (structuraSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'structura' && (React.createElement(SiteStructuraTab, { santierId: selected, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, rapoarte: rapoarte, materials: materials, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected) })), accHeader('devizpoz', '📋', 'Poziții / Materiale', ((pozitiiSantier.filter((x) => x.santierId === selected).length + materialeListaSantier.filter((x) => x.santierId === selected).length) || null)), siteView === 'devizpoz' && (React.createElement(SiteDevizPozTab, { santierId: selected, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, persist: persist, isManager: currentUser?.rol === 'Manager' })))));
+        }))))), currentUser?.rol === 'Manager' && accHeader('incasari', '💵', 'Încasări (numerar / factură)', (incasariSantier(santier).length || null)), currentUser?.rol === 'Manager' && siteView === 'incasari' && React.createElement(IncasariSantier, { santier: santier, currentUser: currentUser, onSchimba: (lista) => setIncasariSantier(selected, lista), onSchimbaLucrari: (lista) => setLucrariSantierMic(selected, lista) }), accHeader('structura', '🏢', 'Structură — etaje', (structuraSantier.filter((x) => x.santierId === selected).length || null)), siteView === 'structura' && (React.createElement(SiteStructuraTab, { santierId: selected, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, rapoarte: rapoarte, materials: materials, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected) })), accHeader('devizpoz', '📋', 'Poziții / Materiale', ((pozitiiSantier.filter((x) => x.santierId === selected).length + materialeListaSantier.filter((x) => x.santierId === selected).length) || null)), siteView === 'devizpoz' && (React.createElement(SiteDevizPozTab, { santierId: selected, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, persist: persist, isManager: currentUser?.rol === 'Manager' })))));
     }
     return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-4 gap-3" }, React.createElement("h2", { className: "text-lg shrink-0", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Șantiere"), React.createElement("input", { placeholder: "Caută șantier...", value: siteSearch, onChange: (e) => setSiteSearch(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), !form && currentUser?.rol === 'Manager' && React.createElement("button", { onClick: () => setForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Adaugă șantier"), !quickForm && currentUser?.rol !== 'Manager' && React.createElement("button", { onClick: () => setQuickForm({ nume: '', adresa: '' }), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Șantier nou")), form && React.createElement(SantierForm, { initial: form.id ? form : null, clients: clients, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, persist: persist, onCancel: () => setForm(null), onSave: saveSantier }), quickForm && (React.createElement("div", { className: "rounded-xl p-4 mb-4 space-y-2 max-w-sm", style: { background: 'var(--panel)', border: '1px solid #2E8BD166' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "➕ Șantier nou (rapid)"), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Pui doar numele și adresa. Restul (beneficiar, facturare) le completează managerul. Tu ești pus automat pe el și poți lucra/raporta imediat."), React.createElement("input", { placeholder: "Nume șantier", value: quickForm.nume, onChange: (e) => setQuickForm({ ...quickForm, nume: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), React.createElement("input", { placeholder: "Adresă", value: quickForm.adresa, onChange: (e) => setQuickForm({ ...quickForm, adresa: e.target.value }), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), React.createElement("div", { className: "flex justify-end gap-2 pt-1" }, React.createElement("button", { onClick: () => setQuickForm(null), className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renunță"), React.createElement("button", { onClick: creeazaSantierRapid, disabled: !String(quickForm.nume).trim(), className: "px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc1)' } }, "Creează și mă alochez")))), currentUser?.rol === 'Manager' && (cereriAlocare || []).some((c) => c.status === 'Cerut') && (React.createElement("div", { className: "rounded-xl p-3 mb-4", style: { background: '#E9A23B14', border: '1px solid #E9A23B66', borderLeft: '4px solid #E9A23B' } }, React.createElement("div", { className: "text-sm font-semibold mb-2", style: { color: 'var(--acc3)' } }, "⏳ Cereri de alocare pe șantier"), React.createElement("div", { className: "space-y-1.5" }, (cereriAlocare || []).filter((c) => c.status === 'Cerut').map((c) => {
         const s = santiere.find((x) => x.id === c.santierId);
@@ -13692,8 +13945,100 @@ function DeUndeVineCostul({ company, rapoarte, setTab }) {
             " ",
             React.createElement("button", { onClick: () => setTab('firma'), style: { color: 'var(--acc1)', textDecoration: 'underline' } }, "Schimb\u0103"))));
 }
+/* ═══ ALEGEREA PERIOADEI ══════════════════════════════════════════════════════════════
+   Zi / Săptămână / Lună / An / o perioadă aleasă de tine. Socoteala stă separat de desen,
+   ca s-o pot proba fără browser. Totul se face pe date locale („2026-09-15"), niciodată
+   pe ceasul universal — altfel, la ora 2 noaptea, „azi" ar putea ieși ziua de ieri. */
+const FELURI_PERIOADA = [
+    { id: 'zi', label: 'Zi', pas: 'zi' },
+    { id: 'sapt', label: 'Săptămână', pas: 'sapt' },
+    { id: 'luna', label: 'Lună', pas: 'luna' },
+    { id: 'an', label: 'An', pas: 'an' },
+    { id: 'ales', label: 'Perioadă', pas: null },
+];
+const dinIso = (iso) => {
+    const [a, l, z] = String(iso || '').split('-').map(Number);
+    return new Date(a || 1970, (l || 1) - 1, z || 1);
+};
+function intervalPerioada(fel, ancora, deAles, laAles) {
+    const d = dinIso(ancora);
+    const an = d.getFullYear();
+    if (fel === 'zi') {
+        const iso = dataLocala(d);
+        return { de: iso, la: iso, eticheta: dataRo(iso) };
+    }
+    if (fel === 'sapt') {
+        /* Săptămâna românească începe LUNI. getDay() dă 0 pentru duminică, de aia duminica
+           se dă înapoi cu 6 zile, nu cu 0 — altfel duminica ar începe o săptămână nouă. */
+        const zi = d.getDay();
+        const inapoi = zi === 0 ? 6 : zi - 1;
+        const luni = new Date(an, d.getMonth(), d.getDate() - inapoi);
+        const dum = new Date(luni.getFullYear(), luni.getMonth(), luni.getDate() + 6);
+        return { de: dataLocala(luni), la: dataLocala(dum), eticheta: dataRo(dataLocala(luni)) + ' – ' + dataRo(dataLocala(dum)) };
+    }
+    if (fel === 'luna') {
+        const prima = new Date(an, d.getMonth(), 1);
+        const ultima = new Date(an, d.getMonth() + 1, 0);
+        return { de: dataLocala(prima), la: dataLocala(ultima), eticheta: LUNI_RO[d.getMonth()] + ' ' + an };
+    }
+    if (fel === 'an') {
+        return { de: an + '-01-01', la: an + '-12-31', eticheta: 'Anul ' + an };
+    }
+    const de = String(deAles || '');
+    const la = String(laAles || '');
+    if (!de || !la)
+        return { de: de || la, la: la || de, eticheta: 'Alege perioada' };
+    const [x, y] = de <= la ? [de, la] : [la, de];   // dacă le-ai pus invers, le întorc eu
+    return { de: x, la: y, eticheta: dataRo(x) + ' – ' + dataRo(y) };
+}
+function mutaAncora(fel, ancora, pas) {
+    const d = dinIso(ancora);
+    if (fel === 'zi')
+        return dataLocala(new Date(d.getFullYear(), d.getMonth(), d.getDate() + pas));
+    if (fel === 'sapt')
+        return dataLocala(new Date(d.getFullYear(), d.getMonth(), d.getDate() + pas * 7));
+    if (fel === 'luna')
+        return dataLocala(new Date(d.getFullYear(), d.getMonth() + pas, 1));
+    if (fel === 'an')
+        return dataLocala(new Date(d.getFullYear() + pas, 0, 1));
+    return ancora;
+}
+/* Butoanele. „Perioadă" scoate la iveală două căsuțe de dată; restul umblă cu ‹ ›. */
+function AlegePerioada({ fel, setFel, ancora, setAncora, deAles, setDeAles, laAles, setLaAles, eticheta }) {
+    const chip = (f) => React.createElement("button", { key: f.id, onClick: () => setFel(f.id),
+        className: "text-[11px] px-2.5 py-1 rounded-lg font-semibold",
+        style: { color: fel === f.id ? '#14181C' : 'var(--muted)', background: fel === f.id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, f.label);
+    const sageata = (semn, txt) => React.createElement("button", { onClick: () => setAncora(mutaAncora(fel, ancora, semn)),
+        className: "text-xs px-2 py-1 rounded-lg font-bold",
+        style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, txt);
+    return React.createElement("div", { className: "space-y-2" },
+        React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, FELURI_PERIOADA.map(chip)),
+        fel !== 'ales'
+            ? React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
+                sageata(-1, '‹'),
+                React.createElement("span", { className: "text-xs font-semibold", style: { color: 'var(--text)', minWidth: 150, textAlign: 'center' } }, eticheta),
+                sageata(1, '›'),
+                React.createElement("button", { onClick: () => setAncora(dataLocala(new Date())), className: "text-[11px] px-2 py-1 rounded-lg",
+                    style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Acum"))
+            : React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "De la"),
+                React.createElement(RoDatePicker, { value: deAles, onChange: setDeAles }),
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "până la"),
+                React.createElement(RoDatePicker, { value: laAles, onChange: setLaAles })));
+}
 function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPendingSiteNav, mod, format, onDeschide, analiza, onExtras }) {
     const ePagina = mod === 'pagina';
+    /* PE O PERIOADĂ ALEASĂ, NU PE TOT ISTORICUL. Până acum aduna tot ce s-a lucrat
+       vreodată, iar cifra creștea la nesfârșit și nu-ți spunea nimic despre cum merge
+       treaba ACUM. Implicit e luna curentă; poți trece pe zi, săptămână, an sau pe o
+       perioadă scrisă de tine, iar cu ‹ › te plimbi înainte și înapoi. */
+    const [felPerioada, setFelPerioada] = useState('luna');
+    const [ancoraPerioada, setAncoraPerioada] = useState(dataLocala(new Date()));
+    const [deAles, setDeAles] = useState(dataLocala(new Date()));
+    const [laAles, setLaAles] = useState(dataLocala(new Date()));
+    const per = intervalPerioada(felPerioada, ancoraPerioada, deAles, laAles);
+    const deLaProfit = per.de;
+    const panaLaProfit = per.la;
     const [deschis, setDeschis] = useState(mod === 'pagina');
     const [desfacut, setDesfacut] = useState(null);
     const [santierDeschis, setSantierDeschis] = useState(null);
@@ -13703,7 +14048,8 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
     const costMaterial = (den) => { const m = (materials || []).find((x) => norm(x.denumire) === norm(den)); return m ? (Number(m.pret) || 0) : 0; };
     const rapUnificate = useMemo(() => unificaRapoarte(rapoarte || []), [rapoarte]);
     const rand = useMemo(() => (santiere || []).map((s) => {
-        const rapS = rapUnificate.filter((r) => r.santierId === s.id);
+        const rapS = rapUnificate.filter((r) => r.santierId === s.id
+            && String(r.data || '') >= deLaProfit && String(r.data || '') <= panaLaProfit);
         const minute = rapS.reduce((acc, r) => acc + (r.persoane || []).filter((p) => p.nume && String(p.nume).trim()).reduce((a, p) => a + minuteFacturabile(rapoarte, r, p), 0), 0);
         const ore = minute / 60;
         const tarif = Number(s.tarifOrar) || 0;
@@ -13717,7 +14063,7 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
         const marjaMat = materialeVanzare - materialeCost;
         return { s, ore, tarif, manoperaVal, materialeCost, materialeVanzare, manoperaCost, valoare, cost, profit, marjaMat };
     }).filter((x) => x.ore > 0 || x.materialeCost > 0)
-        .sort((a, b) => (costOra > 0 ? b.profit - a.profit : b.valoare - a.valoare)), [santiere, rapUnificate, rapoarte, materials, adaos, costOra]);
+        .sort((a, b) => (costOra > 0 ? b.profit - a.profit : b.valoare - a.valoare)), [santiere, rapUnificate, rapoarte, materials, adaos, costOra, deLaProfit, panaLaProfit]);
     const tValoare = rand.reduce((a, x) => a + x.valoare, 0);
     const tProfit = rand.reduce((a, x) => a + x.profit, 0);
     const tMarjaMat = rand.reduce((a, x) => a + x.marjaMat, 0);
@@ -13815,15 +14161,20 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
                     React.createElement("span", { className: "text-[9px] font-bold", style: { color: 'var(--muted)', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u221E STATUS SISTEM"),
                     React.createElement("span", { "data-status-sistem": true, className: "text-[9.5px] font-bold", style: { color: st[1], letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, st[0]))));
         }
-        return React.createElement(Ceas, { icon: "\uD83D\uDCB6", titlu: "Profit pe \u0219antiere", format: format, verdict: verdictP, onClick: onDeschide, procent: ac, centru: inMijloc, serie: pulsProfit, eticheta: "marj\u0103", turnuri: rand.slice().sort((a, b) => (costOra > 0 ? b.profit - a.profit : b.valoare - a.valoare)).map((x) => ({ v: costOra > 0 ? Math.max(0, x.profit) : x.valoare, nume: x.s.nume })), valoare: rand.length === 0 ? '—' : costOra > 0 ? money(tProfit) : money(tValoare), nota: rand.length === 0 ? 'încă fără rapoarte' : costOra > 0 ? rand.length + ' șantiere cu activitate' : 'valoare produsă (fără costul orei)', culoare: rand.length === 0 ? 'var(--muted2)' : costOra > 0 ? (tProfit >= 0 ? 'var(--acc2)' : 'var(--acc4)') : 'var(--text)' });
+        return React.createElement(Ceas, { icon: "\uD83D\uDCB6", titlu: "Profit pe \u0219antiere", format: format, verdict: verdictP, onClick: onDeschide, procent: ac, centru: inMijloc, serie: pulsProfit, eticheta: "marj\u0103", turnuri: rand.slice().sort((a, b) => (costOra > 0 ? b.profit - a.profit : b.valoare - a.valoare)).map((x) => ({ v: costOra > 0 ? Math.max(0, x.profit) : x.valoare, nume: x.s.nume })), valoare: rand.length === 0 ? '—' : costOra > 0 ? money(tProfit) : money(tValoare), nota: rand.length === 0 ? per.eticheta + ' — încă fără rapoarte' : costOra > 0 ? rand.length + ' șantiere · ' + per.eticheta : 'valoare produsă (fără costul orei) · ' + per.eticheta, culoare: rand.length === 0 ? 'var(--muted2)' : costOra > 0 ? (tProfit >= 0 ? 'var(--acc2)' : 'var(--acc4)') : 'var(--text)' });
     }
     return (React.createElement("div", { className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement("button", { onClick: () => !ePagina && setDeschis(!deschis), className: "w-full flex items-center justify-between gap-2 text-left" },
             React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
                 React.createElement("span", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "\uD83D\uDCB6 Profitabilitate pe \u0219antier"),
+                React.createElement("span", { className: "text-[11px] px-2 py-0.5 rounded-full", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, per.eticheta),
                 deschis && costOra > 0 && React.createElement("span", { className: "text-[11px] px-2 py-0.5 rounded-full font-bold", style: { color: '#fff', background: tProfit >= 0 ? 'var(--acc2)' : '#E05252' } }, money(tProfit))),
             !ePagina && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, deschis ? '▲ ascunde' : '▼ vezi')),
-        deschis && (rand.length === 0 ? (React.createElement("p", { className: "text-xs mt-3", style: { color: 'var(--muted)' } }, "\u00CEnc\u0103 nu sunt rapoarte cu ore sau materiale din care s\u0103 calculez. Pe m\u0103sur\u0103 ce b\u0103ie\u021Bii completeaz\u0103 rapoartele zilnice, aici vezi ce aduce fiecare \u0219antier.")) : (React.createElement("div", { className: "mt-3" },
+        deschis && React.createElement("div", { className: "mt-3 rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)' } },
+            React.createElement(AlegePerioada, { fel: felPerioada, setFel: setFelPerioada, ancora: ancoraPerioada, setAncora: setAncoraPerioada,
+                deAles: deAles, setDeAles: setDeAles, laAles: laAles, setLaAles: setLaAles, eticheta: per.eticheta }),
+            React.createElement("div", { className: "text-[10px] mt-1.5", style: { color: 'var(--muted2)' } }, "ce s-a lucrat \u00een perioada asta \u2014 nu tot istoricul")),
+        deschis && (rand.length === 0 ? (React.createElement("p", { className: "text-xs mt-3", style: { color: 'var(--muted)' } }, "\u00CEn perioada asta nu sunt rapoarte cu ore sau materiale din care s\u0103 calculez. Alege alt\u0103 perioad\u0103 cu s\u0103ge\u021Bile, sau a\u0219teapt\u0103 rapoartele. Pe m\u0103sur\u0103 ce b\u0103ie\u021Bii completeaz\u0103 rapoartele zilnice, aici vezi ce aduce fiecare \u0219antier.")) : (React.createElement("div", { className: "mt-3" },
             costOra <= 0 && (React.createElement("div", { className: "text-[11px] mb-3 px-2.5 py-1.5 rounded-lg", style: { background: '#E9A23B15', color: 'var(--acc3)' } }, "\u26A0 Ca s\u0103 vezi profitul real, lipe\u0219te situa\u021Bia de la contabil\u0103 \u00EEn \u2699 Firma mea (butonul \uD83D\uDCCB) \u2014 \u00EE\u021Bi calculez singur c\u00E2t te cost\u0103 o or\u0103. P\u00E2n\u0103 atunci ar\u0103t valoarea lucr\u0103rii \u0219i marja pe materiale.")),
             React.createElement("div", { className: "rounded-lg p-2 mb-3", style: { background: 'var(--panel2)' } },
                 React.createElement(UndaHolo, { serie: pulsProfit, culoare: costOra > 0 ? (tProfit >= 0 ? '#00FF9C' : '#FF4757') : '#00E5FF', mare: true }),
@@ -13917,6 +14268,26 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
                                 o.zile.size === 1 ? 'zi' : 'zile')))))),
                     React.createElement("button", { onClick: () => mergiLa(x.s.id), className: "text-xs px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Deschide \u0219antierul \u2192")));
             })(),
+            !(ePagina && santierDeschis) && (() => {
+                /* Rândul care desparte cash-ul de facturat CHIAR AICI, unde altfel totul e
+                   adunat la un loc. Aceleași cifre ca în lista de dedesubt, doar strânse
+                   în două grămezi: lucrările mici (bani gheață) și restul (pe factură). */
+                const mMici = rand.filter((x) => E_LUCRARE_MICA(x.s));
+                const mMari = rand.filter((x) => !E_LUCRARE_MICA(x.s));
+                if (mMici.length === 0 || mMari.length === 0)
+                    return null;
+                const vMici = mMici.reduce((a, x) => a + x.valoare, 0);
+                const vMari = mMari.reduce((a, x) => a + x.valoare, 0);
+                const tot = vMici + vMari;
+                const pMici = tot > 0 ? Math.round(vMici / tot * 100) : 0;
+                const caseta = (icon, et, val, nr, cul, proc) => React.createElement("div", { className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)' } },
+                    React.createElement("div", { className: "text-[9px] uppercase tracking-wide", style: { color: 'var(--muted2)' } }, icon + ' ' + et),
+                    React.createElement("div", { className: "text-xs font-bold", style: { color: cul, fontFamily: "'JetBrains Mono', monospace" } }, money(val)),
+                    React.createElement("div", { className: "text-[9px]", style: { color: 'var(--muted2)' } }, proc + '% \u00b7 ' + nr + (nr === 1 ? ' lucrare' : ' lucr\u0103ri')));
+                return React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-2" },
+                    caseta('\uD83D\uDD27', 'Cash (lucr\u0103ri mici)', vMici, mMici.length, 'var(--acc2)', pMici),
+                    caseta('\uD83E\uDDFE', 'Pe factur\u0103', vMari, mMari.length, '#E9A23B', 100 - pMici));
+            })(),
             !(ePagina && santierDeschis) && React.createElement("div", { className: "space-y-1" }, rand.map((x) => {
                 const marja = x.valoare > 0 ? Math.round(x.profit / x.valoare * 100) : 0;
                 const eDesfacut = false;
@@ -13950,9 +14321,12 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
                     React.createElement("button", { onClick: () => onExtras ? onExtras(x.s.id) : setSantierDeschis(x.s.id), className: "w-full flex items-center justify-between gap-2 text-left rounded-lg px-2.5 py-2" },
                         React.createElement("div", { className: "min-w-0 flex-1" },
                             React.createElement("div", { className: "text-xs font-medium truncate", style: { color: 'var(--text)' } },
-                                "\uD83C\uDFD7 ",
+                                /* 🔧 = lucrare mică, adică bani cash; 🏗 = șantier pe factură.
+                                   Doar semnul diferă — socoteala rămâne exact cum era. */
+                                E_LUCRARE_MICA(x.s) ? "\uD83D\uDD27 " : "\uD83C\uDFD7 ",
                                 x.s.nume),
-                            React.createElement("div", { className: "text-[10px]", style: { color: 'var(--muted2)' } },
+                            React.createElement("div", { className: "text-[10px]", style: { color: E_LUCRARE_MICA(x.s) ? 'var(--acc2)' : 'var(--muted2)' } },
+                                E_LUCRARE_MICA(x.s) ? 'cash · ' : '',
                                 Math.round(x.ore * 10) / 10,
                                 " h",
                                 x.tarif ? ' × ' + money(x.tarif) : '',
@@ -14000,7 +14374,7 @@ function Profitabilitate({ santiere, rapoarte, materials, company, setTab, setPe
                         React.createElement("button", { onClick: () => mergiLa(x.s.id), className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "Deschide \u0219antierul \u2192")))));
             })),
             !(ePagina && santierDeschis) && React.createElement("div", { className: "text-[10px] mt-2", style: { color: 'var(--muted2)' } },
-                "Estimare din rapoartele zilnice: ore \u00D7 tarif + materiale (pre\u021B de v\u00E2nzare), minus ore \u00D7 cost/or\u0103 + materiale la achizi\u021Bie. Nu \u021Bine loc de contabilitate.",
+                "Doar perioada aleas\u0103, nu tot istoricul. Estimare din rapoartele zilnice: ore \u00D7 tarif + materiale (pre\u021B de v\u00E2nzare), minus ore \u00D7 cost/or\u0103 + materiale la achizi\u021Bie. La lucr\u0103rile mici unde ai scris „Ce s-a f\u0103cut\" (buc\u0103\u021Bi \u00D7 pre\u021B), aia e valoarea. Nu \u021Bine loc de contabilitate.",
                 ePagina && onExtras ? ' Apasă pe un șantier → extrasul lui contabil.' : ''),
             ePagina && !santierDeschis && (React.createElement(AnalizaRubrica, { titlu: "profitul pe \u0219antiere", setTab: setTab, semnale: (analiza || []).concat(costOra > 0 && rand.some((x) => x.profit < 0)
                     ? rand.filter((x) => x.profit < 0).slice(0, 3).map((x) => ({ id: 'p_minus_' + x.s.id, nivel: 'rosu', titlu: x.s.nume + ' e pe minus: ' + money(x.profit), detaliu: 'A produs ' + money(x.valoare) + ' dar a costat ' + money(x.cost) + '. Verifică tariful (' + (x.tarif ? money(x.tarif) + '/h' : 'LIPSEȘTE') + ') față de costul orei (' + money(costOra) + '/h) și orele care nu ajung în lucrare.', tab: 'santiere' }))
@@ -14179,6 +14553,88 @@ function Randament({ rapoarte, santiere, pozitiiSantier, materialeListaSantier, 
                     : []), cifre: areCifre && cost
                     ? 'Costul orei (tot inclus): ' + Math.round(cost.totalPeOra) + ' lei; prag tarif: ' + Math.round(cost.pragTarif) + ' lei; produs pe oră în perioadă: ' + (totalOre > 0 ? Math.round(leiPeOra) : 0) + ' lei (' + Math.round(totalOre) + ' h, ' + Math.round(totalVal) + ' lei produși); ore plătite care n-au ajuns în lucrare: ' + Math.round(cost.orePierdute) + ' (' + Math.round(cost.procentPierdut) + '%)'
                     : 'Costul orei NU se poate calcula — lipsesc cifrele contabilei (se pun în ⚙ Firma mea).' }))))));
+}
+/* ═══ RUBRICA „CASH" DIN TABLOUL DE BORD ═════════════════════════════════════════════
+   Întrebarea la care răspunde, într-o privire: cât din ce am lucrat merge pe factură și
+   cât e cash. Două surse, ținute separat ca să se vadă de unde vine fiecare leu:
+     · LUCRĂRILE MICI — se calculează singure din rapoartele zilnice (ore × tarif +
+       materiale). Nu scrii nimic de mână; se umplu pe măsură ce băieții raportează.
+     · ÎNCASĂRILE SCRISE DE TINE pe șantiere, cele marcate „numerar".
+   Facturile rămân unde erau, în rubrica „💰 Cashflow" — nu le-am atins. */
+function PaginaCash({ santiere, rapoarte, materials, company, invoices, setTab, setPendingSiteNav }) {
+    /* Luna curentă, fix — aceeași ca la Cashflow, fără comutator de perioadă.
+       Aici se numără DOAR banii chiar intrați: numerarul și transferurile scrise pe
+       șantiere, plus facturile bifate „Încasată". Valoarea lucrărilor mici o arăt tot
+       aici, dar SEPARAT, jos — ea spune ce ai muncit, nu ce ai încasat, iar diferența
+       dintre cele două e exact lista de bani pe care încă nu i-ai luat. */
+    const acum = new Date();
+    const an = acum.getFullYear();
+    const lunaCur = dataLocala(acum).slice(0, 7);
+    const deLa = lunaCur + '-01';
+    const panaLa = lunaCur + '-31';
+    const eticheta = LUNI_RO[acum.getMonth()] + ' ' + an;
+    const bi = baniIntrati(santiere, invoices, deLa, panaLa);
+    const mici = valoareLucrariMici(santiere, rapoarte, materials, company, deLa, panaLa);
+    const totalJoc = bi.total;
+    const proc = (v) => (totalJoc > 0 ? Math.round(v / totalJoc * 100) : 0);
+    const bara = (val, culoare) => React.createElement("div", { style: { height: 8, borderRadius: 4, background: 'var(--panel)', overflow: 'hidden' } },
+        React.createElement("div", { style: { height: '100%', width: proc(val) + '%', background: culoare, borderRadius: 4 } }));
+    const caseta = (icon, titlu, val, culoare, sub) => React.createElement("div", { className: "rounded-lg px-3 py-2.5", style: { background: 'var(--panel2)' } },
+        React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-0.5", style: { color: 'var(--muted2)' } }, icon + ' ' + titlu),
+        React.createElement("div", { className: "text-base font-bold mb-1", style: { color: culoare, fontFamily: "'JetBrains Mono', monospace" } }, money(val)),
+        bara(val, culoare),
+        React.createElement("div", { className: "text-[10px] mt-1", style: { color: 'var(--muted2)' } }, sub));
+    /* Ce ai lucrat pe mărunțiș, minus ce ai trecut deja ca numerar. Dacă iese pozitiv,
+       sunt bani munciți pe care nu i-ai însemnat nicăieri — nu îi trec eu de la mine. */
+    const netrecut = Math.max(0, mici.total - bi.inMana);
+    return React.createElement("div", { className: "rounded-xl p-4 mb-3", style: { background: 'var(--panel)', border: '1px solid #4CAF7D66', borderLeft: '4px solid #4CAF7D' } },
+        React.createElement("div", { className: "flex items-center justify-between mb-1 gap-2 flex-wrap" },
+            React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--acc2)' } }, "💵 Bani intrați — " + eticheta)),
+        React.createElement("div", { className: "text-[11px] mb-3", style: { color: 'var(--muted2)' } },
+            "Doar ce a intrat efectiv în luna asta. Nu ce ai lucrat, nu ce ai facturat."),
+        React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3" },
+            caseta('💵', 'Numerar (pe mână)', bi.inMana, 'var(--acc2)', totalJoc > 0 ? proc(bi.inMana) + '% din banii intrați' : 'nimic trecut'),
+            caseta('🏦', 'Transfer bancar', bi.peCont, '#2E8BD1', totalJoc > 0 ? proc(bi.peCont) + '% din banii intrați' : 'nimic trecut'),
+            caseta('🧾', 'Facturi încasate', bi.peFactura, '#E9A23B', bi.nrFacturi + (bi.nrFacturi === 1 ? ' factură' : ' facturi'))),
+        React.createElement("div", { className: "rounded-lg px-3 py-2 mb-3 flex items-center justify-between gap-2", style: { background: 'var(--panel2)' } },
+            React.createElement("span", { className: "text-xs font-semibold", style: { color: 'var(--muted)' } }, "📊 Total intrat în " + eticheta),
+            React.createElement("span", { className: "text-base font-bold", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, money(totalJoc))),
+        bi.nrDupaEmitere > 0 && React.createElement("div", { className: "text-[11px] rounded-lg px-3 py-2 mb-3", style: { background: '#E9A23B14', color: 'var(--acc3)', border: '1px solid #E9A23B66' } },
+            "⚠ " + money(bi.dupaEmitere) + " din facturi (" + bi.nrDupaEmitere + (bi.nrDupaEmitere === 1 ? ' factură' : ' facturi') + ") sunt socotite după data emiterii, nu după ziua plății — au fost bifate „Încasată\" înainte ca aplicația să țină minte ziua. De acum înainte se reține ziua exactă."),
+        React.createElement("div", { className: "text-xs font-semibold mb-1.5", style: { color: 'var(--muted)' } }, "🔧 Lucrări mici — ce ai muncit față de ce ai încasat"),
+        React.createElement("div", { className: "rounded-lg px-3 py-2 mb-2", style: { background: 'var(--panel2)' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2" },
+                React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Muncit pe lucrări mici (din rapoarte)"),
+                React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, money(mici.total))),
+            React.createElement("div", { className: "flex items-center justify-between gap-2 mt-1" },
+                React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Din care trecut ca numerar încasat"),
+                React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--acc2)', fontFamily: "'JetBrains Mono', monospace" } }, money(bi.inMana))),
+            netrecut > 0 && React.createElement("div", { className: "text-[11px] mt-2 pt-2", style: { color: 'var(--acc3)', borderTop: '1px solid var(--border)' } },
+                "Rămân " + money(netrecut) + " munciți fără încasare trecută. Dacă banii au intrat, scrie-i la „💵 Încasări\" pe șantierul respectiv — eu nu-i trec de la mine.")),
+        mici.faraTarif.length > 0 && React.createElement("div", { className: "text-[11px] rounded-lg px-3 py-2 mb-3", style: { background: '#E9A23B14', color: 'var(--acc3)', border: '1px solid #E9A23B66' } },
+            "⚠ Lucrări mici fără tarif orar completat (ies 0 lei): " + mici.faraTarif.join(', ') + ". Pune tariful la „Editează șantierul\"."),
+        mici.peSantier.length === 0
+            ? React.createElement("div", { className: "text-xs text-center py-5", style: { color: 'var(--muted2)' } },
+                "Nicio lucrare mică raportată în " + eticheta + ".")
+            : React.createElement("div", { className: "space-y-1.5" }, mici.peSantier.map((x) => {
+                const luat = totalIncasari([x.s], deLa, panaLa);
+                return React.createElement("button", { key: x.s.id,
+                    onClick: () => { if (setPendingSiteNav) {
+                        setPendingSiteNav({ santierId: x.s.id, siteView: 'incasari' });
+                    } if (setTab) {
+                        setTab('santiere');
+                    } },
+                    className: "w-full text-left flex items-center justify-between gap-2 rounded-lg px-3 py-2",
+                    style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                    React.createElement("span", { className: "min-w-0 flex-1" },
+                        React.createElement("span", { className: "text-xs block truncate", style: { color: 'var(--text)' } }, "🔧 " + x.s.nume),
+                        React.createElement("span", { className: "text-[10px]", style: { color: 'var(--muted2)' } },
+                            'muncit ' + money(x.valoare) + ' · încasat ' + money(luat.total))),
+                    React.createElement("span", { className: "text-sm font-bold shrink-0", style: { color: luat.total >= x.valoare ? 'var(--acc2)' : 'var(--acc3)', fontFamily: "'JetBrains Mono', monospace" } },
+                        luat.total >= x.valoare ? '✓' : money(Math.max(0, x.valoare - luat.total))));
+            })),
+        React.createElement("div", { className: "text-[10px] mt-3", style: { color: 'var(--muted2)' } },
+            "Numerarul și transferurile vin din „💵 Încasări\" de pe fiecare șantier — le scrii tu. Facturile intră aici doar când le bifezi „Încasată\", și se socotesc în luna în care le-ai bifat. Ce e neîncasat încă urmărești mai departe la „💰 Cashflow\"."));
 }
 function Dashboard({ company, devize, offers, invoices, santiere, materials, cereriSantier, rapoarte, concedii, cereriAlocare, clients, restanteSantier, pozitiiSantier, materialeListaSantier, setTab, setPendingSiteNav, currentUser, paginaInit, onPaginaInitConsumata }) {
     const roleIcon = ROLES.find((r) => r.id === currentUser?.rol)?.icon || '👤';
@@ -14487,6 +14943,33 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                                 : deFacturat.length > 0
                                     ? deFacturat.length + (deFacturat.length === 1 ? ' lucrare gata de facturat' : ' lucrări gata de facturat') + ' — emite prima factură'
                                     : 'emite prima factură și donutul prinde viață'))) }),
+                React.createElement(CardBord, { atribut: "incasari", titlu: "Bani intra\u021Bi", ord: 3, onClick: () => setPagina('incasari'), copii: (React.createElement(React.Fragment, null,
+                    (() => {
+                        /* Al doilea donut numără DOAR banii chiar intrați luna asta: numerarul
+                           și transferurile scrise de tine pe șantiere, față de facturile
+                           bifate „Încasată". Nu ce ai lucrat, nu ce ai emis — ce ai luat. */
+                        const dL = lunaCur + '-01', dP = lunaCur + '-31';
+                        const bi = baniIntrati(santiere, invoices, dL, dP);
+                        const vMici = valoareLucrariMici(santiere, rapoarte, materials, company, dL, dP);
+                        const netrecut = Math.max(0, Math.round(vMici.total - bi.inMana));
+                        const feliiB = [
+                            { v: Math.round(bi.cash), c: '#2ECC80', t: 'cash', ron: true },
+                            { v: Math.round(bi.peFactura), c: '#E5A43F', t: 'pe factur\u0103', ron: true },
+                        ];
+                        const totB = Math.round(bi.cash) + Math.round(bi.peFactura);
+                        const procB = totB > 0 ? Math.round(bi.cash / totB * 100) : 0;
+                        return React.createElement(React.Fragment, null,
+                            React.createElement(DonutIzo, { felii: feliiB, gol: totB <= 0,
+                                centruMare: totB > 0 ? procB + '%' : '\u2014',
+                                centruMic: totB > 0 ? 'cash din banii intra\u021Bi' : 'niciun ban trecut luna asta' }),
+                            totB > 0 && React.createElement(LegendaDonut, { felii: feliiB }),
+                            React.createElement("div", { className: "text-[9.5px] font-semibold mt-1.5 text-center", style: { color: netrecut > 0 ? 'var(--acc3)' : 'var(--muted2)' } },
+                                netrecut > 0
+                                    ? '\u26A0 lucr\u0103ri mici de ' + money(netrecut) + ' f\u0103r\u0103 \u00eencasare trecut\u0103'
+                                    : totB > 0
+                                        ? bi.nrIncasari + (bi.nrIncasari === 1 ? ' \u00eencasare' : ' \u00eencas\u0103ri') + ' \u00b7 ' + bi.nrFacturi + (bi.nrFacturi === 1 ? ' factur\u0103 \u00eencasat\u0103' : ' facturi \u00eencasate')
+                                        : 'treci o \u00eencasare \u0219i donutul prinde via\u021B\u0103'));
+                    })())) }),
                 React.createElement(CardBord, { atribut: "munca", titlu: "Munca echipei", lat: true, ord: 4, onClick: () => setPagina('munca'), copii: (React.createElement(React.Fragment, null,
                         React.createElement("div", { className: "flex items-baseline gap-2 flex-wrap" },
                             React.createElement("span", { style: { fontSize: 18, fontWeight: 700, color: dinRapoarte.length ? 'var(--acc1)' : 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } }, dinRapoarte.length ? money(totalDinMunca) : '—'),
@@ -14627,6 +15110,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                                 c.note.slice(0, 3).join('” · „'),
                                 "\u201D")));
                     }))))),
+            pagina === 'incasari' && React.createElement(PaginaCash, { santiere: santiere, rapoarte: rapoarte, materials: materials, company: company, invoices: invoices, setTab: setTab, setPendingSiteNav: setPendingSiteNav }),
             pagina === 'cash' && React.createElement("div", { className: "rounded-xl p-4 mb-3", style: { background: 'var(--panel)', border: '1px solid #4CAF7D66', borderLeft: '4px solid #4CAF7D' } },
                 React.createElement("div", { className: "flex items-center justify-between mb-2 gap-2" },
                     React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--acc2)' } },
@@ -14885,7 +15369,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             pagina === 'randament' && React.createElement(Randament, { mod: "pagina", analiza: semnalePt(['cost_lipsa']), rapoarte: rapoarte, santiere: santiere, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, company: company, setTab: setTab }),
             pagina === 'calitate' && React.createElement(TabloCalitate, { mod: "pagina", cuAnaliza: true, restante: restanteSantier, santiere: santiere, setTab: setTab, setPendingSiteNav: setPendingSiteNav }),
             pagina === 'profit' && React.createElement(Profitabilitate, { mod: "pagina", analiza: semnalePt(['tarif_', 'adaos', 'cost_lipsa']), onExtras: deschideExtras, santiere: santiere, rapoarte: rapoarte, materials: materials, company: company, setTab: setTab, setPendingSiteNav: setPendingSiteNav }),
-            (pagina === 'cash' || pagina === 'munca' || pagina === 'nefacturat' || pagina === 'defacturat' || pagina === 'timpimorti') && renderBani(),
+            (pagina === 'cash' || pagina === 'incasari' || pagina === 'munca' || pagina === 'nefacturat' || pagina === 'defacturat' || pagina === 'timpimorti') && renderBani(),
             pagina === 'extras' && extras && (santiere.some((sx) => sx.id === extras) ? (React.createElement(ExtrasContabil, { santier: santiere.find((sx) => sx.id === extras), santiere: santiere, rapoarte: rapoarte, materials: materials, company: company, devize: devize, invoices: invoices, clients: clients, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, semnale: semnaleBord, setTab: setTab, setPendingSiteNav: setPendingSiteNav })) : (React.createElement("div", { className: "rounded-xl p-4 mb-6 text-xs", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--muted)' } }, "\u0218antierul \u0103sta nu mai exist\u0103 \u00EEn list\u0103 (a fost \u0219ters sau arhivat \u00EEntre timp). Apas\u0103 \u201E\u2190 \u00CEnapoi\"."))))),
         !pagina && respinseCount > 0 && (React.createElement("button", { onClick: () => setTab('activitate'), className: "w-full text-left rounded-xl p-3 md:p-4 mb-2 md:mb-3", style: { background: '#E0525214', border: '1px solid #E0525266', borderLeft: '4px solid #E05252' } },
             React.createElement("div", { className: "flex items-center justify-between" },
@@ -16386,6 +16870,17 @@ function ExtrasContabil({ santier, santiere, rapoarte, materials, company, deviz
         nef && nef.ore > 0 ? 'Muncă fără deviz: ' + Math.round(nef.ore) + ' h din ' + fmtData(nef.primaZi) + (nef.sigur ? ' = ' + Math.round(nef.valoare) + ' lei' : ' (fără preț calculabil)') : 'Toată munca e acoperită de devize.',
     ].join('\n');
     return (React.createElement("div", { "data-extras": true, className: "rounded-xl p-4 mb-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+        (() => {
+            /* Încasările intră în extrasul contabil ÎNTOTDEAUNA, indiferent dacă rubrica e
+               ascunsă pe ecran. Ascunderea e pentru ochii din jur, nu pentru contabilă. */
+            const ti = totalIncasari([s]);
+            if (ti.nr === 0)
+                return null;
+            return React.createElement("div", { className: "rounded-lg px-3 py-2 mb-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-0.5", style: { color: 'var(--muted2)' } }, "\uD83D\uDCB5 \u00CEncas\u0103ri scrise pe \u0219antier"),
+                React.createElement("div", { className: "text-xs", style: { color: 'var(--text)' } },
+                    FELURI_INCASARE.filter((f) => ti[f.id] > 0).map((f) => f.label + ': ' + money(ti[f.id])).join('  \u00b7  ') + '  \u00b7  Total: ' + money(ti.total)));
+        })(),
         React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" },
             React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--text)' } },
                 "\uD83D\uDCD2 ",
@@ -22082,6 +22577,7 @@ function App() {
     const [materials, setMaterials] = useState([]);
     const [stockMoves, setStockMoves] = useState([]);
     const [santiere, setSantiere] = useState([]);
+
     const [rapoarte, setRapoarte] = useState([]);
     const [etape, setEtape] = useState([]);
     const [sculeSantier, setSculeSantier] = useState([]);
@@ -23302,7 +23798,25 @@ function App() {
         setInvoices(next);
         persist('invoices', next);
     };
-    const invoiceStatus = (id, status) => { const next = invoices.map((i) => i.id === id ? { ...i, status } : i); setInvoices(next); persist('invoices', next); };
+    /* Când o factură trece pe „Încasată", însemnăm ZIUA în care s-a întâmplat. Aplicația
+       n-a ținut niciodată minte data plății, doar data emiterii — iar pentru „câți bani au
+       intrat luna asta" data emiterii e greșită: o factură din iulie plătită în septembrie
+       e bani de septembrie. Facturile vechi n-au semnul ăsta; pentru ele rămâne data
+       emiterii, și scrie asta pe ecran. */
+    const invoiceStatus = (id, status) => {
+        const next = invoices.map((i) => {
+            if (i.id !== id)
+                return i;
+            const gata = normStatusFactura(status) === 'Încasată';
+            if (gata && !i.incasataLa)
+                return { ...i, status, incasataLa: dataLocala(new Date()) };
+            if (!gata && i.incasataLa)
+                return { ...i, status, incasataLa: undefined };
+            return { ...i, status };
+        });
+        setInvoices(next);
+        persist('invoices', next);
+    };
     const convertToInvoice = (offer) => {
         setTab('facturi');
         setInvoiceForm({ id: uid(), clientId: offer.clientId, items: offer.items.map((it) => ({ ...it, id: uid() })), tva: offer.tva, offerId: offer.id });
