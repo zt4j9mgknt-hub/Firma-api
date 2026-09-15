@@ -676,6 +676,24 @@
 <script>"use strict";
 const { useState, useEffect, useRef, useMemo } = React;
 const uid = () => Math.random().toString(36).slice(2, 10);
+/* ORDINEA ÎN LISTE — O SINGURĂ REGULĂ, SCRISĂ O SINGURĂ DATĂ.
+   Cerută de patron: „cererile de concediu vreau să îmi apară primele cele mai recente,
+   altfel trebuie să dau scroll până mă plictisesc." A ales: întâi ce așteaptă răspunsul lui,
+   apoi restul de la nou la vechi. Regula se aplică peste tot — concedii, cereri de materiale,
+   întrebări de pe șantier, restanțe, notițe, cereri de alocare.
+   De ce o scriu aici și nu în fiecare listă: dacă o scriu de șase ori, o scriu greșit de
+   cel puțin două ori. */
+const DATA_LISTA = (x) => String((x && (x.creatLa || x.data || x.dataCerere || x.dataInceput || x.creata || x.dataRaport)) || '');
+function ordoneazaLista(lista, eDeschis) {
+    return (lista || []).slice().sort((a, b) => {
+        if (eDeschis) {
+            const da = eDeschis(a) ? 0 : 1, db = eDeschis(b) ? 0 : 1;
+            if (da !== db)
+                return da - db;
+        }
+        return DATA_LISTA(b).localeCompare(DATA_LISTA(a));
+    });
+}
 /* ERORILE TĂCUTE. În aplicație sunt sute de locuri unde o eroare e prinsă și lăsată să
    treacă — de multe ori pe bună dreptate (localStorage blocat, un JSON stricat). Problema
    e când tace ceva care conta: o poză care nu s-a urcat, o notificare care n-a plecat.
@@ -2412,7 +2430,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.94-ecran-curat';
+const APP_VERSION = 'v03.96-cele-noi-sus';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -4398,7 +4416,10 @@ function SiteRestanteTab({ santierId, santierNume, echipaIds, restante, setResta
     const [veziStats, setVeziStats] = useState(false);
     const isManager = currentUser?.rol === 'Manager';
     const aici = (restante || []).filter((r) => r.santierId === santierId);
-    const vizibile = aici.filter((r) => !r.sters);
+    /* Restanțele NU se pun pur și simplu „cea mai nouă sus": ele se lucrează pe locuri
+       (apartament, etaj), de aia rămân grupate așa, cu locurile nerezolvate primele.
+       Ce s-a schimbat: ÎNĂUNTRUL unui loc, cea mai nouă stă sus. */
+    const vizibile = ordoneazaLista(aici.filter((r) => !r.sters), (r) => !r.rezolvat);
     const setPersist = (next) => { setRestante(next); persist('restante', next); };
     const keyOf = (it) => it.apId ? ('ap:' + it.apId) : (it.etajId ? ('et:' + it.etajId) : (it.locNume ? ('tx:' + it.locNume) : ''));
     const grupuri = (() => {
@@ -4612,9 +4633,12 @@ function SiteProblemeTab({ santierId, santierNume, echipaIds, problemeSantier, s
     const [raspunsForm, setRaspunsForm] = useState({});
     const aici = problemeSantier.filter((p) => p.santierId === santierId);
     const baza = bazaCunostinteQA(problemeSantier);
-    const rezolvateAici = aici.filter((q) => raspunsCorectQA(q)).slice().reverse();
-    const deschise = aici.filter((q) => !raspunsCorectQA(q)).slice().reverse();
-    const toateAici = aici.slice().reverse();
+    /* Erau întoarse cu „reverse()", adică pe dos față de ordinea în care s-au salvat. Mergea
+       cât timp nimic nu rearanja lista — dar la contopirea datelor de pe două telefoane
+       ordinea aia se pierde. Acum se iau după data lor, cea mai nouă sus. */
+    const rezolvateAici = ordoneazaLista(aici.filter((q) => raspunsCorectQA(q)));
+    const deschise = ordoneazaLista(aici.filter((q) => !raspunsCorectQA(q)));
+    const toateAici = ordoneazaLista(aici, (q) => !raspunsCorectQA(q));
     const setPersist = (next) => { setProblemeSantier(next); persist('problemeSantier', next); };
     const adaugaIntrebare = () => {
         if (!intrebareNoua.trim())
@@ -8434,10 +8458,34 @@ function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, s
     useEffect(() => {
         if (!pendingSiteNav)
             return;
+        /* „DU-MĂ UNDE SE REZOLVĂ, NU UNDE SE VEDE."
+           Un șantier fără tarif orar nu se rezolvă uitându-te la el — se rezolvă în
+           formularul de editare, unde stă câmpul cu prețul orei. Așa că, dacă cel care
+           trimite cere editarea, deschid direct formularul, nu fișa șantierului. */
+        if (pendingSiteNav.deschideEditare) {
+            const sx = santiere.find((x) => x.id === pendingSiteNav.santierId);
+            if (sx) {
+                setSelected(null);
+                setForm(sx);
+                setViewHistory([]);
+                setViewForward([]);
+                setOrigine(pendingSiteNav.origine || null);
+                setPendingSiteNav(null);
+                return;
+            }
+        }
         setSelected(pendingSiteNav.santierId);
         const sectiuneaCeruta = pendingSiteNav.siteView || '__closed__';
         const potVedea = sectiuneaCeruta !== 'timpimorti' || !TIMPI_MORTI_DOAR_MANAGER || currentUser?.rol === 'Manager';
         setSiteView(potVedea ? sectiuneaCeruta : '__closed__');
+        /* PERIOADA DEVIZULUI, PUSĂ DIN MERS.
+           Când vii de la „Muncă făcută, fără deviz", nu te las doar în dreptul secțiunii —
+           îți pun și perioada nedevizată în cele două calendare, ca să nu mai cauți tu de
+           când până când s-a lucrat. Rămâne doar să apeși „Generează deviz". */
+        if (pendingSiteNav.devizDeLa)
+            setDevizFrom(pendingSiteNav.devizDeLa);
+        if (pendingSiteNav.devizPanaLa)
+            setDevizTo(pendingSiteNav.devizPanaLa);
         if (pendingSiteNav.raportData)
             setReportForm({ data: pendingSiteNav.raportData });
         if (pendingSiteNav.deschideRaportId) {
@@ -11800,7 +11848,16 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
             catch { }
         }
     }, [formKey]);
-    const listaVizibila = isManager ? concedii : concedii.filter((c) => c.userId === currentUser?.id);
+    const listaBruta = isManager ? concedii : concedii.filter((c) => c.userId === currentUser?.id);
+    /* Sus stau cererile care așteaptă răspuns, cele mai noi primele. Sub ele, ce e deja
+       rezolvat — strâns, ca să nu mai dea nimeni scroll degeaba.
+       Cinstit: cererile mai vechi n-au în ele ora la care au fost făcute (nu am salvat-o
+       până acum), așa că pentru ele mă iau după data de început a concediului. De la
+       versiunea asta încolo fiecare cerere nouă își scrie ora, deci ordinea e exactă. */
+    const [aratVechi, setAratVechi] = useState(false);
+    const deRaspuns = ordoneazaLista(listaBruta.filter((c) => c.status === 'Cerut'));
+    const rezolvate = ordoneazaLista(listaBruta.filter((c) => c.status !== 'Cerut'));
+    const listaVizibila = aratVechi ? deRaspuns.concat(rezolvate) : deRaspuns;
     const cumScriuPerioada = (x) => concediuCuOre(x)
         ? `${fmtData(x.dataInceput)}, ${x.oraInceput}–${x.oraSfarsit}`
         : `${fmtData(x.dataInceput)} → ${fmtData(x.dataSfarsit)}`;
@@ -11846,7 +11903,7 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
             notifica('manageri', { title: veche && veche.status === 'Aprobat' ? 'Concediu modificat — de reaprobat' : 'Cerere de concediu modificată', body: `${currentUser?.nume || 'Un coleg'}: ${cumScriuPerioada({ ...form, oraInceput, oraSfarsit })}.`, tag: 'concediu' }, currentUser?.id);
         }
         else {
-            const c = { id: uid(), userId: currentUser.id, nume: currentUser.nume, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', oraInceput, oraSfarsit, status: 'Cerut' };
+            const c = { id: uid(), userId: currentUser.id, nume: currentUser.nume, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', oraInceput, oraSfarsit, status: 'Cerut', creatLa: new Date().toISOString() };
             const next = [c, ...concedii];
             setConcedii(next);
             persist('concedii', next);
@@ -11928,7 +11985,7 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
                 const s = soldPt(nume);
                 return React.createElement("div", { key: nume, className: "flex items-center gap-2 flex-wrap rounded-lg px-2.5 py-1.5", style: { background: 'var(--panel2)' } }, React.createElement("span", { className: "text-xs flex-1 min-w-0 truncate", style: { color: 'var(--text)' } }, nume), React.createElement("input", { type: "number", inputMode: "decimal", value: s.zile != null ? s.zile : '', onChange: (e) => setSold(nume, 'zile', e.target.value), placeholder: "zile", className: "w-16 rounded-lg px-2 py-1 text-xs outline-none text-center", style: inputStyle, title: "Zile de concediu rămase acum" }), React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "la"), React.createElement(RoCalendarPicker, { value: s.laData || '', onChange: (v) => setSold(nume, 'laData', v) }), (s.zile !== '' && s.zile != null && s.laData) && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc2)' } }, "✓"));
             }))));
-    })(), listaVizibila.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Nicio cerere de concediu.")) : (React.createElement("div", { className: "space-y-2" }, listaVizibila.map((c) => (React.createElement("div", { key: c.id, className: "rounded-xl p-3 flex items-center justify-between gap-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "min-w-0" }, isManager && React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } }, c.nume), React.createElement("div", { className: "text-sm", style: { color: isManager ? 'var(--muted)' : 'var(--text)' } }, (concediuCuOre(c) ? fmtData(c.dataInceput) + ' · ' + c.oraInceput + '–' + c.oraSfarsit + ' (învoire)' : fmtData(c.dataInceput) + ' → ' + fmtData(c.dataSfarsit)), " · ", c.tip, " (", codPentruTip(c.tip), ")"), c.motiv && React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted2)' } }, c.motiv)), React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, React.createElement("span", { className: "text-xs", style: { color: c.status === 'Aprobat' ? 'var(--acc2)' : c.status === 'Respins' ? 'var(--acc4)' : 'var(--acc3)' } }, c.status), (isManager || c.userId === currentUser?.id) && React.createElement("button", { onClick: () => printCerereConcediu(c, company), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Exportă cererea în PDF (ștampilată dacă e aprobată)" }, "📄 PDF"), isManager && React.createElement("button", { onClick: () => trimiteContabila(c), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Trimite pe email la contabilă" }, "📧"), isManager && (React.createElement(React.Fragment, null, c.status !== 'Aprobat' && React.createElement("button", { onClick: () => setStatus(c.id, 'Aprobat'), className: "px-2 py-1 rounded-lg text-xs", style: { color: '#14181C', background: 'var(--acc2)' }, title: "Aprobă" }, "✓"), c.status !== 'Respins' && React.createElement("button", { onClick: () => setStatus(c.id, 'Respins'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid #E0525266' }, title: "Respinge" }, "✕"), c.status !== 'Cerut' && React.createElement("button", { onClick: () => setStatus(c.id, 'Cerut'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Repune în așteptare" }, "↩"))), (isManager || c.userId === currentUser?.id) && (React.createElement("button", { onClick: () => setForm({ id: c.id, dataInceput: c.dataInceput, dataSfarsit: c.dataSfarsit, tip: c.tip, motiv: c.motiv || '', peOre: concediuCuOre(c), oraInceput: c.oraInceput || '', oraSfarsit: c.oraSfarsit || '' }), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editează")), React.createElement("button", { onClick: () => delCerere(c.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "🗑"))))))))));
+    })(), React.createElement(React.Fragment, null, listaVizibila.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, rezolvate.length > 0 ? (isManager ? 'Nicio cerere de aprobat. Cele vechi sunt mai jos.' : 'Nicio cerere în așteptare. Cele vechi sunt mai jos.') : 'Nicio cerere de concediu.')) : (React.createElement("div", { className: "space-y-2" }, listaVizibila.map((c) => (React.createElement("div", { key: c.id, className: "rounded-xl p-3 flex items-center justify-between gap-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "min-w-0" }, isManager && React.createElement("div", { className: "text-sm", style: { color: 'var(--text)' } }, c.nume), React.createElement("div", { className: "text-sm", style: { color: isManager ? 'var(--muted)' : 'var(--text)' } }, (concediuCuOre(c) ? fmtData(c.dataInceput) + ' · ' + c.oraInceput + '–' + c.oraSfarsit + ' (învoire)' : fmtData(c.dataInceput) + ' → ' + fmtData(c.dataSfarsit)), " · ", c.tip, " (", codPentruTip(c.tip), ")"), c.motiv && React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted2)' } }, c.motiv)), React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, React.createElement("span", { className: "text-xs", style: { color: c.status === 'Aprobat' ? 'var(--acc2)' : c.status === 'Respins' ? 'var(--acc4)' : 'var(--acc3)' } }, c.status), (isManager || c.userId === currentUser?.id) && React.createElement("button", { onClick: () => printCerereConcediu(c, company), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Exportă cererea în PDF (ștampilată dacă e aprobată)" }, "📄 PDF"), isManager && React.createElement("button", { onClick: () => trimiteContabila(c), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' }, title: "Trimite pe email la contabilă" }, "📧"), isManager && (React.createElement(React.Fragment, null, c.status !== 'Aprobat' && React.createElement("button", { onClick: () => setStatus(c.id, 'Aprobat'), className: "px-2 py-1 rounded-lg text-xs", style: { color: '#14181C', background: 'var(--acc2)' }, title: "Aprobă" }, "✓"), c.status !== 'Respins' && React.createElement("button", { onClick: () => setStatus(c.id, 'Respins'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid #E0525266' }, title: "Respinge" }, "✕"), c.status !== 'Cerut' && React.createElement("button", { onClick: () => setStatus(c.id, 'Cerut'), className: "px-2 py-1 rounded-lg text-xs", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Repune în așteptare" }, "↩"))), (isManager || c.userId === currentUser?.id) && (React.createElement("button", { onClick: () => setForm({ id: c.id, dataInceput: c.dataInceput, dataSfarsit: c.dataSfarsit, tip: c.tip, motiv: c.motiv || '', peOre: concediuCuOre(c), oraInceput: c.oraInceput || '', oraSfarsit: c.oraSfarsit || '' }), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editează")), React.createElement("button", { onClick: () => delCerere(c.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "🗑")))))))), rezolvate.length > 0 && React.createElement("button", { onClick: () => setAratVechi(!aratVechi), className: "w-full mt-3 text-sm px-4 py-2.5 rounded-xl font-medium", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, aratVechi ? "▲ Ascunde cererile vechi" : "▼ Arată și cele vechi (" + rezolvate.length + ")"))));
 }
 function CampForm({ label, children }) {
     return (React.createElement("div", null, React.createElement("div", { className: "text-[11px] mb-0.5", style: { color: 'var(--muted)' } }, label), children));
@@ -15749,9 +15806,9 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                         "\u26A0 F\u0103r\u0103 tarif orar completat (manopera iese 0): ",
                         faraTarif.map((x, i) => React.createElement(React.Fragment, { key: x.s.id },
                             i > 0 ? ', ' : '',
-                            React.createElement("button", { onClick: () => { setPendingSiteNav({ santierId: x.s.id, siteView: '__closed__' }); setTab('santiere'); },
+                            React.createElement("button", { onClick: () => { setPendingSiteNav({ santierId: x.s.id, siteView: '__closed__', deschideEditare: true }); setTab('santiere'); },
                                 className: "font-bold underline", style: { color: 'var(--acc3)' } }, x.s.nume))),
-                        " \u2014 apas\u0103 pe nume \u0219i pui tariful \u00een \u0219antier.")),
+                        " \u2014 apas\u0103 pe nume \u0219i se deschide fix formularul unde pui pre\u021Bul orei.")),
                     true && (React.createElement("div", { className: "space-y-1 mt-2" },
                         dinRapoarte.map((x) => (React.createElement("button", { key: x.s.id, "data-rand-santier": true, onClick: () => deschideExtras(x.s.id), className: "w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg", style: { background: 'var(--panel2)' } },
                             React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--text)' } },
@@ -15772,14 +15829,18 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                     React.createElement(AnalizaRubrica, { setPendingSiteNav: setPendingSiteNav, titlu: "munca echipei", setTab: setTab, semnale: semnalePt(['zile_norma', 'timpi_morti', 'nedevizat_']), cifre: 'Valoarea muncii în ' + etichetaLuna(lunaMunca) + ': ' + Math.round(totalDinMunca) + ' lei (manoperă ' + Math.round(totalManopera) + ' lei + materiale ' + Math.round(totalMaterialeR) + ' lei); ore lucrate: ' + Math.round(totalOreLuna) + ' h din ' + capacitateOre + ' posibile' + (faraTarif.length ? '; șantiere FĂRĂ tarif orar: ' + faraTarif.map((x) => x.s.nume).join(', ') : '') })))),
             /* ERA O SINGURĂ APĂSARE PENTRU TOT CARDUL, și te ducea în lista de șantiere — de unde
                tot tu trebuia să cauți șantierul și să intri în el. Acum fiecare rând e butonul
-               lui și te duce ÎN șantier, direct la „Devize", adică exact unde faci devizul care
-               lipsește. Iar „Înapoi" te aduce înapoi în lista asta, ca să le iei la rând. */
+               lui și te duce ÎN șantier, la „Rapoarte zilnice" — acolo stă unealta care face devizul
+               din munca scrisă în rapoarte. Îi pun și perioada nedevizată în calendare, ca să nu
+               mai caute el de când până când s-a lucrat.
+               ATENȚIE, greșeala din v03.92: scrisesem siteView: 'devize'. Secțiunea aia NU EXISTĂ
+               (cheile adevărate sunt rapoarte, devizpoz, restante...), așa că fiecare apăsare
+               ducea la un ecran gol. De aia există acum proba care randează fiecare secțiune. Iar „Înapoi" te aduce înapoi în lista asta, ca să le iei la rând. */
             pagina === 'nefacturat' && nefacturatVechi.length > 0 && (React.createElement("div", { className: "w-full text-left rounded-xl p-4 mb-3", style: { background: '#E0525214', border: '1px solid #E0525266', borderLeft: '4px solid #E05252' } },
                 React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1.5" },
                     React.createElement("span", { style: { fontSize: 15, fontWeight: 700, color: 'var(--acc4)' } }, "\u23F3 Munc\u0103 f\u0103cut\u0103, f\u0103r\u0103 deviz"),
                     nefacturatTotal > 0 && React.createElement("span", { className: "shrink-0 text-sm font-bold", style: { color: 'var(--acc4)', fontFamily: "'JetBrains Mono', monospace" } }, money(nefacturatTotal))),
                 React.createElement("div", { className: "space-y-1" }, nefacturatVechi.map((x) => (React.createElement("button", { key: x.santier.id,
-                    onClick: () => { setPendingSiteNav({ santierId: x.santier.id, siteView: 'devize' }); setTab('santiere'); },
+                    onClick: () => { setPendingSiteNav({ santierId: x.santier.id, siteView: 'rapoarte', devizDeLa: x.primaZi, devizPanaLa: x.ultimaZi }); setTab('santiere'); },
                     className: "w-full text-left flex items-center justify-between gap-2 text-xs px-2.5 py-2 rounded-lg", style: { background: 'var(--panel2)' } },
                     React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--text)' } },
                         "\uD83C\uDFD7 ",
@@ -15799,7 +15860,7 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                         " zile",
                         React.createElement("br", null),
                         React.createElement("span", { style: { color: x.sigur ? 'var(--acc4)' : 'var(--muted2)' } }, x.sigur ? money(x.valoare) : 'fără preț pus')))))),
-                React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--muted)' } }, "Ape\u0219i pe un r\u00e2nd \u2192 intri direct \u00een \u0219antier, la „Devize\", \u0219i porne\u0219ti de la data ar\u0103tat\u0103. Cu „\u2190 \u00cenapoi\" te \u00eentorci aici, la list\u0103."))),
+                React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--muted)' } }, "Ape\u0219i pe un r\u00e2nd \u2192 intri în șantier, la „Rapoarte zilnice\", cu perioada nedevizată deja pusă în cele două calendare. Mai rămâne să apesi „Generează deviz\". Cu „\u2190 \u00cenapoi\" te \u00eentorci aici, la listă."))),
             pagina === 'defacturat' && deFacturat.length > 0 && (React.createElement("div", { className: "rounded-xl p-4 mb-3", style: { background: 'var(--panel)', border: '1px solid #E9A23B66', borderLeft: '4px solid #E9A23B' } },
                 React.createElement("div", { className: "flex items-center justify-between mb-2 gap-2" },
                     React.createElement("span", { className: "text-sm font-bold", style: { color: 'var(--acc3)' } },
@@ -15926,6 +15987,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'cele-noi-sus-v1', aud: 'manager', data: '15.09.2026', titlu: '🔝 Cererile de concediu: cele de aprobat sus, cele mai noi primele',
+        text: 'Patronul: „cererile de concediu vreau să îmi apară primele cele mai recente, altfel trebuie să dau scroll până mă plictisesc."\n\nAvea dreptate: lista se afișa exact în ordinea în care s-au salvat, adică cele mai vechi sus. Cu cât firma merge mai mult, cu atât dai mai mult scroll ca să ajungi la ce ai de aprobat azi.\n\nCUM E ACUM, așa cum a ales el:\n• SUS stau cererile care așteaptă răspunsul tău, cea mai nouă prima\n• ce e deja aprobat sau respins se strânge sub butonul „▼ Arată și cele vechi (N)" — e acolo când îl vrei, dar nu-ți mai stă în drum\n• când n-ai nimic de aprobat, scrie limpede asta și butonul spre arhivă rămâne la locul lui\n\nCINSTIT, o limită: cererile făcute ÎNAINTE de versiunea asta n-au în ele ora la care au fost trimise (nu am salvat-o până acum), așa că pentru ele ordinea se ia după data de început a concediului. De la versiunea asta încolo fiecare cerere nouă își scrie ora, deci ordinea e exactă.\n\nACEEAȘI REGULĂ ÎN REST: întrebările de pe șantier nu mai depind de ordinea în care s-au salvat (se puteau încurca la contopirea datelor de pe două telefoane) — se iau după data lor. Restanțele RĂMÂN grupate pe locuri, dinadins: se lucrează pe apartament, nu pe dată; s-a schimbat doar că înăuntrul unui loc cea mai nouă stă sus. Cererile de materiale, notițele și cererile de alocare erau deja în ordinea bună — le-am verificat, n-am umblat la ele.\n\n15 pași de verificare înainte de livrare. Ordinea nu e doar sortată în cod: proba DESENEAZĂ lista și citește numele în ordinea în care ajung pe ecran.' },
+    { id: 'duce-unde-trebuie-v1', aud: 'manager', data: '15.09.2026', titlu: '🎯 Apeși pe o problemă și ajungi FIX unde se rezolvă (până acum ajungeai pe un ecran gol)',
+        text: 'Patronul a filmat: apăsa pe „Roman Dan" în „Muncă făcută, fără deviz" și ecranul rămânea GOL. Nu era o pagină greșită — era nimic.\n\nDE CE. Când am făcut rândurile apăsabile, am scris ca destinație o secțiune care NU EXISTĂ în șantier („devize"). Secțiunile adevărate se cheamă altfel — Rapoarte zilnice, Poziții/Materiale, Restanțe. Aplicația a ascuns tot, ca să arate secțiunea cerută, și cum secțiunea aia nu era nicăieri, n-a mai rămas nimic pe ecran. Toate probele mele au trecut, fiindcă se uitau la cod, nu la ecran.\n\nCE S-A REPARAT:\n\n⏳ MUNCĂ FĂCUTĂ, FĂRĂ DEVIZ — apeși pe un șantier și intri la „Rapoarte zilnice", acolo unde stă unealta care face devizul din munca scrisă. Și îți pun PERIOADA NEDEVIZATĂ direct în cele două calendare, de la prima zi nefacturată până la ultima. Mai rămâne să apeși „Generează deviz". Fără să cauți tu de când până când s-a lucrat.\n\n⚠ ȘANTIER FĂRĂ TARIF ORAR — apeși pe nume și se deschide DIRECT formularul șantierului, la câmpul cu prețul orei. Nu mai intri în șantier, apoi „Editează", apoi caută câmpul.\n\nȘI CA SĂ NU SE MAI REPETE: mi-am făcut un React de buzunar, ca să pot DESENA componentele aici, la mine, fără browser. Proba nouă deschide pe rând FIECARE secțiune de șantier și fiecare destinație folosită în aplicație, și cade dacă vreuna ajunge pe un ecran gol. Am stricat-o înadins la loc și proba a strigat.\n\nVerificat: 14 pași înainte de livrare, toți verzi.' },
     { id: 'ecran-curat-v1', aud: 'manager', data: '15.09.2026', titlu: '🧹 Două lucruri care încurcau ecranul „Activitatea mea"',
         text: 'Amândouă văzute de patron pe ecranul lui, amândouă reparate.\n\n1. RAPOARTELE VERIFICATE NU MAI STAU DEGEABA. Cardul „Rapoarte de verificat" le ținea pe toate pe ecran și după ce apăsai „✓ Am verificat" — scria chiar dedesubt „Le-ai verificat pe toate ✓" și tot nu pleca nimic. Acum rămân în card DOAR cele neverificate, numărul din titlu e cel adevărat, iar când termini tot, cardul dispare de pe ecran. Cardul e acum galben, nu verde: galben = mai ai de făcut ceva.\n\n2. OMUL ÎN CONCEDIU NU MAI APARE ÎN ECHIPA DE MÂINE. Pe cardul „📅 Mâine pe șantiere" se scriau toți oamenii asignați pe șantier, chiar dacă aveau concediu aprobat fix în ziua aia. Acum echipa arată doar cine chiar vine. Cine e plecat NU e șters în tăcere — apare sub ea, scris aparte: „🌴 Nume — în concediu", ca să vezi de ce lipsește, nu să crezi că l-am uitat. Dacă tot șantierul e plecat, scrie limpede „Nimeni pe teren — toți sunt în concediu".\n\nCe NU se schimbă: o cerere de concediu neaprobată nu scoate pe nimeni de pe șantier, iar o învoire de câteva ore nu scoate omul toată ziua — el vine și lucrează restul zilei.\n\n19 probe automate noi pentru fix cazurile astea, verificate și pe invers: am stricat din nou fiecare reparație și probele au strigat.' },
     { id: 'sb-fara-tacere-v1', aud: 'manager', data: '21.08.2026', titlu: '⛔ O factură care nu ajunge la SmartBill nu mai dispare în tăcere',
