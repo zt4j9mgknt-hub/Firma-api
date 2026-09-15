@@ -2430,7 +2430,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v03.96-cele-noi-sus';
+const APP_VERSION = 'v03.97-planse-clare';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -3787,11 +3787,20 @@ function ZoomImage({ src, alt, onClose, onFull }) {
 }
 function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
     const dl = downloadUrl || src;
+    /* CE ERA GREȘIT PÂNĂ ACUM (reclamat de patron: „la calitate ft slaba cand se da zoom"):
+       planșa se desena O SINGURĂ DATĂ, ca poză, la o lățime fixă (1500 px, ori 2600 cu „HD"),
+       se strângea în JPEG, iar zoom-ul doar MĂREA poza aia. Adică măreai o fotografie a
+       planului, nu planul. La 4× nu mai era nimic de citit, iar JPEG-ul punea și un halou în
+       jurul fiecărei linii subțiri — exact ce omoară un desen tehnic.
+       ACUM: planul se REDESENEAZĂ din PDF la mărimea la care te uiți. Liniile rămân linii.
+       Fără JPEG deloc — se desenează direct în pânză (canvas), fără strângere cu pierderi. */
     const [zoom, setZoom] = useState(1);
-    const pz = useRef({ startDist: 0, startZoom: 1 });
-    const clampZ = (z) => Math.min(10, Math.max(1, z));
+    const [zoomAsezat, setZoomAsezat] = useState(1);
+    const ZOOM_MAX = 8;
+    const clampZ = (z) => Math.min(ZOOM_MAX, Math.max(1, z));
     const zoomBy = (f) => setZoom((z) => clampZ(z * f));
     const resetZ = () => setZoom(1);
+    const pz = useRef({ startDist: 0, startZoom: 1 });
     const dist2 = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     const onTS = (e) => {
         if (e.touches.length === 2) {
@@ -3805,10 +3814,14 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
             setZoom(clampZ(pz.current.startZoom * (d / (pz.current.startDist || d))));
         }
     };
-    const [pages, setPages] = useState([]);
+    const [numPagini, setNumPagini] = useState(0);
     const [status, setStatus] = useState('Se încarcă planșa…');
-    const [hd, setHd] = useState(false);
+    const [limpezesc, setLimpezesc] = useState(false);
     const [zen, setZen] = useState(false);
+    const pdfRef = useRef(null);
+    const panzeRef = useRef([]);
+    const cutieRef = useRef(null);
+    const randareRef = useRef(0);
     const potFullscreen = typeof document !== 'undefined' && (document.fullscreenEnabled || document.webkitFullscreenEnabled);
     const comutaEcran = () => {
         if (potFullscreen && onFull)
@@ -3816,12 +3829,47 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
         else
             setZen((z) => !z);
     };
+    /* MIȘCAREA STÂNGA-DREAPTA PE CALCULATOR. Reclamat: „de pe pc daca dau zoom nu mai pot
+       merge stanga dreapta". Bara de derulare e ascunsă în toată aplicația (tot la cererea
+       lui), deci pe PC nu aveai de ce apuca: mouse-ul nu derulează lateral singur.
+       Acum apuci planul cu mouse-ul și îl tragi, ca pe o hârtie pe masă. */
+    const trage = useRef({ activ: false, x: 0, y: 0, sl: 0, st: 0 });
+    const incepeTras = (e) => {
+        const c = cutieRef.current;
+        if (!c || zoom <= 1)
+            return;
+        trage.current = { activ: true, x: e.clientX, y: e.clientY, sl: c.scrollLeft, st: c.scrollTop };
+    };
+    const tragMai = (e) => {
+        if (!trage.current.activ)
+            return;
+        const c = cutieRef.current;
+        if (!c)
+            return;
+        e.preventDefault();
+        c.scrollLeft = trage.current.sl - (e.clientX - trage.current.x);
+        c.scrollTop = trage.current.st - (e.clientY - trage.current.y);
+    };
+    const gataTras = () => { trage.current.activ = false; };
+    /* Rotița: cu Ctrl (sau ⌘) apăsat mărește/micșorează, ca în orice program de planuri.
+       Fără Ctrl rămâne derulare normală, ca să nu sară planul când vrei doar să cobori. */
+    const laRotita = (e) => {
+        if (!(e.ctrlKey || e.metaKey))
+            return;
+        e.preventDefault();
+        zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15);
+    };
+    // deschid documentul o singură dată, nu la fiecare zoom
     useEffect(() => {
-        let cancelled = false;
-        setPages([]);
+        let anulat = false;
+        pdfRef.current = null;
+        panzeRef.current = [];
+        setNumPagini(0);
+        setZoom(1);
+        setZoomAsezat(1);
         setStatus('Se încarcă planșa…');
         const tLent = setTimeout(() => {
-            if (!cancelled)
+            if (!anulat)
                 setStatus('Durează neobișnuit de mult… Verifică internetul. Dacă la fel se întâmplă la TOATE planșele/pozele, stocarea (Vercel Blob) e probabil deconectată sau la limită.');
         }, 18000);
         (async () => {
@@ -3842,55 +3890,106 @@ function PdfViewer({ src, fallbackSrc, downloadUrl, nume, onClose, onFull }) {
                     pdf = await lib.getDocument(optiuni(src)).promise;
                 }
                 catch (e1) {
-                    if (fallbackSrc && fallbackSrc !== src) {
+                    if (fallbackSrc && fallbackSrc !== src)
                         pdf = await lib.getDocument(optiuni(fallbackSrc)).promise;
-                    }
-                    else {
+                    else
                         throw e1;
-                    }
                 }
                 clearTimeout(tLent);
-                const targetW = hd ? 2600 : 1500;
-                const maxS = hd ? 4 : 2;
-                const jpegQ = hd ? 0.92 : 0.8;
-                const MAX_PX = hd ? 9e6 : 4e6;
-                const imgs = [];
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    if (cancelled)
-                        return;
-                    if (pdf.numPages > 1)
-                        setStatus(`Se randează pagina ${i}/${pdf.numPages}…`);
-                    const page = await pdf.getPage(i);
-                    const base = page.getViewport({ scale: 1 });
-                    let s = Math.min(maxS, Math.max(1, targetW / base.width));
-                    if (base.width * s * base.height * s > MAX_PX) {
-                        s = Math.sqrt(MAX_PX / (base.width * base.height));
-                    }
-                    const viewport = page.getViewport({ scale: s });
-                    const canvas = document.createElement('canvas');
-                    canvas.width = Math.floor(viewport.width);
-                    canvas.height = Math.floor(viewport.height);
-                    const ctx = canvas.getContext('2d');
-                    await page.render({ canvasContext: ctx, viewport }).promise;
-                    imgs.push(canvas.toDataURL('image/jpeg', jpegQ));
-                    if (!cancelled) {
-                        setPages(imgs.slice());
-                        if (i === 1)
-                            setStatus('');
-                    }
-                }
-                if (!cancelled)
-                    setStatus('');
+                if (anulat)
+                    return;
+                pdfRef.current = pdf;
+                setNumPagini(pdf.numPages);
+                setStatus('');
             }
             catch (e) {
                 clearTimeout(tLent);
-                if (!cancelled)
+                if (!anulat)
                     setStatus('Nu am putut afișa planșa aici. ' + (e && e.message ? e.message : ''));
             }
         })();
-        return () => { cancelled = true; clearTimeout(tLent); };
-    }, [src, hd]);
-    return (React.createElement("div", { style: { position: 'relative', flex: 1, minHeight: 0, background: '#0c0f13' } }, React.createElement("div", { onTouchStart: onTS, onTouchMove: onTM, style: { position: 'absolute', inset: 0, overflow: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y', textAlign: 'center' } }, React.createElement("div", { style: { width: `${zoom * 100}%`, minWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '10px 0 70px' } }, status && (React.createElement("div", { style: { color: '#9fb0c0', padding: '24px 16px', textAlign: 'center', fontSize: 13 } }, status, pages.length === 0 && !/^Se /.test(status) && (React.createElement("div", { style: { marginTop: 12 } }, React.createElement("a", { href: dl, target: "_blank", rel: "noopener noreferrer", style: { color: '#14181C', background: 'var(--acc2)', padding: '8px 14px', borderRadius: 8, fontWeight: 700, textDecoration: 'none' } }, "⬇ Deschide / descarcă PDF"))))), pages.map((d, i) => (React.createElement("img", { key: i, src: d, draggable: "false", style: { width: '100%', display: 'block', boxShadow: '0 2px 10px rgba(0,0,0,.4)', userSelect: 'none' } }))))), nume && !zen && React.createElement("div", { style: { position: 'absolute', top: 'max(14px, env(safe-area-inset-top))', left: 12, zIndex: 15, maxWidth: '42%', color: '#cdd7e2', fontSize: 12, background: 'rgba(10,14,20,.55)', padding: '5px 10px', borderRadius: 8, backdropFilter: 'blur(6px)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, nume), !zen && React.createElement("button", { onClick: () => setHd(!hd), style: { position: 'absolute', top: 'max(14px, env(safe-area-inset-top))', left: '50%', transform: 'translateX(-50%)', zIndex: 16, color: hd ? '#14181C' : '#cdd7e2', background: hd ? 'var(--acc3)' : 'rgba(10,14,20,.55)', fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 8, backdropFilter: 'blur(6px)', whiteSpace: 'nowrap', border: 'none' } }, hd ? '🔍 HD pornit' : '🔍 HD (mai clar)'), onClose && React.createElement(CloseX, { onClose: onClose, onFull: comutaEcran }), !zen && React.createElement(ZoomControls, { scale: zoom, zoomBy: zoomBy, reset: resetZ })));
+        return () => { anulat = true; clearTimeout(tLent); };
+    }, [src]);
+    /* Nu redesenez la fiecare pixel de zoom — aș reface planul de cincizeci de ori în timp ce
+       tragi de el cu două degete. Aștept să te oprești o clipă, apoi limpezesc. */
+    useEffect(() => {
+        if (zoom === zoomAsezat)
+            return;
+        const t = setTimeout(() => setZoomAsezat(zoom), 260);
+        return () => clearTimeout(t);
+    }, [zoom, zoomAsezat]);
+    useEffect(() => {
+        const pdf = pdfRef.current;
+        if (!pdf || !numPagini)
+            return;
+        const alMeu = ++randareRef.current;
+        let anulat = false;
+        (async () => {
+            const latimeCutie = (cutieRef.current && cutieRef.current.clientWidth) || 1000;
+            const dpr = Math.min(3, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+            /* Cât de mari pot fi pânzele. O pânză e memorie adevărată: lățime × înălțime × 4
+               octeți. De aia împart un buget între pagini, în loc să las fiecare pagină să
+               ceară cât vrea — altfel o planșă cu 8 pagini dată la zoom mare pică telefonul. */
+            const eTelefon = typeof window !== 'undefined' && window.innerWidth < 820;
+            const buget = eTelefon ? 14e6 : 36e6;
+            const maxPx = Math.max(2.2e6, buget / numPagini);
+            if (zoomAsezat > 1)
+                setLimpezesc(true);
+            for (let i = 1; i <= numPagini; i++) {
+                if (anulat || alMeu !== randareRef.current)
+                    return;
+                const panza = panzeRef.current[i - 1];
+                if (!panza)
+                    continue;
+                const pagina = await pdf.getPage(i);
+                const baza = pagina.getViewport({ scale: 1 });
+                /* Desenez cu jumătate mai multe puncte decât are nevoie ecranul. Costă puțin
+                   și înseamnă că, la mărimea normală, planul e deja curat — nu aștepți să se
+                   limpezească pentru o cotă citită dintr-o privire. */
+                let s = (latimeCutie * zoomAsezat * dpr * 1.5) / baza.width;
+                s = Math.min(s, 12);
+                if (baza.width * s * baza.height * s > maxPx)
+                    s = Math.sqrt(maxPx / (baza.width * baza.height));
+                s = Math.max(s, 0.25);
+                const vp = pagina.getViewport({ scale: s });
+                const tmp = document.createElement('canvas');
+                tmp.width = Math.max(1, Math.floor(vp.width));
+                tmp.height = Math.max(1, Math.floor(vp.height));
+                const ctx = tmp.getContext('2d');
+                /* Fundal alb: un PDF are pagina transparentă, iar pe fundalul negru al
+                   vizualizatorului liniile negre ar dispărea cu totul. */
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, tmp.width, tmp.height);
+                await pagina.render({ canvasContext: ctx, viewport: vp }).promise;
+                if (anulat || alMeu !== randareRef.current)
+                    return;
+                /* Schimb pânza dintr-o mișcare: îi dau mărimea nouă și copiez desenul imediat.
+                   Dacă aș desena direct în ea, s-ar goli întâi și ai vedea o clipire albă. */
+                panza.width = tmp.width;
+                panza.height = tmp.height;
+                panza.getContext('2d').drawImage(tmp, 0, 0);
+            }
+            if (!anulat && alMeu === randareRef.current)
+                setLimpezesc(false);
+        })();
+        return () => { anulat = true; };
+    }, [numPagini, zoomAsezat]);
+    const potTrage = zoom > 1;
+    return (React.createElement("div", { style: { position: 'relative', flex: 1, minHeight: 0, background: '#0c0f13' } },
+        React.createElement("div", { ref: cutieRef, className: "planseCutie", onTouchStart: onTS, onTouchMove: onTM, onWheel: laRotita,
+            onMouseDown: incepeTras, onMouseMove: tragMai, onMouseUp: gataTras, onMouseLeave: gataTras,
+            style: { position: 'absolute', inset: 0, overflow: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y', textAlign: 'center', cursor: potTrage ? 'grab' : 'default' } },
+            React.createElement("div", { style: { width: `${zoom * 100}%`, minWidth: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '10px 0 70px' } },
+                status && (React.createElement("div", { style: { color: '#9fb0c0', padding: '24px 16px', textAlign: 'center', fontSize: 13 } }, status,
+                    numPagini === 0 && !/^Se /.test(status) && (React.createElement("div", { style: { marginTop: 12 } },
+                        React.createElement("a", { href: dl, target: "_blank", rel: "noopener noreferrer", style: { color: '#14181C', background: 'var(--acc2)', padding: '8px 14px', borderRadius: 8, fontWeight: 700, textDecoration: 'none' } }, "⬇ Deschide / descarcă PDF"))))),
+                Array.from({ length: numPagini }).map((_, i) => (React.createElement("canvas", { key: i, ref: (el) => { panzeRef.current[i] = el; },
+                    style: { width: '100%', height: 'auto', display: 'block', background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,.4)', userSelect: 'none' } }))))),
+        nume && !zen && React.createElement("div", { style: { position: 'absolute', top: 'max(14px, env(safe-area-inset-top))', left: 12, zIndex: 15, maxWidth: '42%', color: '#cdd7e2', fontSize: 12, background: 'rgba(10,14,20,.55)', padding: '5px 10px', borderRadius: 8, backdropFilter: 'blur(6px)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, nume),
+        !zen && (limpezesc || zoom !== zoomAsezat) && React.createElement("div", { style: { position: 'absolute', top: 'max(14px, env(safe-area-inset-top))', left: '50%', transform: 'translateX(-50%)', zIndex: 16, color: '#14181C', background: 'var(--acc3)', fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 8, whiteSpace: 'nowrap' } }, "🔍 se limpezește…"),
+        !zen && zoom > 1 && !limpezesc && zoom === zoomAsezat && React.createElement("div", { style: { position: 'absolute', top: 'max(14px, env(safe-area-inset-top))', left: '50%', transform: 'translateX(-50%)', zIndex: 16, color: '#cdd7e2', background: 'rgba(10,14,20,.55)', fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 8, backdropFilter: 'blur(6px)', whiteSpace: 'nowrap' } }, "✋ trage de plan ca să te muți"),
+        onClose && React.createElement(CloseX, { onClose: onClose, onFull: comutaEcran }),
+        !zen && React.createElement(ZoomControls, { scale: zoom, zoomBy: zoomBy, reset: resetZ })));
 }
 const HELP = {
     rapoarte: {
@@ -4127,7 +4226,7 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
     if (viewing) {
         return (React.createElement("div", { ref: planFsRef, style: { position: 'fixed', inset: 0, zIndex: 200, background: '#0c0f13', display: 'flex', flexDirection: 'column' } }, React.createElement(PdfViewer, { src: blobViewUrl(viewing.pathname), fallbackSrc: viewing.url || blobViewUrl(viewing.pathname), downloadUrl: viewing.url || blobViewUrl(viewing.pathname), nume: viewing.nume, onClose: () => setViewing(null), onFull: () => toggleFullscreen(planFsRef.current) })));
     }
-    return (React.createElement("div", null, React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "📐 Planșe de execuție (PDF)"), React.createElement("label", { className: "w-full flex items-center justify-center gap-2 text-sm px-4 py-2.5 rounded-lg cursor-pointer font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " ", uploading ? 'Se încarcă...' : 'Adaugă planșă PDF', React.createElement("input", { type: "file", accept: "application/pdf", multiple: true, disabled: uploading, onChange: (e) => { handleFiles(e.target.files); e.target.value = ''; }, style: { display: 'none' } })), error && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, error), planseAici.length > 1 && (React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută planșă (ex: prize parter, et 4)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-3", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } })), planseAici.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă încărcată încă.")) : planseFiltrate.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă nu se potrivește cu „", cauta, "\".")) : (React.createElement("div", { className: "space-y-2 mt-3" }, planseFiltrate.map((p) => (React.createElement("div", { key: p.id, className: "rounded-lg px-3 py-2", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "flex items-center justify-between text-sm" }, React.createElement("button", { onClick: () => openPlan(p), className: "truncate text-left flex-1", style: { color: 'var(--acc1)' } }, "📄 ", p.nume), React.createElement("div", { className: "flex items-center gap-2 shrink-0 ml-2" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, fmtData(p.data)), React.createElement(EditText, { valoare: p.nume, titlu: 'Redenumește planșa', onSalveaza: (den) => redenumeste(p.id, den) }), React.createElement("button", { onClick: () => remove(p), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "🗑")))), React.createElement("div", { className: "flex gap-1.5 mt-2 flex-wrap" }, React.createElement("button", { onClick: () => openPlan(p), className: "text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "👁 Deschide planul (rămâi în aplicație)"), React.createElement("button", { onClick: () => descarca(p), disabled: dlBusy === p.id, className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-60", style: { color: 'var(--text)', background: 'var(--panel)', border: '1px solid var(--border)' } }, dlBusy === p.id ? '⏳ Se salvează…' : '⬇ Salvează în telefon'))))))))));
+    return (React.createElement("div", null, React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "📐 Planșe de execuție (PDF)"), React.createElement("label", { className: "w-full flex items-center justify-center gap-2 text-sm px-4 py-2.5 rounded-lg cursor-pointer font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " ", uploading ? 'Se încarcă...' : 'Adaugă planșă PDF', React.createElement("input", { type: "file", accept: "application/pdf", multiple: true, disabled: uploading, onChange: (e) => { handleFiles(e.target.files); e.target.value = ''; }, style: { display: 'none' } })), error && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, error), planseAici.length > 1 && (React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută planșă (ex: prize parter, et 4)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-3", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } })), planseAici.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă încărcată încă.")) : planseFiltrate.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă nu se potrivește cu „", cauta, "\".")) : (React.createElement("div", { className: "space-y-2 mt-3" }, planseFiltrate.map((p) => (React.createElement("div", { key: p.id, className: "rounded-lg px-3 py-2", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "flex items-center justify-between text-sm" }, React.createElement("button", { onClick: () => openPlan(p), className: "truncate text-left flex-1", style: { color: 'var(--acc1)' } }, "📄 ", p.nume), React.createElement("div", { className: "flex items-center gap-2 shrink-0 ml-2" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, fmtData(p.data)), React.createElement(EditText, { valoare: p.nume, titlu: 'Redenumește planșa', onSalveaza: (den) => redenumeste(p.id, den) }), React.createElement("button", { onClick: () => remove(p), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "🗑")))), React.createElement("div", { className: "flex gap-1.5 mt-2 flex-wrap" }, React.createElement("button", { onClick: () => openPlan(p), className: "text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "👁 Deschide planul (rămâi în aplicație)"), React.createElement("button", { onClick: () => descarca(p), disabled: dlBusy === p.id, className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-60", style: { color: 'var(--text)', background: 'var(--panel)', border: '1px solid var(--border)' } }, dlBusy === p.id ? '⏳ Se salvează…' : '⬇ Salvează în telefon')), React.createElement("div", { className: "text-[10px] mt-1", style: { color: 'var(--muted2)', lineHeight: 1.45 } }, "\u26A0 „Salveaz\u0103 \u00een telefon\" deschide fi\u0219ierul \u00een afara aplica\u021Biei \u2014 c\u00e2nd \u00eel \u00eenchizi, telefonul te scoate de tot \u0219i trebuie s\u0103 redeschizi aplica\u021Bia. Folose\u0219te-l doar c\u00e2nd chiar ai nevoie de fi\u0219ier (de trimis mai departe). Pentru citit, „Deschide planul\" r\u0103m\u00e2ne aici \u0219i se vede la fel de clar.")))))))));
 }
 function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, persist, currentUser }) {
     const refMedia = useRef(mediaSantier);
@@ -15987,6 +16086,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'planse-clare-v1', aud: 'manager', data: '15.09.2026', titlu: '📐 Planșele se văd clar la orice zoom — și se pot mișca stânga-dreapta pe calculator',
+        text: 'Patronul: „planurile de ce sa vad la calitate ft slaba cand se da zoom si se vede bine doar daca descarc pe telefon […] iar de pe pc daca dau zoom nu mai pot merge stanga dreapta."\n\nDE CE ERA PROST. Planul se desena O SINGURĂ DATĂ, ca o poză, la o lățime fixă (1500 puncte), se strângea în JPEG, iar zoom-ul doar MĂREA poza aia. Adică măreai o fotografie a planului, nu planul. La 4× nu mai era nimic de citit. Iar JPEG-ul, care e făcut pentru fotografii, punea un halou în jurul fiecărei linii subțiri — exact ce omoară un desen tehnic.\n\nCE E ACUM:\n\n🔍 PLANUL SE REDESENEAZĂ DIN PDF la mărimea la care te uiți. Dai zoom, se limpezește singur în mai puțin de o secundă (scrie „se limpezește…" cât lucrează). Liniile rămân linii, cotele rămân citibile. Fără JPEG deloc, fără pierderi.\n\n✋ PE CALCULATOR APUCI PLANUL CU MOUSE-UL ȘI ÎL TRAGI, ca pe o hârtie pe masă. Asta lipsea: bara de derulare e ascunsă în toată aplicația (tot cum ai cerut), deci nu aveai de ce apuca. În plus, Ctrl + rotița mărește și micșorează, ca în orice program de planuri.\n\n🔎 BUTONUL „HD" A DISPĂRUT — nu mai are rost, calitatea e maximă automat, la orice mărime. Dacă îți lipsește, spune și îl pun la loc.\n\n⚠ DESPRE „SALVEAZĂ ÎN TELEFON": rămâne, dar acum scrie limpede sub el că deschide fișierul ÎN AFARA aplicației — de aia, când îl închizi, telefonul te scoate de tot. Folosește-l doar când chiar vrei fișierul (să-l trimiți mai departe). Pentru citit, „Deschide planul" rămâne în aplicație și se vede la fel de clar.\n\nMEMORIA E PĂZITĂ: la planșe cu multe pagini, aplicația împarte un buget între ele, ca telefonul să nu pice la zoom mare.\n\n16 pași de verificare înainte de livrare. Pentru ăsta am învățat React-ul meu de buzunar să țină minte dependențele efectelor, ca să pot chiar APĂSA pe „+" în probă și să văd că planul se cere din nou, mai mare: 1500 → 3000 → 6000 puncte.' },
     { id: 'cele-noi-sus-v1', aud: 'manager', data: '15.09.2026', titlu: '🔝 Cererile de concediu: cele de aprobat sus, cele mai noi primele',
         text: 'Patronul: „cererile de concediu vreau să îmi apară primele cele mai recente, altfel trebuie să dau scroll până mă plictisesc."\n\nAvea dreptate: lista se afișa exact în ordinea în care s-au salvat, adică cele mai vechi sus. Cu cât firma merge mai mult, cu atât dai mai mult scroll ca să ajungi la ce ai de aprobat azi.\n\nCUM E ACUM, așa cum a ales el:\n• SUS stau cererile care așteaptă răspunsul tău, cea mai nouă prima\n• ce e deja aprobat sau respins se strânge sub butonul „▼ Arată și cele vechi (N)" — e acolo când îl vrei, dar nu-ți mai stă în drum\n• când n-ai nimic de aprobat, scrie limpede asta și butonul spre arhivă rămâne la locul lui\n\nCINSTIT, o limită: cererile făcute ÎNAINTE de versiunea asta n-au în ele ora la care au fost trimise (nu am salvat-o până acum), așa că pentru ele ordinea se ia după data de început a concediului. De la versiunea asta încolo fiecare cerere nouă își scrie ora, deci ordinea e exactă.\n\nACEEAȘI REGULĂ ÎN REST: întrebările de pe șantier nu mai depind de ordinea în care s-au salvat (se puteau încurca la contopirea datelor de pe două telefoane) — se iau după data lor. Restanțele RĂMÂN grupate pe locuri, dinadins: se lucrează pe apartament, nu pe dată; s-a schimbat doar că înăuntrul unui loc cea mai nouă stă sus. Cererile de materiale, notițele și cererile de alocare erau deja în ordinea bună — le-am verificat, n-am umblat la ele.\n\n15 pași de verificare înainte de livrare. Ordinea nu e doar sortată în cod: proba DESENEAZĂ lista și citește numele în ordinea în care ajung pe ecran.' },
     { id: 'duce-unde-trebuie-v1', aud: 'manager', data: '15.09.2026', titlu: '🎯 Apeși pe o problemă și ajungi FIX unde se rezolvă (până acum ajungeai pe un ecran gol)',
