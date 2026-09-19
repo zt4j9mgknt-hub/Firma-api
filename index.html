@@ -2059,6 +2059,51 @@ function eSters(key, id) {
     const sv = getStersServer();
     return !!(sv[key] && sv[key][String(id)]);
 }
+/* VERIFICĂRILE DIN ZBOR — plasa pentru „am verificat toate rapoartele și îmi apar iar
+   neverificate".
+   Cum se pierdea: bifa de verificat se scrie punând ÎNTREAGA listă de rapoarte pe server.
+   Între apăsare și confirmarea serverului trec câteva zecimi de secundă, iar în timpul ăsta
+   aplicația poate reciti lista de pe server (o face la fiecare revenire în aplicație și la
+   fiecare veste de la alt telefon). Recitirea aduce lista FĂRĂ bifa care încă n-a ajuns, o
+   pune peste ce e pe ecran, iar următoarea apăsare pleacă de la lista aia — și scrie peste,
+   ștergând bifele dinainte. La 33 de rapoarte bifate una după alta, se pierdeau cu grămada.
+   Aici țin bifele pe care le-am pus eu și care încă n-au fost confirmate de server. Orice
+   listă venită de pe server trece prin `aplicaVerificari` și le primește înapoi. Când
+   serverul le confirmă, se uită de ele. Nu se pierde nimic și nu se inventează nimic:
+   e strict ce a apăsat omul cu mâna lui, până când serverul o spune și el. */
+const VERIF_IN_ZBOR = new Map();
+function noteazaVerificare(ids, stamp) {
+    (Array.isArray(ids) ? ids : [ids]).forEach((id) => { if (id != null)
+        VERIF_IN_ZBOR.set(String(id), stamp); });
+}
+/* Fereastră spre plasă, pentru probe și pentru panoul de diagnostic din Profil: câte bife
+   încă n-au fost confirmate de server. Dacă numărul ăsta stă mare, ceva nu pleacă. */
+function verificariInZbor() { return VERIF_IN_ZBOR; }
+function aplicaVerificari(key, arr) {
+    if (key !== 'rapoarte' || !Array.isArray(arr) || VERIF_IN_ZBOR.size === 0)
+        return arr;
+    /* Plasa e pentru câteva secunde, nu pentru totdeauna. Dacă o bifă n-a fost confirmată
+       nici într-o zi, raportul ei probabil nu mai există — o las să plece, ca să nu car
+       după mine o listă care crește la nesfârșit. */
+    const limita = Date.now() - 24 * 3600 * 1000;
+    VERIF_IN_ZBOR.forEach((v, id) => { if (!(Date.parse(v && v.la) > limita))
+        VERIF_IN_ZBOR.delete(id); });
+    if (VERIF_IN_ZBOR.size === 0)
+        return arr;
+    return arr.map((r) => {
+        if (!r || r.id == null)
+            return r;
+        const v = VERIF_IN_ZBOR.get(String(r.id));
+        if (!v)
+            return r;
+        /* Dacă serverul o are deja (oricare ar fi ea), nu mai am ce apăra — uit. */
+        if (r.verificat) {
+            VERIF_IN_ZBOR.delete(String(r.id));
+            return r;
+        }
+        return { ...r, verificat: v };
+    });
+}
 let ASCUNSE_DE_STERGERI = 0;
 function faraSterse(key, arr) {
     if (!Array.isArray(arr))
@@ -2119,6 +2164,7 @@ async function loadKey(key, fallback) {
             val = fallback;
         if (pending !== undefined)
             val = mergeById(val, pending.value, key);
+        val = aplicaVerificari(key, val);
         val = faraSterse(key, val);
         if (Array.isArray(val) && val.length === 0 && Array.isArray(cached) && cached.length > 0) {
             const curat = faraSterse(key, cached);
@@ -2484,7 +2530,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.04-data-din-viitor';
+const APP_VERSION = 'v04.05-bifele-raman';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -8650,7 +8696,7 @@ function SiteTimpiMortiTab({ santierId, santierNume, santier, rapoarte, company,
             React.createElement("div", { className: "space-y-1.5" }, (totJurnal ? randuri : randuri.slice(0, 15)).map(randDetaliu)),
             randuri.length > 15 && (React.createElement("button", { onClick: () => setTotJurnal(!totJurnal), className: "w-full text-xs mt-2 px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, totJurnal ? 'Arată mai puțin' : 'Arată toate cele ' + randuri.length + ' înregistrări'))))));
 }
-function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, setSantiere, rapoarte, setRapoarte, etape, setEtape, persist, company, materials, clients, devize, setDevize, concedii, cereriAlocare, setCereriAlocare, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, restanteSantier, setRestanteSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav, onSiteView, onNav, onIesire, setTab, inapoiGlobal, inainteGlobal, potInapoiGlobal, potInainteGlobal }) {
+function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, setSantiere, rapoarte, setRapoarte, getRapoarte, etape, setEtape, persist, company, materials, clients, devize, setDevize, concedii, cereriAlocare, setCereriAlocare, sculeSantier, setSculeSantier, cereriSantier, setCereriSantier, miscariSantier, setMiscariSantier, problemeSantier, setProblemeSantier, restanteSantier, setRestanteSantier, planseSantier, setPlanseSantier, mediaSantier, setMediaSantier, structuraSantier, setStructuraSantier, pozitiiSantier, setPozitiiSantier, materialeListaSantier, setMaterialeListaSantier, checklistSantier, setChecklistSantier, checklistConfirmari, setChecklistConfirmari, checklistSablon, setChecklistSablon, onExportToDeviz, onExportMaterialeFolosite, onCerereMaterial, currentUser, pendingSiteNav, setPendingSiteNav, onSiteView, onNav, onIesire, setTab, inapoiGlobal, inainteGlobal, potInapoiGlobal, potInainteGlobal }) {
     const [form, setForm] = useState(null);
     const [selected, setSelected] = useState(null);
     const [quickForm, setQuickForm] = useState(null);
@@ -9217,8 +9263,8 @@ function SantiereTab({ onOrigine, proceseVerbale, setProceseVerbale, santiere, s
                 onInchide: () => setRaportFull(null),
                 onEditeaza: () => { const rr = raportFull.r; setRaportFull(null); setReportForm(rr); },
                 onSterge: () => { const rr = raportFull.r; setRaportFull(null); delReport(rr._idUnite && rr._idUnite.length > 1 ? rr._idUnite : rr.id); },
-                onVerifica: (ids) => { marcheazaVerificat(ids, { rapoarte, setRapoarte, persist, currentUser, santiere: [santier] }); setRaportFull(null); },
-                onObservatie: (ids, text) => { trimiteObservatieRaport(ids, text, { rapoarte, setRapoarte, persist, currentUser, santiere: [santier] }); setRaportFull(null); },
+                onVerifica: (ids) => { marcheazaVerificat(ids, { rapoarte, getRapoarte, setRapoarte, persist, currentUser, santiere: [santier] }); setRaportFull(null); },
+                onObservatie: (ids, text) => { trimiteObservatieRaport(ids, text, { rapoarte, getRapoarte, setRapoarte, persist, currentUser, santiere: [santier] }); setRaportFull(null); },
             });
         }
         if (reportForm)
@@ -10830,19 +10876,26 @@ function LeduriTipar() {
 }
 function marcheazaVerificat(ids, ctx) {
     const lista = Array.isArray(ids) ? ids : [ids];
-    const rapoarte = ctx.rapoarte || [];
+    /* Plec de la lista CEA MAI PROASPĂTĂ, nu de la cea prinsă când s-a desenat butonul.
+       Dacă apeși repede pe mai multe rânduri, butoanele a doua și a treia se desenaseră
+       deja cu lista veche — și fiecare scria peste bifa dinainte. */
+    const rapoarte = (typeof ctx.getRapoarte === 'function' ? ctx.getRapoarte() : null) || ctx.rapoarte || [];
     const stamp = { de: ctx.currentUser && ctx.currentUser.nume || 'Manager', deId: ctx.currentUser && ctx.currentUser.id, la: new Date().toISOString() };
-    const next = rapoarte.map((r) => lista.includes(r.id) ? { ...r, verificat: stamp } : r);
+    const next = aplicaVerificari('rapoarte', rapoarte).map((r) => lista.includes(r.id) ? { ...r, verificat: stamp } : r);
+    noteazaVerificare(lista, stamp);
     ctx.setRapoarte(next);
     ctx.persist('rapoarte', next);
 }
 function trimiteObservatieRaport(ids, text, ctx) {
     const lista = Array.isArray(ids) ? ids : [ids];
-    const rapoarte = ctx.rapoarte || [];
+    const rapoarte = (typeof ctx.getRapoarte === 'function' ? ctx.getRapoarte() : null) || ctx.rapoarte || [];
     const stamp = { de: ctx.currentUser && ctx.currentUser.nume || 'Manager', deId: ctx.currentUser && ctx.currentUser.id, la: new Date().toISOString(), text: String(text || '').trim() };
     if (!stamp.text)
         return;
-    const next = rapoarte.map((r) => lista.includes(r.id) ? { ...r, observatieManager: stamp, verificat: null } : r);
+    /* Când trimit o observație, raportul se face NEVERIFICAT dinadins — deci uit bifa din
+       zbor, altfel plasa i-ar pune-o la loc peste voința mea. */
+    lista.forEach((id) => VERIF_IN_ZBOR.delete(String(id)));
+    const next = aplicaVerificari('rapoarte', rapoarte).map((r) => lista.includes(r.id) ? { ...r, observatieManager: stamp, verificat: null } : r);
     ctx.setRapoarte(next);
     ctx.persist('rapoarte', next);
     const alese = rapoarte.filter((r) => lista.includes(r.id));
@@ -16385,6 +16438,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'bifele-raman-v1', aud: 'manager', data: '19.09.2026', titlu: '✅ Reparat: bifele „am verificat" se pierdeau — acum rămân puse',
+        text: 'Patronul: „am verificat toate rapoartele și îmi apar iar neverificate, este un bug undeva." Era. L-am găsit și l-am reprodus înainte să repar ceva.\n\nCUM SE PIERDEAU. Bifa se scrie punând ÎNTREAGA listă de rapoarte pe server. Între apăsarea ta și confirmarea serverului trec câteva zecimi de secundă — iar în timpul ăsta aplicația poate reciti lista de pe server. O face de fiecare dată când revii în aplicație și de fiecare dată când un coleg trimite ceva. Recitirea aducea lista FĂRĂ bifa care încă n-apucase să ajungă, o punea peste ce era pe ecran, iar următoarea apăsare pleca de la lista aia și scria peste — ștergând bifele dinainte. La 33 de rapoarte bifate unul după altul, se pierdeau cu grămada. Al doilea fel de a le pierde: două apăsări prea apropiate, ale căror butoane fuseseră desenate amândouă cu aceeași listă veche.\n\nCE E ACUM. Bifele pe care le-ai pus și pe care serverul nu le-a confirmat încă sunt ținute deoparte. Orice listă venită de pe server trece prin ele și le primește înapoi, deci nicio recitire nu mai poate șterge o bifă din zbor. Când serverul confirmă, se uită de ele singure. Iar fiecare apăsare pleacă acum de la lista CEA MAI PROASPĂTĂ, nu de la cea prinsă când s-a desenat butonul.\n\nCE NU FACE: nu inventează nimic. E strict ce ai apăsat tu cu mâna ta, până când serverul o spune și el. O bifă neconfirmată nici într-o zi se uită — raportul ei probabil nici nu mai există. Iar dacă trimiți o observație la un raport, bifa lui se scoate dinadins și NU i se mai pune la loc.\n\nCE TREBUIE SĂ FACI: bifele pe care le-ai pus ieri și s-au pierdut trebuie puse din nou, o singură dată. De acum rămân.\n\n20 de pași de verificare. Proba nouă rulează funcțiile adevărate cu un server care răspunde cu întârziere, apasă două bife la distanță de o clipă și strecoară o recitire fix între ele — și se uită la CE AJUNGE PE SERVER, nu la ce arată ecranul. Ecranul mințea; serverul e adevărul.' },
     { id: 'data-din-viitor-v1', aud: 'manager', data: '19.09.2026', titlu: '⏰ Un raport datat 30.09 în ziua de 18.09 — și teancul de 33 care stătea ascuns',
         text: 'Patronul, după ce am scos filtrul pe „azi": „cum să fie Roman Dan din 30.09.2026 și noi suntem în 18.09.2026, posibil să fie atâtea șantiere neverificate?"\n\nSUNT DOUĂ LUCRURI DIFERITE, și amândouă au răspuns.\n\n1️⃣ CELE 33 SUNT REALE. Stăteau neverificate de luni de zile, fiindcă ecranul arăta doar rapoartele cu data de AZI — deci nu le vedeai niciodată. Nu s-au înmulțit acum; acum s-au făcut vizibile. DAR 33 de rânduri deodată nu e o listă de lucru, e un zid. De acum stau pe ecran cele mai noi 5, restul la o apăsare („▼ Arată-le și pe celelalte"). Numărul din titlu rămâne cel adevărat, ca să nu se mai ascundă nimic.\n\n2️⃣ DATA DIN VIITOR e o eroare reală și trebuie îndreptată. Un raport pus pe o zi care n-a venit încă intră în pontaj pe ziua aia și strică și orele, și banca de ore. În listă acum apare ROȘU, cu „⚠ Dată din viitor — deschide-l și îndreaptă ziua", și stă primul, nu îngropat. Îl deschizi, schimbi data, gata.\n\nDE CE S-A ÎNTÂMPLAT — două cauze, amândouă acoperite:\n• s-a ales greșit ziua în calendar → ACUM aplicația întreabă înainte de salvare: „Raportul e trecut pe 30.09, dar azi e 18.09" și îți dă să te întorci și să îndrepți;\n• TELEFONUL ARE DATA GREȘITĂ în setări → asta e mai perfidă, fiindcă omul n-are de unde bănui: pentru el totul arată normal, dar tot ce scrie intră pe altă zi. Acum aplicația compară ceasul telefonului cu ora serverului (fără nicio cerere în plus, din verificarea de versiune) și, dacă diferă cu mai mult de 6 ore, telefonul ăla primește un banner galben: „Telefonul ăsta are data greșită — în telefon scrie X, dar azi e Y", cu indicația să pună data automată din setări.\n\nDacă vezi bannerul la cineva, ăla e omul de la care vin datele stricate.\n\n19 pași de verificare. Proba desenează ecranul cu 33 de rapoarte și unul din viitor, și cade dacă teancul nu se strânge sau dacă data din viitor nu e semnalată.' },
     { id: 'raport-intarziat-v1', aud: 'manager', data: '19.09.2026', titlu: '📋 Reparat: un raport venit cu întârziere nu mai dispare din „Activitatea mea"',
@@ -16634,7 +16689,7 @@ const NOUTATI = [
     { id: 'notificari-manager', aud: 'manager', data: '', titlu: '🔔 Ești la curent cu tot ce fac băieții',
         text: 'Primești notificare pentru tot ce fac angajații: raport trimis/modificat, cerere de materiale, sculă adusă/mutată, planșă sau poză adăugată, checklist confirmat, șantier finalizat, cerere de concediu și întrebări de verificat.' },
 ];
-function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRapoarte, persist, concedii, cereriAlocare, mementouri, problemeSantier, restanteSantier, setRestanteSantier, pontajCorectii, setPontajCorectii, setTab, setPendingSiteNav, goQA, currentUser, company }) {
+function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRapoarte, getRapoarte, persist, concedii, cereriAlocare, mementouri, problemeSantier, restanteSantier, setRestanteSantier, pontajCorectii, setPontajCorectii, setTab, setPendingSiteNav, goQA, currentUser, company }) {
     const goToSite = (santierId, siteView, raportData) => {
         const v = (currentUser?.rol === 'Manager' && (!siteView || siteView === 'rapoarte')) ? '__closed__' : (siteView || 'rapoarte');
         setPendingSiteNav({ santierId, siteView: v, raportData: raportData || null });
@@ -16955,7 +17010,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                                     v?.de,
                                     v?.la ? ` · ${fmtData(String(v.la).slice(0, 10))}` : '')
                                 : React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc3)' } }, "\u23F3 Neverificat"),
-                            !totVerif && React.createElement("button", { onClick: () => marcheazaVerificat(g.ids, { rapoarte, setRapoarte, persist, currentUser, santiere }), className: "shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713 Am verificat"))));
+                            !totVerif && React.createElement("button", { onClick: () => marcheazaVerificat(g.ids, { rapoarte, getRapoarte, setRapoarte, persist, currentUser, santiere }), className: "shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713 Am verificat"))));
                 }), (ascunse > 0 || aratRapVechi) && React.createElement("button", { onClick: () => setAratRapVechi(!aratRapVechi), className: "w-full mt-1 text-[11px] px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid #2E8BD155' } }, aratRapVechi ? "\u25B2 Arat\u0103 doar primele " + CATE_ODATA : "\u25BC Arat\u0103-le \u0219i pe celelalte (" + ascunse + ")"))));
         })(),
         (() => {
@@ -23736,6 +23791,11 @@ function App() {
     };
 
     const [rapoarte, setRapoarte] = useState([]);
+    /* Oglinda listei de rapoarte, mereu la zi. De aici o iau cele care bifează „am verificat",
+       ca să nu plece niciodată de la o listă prinsă la o randare de acum trei apăsări. */
+    const refRapoarte = useRef(rapoarte);
+    refRapoarte.current = rapoarte;
+    const iaRapoarte = () => refRapoarte.current;
     const [etape, setEtape] = useState([]);
     const [sculeSantier, setSculeSantier] = useState([]);
     const [cereriSantier, setCereriSantier] = useState([]);
@@ -25294,7 +25354,7 @@ function App() {
                             React.createElement("button", { onClick: () => { setError(null); loadAllData(false); }, className: "text-xs font-semibold px-2 py-1 rounded-lg shrink-0", style: { color: 'var(--acc4)', background: 'rgba(224,82,82,.18)', border: '1px solid rgba(224,82,82,.4)' } }, "\u21BB Re\u00EEncearc\u0103"))),
                         loading ? (React.createElement(EcranIncarcare, null)) : !tab ? (effectiveUser.rol === 'Manager'
                             ? React.createElement(Dashboard, { inapoiGlobal: mergiInapoi, potInapoiGlobal: potInapoiOriunde, onMarcheazaRevizie: marcheazaRevizie, company: company, devize: devize, offers: offers, invoices: invoices, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, concedii: concedii, cereriAlocare: cereriAlocare, clients: clients, restanteSantier: restanteSantier, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab, setPendingSiteNav: setPendingSiteNav, currentUser: effectiveUser, paginaInit: dashCmd && dashCmd.pagina, paginaCheie: dashCmd && dashCmd.cheie, onPagina: setDashPaginaCurenta, onPaginaInitConsumata: () => setDashCmd(null) })
-                            : React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser })) : (typeof tab === 'string' && tab.startsWith('grup-')) ? ((() => {
+                            : React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser })) : (typeof tab === 'string' && tab.startsWith('grup-')) ? ((() => {
                             const g = GRUPE_MENIU.find(([cheie]) => cheie === tab.slice(5));
                             if (!g || (g[4] && !eManagerMeniu))
                                 return React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Grupul \u0103sta nu-\u021Bi este disponibil.");
@@ -25342,12 +25402,12 @@ function App() {
                                 } }),
                             tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, setDevize: setDevize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, pdfDeviz: pdfDevizBlob, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz, onReverse: (d) => reverseStock(d.items, `Ștergere deviz ${d.numar}`) }),
                             (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab }),
-                            tab === 'santiere' && React.createElement(SantiereTab, { inapoiGlobal: mergiInapoi, inainteGlobal: mergiInainte, potInapoiGlobal: potInapoiOriunde, potInainteGlobal: potInainteOriunde, onOrigine: (o) => { setDashCmd({ pagina: o && o.pagina != null ? o.pagina : null, cheie: Date.now() + Math.random() }); sarPeste.current = true; setTab(o && o.tab !== undefined ? o.tab : null); }, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
+                            tab === 'santiere' && React.createElement(SantiereTab, { inapoiGlobal: mergiInapoi, inainteGlobal: mergiInainte, potInapoiGlobal: potInapoiOriunde, potInainteGlobal: potInainteOriunde, onOrigine: (o) => { setDashCmd({ pagina: o && o.pagina != null ? o.pagina : null, cheie: Date.now() + Math.random() }); sarPeste.current = true; setTab(o && o.tab !== undefined ? o.tab : null); }, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                             tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
                             tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
                             tab === 'fisaom' && effectiveUser.rol === 'Manager' && React.createElement(FisaOmTab, { allUsers: totiOamenii, rapoarte: rapoarte, santiere: santiere, concedii: concedii, cereriSantier: cereriSantier, restanteSantier: restanteSantier, company: company, currentUser: effectiveUser }),
                             tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, currentUser: effectiveUser, categoriiTimp: categoriiTimp, setCategoriiTimp: setCategoriiTimp }),
-                            tab === 'activitate' && React.createElement(ActivitateaMeaTab, { company: company, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
+                            tab === 'activitate' && React.createElement(ActivitateaMeaTab, { company: company, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
                             tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
                             tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, soldConcediu: soldConcediu, setSoldConcediu: setSoldConcediu, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company }),
                             tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist, materials: materials, onReceptie: receptioneazaAchizitie }),
