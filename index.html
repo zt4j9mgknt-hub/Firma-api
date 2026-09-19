@@ -2484,7 +2484,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.03-raportul-intarziat';
+const APP_VERSION = 'v04.04-data-din-viitor';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -7228,6 +7228,20 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
                 const r = await alege({ titlu: 'Raportul are doar orele', text: 'Nu scrie nicăieri CE s-a lucrat. Peste o lună nu o să mai știi, iar în deviz nu intră nimic.',
                     variante: [{ valoare: 'inapoi', eticheta: '↩ Mă întorc să scriu lucrările', principal: true }, { valoare: 'salvez', eticheta: '💾 Salvez așa, doar cu ore' }] });
                 if (r !== 'salvez')
+                    return;
+            }
+            /* UN RAPORT NU POATE FI DIN VIITOR.
+               Patronul a găsit în listă un raport cu data de 30.09, în 18.09: „cum să fie
+               Roman Dan din 30.09.2026 și noi suntem în 18.09.2026?" Ori s-a greșit data în
+               calendar, ori telefonul are ceasul dat aiurea. În ambele cazuri raportul intră
+               în pontaj pe o zi care n-a venit încă — și strică și orele, și banca de ore.
+               De aia întreb înainte de salvare, cu ziua scrisă mare. */
+            const aziAcum = dataLocala(new Date());
+            if (String(data || '') > aziAcum) {
+                const rz = await alege({ titlu: '📅 Data raportului e în viitor',
+                    text: 'Raportul e trecut pe ' + fmtData(data) + ', dar azi e ' + fmtData(aziAcum) + '.\n\nOri s-a ales greșit ziua în calendar, ori telefonul are data greșită în setări. Un raport pus pe o zi care n-a venit încă strică pontajul și banca de ore.',
+                    variante: [{ valoare: 'inapoi', eticheta: '↩ Mă întorc și îndrept data', principal: true }, { valoare: 'salvez', eticheta: 'Data e bună, salvez așa' }] });
+                if (rz !== 'salvez')
                     return;
             }
             refSalvat.current = true;
@@ -16371,6 +16385,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'data-din-viitor-v1', aud: 'manager', data: '19.09.2026', titlu: '⏰ Un raport datat 30.09 în ziua de 18.09 — și teancul de 33 care stătea ascuns',
+        text: 'Patronul, după ce am scos filtrul pe „azi": „cum să fie Roman Dan din 30.09.2026 și noi suntem în 18.09.2026, posibil să fie atâtea șantiere neverificate?"\n\nSUNT DOUĂ LUCRURI DIFERITE, și amândouă au răspuns.\n\n1️⃣ CELE 33 SUNT REALE. Stăteau neverificate de luni de zile, fiindcă ecranul arăta doar rapoartele cu data de AZI — deci nu le vedeai niciodată. Nu s-au înmulțit acum; acum s-au făcut vizibile. DAR 33 de rânduri deodată nu e o listă de lucru, e un zid. De acum stau pe ecran cele mai noi 5, restul la o apăsare („▼ Arată-le și pe celelalte"). Numărul din titlu rămâne cel adevărat, ca să nu se mai ascundă nimic.\n\n2️⃣ DATA DIN VIITOR e o eroare reală și trebuie îndreptată. Un raport pus pe o zi care n-a venit încă intră în pontaj pe ziua aia și strică și orele, și banca de ore. În listă acum apare ROȘU, cu „⚠ Dată din viitor — deschide-l și îndreaptă ziua", și stă primul, nu îngropat. Îl deschizi, schimbi data, gata.\n\nDE CE S-A ÎNTÂMPLAT — două cauze, amândouă acoperite:\n• s-a ales greșit ziua în calendar → ACUM aplicația întreabă înainte de salvare: „Raportul e trecut pe 30.09, dar azi e 18.09" și îți dă să te întorci și să îndrepți;\n• TELEFONUL ARE DATA GREȘITĂ în setări → asta e mai perfidă, fiindcă omul n-are de unde bănui: pentru el totul arată normal, dar tot ce scrie intră pe altă zi. Acum aplicația compară ceasul telefonului cu ora serverului (fără nicio cerere în plus, din verificarea de versiune) și, dacă diferă cu mai mult de 6 ore, telefonul ăla primește un banner galben: „Telefonul ăsta are data greșită — în telefon scrie X, dar azi e Y", cu indicația să pună data automată din setări.\n\nDacă vezi bannerul la cineva, ăla e omul de la care vin datele stricate.\n\n19 pași de verificare. Proba desenează ecranul cu 33 de rapoarte și unul din viitor, și cade dacă teancul nu se strânge sau dacă data din viitor nu e semnalată.' },
     { id: 'raport-intarziat-v1', aud: 'manager', data: '19.09.2026', titlu: '📋 Reparat: un raport venit cu întârziere nu mai dispare din „Activitatea mea"',
         text: 'Patronul: „alex a trimis acum raport, am primit notificarea dar nu apare în activitatea mea, de ce?"\n\nCAUZA. Cardul „Rapoarte de verificat" se uita DOAR la rapoartele care poartă data de AZI. Un raport care ajunge cu întârziere pica direct în afara listei — și asta se întâmplă exact în două situații care nu sunt deloc rare:\n• raportul a stat blocat în telefonul omului (fără net, ori server refuzat) și a plecat abia a doua zi;\n• omul l-a scris seara târziu, pentru ziua care tocmai se terminase.\n\nÎn ambele cazuri primeai înștiințarea — aia se dă când datele ajung pe server, deci era corectă — și nu găseai nimic pe ecran. Raportul era în șantier, la „Rapoarte", dar în lista ta cu ce ai DE FĂCUT nu apărea. Un raport neverificat nu devine verificat de la trecerea unei zile.\n\nCE E ACUM:\n• se adună TOATE rapoartele neverificate, nu doar cele de azi;\n• cele de azi stau sus, ca până acum;\n• cele din zilele trecute se strâng sub „▼ Arată și din zile trecute (N)" — dar numărul din titlul cardului le cuprinde pe toate, ca să nu se mai ascundă nimic;\n• pe fiecare rând venit din altă zi scrie DATA lui, cu albastru — un raport de acum trei zile care arată exact ca unul de azi e mai rău decât unul lipsă;\n• dacă azi n-a venit nimic dar ai restanțe mai vechi, cardul se deschide direct pe ele, nu-ți arată un card gol.\n\nȘi o greșeală mai veche, tot aici: două zile diferite pe ACELAȘI șantier se contopeau într-un singur rând. Acum gruparea e pe zi ȘI pe șantier.\n\n19 pași de verificare. Proba nouă desenează ecranul cu un raport de ieri și cade dacă nu se vede.' },
     { id: 'spune-de-ce-v1', aud: 'manager', data: '19.09.2026', titlu: '📡 Eroarea roșie care nu pleca: acum spune DE CE și îți dă ce să apeși',
@@ -16886,7 +16902,15 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                toate — altfel un raport întârziat ar fi din nou invizibil, exact greșeala pe
                care o repar aici. Iar dacă azi n-a venit nimic, se deschide pe vechituri, ca
                să nu vezi un card gol când ai totuși treabă. */
-            const deVerificat = (aratRapVechi || deAzi.length === 0) ? toateDeVerificat : deAzi;
+            /* CÂTE SE ARATĂ DEODATĂ. Când am scos filtrul pe „azi", patronul a văzut dintr-o
+               dată 33 de rapoarte neverificate — reale, dar nevăzute luni de zile fiindcă
+               ecranul le ascundea. 33 de rânduri deodată nu e o listă de lucru, e un zid.
+               Arăt cele mai noi câteva; restul, la o apăsare. Numărul din titlu rămâne cel
+               adevărat, ca nimic să nu se mai ascundă. */
+            const CATE_ODATA = 5;
+            const toateDeAratat = (aratRapVechi || deAzi.length === 0) ? toateDeVerificat : deAzi;
+            const deVerificat = aratRapVechi ? toateDeAratat : toateDeAratat.slice(0, CATE_ODATA);
+            const ascunse = toateDeVerificat.length - deVerificat.length;
             if (toateDeVerificat.length === 0)
                 return null;
             return (React.createElement("div", { className: "mb-6 rounded-xl p-4", style: { background: '#E9A23B14', border: '1px solid #E9A23B66', borderLeft: '4px solid #E9A23B' } },
@@ -16912,20 +16936,27 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                                     "\u00B7 ",
                                     cine || 'fără persoane'),
                                 /* Ziua scrie pe rând. Un raport de acum trei zile care arată
-                                   exact ca unul de azi e mai rău decât unul lipsă. */
-                                g.data !== aziR && React.createElement("span", { className: "ml-1", style: { color: 'var(--acc1)', fontWeight: 700 } }, "\u00B7 ", fmtData(g.data))),
+                                   exact ca unul de azi e mai rău decât unul lipsă.
+                                   Iar dacă ziua e în VIITOR, o scriu roșu: înseamnă ori data
+                                   aleasă greșit, ori ceasul telefonului dat aiurea, și în
+                                   ambele cazuri orele intră pe o zi care n-a venit încă. */
+                                g.data !== aziR && React.createElement("span", { className: "ml-1", style: { color: g.data > aziR ? 'var(--acc4)' : 'var(--acc1)', fontWeight: 700 } },
+                                    "\u00B7 ", g.data > aziR ? '⚠ ' : '', fmtData(g.data))),
                             React.createElement("span", { className: "shrink-0", style: { color: 'var(--acc2)', fontFamily: "'JetBrains Mono', monospace" } },
                                 minutesToHM(ore),
                                 " h")),
                         React.createElement("div", { className: "flex items-center justify-between gap-2 mt-1.5" },
-                            totVerif
+                            g.data > aziR
+                                ? React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc4)' } },
+                                    "\u26A0 Dat\u0103 din viitor \u2014 deschide-l \u0219i \u00EEndreapt\u0103 ziua")
+                                : totVerif
                                 ? React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc2)' } },
                                     "\u2713 Verificat de ",
                                     v?.de,
                                     v?.la ? ` · ${fmtData(String(v.la).slice(0, 10))}` : '')
                                 : React.createElement("span", { className: "text-[11px]", style: { color: 'var(--acc3)' } }, "\u23F3 Neverificat"),
                             !totVerif && React.createElement("button", { onClick: () => marcheazaVerificat(g.ids, { rapoarte, setRapoarte, persist, currentUser, santiere }), className: "shrink-0 text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2713 Am verificat"))));
-                }), maiVechi.length > 0 && React.createElement("button", { onClick: () => setAratRapVechi(!aratRapVechi), className: "w-full mt-1 text-[11px] px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid #2E8BD155' } }, aratRapVechi ? "\u25B2 Ascunde zilele trecute" : "\u25BC Arat\u0103 \u0219i din zile trecute (" + maiVechi.length + ")"))));
+                }), (ascunse > 0 || aratRapVechi) && React.createElement("button", { onClick: () => setAratRapVechi(!aratRapVechi), className: "w-full mt-1 text-[11px] px-3 py-2 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid #2E8BD155' } }, aratRapVechi ? "\u25B2 Arat\u0103 doar primele " + CATE_ODATA : "\u25BC Arat\u0103-le \u0219i pe celelalte (" + ascunse + ")"))));
         })(),
         (() => {
             const acumA = new Date();
@@ -24138,6 +24169,7 @@ function App() {
         })();
     }, [dateIncarcate, currentUser, noutatiAnuntate]);
     const [versiuneNoua, setVersiuneNoua] = useState('');
+    const [ceasStrambe, setCeasStrambe] = useState(null);
     const refEManager = useRef(false);
     refEManager.current = !!(currentUser && currentUser.rol === 'Manager');
     useEffect(() => {
@@ -24147,6 +24179,21 @@ function App() {
                 return;
             try {
                 const r = await fetch('/index.html?v=' + Date.now(), { cache: 'no-store' });
+                /* CEASUL TELEFONULUI, VERIFICAT PE GRATIS.
+                   Patronul a găsit un raport datat 30.09 în ziua de 18.09. Un telefon cu data
+                   greșită în setări scrie raportul pe o zi care n-a venit încă, și de acolo
+                   strică pontajul, banca de ore și tot ce se socotește pe zile. Omul n-are de
+                   unde bănui — pentru el aplicația arată normal.
+                   Orice răspuns de la server aduce ora lui exactă în antet. O citesc de aici,
+                   din verificarea de versiune pe care oricum o fac, fără nicio cerere în plus. */
+                try {
+                    const oraServer = Date.parse(r.headers.get('date') || '');
+                    if (oraServer && Math.abs(Date.now() - oraServer) > 6 * 3600 * 1000 && !oprit)
+                        setCeasStrambe({ alTelefonului: dataLocala(new Date()), alServerului: dataLocala(new Date(oraServer)) });
+                    else if (oraServer && !oprit)
+                        setCeasStrambe(null);
+                }
+                catch (e) { tacut('ceasServer', e); }
                 const t = await r.text();
                 const m = t.match(/APP_VERSION\s*=\s*'([^']+)'/);
                 const ver = m && m[1];
@@ -25059,6 +25106,20 @@ function App() {
     const rezultateMeniu = cautaMeniuN.length >= 2
         ? TOATE_RANDURILE_MENIU.filter((r) => cautNorm(r.label + ' ' + r.grup + ' ' + r.sin).includes(cautaMeniuN))
         : null;
+    /* Bannerul ceasului stă SUS DE TOT, peste cel de versiune: dacă telefonul are data
+       greșită, orice scrie omul azi intră pe o zi greșită. E de reparat înaintea oricărei
+       alte treburi, și e reparat din setările telefonului, nu din aplicație. */
+    const bannerCeas = ceasStrambe ? (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 10000 } },
+        React.createElement("div", { style: { maxWidth: 520, margin: '0 auto', padding: '12px 14px', borderRadius: '12px', textAlign: 'left',
+                background: '#5a3a00', color: '#ffe2b0', border: '1px solid #C9902B', boxShadow: '0 4px 14px rgba(0,0,0,.5)' } },
+            React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, marginBottom: 4 } }, "\u23F0 Telefonul \u0103sta are data gre\u0219it\u0103"),
+            React.createElement("div", { style: { fontSize: 12, lineHeight: 1.55 } },
+                "\u00CEn telefon scrie ", React.createElement("b", null, fmtData(ceasStrambe.alTelefonului)),
+                ", dar azi e ", React.createElement("b", null, fmtData(ceasStrambe.alServerului)), "."),
+            React.createElement("div", { style: { fontSize: 12, lineHeight: 1.55, marginTop: 6 } },
+                "Tot ce scrii de pe el \u2014 rapoarte, ore, concedii \u2014 se \u00eenregistreaz\u0103 pe ziua gre\u0219it\u0103 \u0219i stric\u0103 pontajul. Intr\u0103 \u00een ",
+                React.createElement("b", null, "Set\u0103ri \u2192 Dat\u0103 \u0219i or\u0103"), " \u0219i pune ",
+                React.createElement("b", null, "data automat\u0103"), ". Apoi redeschide aplica\u021Bia.")))) : null;
     const bannerVersiune = versiuneNoua ? (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9999, textAlign: 'center' } },
         React.createElement("button", { onClick: pornesteVersiuneaNoua, style: { display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
                 background: '#1d3a52', color: '#9ad', border: '1px solid #2E8BD1AA', boxShadow: '0 4px 14px rgba(0,0,0,.45)', cursor: 'pointer' } },
@@ -25067,6 +25128,7 @@ function App() {
             ") \u2014 apas\u0103 ca s\u0103 o porne\u0219ti"))) : null;
     if (!currentUser) {
         return (React.createElement(React.Fragment, null,
+            bannerCeas,
             bannerVersiune,
             React.createElement(LoginScreen, { onLogin: handleAuth, onBioUnlock: handleBioUnlock })));
     }
@@ -25076,6 +25138,7 @@ function App() {
         React.createElement("div", { className: "min-h-screen w-full", style: { background: 'transparent', position: 'relative', zIndex: 1, fontFamily: "'Inter', sans-serif" } },
             E_MEDIU_DE_PROBA && (React.createElement("div", { style: { background: '#7a4a00', color: '#ffe2b0', textAlign: 'center', padding: '7px 12px',
                     fontSize: '12.5px', fontWeight: 700, letterSpacing: '.02em', borderBottom: '2px solid #C9902B' } }, "\uD83E\uDDEA MEDIU DE PROB\u0102 \u2014 datele de aici NU sunt cele ale firmei. Ce faci aici nu ajunge nic\u0103ieri.")),
+            bannerCeas,
             bannerVersiune,
             memoriePlina && (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9998, textAlign: 'center' } },
                 React.createElement("span", { style: { display: 'inline-block', padding: '10px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
