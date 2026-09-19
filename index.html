@@ -2353,11 +2353,45 @@ async function syncQueue() {
                 toPost = mergeById(d.value, item.value, item.key);
             }
             catch { }
+            /* DE CE SCRIU AICI MOTIVUL, ȘI NU DOAR „a eșuat":
+               Un coleg (Alex) a rămas cu bannerul roșu „unele date nu pot fi trimise" care nu
+               pleca nici după ce ieșea din aplicație — fiindcă lucrul netrimis stă în memoria
+               telefonului și se reîncearcă la nesfârșit. Textul bannerului ghicea („pot fi
+               prea mari sau sesiunea a expirat") și nu-i dădea nimic de apăsat. Omul n-avea
+               ce face, iar eu n-aveam ce să mă uit.
+               De acum păstrez pe lucrul blocat: ce răspuns a dat serverul, ce a scris, cât de
+               mare e pachetul și când a fost ultima încercare. Așa scrie pe ecran adevărul,
+               nu o presupunere. */
+            const octeti = (() => { try {
+                return JSON.stringify({ key: item.key, value: toPost }).length;
+            }
+            catch (_) {
+                return 0;
+            } })();
             let rr;
             try {
                 rr = await authFetch('/api/data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: item.key, value: toPost }) });
             }
-            catch {
+            catch (eRet) {
+                /* Aici intră și pachetele prea mari care nu apucă să plece în 12 secunde.
+                   Înainte ieșeam din buclă fără să număr nimic, deci un pachet care nu pleacă
+                   niciodată nu ajungea să fie raportat ca blocat — tăcere curată. */
+                const q0 = getPending();
+                const it0 = q0.find((x) => x.key === item.key);
+                if (it0) {
+                    it0._try = (it0._try || 0) + 1;
+                    it0._cod = 0;
+                    it0._mesaj = 'nu s-a putut trimite (net întrerupt sau pachet prea mare pentru conexiunea asta)';
+                    it0._octeti = octeti;
+                    it0._cand = Date.now();
+                    setPending(q0);
+                    if (it0._try >= 5) {
+                        try {
+                            window.dispatchEvent(new CustomEvent('sync-blocat', { detail: { key: item.key, cod: 0, mesaj: it0._mesaj, octeti } }));
+                        }
+                        catch { }
+                    }
+                }
                 break;
             }
             let dd = {};
@@ -2374,10 +2408,14 @@ async function syncQueue() {
                 const it = q.find((x) => x.key === item.key);
                 if (it) {
                     it._try = (it._try || 0) + 1;
+                    it._cod = rr.status;
+                    it._mesaj = String((dd && (dd.error || dd.mesaj)) || rr.statusText || '').slice(0, 200);
+                    it._octeti = octeti;
+                    it._cand = Date.now();
                     setPending(q);
                     if (it._try >= 5) {
                         try {
-                            window.dispatchEvent(new CustomEvent('sync-blocat', { detail: item.key }));
+                            window.dispatchEvent(new CustomEvent('sync-blocat', { detail: { key: item.key, cod: rr.status, mesaj: it._mesaj, octeti } }));
                         }
                         catch { }
                     }
@@ -2394,8 +2432,24 @@ async function syncQueue() {
 }
 if (typeof window !== 'undefined') {
     window.addEventListener('online', () => { syncQueue(); });
-    setInterval(() => { if (navigator.onLine && getPending().length)
-        syncQueue(); }, 15000);
+    /* RITMUL REÎNCERCĂRILOR. Cât timp merge, încerc des (15 secunde). Dar dacă ceva a picat
+       de cinci ori la rând, nu mai are rost să bat serverul la fiecare 15 secunde — nu se
+       repară de la insistență, doar consumă net și baterie pe telefonul omului. După cinci
+       eșecuri, o dată la 5 minute. Butonul „Încearcă acum" trece peste orice așteptare. */
+    setInterval(() => {
+        if (!navigator.onLine)
+            return;
+        const q = getPending();
+        if (!q.length)
+            return;
+        const blocate = q.every((x) => (x._try || 0) >= 5);
+        if (blocate) {
+            const ultima = Math.max(...q.map((x) => Number(x._cand) || 0));
+            if (Date.now() - ultima < 5 * 60 * 1000)
+                return;
+        }
+        syncQueue();
+    }, 15000);
     setTimeout(() => { syncQueue(); }, 3000);
     setTimeout(() => {
         try {
@@ -2430,7 +2484,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.00-fisa-pe-om';
+const APP_VERSION = 'v04.02-spune-de-ce';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată', 'Restantă'];
@@ -6357,7 +6411,7 @@ function santiereCuTimpMortMare({ rapoarte, santiere, company, costOra }) {
         .filter((x) => x.proc != null && x.proc >= prag && x.minute >= 60
         && (santiere || []).some((s) => s.id === x.santierId && s.status !== 'Finalizat'));
 }
-function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone }) {
+function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone, mergiLaOameni }) {
     /* REFĂCUT LA CERERE, ÎN TREI RÂNDURI. Cuvintele patronului, pe rând:
        1. „vreau să fie la fiecare persoană să poți selecta ora (de la 0 la 24) și la minut
           (de la 0 la 60) și rubricile unde s-au dus timpi mult mai intuitive, se descurcă
@@ -6513,8 +6567,17 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone }) {
             React.createElement("div", { className: "text-[11px] font-semibold", style: { color: 'var(--muted)' } },
                 "1 · Cine a pierdut timp?",
                 React.createElement("span", { className: "font-normal", style: { color: 'var(--muted2)' } }, " — bifează doar pe cei implicați")),
+            /* FUNDĂTURA DIN POZA LUI: a intrat aici înainte să bifeze cine a lucrat azi, și
+               ecranul îi spunea doar „treci oamenii sus în raport" — fără să-i dea vreun drum
+               într-acolo. Cuvintele lui: „sunt aici si nu pot face nimic".
+               Un ecran care îți spune ce-ți lipsește TREBUIE să-ți dea și butonul până acolo. */
             numePersoane.length === 0
-                ? React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Întâi treci oamenii care au lucrat azi, sus în raport.")
+                ? React.createElement("div", { className: "rounded-lg px-3 py-3", style: { background: '#E9A23B14', border: '1px solid #E9A23B66' } },
+                    React.createElement("div", { className: "text-sm font-semibold mb-1", style: { color: 'var(--acc3)' } }, "Nu știu încă cine a lucrat azi"),
+                    React.createElement("div", { className: "text-xs mb-2.5", style: { color: 'var(--text)', lineHeight: 1.5 } }, "Timpul pierdut se trece pe oameni, așa că întâi trebuie bifat cine a fost azi pe șantier. Se face în rubrica „👷 Cine a lucrat azi\", prima din raport."),
+                    mergiLaOameni
+                        ? React.createElement("button", { type: "button", onClick: mergiLaOameni, className: "w-full text-sm px-3 py-2.5 rounded-lg font-bold", style: { color: '#14181C', background: 'var(--acc3)' } }, "👷 Du-mă la „Cine a lucrat azi\"")
+                        : React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Ieși cu „‹ Înapoi” și deschide prima rubrică din raport."))
                 : React.createElement("div", { className: "flex flex-wrap gap-1.5" },
                     numePersoane.map((n) => chip(n, sel.includes(n), () => bifeaza(n), 'chip-' + n)),
                     numePersoane.length > 1 && chip('👥 Toată echipa', totiBifati, bifeazaToti, 'chip-toti')),
@@ -6535,7 +6598,9 @@ function TimpNeproductivEditor({ timpi, setTimpi, persoane, zone }) {
                     : faraTimp.length > 0
                         ? 'Pune ora și minutul la toți cei bifați'
                         : `➕ Adaugă — ${hm(totalNou)} h pierdute (${alesi.length} ${alesi.length === 1 ? 'rând' : 'rânduri'})`),
-            React.createElement("div", { className: "text-[11px] rounded-lg px-2.5 py-1.5", style: { background: '#2E8BD114', border: '1px solid #2E8BD155', color: 'var(--acc1)' } },
+            /* Îndemnul ăsta n-are ce căuta pe ecran cât timp n-ai pe cine bifa — în poza lui
+               era singurul lucru colorat, lângă un formular care nu făcea nimic. */
+            numePersoane.length > 0 && React.createElement("div", { className: "text-[11px] rounded-lg px-2.5 py-1.5", style: { background: '#2E8BD114', border: '1px solid #2E8BD155', color: 'var(--acc1)' } },
                 "➕ Poți adăuga de câte ori vrei într-o zi. Fiecare om bifat intră cu rândul LUI, cu rubrica, ora, etajul și explicația lui — deci doi oameni care au făcut lucruri diferite nu mai trebuie trecuți în două reprize.")),
         lista.length === 0
             ? React.createElement("div", { className: "text-xs text-center py-2", style: { color: 'var(--muted2)' } }, "Nimic trecut încă. Dacă ziua a mers din plin, lasă gol.")
@@ -7101,9 +7166,12 @@ function RaportForm({ initial, dataInitiala, etape, echipaPermisa, echipaNume, m
         });
         pune('timp', {
             icon: '⏳', titlu: 'Timp care nu s-a dus în lucrare', accent: 'var(--acc3)',
-            rezumat: minTimp ? hm(minTimp) : '—',
+            /* Scrie de pe listă de ce nu se poate intra încă, ca omul să nu deschidă o rubrică
+               în care n-are ce face. Mai bine află înainte de apăsare decât după. */
+            rezumat: persoane.length === 0 ? 'bifează întâi oamenii' : (minTimp ? hm(minTimp) : '—'),
             plin: minTimp > 0,
-            continut: React.createElement(TimpNeproductivEditor, { timpi: timpNeproductiv, setTimpi: setTimpNeproductiv, persoane: persoane, zone: zoneSantier }),
+            nota: persoane.length === 0 ? 'Timpul pierdut se trece pe oameni. Bifează întâi „👷 Cine a lucrat azi", prima rubrică din raport.' : null,
+            continut: React.createElement(TimpNeproductivEditor, { timpi: timpNeproductiv, setTimpi: setTimpNeproductiv, persoane: persoane, zone: zoneSantier, mergiLaOameni: () => setSectiuneFocus('oameni') }),
         });
         pune('obs', {
             icon: '📝', titlu: 'Alte observații', accent: 'var(--acc1)',
@@ -16303,6 +16371,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[9px] font-bold shrink-0", style: { color: '#00FF9C', letterSpacing: '.1em', fontFamily: "'JetBrains Mono', monospace" } }, "\u25CF SISTEM SECURIZAT \u00B7 AES")))));
 }
 const NOUTATI = [
+    { id: 'spune-de-ce-v1', aud: 'manager', data: '19.09.2026', titlu: '📡 Eroarea roșie care nu pleca: acum spune DE CE și îți dă ce să apeși',
+        text: 'Patronul, despre un coleg: „La Alex îi apare eroarea asta și nu dispare chiar dacă iese din aplicație, de ce?"\n\nDE CE NU DISPĂREA, pe scurt: ce nu apucă să plece pe server rămâne în memoria telefonului și se reîncearcă la nesfârșit. Asta e BINE — altfel munca omului s-ar pierde când pică netul. De aia trece peste orice ieșire din aplicație: nu e un mesaj rămas agățat, e o treabă nefăcută.\n\nCE ERA RĂU ERA MESAJUL. Scria „pot fi prea mari sau sesiunea a expirat. Ieși și intră din nou; dacă rămâne, spune administratorului". Adică GHICEA motivul, nu-l știa — aplicația avea răspunsul serverului în mână și îl arunca. Iar omul a făcut exact ce scria acolo și tot a rămas blocat, fără nimic de apăsat.\n\nACUM BANNERUL SPUNE ADEVĂRUL:\n• CE anume n-a plecat, pe numele lui („rapoartele zilnice", „restanțele");\n• DE CE: codul și mesajul serverului, ori „pachetul e prea mare (N KB)", ori „sesiunea a expirat";\n• și cât de mare e pachetul.\n\nȘI ÎȚI DĂ BUTOANE:\n↻ ÎNCEARCĂ ACUM — fără să aștepți.\n💾 SALVEAZĂ PE TELEFON — scoate într-un fișier exact ce n-a plecat, ca munca să fie în siguranță chiar dacă telefonului i se întâmplă ceva. Fișierul se trimite managerului.\n🚪 INTRĂ DIN NOU ÎN CONT — apare doar când chiar sesiunea e de vină.\n\nSCRIE LIMPEDE și ce să NU facă: să nu șteargă aplicația și să nu golească datele browserului până nu pleacă — acolo stă munca.\n\nȘI NU MAI BATE SERVERUL: după cinci încercări eșuate, reîncearcă o dată la 5 minute în loc de la fiecare 15 secunde. Nu se repară din insistență, doar se consumă netul și bateria omului.\n\nCE NU SE SCHIMBĂ, ȘI E CEL MAI IMPORTANT: la eșec nu se șterge NIMIC din coadă, niciodată. Proba nouă verifică exact asta — am stricat-o înadins ca să șteargă, și au căzut 12 verificări deodată.\n\n19 pași de verificare înainte de livrare.' },
+    { id: 'fara-fundatura-v1', aud: 'manager', data: '15.09.2026', titlu: '🚪 Reparat: intrai la „Timp care nu s-a dus în lucrare" și nu puteai face nimic',
+        text: 'Patronul a trimis poza ecranului: „sunt aici și nu pot face nimic, apare doar asta."\n\nCE SE ÎNTÂMPLA. Timpul pierdut se trece PE OAMENI. Dacă intrai în rubrică înainte să bifezi cine a lucrat azi, nu aveai pe cine bifa — și tot ce scria pe ecran era „Întâi treci oamenii care au lucrat azi, sus în raport". Adevărat, dar fără niciun drum într-acolo: rămâneai blocat într-o rubrică goală, cu un buton stins.\n\nREPARAT ÎN DOUĂ LOCURI:\n\n👷 ÎN RUBRICĂ, când nu e nimeni bifat, scrie limpede de ce nu se poate lucra acolo și apare butonul „👷 Du-mă la «Cine a lucrat azi»" — o apăsare și ești unde trebuie.\n\n📋 ȘI PE LISTA RUBRICILOR, înainte să intri: în dreptul rubricii scrie „bifează întâi oamenii", cu explicația dedesubt. Mai bine afli înainte de apăsare decât după.\n\nȘi a plecat de acolo îndemnul albastru „poți adăuga de câte ori vrei" — n-avea ce căuta pe un ecran unde nu se putea adăuga nimic; era singurul lucru colorat, lângă un formular mort.\n\nREGULA, de acum înainte: un ecran care îți spune ce-ți lipsește trebuie să-ți dea și butonul până acolo. Altfel nu e un mesaj de ajutor, e un zid.' },
     { id: 'fisa-pe-om-v1', aud: 'manager', data: '15.09.2026', titlu: '👷 Timpul pierdut: fiecare om are fișa LUI — rubrică, ore, etaj, explicație',
         text: 'Patronul, după ce a văzut varianta dinainte: „trebuie să pui și persoanele să fie selectate, și opțiunea de adaugă dacă persoane diferite au făcut lucruri diferite" și „la fiecare persoană în parte îi pui selecția timpului, unde s-a pierdut timpul și explicație, și unde este pe etaje și etc să se poată selecta și asta."\n\nAVEA DREPTATE PE AMÂNDOUĂ. Scosesem bifarea oamenilor ca să scurtez drumul — greșit: pe un șantier cu opt oameni, opt rânduri cu ceasuri sunt mai greu de citit decât să bifezi întâi cei doi care chiar au stat. Și, mai important, un rând însemna „o rubrică, o durată, mai mulți oameni" — adică presupunea că toți au făcut același lucru. Pe șantier nu e așa aproape niciodată.\n\nCUM MERGE ACUM:\n\n1️⃣ BIFEZI cine a pierdut timp (sau „👥 Toată echipa" dintr-o apăsare).\n\n2️⃣ FIECARE BIFAT ÎȘI PRIMEȘTE CARTONAȘUL LUI, cu tot ce ține de el: unde s-a dus timpul (rubrica, din plăcuțele cu poză și explicație), cât a pierdut (ora și minutul lui, 0–24 și 0–59), la ce ETAJ / apartament, și explicația în cuvintele lui.\n\n3️⃣ APEȘI ADAUGĂ O SINGURĂ DATĂ și se trece câte un rând pentru fiecare. Doi oameni la aprovizionare o oră și unul care a așteptat frontul două ore la etajul 3 intră dintr-o mișcare, fiecare cu ale lui — nu în trei reprize, și nu toți sub o rubrică aleasă de aplicație.\n\n↧ SCURTĂTURA „LA FEL LA TOȚI": dacă toată echipa a pățit același lucru, pui rubrica și etajul pe un cartonaș și apeși butonul — se duc pe toate. ORELE NU se copiază niciodată: alea sunt ale fiecăruia, și aplicația n-are voie să scrie o oră plătită în locul omului.\n\n⚠ ȘI NU TE LASĂ SĂ PIERZI PE NIMENI: dacă ai bifat pe cineva și i-ai lăsat ceasul pe zero, îți scrie numele lui și nu te lasă să adaugi până nu îl pui sau îl scoți. Un om care dispare în tăcere dintr-un rând e felul în care se pierd orele pe nesimțite.\n\nCE NU S-A ATINS: tot ce s-a scris înainte arată exact aceleași minute ca până acum, inclusiv rândurile puse cu ceasul „de la — până la". Probele verifică fix asta, pe rânduri vechi adevărate.\n\n18 pași de verificare înainte de livrare. Pentru ăsta am apăsat butoanele ca un om, în probă: am bifat doi oameni, le-am dat rubrici diferite, etaje diferite și ore diferite, și am verificat că ies două rânduri cu datele corecte.' },
     { id: 'timpi-pe-om-v1', aud: 'manager', data: '15.09.2026', titlu: '⏱ Timpul care nu s-a dus în lucrare: ora și minutul la FIECARE om, rubricile se desfac',
@@ -24085,13 +24157,21 @@ function App() {
     const [online, setOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const [pendingCount, setPendingCount] = useState((typeof getPending === 'function') ? getPending().length : 0);
     const [memoriePlina, setMemoriePlina] = useState(false);
-    const [syncBlocat, setSyncBlocat] = useState(false);
+    /* Dacă telefonul a rămas peste noapte cu ceva netrimis, îl arăt din prima secundă, nu
+       abia după ce mai eșuează o dată. Alex a stat cu bannerul fără să afle vreodată ce e. */
+    const [syncBlocat, setSyncBlocat] = useState(() => { try {
+        const b = getPending().find((x) => (x._try || 0) >= 5);
+        return b ? { key: b.key, cod: b._cod, mesaj: b._mesaj, octeti: b._octeti } : false;
+    }
+    catch (_) {
+        return false;
+    } });
     useEffect(() => {
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js').catch(() => { });
         }
         const onMemPlina = () => setMemoriePlina(true);
-        const onSyncBlocat = () => setSyncBlocat(true);
+        const onSyncBlocat = (ev) => setSyncBlocat((ev && ev.detail) ? ev.detail : true);
         window.addEventListener('memorie-plina', onMemPlina);
         window.addEventListener('sync-blocat', onSyncBlocat);
         const onVis = () => { if (document.visibilityState === 'visible' && navigator.onLine) {
@@ -24352,6 +24432,33 @@ function App() {
                 return persist(key, value, true);
             }
             setError(`Salvarea pentru „${key}" a eșuat: ${e.message}`);
+        }
+    };
+    /* PLASA DE SIGURANȚĂ. Dacă ceva nu pleacă de zile întregi, omul trebuie să poată scoate
+       munca din telefon ÎNAINTE să i se întâmple ceva telefonului. Salvează un fișier cu exact
+       ce stă în coadă — nu șterge nimic, doar face o copie. */
+    const salveazaNetrimise = () => {
+        try {
+            const q = getPending();
+            const pachet = { _meta: { aplicatie: 'SC SMART ELECTROCONECT', versiune: APP_VERSION,
+                    creatLa: new Date().toISOString(), creatDe: currentUser?.nume || '',
+                    explicatie: 'Date care nu au putut pleca pe server de pe telefonul ăsta. Trimite fișierul managerului.' }, coada: q };
+            const blob = new Blob([JSON.stringify(pachet, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `netrimis-${(currentUser?.nume || 'coleg').replace(/\s+/g, '-')}-${dataLocala(new Date())}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => { try {
+                URL.revokeObjectURL(url);
+            }
+            catch (_) { } }, 10000);
+        }
+        catch (e) {
+            tacut('salveazaNetrimise', e);
+            window.alert('Nu am putut salva fișierul. Fă o poză ecranului și trimite-o managerului.');
         }
     };
     const [backupStare, setBackupStare] = useState('');
@@ -24948,9 +25055,42 @@ function App() {
             memoriePlina && (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9998, textAlign: 'center' } },
                 React.createElement("span", { style: { display: 'inline-block', padding: '10px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
                         background: '#4a1f1f', color: '#ffb3b3', border: '1px solid #E0525288', boxShadow: '0 4px 14px rgba(0,0,0,.5)' } }, "\u26A0\uFE0F Memoria telefonului e plin\u0103 \u2014 NU \u00EEnchide aplica\u021Bia p\u00E2n\u0103 nu revii pe net \u0219i se sincronizeaz\u0103. Apoi \u0219terge poze/plan\u0219e vechi din telefon."))),
-            syncBlocat && (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9997, textAlign: 'center' } },
-                React.createElement("span", { style: { display: 'inline-block', padding: '10px 16px', borderRadius: '10px', fontSize: '13px', fontWeight: 700,
-                        background: '#4a1f1f', color: '#ffb3b3', border: '1px solid #E0525288', boxShadow: '0 4px 14px rgba(0,0,0,.5)' } }, "\u26A0\uFE0F Unele date nu pot fi trimise pe server (pot fi prea mari sau sesiunea a expirat). Ie\u0219i \u0219i intr\u0103 din nou; dac\u0103 r\u0103m\u00E2ne, spune administratorului."))),
+            /* BANNERUL CARE ÎL BLOCA PE ALEX.
+               Înainte scria „pot fi prea mari sau sesiunea a expirat. Ieși și intră din nou;
+               dacă rămâne, spune administratorului" — o ghiceală și o fundătură. El a ieșit
+               și a intrat, bannerul a rămas, și n-avea ce să-mi spună mie în plus.
+               Acum scrie CE anume n-a plecat, CÂT e de mare, CE a răspuns serverul — și are
+               butoane: încearcă acum, salvează pe telefon ce nu s-a trimis (ca să nu se
+               piardă munca), și, când e chiar sesiunea, ieșirea din cont.
+               Ce NU face: nu șterge nimic singur. Ce e în coadă e munca omului. */
+            syncBlocat && (() => {
+                const d = (syncBlocat && typeof syncBlocat === 'object') ? syncBlocat : {};
+                const NUME_CHEI = { rapoarte: 'rapoartele zilnice', santiere: 'șantierele', restante: 'restanțele',
+                    concedii: 'concediile', cereriSantier: 'cererile de materiale', problemeSantier: 'întrebările de pe șantier',
+                    mediaSantier: 'pozele', planseSantier: 'planșele', pontajCorectii: 'corecțiile de pontaj' };
+                const ce = NUME_CHEI[d.key] || d.key || 'o parte din date';
+                const kb = Number(d.octeti) > 0 ? Math.round(Number(d.octeti) / 1024) : 0;
+                const eSesiune = d.cod === 401 || d.cod === 403;
+                const ePreaMare = d.cod === 413 || (kb > 900);
+                const motiv = eSesiune
+                    ? 'Serverul nu te mai recunoaște — sesiunea a expirat.'
+                    : ePreaMare
+                        ? 'Pachetul e prea mare pentru o singură trimitere (' + kb + ' KB).'
+                        : (d.cod ? ('Serverul a răspuns cu codul ' + d.cod + (d.mesaj ? ': ' + d.mesaj : '') + '.')
+                            : 'Nu a putut pleca de pe telefon' + (kb ? ' (' + kb + ' KB)' : '') + '.');
+                return (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9997 } },
+                    React.createElement("div", { style: { maxWidth: 520, margin: '0 auto', padding: '12px 14px', borderRadius: '12px', textAlign: 'left',
+                            background: '#4a1f1f', color: '#ffd9d9', border: '1px solid #E0525288', boxShadow: '0 4px 14px rgba(0,0,0,.5)' } },
+                        React.createElement("div", { style: { fontSize: 13.5, fontWeight: 800, marginBottom: 4 } }, "\u26A0\uFE0F Nu s-a putut trimite pe server: ", ce),
+                        React.createElement("div", { style: { fontSize: 12, lineHeight: 1.5, marginBottom: 2 } }, motiv),
+                        React.createElement("div", { style: { fontSize: 11.5, lineHeight: 1.5, color: '#ffb3b3', marginBottom: 8 } },
+                            "Munca ta NU s-a pierdut \u2014 st\u0103 pe telefon \u0219i se retrimite singur\u0103. Nu \u0219terge aplica\u021Bia \u0219i nu goli datele browserului p\u00E2n\u0103 nu pleac\u0103."),
+                        React.createElement("div", { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+                            React.createElement("button", { onClick: () => { setSyncBlocat(false); syncQueue(); }, style: { fontSize: 12, fontWeight: 700, padding: '8px 12px', borderRadius: 8, border: 'none', color: '#14181C', background: '#ffb3b3' } }, "\u21BB \u00CEncearc\u0103 acum"),
+                            React.createElement("button", { onClick: salveazaNetrimise, style: { fontSize: 12, fontWeight: 700, padding: '8px 12px', borderRadius: 8, color: '#ffd9d9', background: 'transparent', border: '1px solid #E0525288' } }, "\uD83D\uDCBE Salveaz\u0103 pe telefon"),
+                            eSesiune && React.createElement("button", { onClick: logout, style: { fontSize: 12, fontWeight: 700, padding: '8px 12px', borderRadius: 8, color: '#ffd9d9', background: 'transparent', border: '1px solid #E0525288' } }, "\uD83D\uDEAA Intr\u0103 din nou \u00een cont"),
+                            React.createElement("button", { onClick: () => setSyncBlocat(false), style: { fontSize: 12, padding: '8px 12px', borderRadius: 8, color: '#ffb3b3', background: 'transparent', border: '1px solid #E0525244' } }, "Ascunde")))));
+            })(),
             (!online || pendingCount > 0) && (React.createElement("div", { className: "bandaJos" },
                 React.createElement("span", { style: { display: 'inline-block', padding: '8px 14px', borderRadius: '10px', fontSize: '13px', fontWeight: 600,
                         background: online ? '#1d3a52' : '#3a2a14', color: online ? '#9ad' : 'var(--acc3)', border: '1px solid ' + (online ? '#2E8BD166' : '#E9A23B66'), boxShadow: '0 4px 14px rgba(0,0,0,.4)' } }, !online ? '📴 Fără net — lucrezi offline, se salvează local.' : `🔄 Se sincronizează… (${pendingCount} în așteptare)`))),
