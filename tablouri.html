@@ -2792,9 +2792,14 @@ function traceComp(cid){const byT=new Map();for(const w of model.wires){for(cons
  chain.reverse();const ch2=[];for(const id of chain){const b=B(byId(id));const prev=ch2.length?B(byId(ch2[ch2.length-1])):'';if(/^mcb|^rcbo/.test(b)&&/^mcb|^rcbo/.test(prev))continue;ch2.push(id);}
  return {comps,wires,chain:ch2.length?ch2:[cid]};}
 function traceWire(wid){const w=model.wires.find(x=>x.id===wid);if(!w)return null;const a=term(w.a),b=term(w.b);return {comps:new Set([a&&a.c.id,b&&b.c.id].filter(Boolean)),wires:new Set([wid]),chain:[a&&a.c.id,b&&b.c.id].filter(Boolean),wire:w};}
-function startTrace(o){const t=o.wire?traceWire(o.wire):traceComp(o.comp);if(!t)return;if(typeof R3!=='undefined'&&R3&&[...t.comps].some(id=>{const c=byId(id);return c&&c.zone==='field';}))R3.showField=true;TRACE=Object.assign(t,{t0:performance.now(),paths:[],cam:null});
+function startTrace(o){let t;if(o.wire)t=traceWireDown(o.wire);else if(o.term)t=traceTerm(o.term);else{const c=byId(o.comp);const b=c&&B(c);if(c&&PROT_B.has(b))t=traceProt(o.comp);else{const up=traceComp(o.comp);const dn=traceDown([[o.comp,null,DEFS[c.t].terms(c).filter(x=>x.kind!=='N'&&x.kind!=='PE')]],wiresAt());const upSet=new Set(up.chain);const extra=[...dn.comps].filter(id=>id!==o.comp&&!upSet.has(id));const swl=['sw1','sw2','swcs','swcc','btn','dali_btn'].includes(b);const onlyUp=(c.zone==='field'&&!swl)||extra.length===0||dn.loads.size===0||(dn.loads.size===1&&dn.loads.has(o.comp));t={comps:new Set([...up.comps,...(onlyUp?[]:dn.comps)]),wires:new Set([...up.wires,...(onlyUp?[]:dn.wires)]),loads:onlyUp?new Set():dn.loads,dnC:dn.comps,chain:up.chain,mode:onlyUp?'up':'both'};}}if(!t)return;if(typeof R3!=='undefined'&&R3&&[...t.comps].some(id=>{const c=byId(id);return c&&c.zone==='field';}))R3.showField=true;TRACE=Object.assign(t,{t0:performance.now(),paths:[],cam:null});
  const nm=id=>{const c=byId(id);return c?compName(c):'?';};
- if(t.wire){const A=term(t.wire.a),Bt=term(t.wire.b);toast(`Fir ${WC[t.wire.color]?WC[t.wire.color].n:''} ${fmtN(t.wire.sec||0)} mm²${t.wire.label?' „'+t.wire.label+'”':''}: de la ${A?compName(A.c)+' ('+A.t.label+')':'?'} până la ${Bt?compName(Bt.c)+' ('+Bt.t.label+')':'?'}.`);}
+ const start=o.comp||(t.term&&t.term.c.id);const reached=[...t.comps].filter(id=>id!==start&&byId(id));const prots=t.mode==='up'||t.mode==='both'?[]:reached.filter(id=>PROT_B.has(B(byId(id)))&&!(t.chain||[]).includes(id));const cons=t.mode==='up'?[]:reached.filter(id=>(t.mode!=='both'||(t.dnC&&t.dnC.has(id))))
+  .filter(id=>{const c=byId(id),b=B(c);return !PROT_B.has(b)&&!STOP_B.has(b)&&b!=='clamp1'&&(c.zone==='field'||(t.loads&&t.loads.has(id))||DEFS[c.t].heat||/ctl|psu|contact|relay|impuls|timer|stair|astro|thermo/.test(b));});const L6=a=>a.slice(0,7).map(nm).join(', ')+(a.length>7?` și încă ${a.length-7}`:'');const fs=(prots.length?` Siguranțe/protecții: ${L6(prots)}.`:'')+(cons.length?` Alimentează: ${L6(cons)}.`:'');
+ if(t.mode==='term'){toast(`Borna ${t.term.t.label} de la ${compName(t.term.c)}: ${t.wires.size} fire pe traseu.${fs||' Nu alimentează nimic mai departe.'}`);render();return;}
+ if(t.mode==='down'){toast(`${nm(o.comp)} → unde merge: ${t.wires.size} fire.${fs||' Nu are nimic legat la ieșire.'}`);render();return;}
+ if(t.mode==='both'){toast(`${nm(o.comp)}: comandat din ${t.chain.map(nm).join(' → ')}.${fs}`);render();return;}
+ if(t.wire){const A=term(t.wire.a),Bt=term(t.wire.b);toast(`Fir ${WC[t.wire.color]?WC[t.wire.color].n:''} ${fmtN(t.wire.sec||0)} mm²${t.wire.label?' „'+t.wire.label+'”':''}: de la ${A?compName(A.c)+' ('+A.t.label+')':'?'} până la ${Bt?compName(Bt.c)+' ('+Bt.t.label+')':'?'}.${fs}`);}
  else{const ch=t.chain.map(nm);toast(ch.length>1?`Cum e comandat ${nm(o.comp)}: ${ch.join(' → ')}. ${t.wires.size} fire pe traseu.`:`${nm(o.comp)}: ${t.wires.size} fire legate. Atinge spațiul gol ca să ieși din traseu.`);}
  render();}
 function clearTrace(){if(!TRACE)return;TRACE=null;render();toast('Ai ieșit din traseu.');}
@@ -2810,6 +2815,23 @@ function traceAfterBuild(r,g){if(!TRACE)return;const box=new THREE.Box3();let an
   TRACE.cam={t0:performance.now(),dur:reduceMotion?1:1700,p0:r.cam.position.clone(),q0:r.ctl.target.clone(),p1:c.clone().add(dir.multiplyScalar(dist)),q1:c,back:dist*.28};}}
 function traceTick(r,now){if(!TRACE)return;const C=TRACE.cam;if(C&&C.t0!=null){let u=Math.min(1,(now-C.t0)/C.dur);const e=u<.5?4*u*u*u:1-Math.pow(-2*u+2,3)/2;const pos=C.p0.clone().lerp(C.p1,e),tg=C.q0.clone().lerp(C.q1,e);const out=pos.clone().sub(tg).normalize().multiplyScalar(Math.sin(Math.PI*e)*C.back);r.cam.position.copy(pos.add(out));r.ctl.target.copy(tg);if(u>=1)C.t0=null;}
  for(const d of TRACE.dots||[]){const t=((now-TRACE.t0)/2200+d.off)%1;try{d.m.position.copy(d.p.getPointAt(t));}catch(_){}}}
+
+/* în aval: ce alimentează */
+function wiresAt(){const m=new Map();for(const w of model.wires)for(const k of [w.a,w.b])(m.get(k)||m.set(k,[]).get(k)).push(w);return m;}
+function traceDown(starts,byT){const comps=new Set(),wires=new Set(),loads=new Set();const VIS=new Set();const Q=starts.slice();let guard=0;
+ while(Q.length&&guard++<600){const [id,ent,first]=Q.shift();const c=byId(id);if(!c)continue;comps.add(id);const b=B(c);const ts=DEFS[c.t].terms(c);let exp;
+  if(first)exp=first;else if(STOP_B.has(b))exp=[];else if(PROT_B.has(b)){const et=ts.find(t=>tk(c,t.id)===ent);exp=et&&et.side==='top'?ts.filter(t=>t.side==='bot'||tk(c,t.id)===ent):[];}else exp=ts.filter(t=>tk(c,t.id)!==ent&&t.kind!=='N'&&t.kind!=='PE');
+  let out=0;for(const t of exp){const k=tk(c,t.id);for(const w of byT.get(k)||[]){if(wires.has(w.id))continue;const other=w.a===k?w.b:w.a;const T=term(other);if(!T)continue;wires.add(w.id);out++;comps.add(T.c.id);if(!VIS.has(T.c.id+'|'+other)){VIS.add(T.c.id+'|'+other);Q.push([T.c.id,other,null]);}}}
+  if(!first&&!out&&!STOP_B.has(b)&&!PROT_B.has(b))loads.add(id);}
+ // la consumatori arată și nulul și PE-ul lor
+ for(const id of loads){const c=byId(id);for(const t of DEFS[c.t].terms(c)){if(t.kind!=='N'&&t.kind!=='PE')continue;for(const w of byT.get(tk(c,t.id))||[])wires.add(w.id);}}
+ return {comps,wires,loads};}
+function traceProt(cid){const c=byId(cid);const byT=wiresAt();const ts=DEFS[c.t].terms(c);const r=traceDown([[cid,null,ts.filter(t=>t.side==='bot')]],byT);const up=traceComp(cid);return {comps:r.comps,wires:r.wires,loads:r.loads,chain:up.chain,mode:'down'};}
+function traceTerm(k){const T=term(k);if(!T)return null;const byT=wiresAt();const ws=byT.get(k)||[];const st=[];const wires=new Set(ws.map(w=>w.id));const comps=new Set([T.c.id]);
+ const b=B(T.c);let r;if(PROT_B.has(b)&&T.t.side==='top'){r=traceDown([[T.c.id,null,DEFS[T.c.t].terms(T.c).filter(t=>t.side==='bot')]],byT);}
+ else{for(const w of ws){const o=w.a===k?w.b:w.a;const OT=term(o);if(OT)st.push([OT.c.id,o,null]);}if(!PROT_B.has(b)||T.t.side==='bot'){}r=traceDown(st,byT);}
+ for(const x of r.wires)wires.add(x);for(const x of r.comps)comps.add(x);return {comps,wires,loads:r.loads,chain:[T.c.id],term:T,mode:'term'};}
+function traceWireDown(wid){const w=model.wires.find(x=>x.id===wid);if(!w)return null;const byT=wiresAt();const st=[];for(const [k,o] of [[w.a,w.b],[w.b,w.a]]){const T=term(o);if(T)st.push([T.c.id,o,null]);}const r=traceDown(st,byT);r.wires.add(wid);const A=term(w.a),Bt=term(w.b);if(A)r.comps.add(A.c.id);if(Bt)r.comps.add(Bt.c.id);return {comps:r.comps,wires:r.wires,loads:r.loads,chain:[A&&A.c.id,Bt&&Bt.c.id].filter(Boolean),wire:w,mode:'wire'};}
 /* ---------- 3D ---------- */
 let R3=null;
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -2823,7 +2845,7 @@ function init3d(){if(R3)return R3;if(!window.THREE||!THREE.OrbitControls){$('#v3
  const dom=renderer.domElement;let down=null;dom.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY};});
  dom.addEventListener('pointerup',e=>{if(!down)return;const dx=e.clientX-down.x,dy=e.clientY-down.y;down=null;if(dx*dx+dy*dy>30)return;const r=dom.getBoundingClientRect();R3.ray.setFromCamera(new THREE.Vector2((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1),cam);const hit=R3.ray.intersectObjects(R3.click,false)[0];if(!hit){clearTrace();return;}const o=hit.object;
   if(o.userData.door){toggleDoor();return;}if(o.userData.wid){startTrace({wire:o.userData.wid});return;}const c=byId(o.userData.cid);if(!c)return;if(c.zone==='panel'&&!R3.doorOpen)toggleDoor();
-  if(sim&&DEFS[c.t].act)simAction(c);else{sel=c.id;startTrace({comp:c.id});}});
+  if(sim&&DEFS[c.t].act){simAction(c);return;}sel=c.id;{const L=layout();const px=hit.point.x+R3.cx,py=R3.cy-hit.point.y;let best=null;for(const t of DEFS[c.t].terms(c)){const A=termAbs(tk(c,t.id),L);if(!A)continue;const d=Math.hypot(A.x-px,A.y-py);if(d<8&&(!best||d<best.d))best={d,k:tk(c,t.id)};}if(best&&model.wires.some(w=>w.a===best.k||w.b===best.k)){startTrace({term:best.k});return;}}startTrace({comp:c.id});});
  (function loop(){requestAnimationFrame(loop);if(tab!=='3d')return;const tg=R3.doorOpen?-1.95:0;R3.doorAng+=(tg-R3.doorAng)*(reduceMotion?1:.1);if(R3.pivot)R3.pivot.rotation.y=R3.doorAng;traceTick(R3,performance.now());ctl.update();renderer.render(scene,cam);})();
  return R3;}
 function toggleDoor(){if(!R3)return;R3.doorOpen=!R3.doorOpen;$('#door').textContent=R3.doorOpen?'Închide ușa':'Deschide ușa';}
@@ -2843,7 +2865,7 @@ function doorTex(w,h){const cw=1024,ch=Math.round(cw*h/w),cv=document.createElem
  x.font=`600 42px ${F}`;x.fillStyle='#1F2B33';let yy=Math.max(ty+ts+170,ch-230);x.fillText(doorLabel(),cw/2,yy);x.font=`500 36px ${F}`;x.fillStyle='#34424b';x.fillText('Data montajului: '+fmtDate(model.date),cw/2,yy+56);x.fillText('Autorizație nr. '+co.auth,cw/2,yy+104);
  const t=new THREE.CanvasTexture(cv);return t;}
 function build3d(S){const r=init3d();if(!r)return;const EV=sim?S.ev:{};if(r.root){r.scene.remove(r.root);disposeTree(r.root);}const L=layout();const g=new THREE.Group();r.root=g;r.scene.add(g);r.click=[];
- const cx=L.PW/2,cy=L.PH/2,V=(x,y,z)=>new THREE.Vector3(x-cx,cy-y,z),M=(col,o)=>{const m=new THREE.MeshStandardMaterial(Object.assign({color:col,roughness:.75,metalness:0,envMapIntensity:.85},o||{}));m.color.convertSRGBToLinear();if(m.emissive)m.emissive.convertSRGBToLinear();return m;};
+ const cx=L.PW/2,cy=L.PH/2;r.cx=cx;r.cy=cy;const V=(x,y,z)=>new THREE.Vector3(x-cx,cy-y,z),M=(col,o)=>{const m=new THREE.MeshStandardMaterial(Object.assign({color:col,roughness:.75,metalness:0,envMapIntensity:.85},o||{}));m.color.convertSRGBToLinear();if(m.emissive)m.emissive.convertSRGBToLinear();return m;};
  const box=(w,h,d,x,y,z,m,par)=>{const me=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);me.position.copy(V(x,y,z));(par||g).add(me);return me;};
  const D=(L.metal||L.rack)?L.box.d:(+model.cfg.boxDepth>0?+model.cfg.boxDepth:125),BW=L.BW,BH=L.BH,bx=L.bx,by=L.by,wm=M(L.rack?'#26292c':L.metal?'#cfd2d0':'#d0d2cb',(L.metal||L.rack)?{metalness:.15,roughness:.55}:{});
  if(!L.rack)box(BW,BH,6,BW/2-bx,BH/2-by,-3,M(L.metal?'#c9ccca':'#d6d7d0',{roughness:.6,metalness:.1}));box(8,BH,D,-bx+4,BH/2-by,D/2,wm);box(8,BH,D,BW-bx-4,BH/2-by,D/2,wm);box(BW,8,D,BW/2-bx,-by+4,D/2,wm);box(BW,8,D,BW/2-bx,BH-by-4,D/2,wm);
