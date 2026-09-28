@@ -283,7 +283,7 @@ input[type=range]{width:100%;accent-color:var(--ink)}
  </div>
  <div class="view" id="view3d" hidden>
   <div id="v3d"></div>
-  <div class="tools3d"><button class="btn" id="door">Deschide ușa</button><button class="btn" id="lids">Pune capacele</button><button class="btn" id="focus3d" aria-pressed="false">Doar selecția</button><button class="btn" id="rulesBtn">Reguli de execuție</button><button class="btn" id="field3d" aria-pressed="false">Teren</button><span class="seg3"><button class="btn sm" data-cam="fata">Față</button><button class="btn sm" data-cam="jgheab">Jgheab de aproape</button><button class="btn sm" data-cam="lateral">Lateral</button><button class="btn sm" data-cam="sus">De sus</button><button class="btn sm" data-cam="spate" hidden>Spate</button></span><button class="btn" id="recenter" hidden>Recentrează</button></div>
+  <div class="tools3d"><button class="btn" id="door">Deschide ușa</button><button class="btn" id="lids">Pune capacele</button><button class="btn" id="focus3d" aria-pressed="false">Doar selecția</button><button class="btn" id="rulesBtn">Reguli de execuție</button><button class="btn" id="field3d" aria-pressed="true">Cameră ✓</button><span class="seg3"><button class="btn sm" data-cam="fata">Față</button><button class="btn sm" data-cam="jgheab">Jgheab de aproape</button><button class="btn sm" data-cam="lateral">Lateral</button><button class="btn sm" data-cam="sus">De sus</button><button class="btn sm" data-cam="spate" hidden>Spate</button></span><button class="btn" id="recenter" hidden>Recentrează</button></div>
   <div class="rules3d" id="rules3d" hidden><div class="rhead"><b>Cum se aranjează în realitate</b><button class="btn sm" onclick="this.closest('.rules3d').hidden=true">Închide</button></div><div class="rbody"></div></div>
   <p class="hint3d">Rotește cu mouse-ul sau un deget, apropie cu rotița sau cu două degete. Cu ușa deschisă și „Sub tensiune” pornit, atinge siguranțele ca să le acționezi.</p>
  </div>
@@ -2964,6 +2964,8 @@ function init3d(){if(R3)return R3;if(!window.THREE||!THREE.OrbitControls){$('#v3
  const size=()=>{const w=host.clientWidth,h=host.clientHeight;if(!w||!h)return;renderer.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();};new ResizeObserver(size).observe(host);size();
  const dom=renderer.domElement;let down=null;dom.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY};});
  dom.addEventListener('pointerup',e=>{if(!down)return;const dx=e.clientX-down.x,dy=e.clientY-down.y;down=null;if(dx*dx+dy*dy>30)return;const r=dom.getBoundingClientRect();R3.ray.setFromCamera(new THREE.Vector2((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1),cam);const hit=R3.ray.intersectObjects(R3.click,false)[0];if(!hit){clearTrace();return;}const o=hit.object;
+  if(o.userData.key!=null&&o.userData.cid){const c=byId(o.userData.cid);if(c){showKeyResult(pressKey(c,o.userData.key));return;}}
+  if(o.userData.plug&&o.userData.cid){const c=byId(o.userData.cid);if(c){c.state.plug=!c.state.plug;if(!sim&&c.state.plug){sim=true;try{simSettle();}catch(_){}}save();render();const e=solve().ev[c.id]||{};toast(c.state.plug?(e.pw?'Am băgat o lampă în priză: se aprinde, priza are tensiune.':'Am băgat o lampă în priză: nu se aprinde, priza n-are tensiune. Verifică siguranța și legăturile L, N.'):'Am scos lampa din priză.');return;}}
   if(o.userData.door){toggleDoor();return;}if(o.userData.wid){startTrace({wire:o.userData.wid});return;}const c=byId(o.userData.cid);if(!c)return;if(c.zone==='field'&&KEYS(c)){openKeyPad(c);return;}if(c.zone==='panel'&&!R3.doorOpen)toggleDoor();
   if(sim&&DEFS[c.t].act){simAction(c);return;}sel=c.id;{const L=layout();const px=hit.point.x+R3.cx,py=R3.cy-hit.point.y;let best=null;for(const t of DEFS[c.t].terms(c)){const A=termAbs(tk(c,t.id),L);if(!A)continue;const d=Math.hypot(A.x-px,A.y-py);if(d<8&&(!best||d<best.d))best={d,k:tk(c,t.id)};}if(best&&model.wires.some(w=>w.a===best.k||w.b===best.k)){startTrace({term:best.k});return;}}startTrace({comp:c.id});});
  (function loop(){requestAnimationFrame(loop);if(tab!=='3d')return;const tg=R3.doorOpen?-1.95:0;R3.doorAng+=(tg-R3.doorAng)*(reduceMotion?1:.1);if(R3.pivot)R3.pivot.rotation.y=R3.doorAng;traceTick(R3,performance.now());flyTick(R3,performance.now());fxTick(performance.now());ctl.update();renderer.render(scene,cam);})();
@@ -2984,7 +2986,7 @@ function doorTex(w,h){const cw=1024,ch=Math.round(cw*h/w),cv=document.createElem
  x.font=`700 48px ${F}`;x.fillStyle='#1d1d1d';x.fillText('Atenție! Pericol de electrocutare',cw/2,ty+ts+75);
  x.font=`600 42px ${F}`;x.fillStyle='#1F2B33';let yy=Math.max(ty+ts+170,ch-230);x.fillText(doorLabel(),cw/2,yy);x.font=`500 36px ${F}`;x.fillStyle='#34424b';x.fillText('Data montajului: '+fmtDate(model.date),cw/2,yy+56);x.fillText('Autorizație nr. '+co.auth,cw/2,yy+104);
  const t=new THREE.CanvasTexture(cv);return t;}
-function build3d(S){const r=init3d();if(!r)return;FXLIST=[];const EV=sim?S.ev:{};if(r.root){r.scene.remove(r.root);disposeTree(r.root);}const L=layout();const g=new THREE.Group();r.root=g;r.scene.add(g);r.click=[];
+function build3d(S){const r=init3d();if(!r)return;if(r.room==null)r.room=true;if(r.room)r.showField=false;FXLIST=[];const EV=sim?S.ev:{};if(r.root){r.scene.remove(r.root);disposeTree(r.root);}const L=layout();const g=new THREE.Group();r.root=g;r.scene.add(g);r.click=[];
  const cx=L.PW/2,cy=L.PH/2;r.cx=cx;r.cy=cy;const V=(x,y,z)=>new THREE.Vector3(x-cx,cy-y,z),M=(col,o)=>{const m=new THREE.MeshStandardMaterial(Object.assign({color:col,roughness:.75,metalness:0,envMapIntensity:.85},o||{}));m.color.convertSRGBToLinear();if(m.emissive)m.emissive.convertSRGBToLinear();return m;};
  const box=(w,h,d,x,y,z,m,par)=>{const me=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);me.position.copy(V(x,y,z));(par||g).add(me);return me;};
  const D=(L.metal||L.rack)?L.box.d:(+model.cfg.boxDepth>0?+model.cfg.boxDepth:125),BW=L.BW,BH=L.BH,bx=L.bx,by=L.by,wm=M(L.rack?'#26292c':L.metal?'#cfd2d0':'#d0d2cb',(L.metal||L.rack)?{metalness:.15,roughness:.55}:{});
@@ -3011,12 +3013,12 @@ function build3d(S){const r=init3d();if(!r)return;FXLIST=[];const EV=sim?S.ev:{}
   let mat;if(wc.pe){const t=new THREE.CanvasTexture(stripeCv);t.wrapS=THREE.RepeatWrapping;t.repeat.set(path.getLength()/16,1);mat=new THREE.MeshStandardMaterial(Object.assign({map:t},o));}else mat=M(wc.c,o);
   if(sel===w.id){mat.emissive=new THREE.Color('#E3A008');mat.emissiveIntensity=.6;}
   g.add(new THREE.Mesh(new THREE.TubeGeometry(path,Math.max(12,p3.length*10),rad,6,false),mat));});
- finish3d(g,L,r);
+ finish3d(g,L,r);if(r.room&&!L.rack)try{buildRoom3d(g,L,V,M,EV);}catch(e){console.warn(e);}
  const dw=BW,dh=BH;const pivot=new THREE.Group();pivot.position.copy(V(-bx,BH/2-by,D+3));g.add(pivot);const dm_=M('#cfd1ca');
  const glass=new THREE.MeshStandardMaterial({color:'#9fb8c8',transparent:true,opacity:.18,roughness:.05,metalness:.2,depthWrite:false});const door=new THREE.Mesh(new THREE.BoxGeometry(dw,dh,4),L.rack?[M('#23272b'),M('#23272b'),M('#23272b'),M('#23272b'),glass,glass]:[dm_,dm_,dm_,dm_,new THREE.MeshStandardMaterial({map:doorTex(dw,dh),roughness:.7}),M('#c7c9c2')]);if(L.rack){const fr=M('#23272b');for(const [w_,h_,x_,y_] of [[dw,24,dw/2,dh/2-12],[dw,24,dw/2,-dh/2+12],[24,dh,12,0],[24,dh,dw-12,0]]){const m_=new THREE.Mesh(new THREE.BoxGeometry(w_,h_,6),fr);m_.position.set(x_,y_,0);m_.userData.door=true;pivot.add(m_);r.click.push(m_);}if(model.cfg.doorLogo!==false||doorLabel()){const cv2=document.createElement('canvas');cv2.width=512;cv2.height=64;const x2=cv2.getContext('2d');x2.fillStyle='#23272b';x2.fillRect(0,0,512,64);if(logoImg&&model.cfg.doorLogo!==false){const s2=Math.min(150/logoImg.width,56/logoImg.height);x2.fillStyle='#f4f6f7';x2.fillRect(4,4,logoImg.width*s2+8,56);x2.drawImage(logoImg,8,4+(56-logoImg.height*s2)/2,logoImg.width*s2,logoImg.height*s2);}x2.fillStyle='#e8ecef';x2.font='600 30px Arial';x2.textAlign='right';x2.fillText(doorLabel()||'',500,42);const tp=new THREE.Mesh(new THREE.PlaneGeometry(Math.min(dw-30,dw*.9),20),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(cv2)}));tp.position.set(dw/2,dh/2-12,3.2);tp.userData.door=true;pivot.add(tp);}}door.position.set(dw/2,0,0);door.userData.door=true;pivot.add(door);r.click.push(door);if(!L.rack)try{doorDevices3D(pivot,L,S,M,dw,dh);}catch(e){}
  const hnd=new THREE.Mesh(new THREE.BoxGeometry(10,70,14),M('#3b4349',{metalness:.4}));hnd.position.set(dw-26,0,9);hnd.userData.door=true;pivot.add(hnd);r.click.push(hnd);
  r.pivot=pivot;pivot.rotation.y=r.doorAng;
- if(!r.placed){recenter3d();r.placed=true;}try{traceAfterBuild(r,g);}catch(e){console.warn(e);}}
+ if(!r.placed){if(r.room&&r.roomBox&&!L.rack)roomView();else recenter3d();r.placed=true;}try{traceAfterBuild(r,g);}catch(e){console.warn(e);}}
 function cam3d(k){if(!R3)return;const L=layout();if(k==='fata'){recenter3d();return;}if(k==='spate'){R3.cam.position.set(L.PW*.06,110,-Math.max(900,L.PH*1.4)/Math.min(1,R3.cam.aspect*1.3));R3.ctl.target.set(0,40,L.box?L.box.d/3:60);R3.ctl.update();return;}if(!R3.doorOpen)toggleDoor();const d=L.ducts[Math.min(1,L.nb)];const cy=L.PH/2;if(k==='jgheab'){const ty=cy-d.cy;R3.cam.position.set(-L.PW*.08,ty+170,430);R3.ctl.target.set(-L.PW*.1,ty-10,25);}else if(k==='lateral'){R3.cam.position.set(L.PW*.62,90,Math.max(460,L.box?L.box.d*3:460));R3.ctl.target.set(0,0,45);}else if(k==='sus'){R3.cam.position.set(0,L.PH*.9,220);R3.ctl.target.set(0,0,30);}R3.ctl.update();}
 function recenter3d(){if(!R3)return;const L=layout();const tz=L.rack?L.box.d-150:50;let cy=0,s=Math.max(L.BW,L.BH);if(R3.showField&&!L.rack&&model.comps.some(c=>c.zone==='field')){const top=-L.by,bot=Math.max(L.BH-L.by,L.bottom||0),topF=L.frowsTop&&L.frowsTop.length?Math.min(top,L.frowsTop[L.frowsTop.length-1].top-40):top;const h=bot-topF;cy=L.PH/2-(topF+bot)/2;s=Math.max(L.BW,h);}R3.cam.position.set(s*.5,cy+s*.15,s*2.2+tz);R3.ctl.target.set(0,cy,tz);R3.ctl.update();}
 
@@ -3188,7 +3190,7 @@ function init(){const saved=(()=>{try{const s=localStorage.getItem(KEY);if(s){co
  $('#door').onclick=toggleDoor;
  $('#lids').onclick=()=>{model.cfg.covers2d=!model.cfg.covers2d;model.coverOff={};save();render();};
  $('#focus3d').onclick=()=>{if(!R3)return;R3.focus=!R3.focus;$('#focus3d').setAttribute('aria-pressed',R3.focus);if(R3.focus&&!sel)toast('Selectează un aparat sau un fir; restul firelor se estompează.');render();};
- $('#field3d').onclick=()=>{if(!R3)return;R3.showField=!R3.showField;$('#field3d').setAttribute('aria-pressed',R3.showField);render();};
+ $('#field3d').onclick=()=>{if(!R3)return;R3.room=!(R3.room!==false);if(!R3.room)R3.showField=true;$('#field3d').setAttribute('aria-pressed',R3.room);$('#field3d').textContent=R3.room?'Cameră ✓':'Cameră';render();if(R3.room)roomView();else recenter3d();};
  $('#rulesBtn').onclick=()=>{const p=$('#rules3d');p.hidden=!p.hidden;if(!p.hidden)p.querySelector('.rbody').innerHTML=rulesHTML();};
  document.querySelectorAll('[data-cam]').forEach(b=>b.onclick=()=>cam3d(b.dataset.cam));$('#recenter').onclick=recenter3d;
  document.addEventListener('keydown',e=>{if(e.target.matches('input,select,textarea'))return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();undo();}else if(e.key==='Escape'){pending=null;reconn=null;draft=null;closeModal();render();}else if((e.key==='Delete'||e.key==='Backspace')&&sel&&tab==='2d'){e.preventDefault();delSel();}});
@@ -3243,7 +3245,7 @@ function pressKey(c,i){const K=KEYS(c),k=K&&K[i];if(!k)return null;let autoSim=f
  else if(k.generic)DEFS[c.t].act(c);else k.set(!k.on);
  try{simSettle();}catch(_){}save();
  const r=diagKey(c,i,before,protOn);r.autoSim=autoSim;return r;}
-function diagKey(c,i,before,protOn){const K=KEYS(c)[i];const S=solve(),byT=wiresAt(),nm=compName,errs=[],warns=[];
+function diagKey(c,i,before,protOn){const K=KEYS(c)[i];const S=solve(),byT=wiresAt(),nm=compName,errs=[],warns=[],infos=[];
  const onNow=[],offNow=[];for(const x of model.comps){if(x.id===c.id)continue;const a=before[x.id],b=onOfK(S.ev[x.id]);if(b&&!a)onNow.push(x);else if(a&&!b)offNow.push(x);}
  const up=traceComp(c.id);const chain=up.chain.filter(id=>id!==c.id).map(byId).filter(Boolean);
  const tripped=model.comps.filter(x=>protOn[x.id]&&!on(x));
@@ -3256,7 +3258,7 @@ function diagKey(c,i,before,protOn){const K=KEYS(c)[i];const S=solve(),byT=wires
   else if(P.has('PE'))errs.push({m:'Pe borna de fază a întrerupătorului ajunge PE (împământarea).',h:'Firul galben-verde nu se folosește niciodată pentru comandă. Leagă aici faza circuitului.'});
   else if(!tripped.length){const off=chain.filter(x=>DEFS[x.t].trip&&!on(x));
    if(off.length)errs.push({m:`${off.map(nm).join(', ')} ${off.length>1?'sunt oprite':'e oprită'}${off.some(x=>x.state.tripped)?' (a declanșat)':''}, deci nu ajunge fază la întrerupător.`,h:'Deschide ușa tabloului și ridică maneta. Dacă sare din nou, e un scurtcircuit pe circuit.'});
-   else errs.push({m:'Nu ajunge fază la întrerupător.',h:'Urmărește firul de la borna L înapoi spre tablou: trebuie să ajungă la ieșirea unei siguranțe, direct sau printr-o clemă. Verifică și alimentarea tabloului.'});}}
+   else{const path=feedPath(c,[id]);if(!path)errs.push({m:'Borna L a întrerupătorului nu ajunge până la tablou.',h:'Firul de fază al întrerupătorului trebuie să ajungă la ieșirea unei siguranțe, direct sau printr-o clemă (sau printr-un releu astro / contactor, dacă așa vrei comanda).'});else for(const q of openContactCheck(c,id,path))(q.info?infos:errs).push(q);}}}
  const outW=(K.out||[]).filter(wired);
  if((K.out||[]).length&&!outW.length)errs.push({m:`${K.label} nu e legată la nimic (borna ${K.out.map(tl).join(' / ')} e liberă).`,h:'Trage firul de comandă de la această bornă la borna L a corpului de iluminat, direct sau prin clema lui din tablou.'});
  let ctrl=[],cons=[];
@@ -3271,7 +3273,118 @@ function diagKey(c,i,before,protOn){const K=KEYS(c)[i];const S=solve(),byT=wires
  for(const x of ctrl.concat(cons.map(q=>q.x))){const tp=DEFS[x.t].terms(x).filter(t=>t.kind==='PE');if(tp.length&&!tp.some(t=>S.potOf(tk(x,t.id)).has('PE'))&&!warns.some(w=>w.x===x.id))warns.push({x:x.id,m:`${nm(x)} nu are împământare (PE).`,h:'Leagă borna PE la clema sau bara de împământare.'});}
  const myNets=new Set(T.map(t=>S.net(tk(c,t.id))));for(const f of faults(S))if(f.level==='err'&&myNets.has(f.net)&&!tripped.length)errs.push({m:f.msg+' pe legăturile întrerupătorului.',h:'Faza și comanda nu au voie să atingă nulul sau PE. Verifică firele de la întrerupător.'});
  const K2=KEYS(c)[i];
- return {c,i,label:K.label,mom:!!K.mom,on:!!(K2&&K2.on),chain,ctrl,onNow,offNow,errs,warns,out:K.out||[],inp:K.inp||[]};}
+ const fp=(K.inp&&K.inp.length)?feedPath(c,K.inp):null;const chain2=fp||chain;
+ return {c,i,infos,inOk:!inErr&&(K.inp||[]).length>0,label:K.label,mom:!!K.mom,on:!!(K2&&K2.on),chain:chain2,ctrl,onNow,offNow,errs,warns,out:K.out||[],inp:K.inp||[]};}
+function feedKeys(c,inp){const byT=wiresAt(),SRC=/^(src230|src400|bb_feed1|bb_feed3)$/;const par=new Map(),Q=[];for(const id of inp){const k=tk(c,id);par.set(k,null);Q.push(k);}
+ const inner=(x,k)=>{const d=DEFS[x.t],b=B(x),tid=k.slice(x.id.length+1);if(x.id===c.id)return [];const t=d.terms(x).find(q=>q.id===tid);if(!t||t.kind==='N'||t.kind==='PE')return [];
+  if(b==='clamp1'||b==='clamps'){const o=[];for(const [a,bb] of (d.links?d.links(x,{}):[])||[]){if(a===tid)o.push(tk(x,bb));if(bb===tid)o.push(tk(x,a));}return o;}
+  if(b==='nbar'||b==='pebar')return [];return d.terms(x).filter(q=>q.id!==tid&&q.kind!=='N'&&q.kind!=='PE'&&q.kind!=='SENS').map(q=>tk(x,q.id));};
+ let hit=null,g=0;while(Q.length&&g++<20000){const k=Q.shift();const T0=term(k);if(T0&&T0.c.id!==c.id&&SRC.test(B(T0.c))){hit=k;break;}
+  const nx=[];for(const w of byT.get(k)||[])nx.push(w.a===k?w.b:w.a);if(T0)nx.push(...inner(T0.c,k));
+  for(const n of nx){if(par.has(n))continue;const Tn=term(n);if(!Tn||Tn.t.kind==='N'||Tn.t.kind==='PE')continue;par.set(n,k);Q.push(n);}}
+ if(!hit)return null;const keys=[];let k=hit;while(k){keys.push(k);k=par.get(k);}return keys;}
+function feedPath(c,inp){const keys=feedKeys(c,inp);if(!keys)return null;const ids=[];for(const k of keys){const T0=term(k);if(T0&&T0.c.id!==c.id&&ids[ids.length-1]!==T0.c.id)ids.push(T0.c.id);}
+ const L0=ids.map(byId).filter(Boolean),o=[];const isM=x=>/^mcb|^rcbo/.test(B(x));for(const x of L0){if(o.length&&isM(x)&&isM(o[o.length-1])){o[o.length-1]=x;continue;}o.push(x);}return o;}
+function forcedGroups(x){const d=DEFS[x.t];const FAKE=new Proxy({},{get:()=>true});const uf=new Map();const f=a=>{while(uf.has(a)&&uf.get(a)!==a)a=uf.get(a);return a;};const u=(a,b)=>{const ra=f(a),rb=f(b);if(ra!==rb)uf.set(ra,rb);};
+ const st=JSON.stringify(x.state);const trial=()=>{try{for(const [a,b] of (d.links?d.links(x,FAKE):[])||[])u(a,b);}catch(_){}};trial();if(d.act){for(let i=0;i<3;i++){try{d.act(x);}catch(_){}trial();}}x.state=JSON.parse(st);return (a,b)=>f(a)===f(b);}
+function openContactCheck(c,inpId,path){const keys=feedKeys(c,[inpId]);if(!keys)return [];const S=solve(),ph=k=>[...S.potOf(k)].some(x=>/^L[123]$/.test(x));
+ const segs=[];for(const k of keys){const T0=term(k);if(!T0||T0.c.id===c.id)continue;const L=segs[segs.length-1];if(L&&L.x.id===T0.c.id)L.keys.push(k);else segs.push({x:T0.c,keys:[k]});}
+ const tl=(x,k)=>{const id=k.slice(x.id.length+1);const t=DEFS[x.t].terms(x).find(q=>q.id===id);return t?t.label:id;};
+ for(const sg of segs){const x=sg.x,d=DEFS[x.t],b=B(x),en=sg.keys[0],ex=sg.keys[sg.keys.length-1];if(en===ex||!ph(en)||ph(ex))continue;
+  const e=S.ev[x.id]||{},te=en.slice(x.id.length+1),tx=ex.slice(x.id.length+1),nm=compName(x);
+  if(PROT_B.has(b)&&!on(x))return [{cid:x.id,m:`${nm} e oprită${x.state.tripped?' (a declanșat)':''}: faza intră în ea, dar nu iese.`,h:'Ridică maneta în tablou (ușa deschisă). Dacă sare din nou, e un scurtcircuit pe circuit.'}];
+  const conn=forcedGroups(x);let p0=null;{const FK=new Proxy({},{get:()=>true});const st=JSON.stringify(x.state);for(let i=0;i<4&&!p0;i++){try{for(const [a,bb] of (d.links?d.links(x,FK):[])||[]){if(a===tx)p0=bb;if(bb===tx)p0=a;}}catch(_){}if(d.act)try{d.act(x);}catch(_){}else break;}x.state=JSON.parse(st);}
+  if(!conn(te,tx)&&!(p0&&ph(tk(x,p0)))){let p=null;const FAKE=new Proxy({},{get:()=>true});for(const [a,bb] of (d.links?d.links(x,FAKE):[])||[]){if(a===tx)p=bb;if(bb===tx)p=a;}if(!p&&d.act){const st=JSON.stringify(x.state);d.act(x);for(const [a,bb] of (d.links?d.links(x,FAKE):[])||[]){if(a===tx)p=bb;if(bb===tx)p=a;}x.state=JSON.parse(st);}
+   const pl=p?tl(x,tk(x,p)):'';
+   return [{cid:x.id,m:`La ${nm}, faza intră pe borna ${tl(x,en)}, dar ieșirea ${tl(x,ex)} e un contact separat${p?`, alimentat din borna ${pl}`:''}, care n-are fază.`,h:p?`Pune o punte (fir scurt) între borna ${tl(x,en)} și borna ${pl}, la ${nm}. Așa lucrează și în realitate: ${tl(x,en)}–N alimentează aparatul, iar ${pl}–${tl(x,ex)} e contactul care comută faza spre circuit.`:`Contactul de ieșire al lui ${nm} trebuie alimentat separat cu fază.`}];}
+  if(d.act){const st=JSON.stringify(x.state);d.act(x);const ok=[...solve().potOf(p0&&!conn(te,tx)?ex:ex)].some(q=>/^L[123]$/.test(q));x.state=JSON.parse(st);
+   if(ok)return [{info:1,cid:x.id,m:`Faza vine prin ${nm}, care acum are contactul deschis${d.status?': '+String(d.status(x,e)).toLowerCase():''}.`,h:`Cablarea e corectă: când ${nm} cuplează${b==='astro'?' (noaptea)':''}, întrerupătorul primește fază și tastele comandă normal.`,act:d.actLabel?String(d.actLabel(x)):'Comută'}];}
+  if('pw' in e&&!e.pw)return [{cid:x.id,m:`${nm} nu are alimentare (fază pe L și nul pe N), deci contactul lui nu închide.`,h:`Leagă nulul la borna N a lui ${nm} (de la bara de nul sau clema N).`}];
+  if('coil' in e&&!e.coil)return [{cid:x.id,m:`Faza trece prin ${nm}, dar bobina lui (A1–A2) nu primește tensiune, deci contactele stau deschise.`,h:'Verifică ce comandă bobina (termostat, releu astro, buton) și dacă A2 e legat la nul.'}];
+  return [{cid:x.id,m:`Faza ajunge la ${nm} pe borna ${tl(x,en)}, dar nu iese pe ${tl(x,ex)}: contactul lui e deschis acum${d.status?' ('+String(d.status(x,e)).toLowerCase()+')':''}.`,h:`Verifică de ce nu închide ${nm}.`}];}
+ return [{m:'Faza nu ajunge la întrerupător, deși traseul spre tablou există.',h:'Verifică alimentarea tabloului (rețea, diferențial, siguranța generală).'}];}
+/* ===== CAMERĂ 3D: tabloul pe perete, aparataj în doze, becuri pe tavan, copex în șliț ===== */
+const ROOM={H:2700,TOP:1900,SW:1100,SO:300,GEN:1500,STEP:520};
+function roomLabel(txt,col,h){const s=labelSprite(txt,col||'#33414a');s.scale.multiplyScalar((h||46)/22);s.material.depthTest=true;s.renderOrder=0;return s;}
+function roomKind(c){const b=B(c);if(b==='bulb')return 'bulb';if(b==='ledstrip')return 'strip';if(b==='socket')return 'socket';const K=KEYS(c);if(K&&!K[0].generic)return 'switch';return 'box';}
+function buildRoom3d(g,L,V,M,EV){const r=R3;const cx=r.cx,cy=r.cy;const topW=cy+L.by,botW=cy-(L.BH-L.by),D=L.box?L.box.d:125;const floorY=topW-ROOM.TOP,ceilY=floorY+ROOM.H;
+ const boxL=-L.bx-cx,boxR=L.BW-L.bx-cx;const F=model.comps.filter(c=>c.zone==='field').sort((a,b)=>(a.row-b.row)||(a.x-b.x));
+ // cine comandă ce: becurile se pun deasupra întrerupătorului lor
+ const ctrlBy=new Map();for(const c of F)if(roomKind(c)==='switch'){KEYS(c).forEach((k,i)=>{try{for(const x of keyTargets(c,i))if(x.zone==='field'&&!ctrlBy.has(x.id))ctrlBy.set(x.id,{sw:c.id,key:i});}catch(_){}});}
+ const pos=new Map();let xs=boxR+650;const leftList=[];
+ for(const c of F){const k=roomKind(c);if((k==='bulb'||k==='strip')&&ctrlBy.has(c.id))continue;pos.set(c.id,{x:xs,k});xs+=k==='box'?Math.max(ROOM.STEP,WPX(c)+260):ROOM.STEP;}
+ for(const c of F){const k=roomKind(c);if(!((k==='bulb'||k==='strip')&&ctrlBy.has(c.id)))continue;const s=pos.get(ctrlBy.get(c.id).sw);const n=[...pos.values()].filter(p=>p.of===ctrlBy.get(c.id).sw).length;pos.set(c.id,{x:(s?s.x:xs)+(n%3-1)*420,z:1300+Math.floor(n/3)*700+(n%3===1?0:250),k,of:ctrlBy.get(c.id).sw});}
+ for(const [id,p] of pos)if((p.k==='bulb')&&p.z==null)p.z=1300;
+ const x0=Math.min(boxL-900,-1200),x1=Math.max(xs+600,boxR+2400),W=x1-x0,mid=(x0+x1)/2;r.roomBox={x0,x1,floorY,ceilY,mid};
+ // perete, pardoseală, tavan
+ const plaster=M('#ebe7df',{roughness:.95});const wall=new THREE.Mesh(new THREE.PlaneGeometry(W,ROOM.H),plaster);wall.position.set(mid,floorY+ROOM.H/2,-7);wall.receiveShadow=true;g.add(wall);
+ const fcv=document.createElement('canvas');fcv.width=256;fcv.height=256;{const x=fcv.getContext('2d');for(let i=0;i<8;i++){x.fillStyle=i%2?'#b8946a':'#c29f74';x.fillRect(0,i*32,256,32);x.fillStyle='rgba(0,0,0,.08)';x.fillRect(0,i*32,256,1.5);}}
+ const ft=new THREE.CanvasTexture(fcv);ft.encoding=THREE.sRGBEncoding;ft.wrapS=ft.wrapT=THREE.RepeatWrapping;ft.repeat.set(W/1200,3600/1200);
+ const floor=new THREE.Mesh(new THREE.PlaneGeometry(W,3600),new THREE.MeshStandardMaterial({map:ft,roughness:.8}));floor.rotation.x=-Math.PI/2;floor.position.set(mid,floorY,1800-7);floor.receiveShadow=true;g.add(floor);
+ const ceil=new THREE.Mesh(new THREE.PlaneGeometry(W,3600),M('#f6f5f1',{roughness:.95}));ceil.rotation.x=Math.PI/2;ceil.position.set(mid,ceilY,1800-7);g.add(ceil);
+ const skirt=new THREE.Mesh(new THREE.BoxGeometry(W,70,12),M('#d9d3c7'));skirt.position.set(mid,floorY+35,-1);g.add(skirt);
+ {const s=roomLabel(`Tavan ${ROOM.H/1000} m`,'#8a949b',40);s.position.set(x0+300,ceilY-60,20);g.add(s);const f=roomLabel('Pardoseală','#8a949b',40);f.position.set(x0+300,floorY+110,20);g.add(f);}
+ // copex
+ const ccv=document.createElement('canvas');ccv.width=64;ccv.height=8;{const x=ccv.getContext('2d');for(let i=0;i<8;i++){x.fillStyle=i%2?'#8f989e':'#c7ccd0';x.fillRect(i*8,0,8,8);}}
+ const tube=(P,col,cid,lab)=>{const path=filletPath(P,60);if(!path.curves.length)return;const len=path.getLength();const t=new THREE.CanvasTexture(ccv);t.wrapS=THREE.RepeatWrapping;t.repeat.set(len/7,1);t.encoding=THREE.sRGBEncoding;
+  const dim=TRACE&&cid&&!TRACE.comps.has(cid);const m=new THREE.Mesh(new THREE.TubeGeometry(path,Math.max(40,P.length*20),10,10,false),new THREE.MeshStandardMaterial({map:t,roughness:.6,transparent:!!dim,opacity:dim?.25:1}));if(cid)m.userData.cid=cid;g.add(m);r.click.push(m);
+  if(lab){const s=roomLabel(lab,'#5b666d',34);const p=path.getPointAt(.5);s.position.copy(p).add(new THREE.Vector3(0,0,30));g.add(s);}};
+ const aY=(c,p)=>p.k==='bulb'||p.k==='strip'?ceilY:p.k==='socket'?floorY+ROOM.SO:p.k==='switch'?floorY+ROOM.SW:floorY+ROOM.GEN;
+ const anch=(c,up)=>{const p=pos.get(c.id);if(!p)return null;const h=p.k==='box'?H(c):80;const y=aY(c,p);if(p.k==='bulb'||p.k==='strip')return {x:p.x,y:ceilY-14,z:p.k==='strip'?60:p.z,ceil:1};return {x:p.x,y:up?y+h/2:y-h/2,z:-2};};
+ let lane=0;const pairs=new Set();const panelLane=new Map();let pl=0;
+ for(const c of F){const done=new Set();for(const w of model.wires){const k=w.a.startsWith(c.id+':')?w.b:w.b.startsWith(c.id+':')?w.a:null;if(!k)continue;const T=term(k);if(!T)continue;const o=T.c;const key=o.zone==='field'?[c.id,o.id].sort().join('|'):c.id+'|P';if(pairs.has(key)||done.has(key))continue;done.add(key);pairs.add(key);
+   const lz=90+(lane++%8)*26;
+   if(o.zone==='field'){const A=anch(c,true),Bn=anch(o,true);if(!A||!Bn)continue;const lv=ceilY-14;const seg=q=>q.ceil?[new THREE.Vector3(q.x,lv,q.z),new THREE.Vector3(q.x,lv,lz)]:[new THREE.Vector3(q.x,q.y,q.z+8),new THREE.Vector3(q.x,lv-40,0),new THREE.Vector3(q.x,lv,lz)];
+    const P=seg(A).concat(seg(Bn).reverse());tube(P,null,c.id,null);}
+   else{const A=anch(c,c.row<0||roomKind(c)==='bulb');if(!A)continue;const top=c.row<0||A.ceil;if(!panelLane.has(c.id))panelLane.set(c.id,pl++);const n=panelLane.get(c.id);const xp=Math.min(boxR-25,boxL+30+n*28);const lv=top?ceilY-14:floorY+14;
+    const P=[];if(A.ceil){P.push(new THREE.Vector3(A.x,lv,A.z),new THREE.Vector3(A.x,lv,lz));}else{P.push(new THREE.Vector3(A.x,A.y,A.z+8),new THREE.Vector3(A.x,top?lv-40:lv+40,0),new THREE.Vector3(A.x,lv,lz));}
+    if(!top&&A.ceil){}
+    P.push(new THREE.Vector3(xp,lv,lz),new THREE.Vector3(xp,top?lv-40:lv+40,D/2),new THREE.Vector3(xp,top?topW+10:botW-10,D/2),new THREE.Vector3(xp,top?topW-25:botW+25,D/2));tube(P,null,c.id,copexName(c));}}}
+ // aparate
+ const lights=[];const sand='#d8cdb6',sandK='#e8dfcb';
+ for(const c of F){const p=pos.get(c.id);if(!p)continue;const e=EV[c.id]||{},dim=TRACE&&!TRACE.comps.has(c.id);const grp=new THREE.Group();grp.userData.cid=c.id;g.add(grp);const reg=m=>{m.userData.cid=c.id;r.click.push(m);if(dim&&m.material){m.material=m.material.clone();m.material.transparent=true;m.material.opacity=.3;}return m;};
+  const nm=compName(c);
+  if(p.k==='switch'||p.k==='socket'){const y=aY(c,p);
+   const doza=new THREE.Mesh(new THREE.CylinderGeometry(34,34,4,24),M('#e07a2f'));doza.rotation.x=Math.PI/2;doza.position.set(p.x,y,-5);g.add(doza);
+   const plate=reg(new THREE.Mesh(THREE.RoundedBoxGeometry?new THREE.RoundedBoxGeometry(122,82,9,3,3):new THREE.BoxGeometry(122,82,9),M(sand,{roughness:.55})));plate.position.set(p.x,y,4.5);plate.castShadow=true;grp.add(plate);
+   if(p.k==='switch'){const K=KEYS(c),n=K.length,kw=Math.min(66,96/n);K.forEach((k,i)=>{const piv=new THREE.Group();piv.position.set(p.x+(i-(n-1)/2)*(kw+2),y,9);grp.add(piv);
+     const key=new THREE.Mesh(THREE.RoundedBoxGeometry?new THREE.RoundedBoxGeometry(kw-2,66,8,2,2):new THREE.BoxGeometry(kw-2,66,8),M(k.on?'#efe6d1':sandK,{roughness:.45}));key.position.z=4;piv.add(key);
+     piv.rotation.x=k.mom?0:(k.on?-.11:.11);key.userData.key=i;reg(key);
+     if(k.mom){const dot=new THREE.Mesh(new THREE.CylinderGeometry(9,9,3,20),M('#b7a987'));dot.rotation.x=Math.PI/2;dot.position.z=9;piv.add(dot);dot.userData.key=i;reg(dot);}
+     else{const led=new THREE.Mesh(new THREE.BoxGeometry(6,2,1),new THREE.MeshBasicMaterial({color:k.on?'#7bd88f':'#9aa1a4'}));led.position.set(0,k.on?26:-26,8.6);piv.add(led);}
+     if(n>1){const s=roomLabel(String(i+1),'#7d6f4f',24);s.position.set(piv.position.x,y+56,14);g.add(s);}});}
+   else{const cup=new THREE.Mesh(new THREE.CylinderGeometry(22,22,6,28),M('#c9bea5'));cup.rotation.x=Math.PI/2;cup.position.set(p.x,y,10);grp.add(cup);reg(cup);
+    for(const dx of [-9.5,9.5]){const h=new THREE.Mesh(new THREE.CylinderGeometry(2.4,2.4,2,12),M('#2b2f33'));h.rotation.x=Math.PI/2;h.position.set(p.x+dx,y,13.2);grp.add(h);}
+    const plug=!!c.state.plug;const hit=reg(new THREE.Mesh(new THREE.BoxGeometry(130,90,30),new THREE.MeshBasicMaterial({visible:false})));hit.position.set(p.x,y,15);hit.userData.plug=1;grp.add(hit);
+    if(plug){const pl=new THREE.Mesh(new THREE.CylinderGeometry(20,20,30,24),M('#f2f2ef'));pl.rotation.x=Math.PI/2;pl.position.set(p.x,y,26);grp.add(pl);
+     const lx=p.x+260;const cord=new THREE.CatmullRomCurve3([new THREE.Vector3(p.x,y-18,32),new THREE.Vector3(p.x+40,floorY+40,120),new THREE.Vector3(lx-60,floorY+6,200),new THREE.Vector3(lx,floorY+10,220)]);g.add(new THREE.Mesh(new THREE.TubeGeometry(cord,40,3,6,false),M('#f2f2ef')));
+     const base=new THREE.Mesh(new THREE.CylinderGeometry(70,80,20,28),M('#3a3f44'));base.position.set(lx,floorY+10,220);g.add(base);const pole=new THREE.Mesh(new THREE.CylinderGeometry(6,6,380,12),M('#3a3f44',{metalness:.6}));pole.position.set(lx,floorY+200,220);g.add(pole);
+     const shade=new THREE.Mesh(new THREE.CylinderGeometry(60,110,130,28,1,true),new THREE.MeshStandardMaterial({color:e.pw?'#fff1cf':'#e8e1d2',emissive:e.pw?'#ffcf7a':'#000',emissiveIntensity:e.pw?.8:0,side:THREE.DoubleSide}));shade.position.set(lx,floorY+430,220);g.add(shade);
+     if(e.pw)lights.push([lx,floorY+400,220,'#ffd49a',.7,2600]);}
+    const s=roomLabel(plug?(e.pw?'lampa se aprinde: priza are tensiune':'lampa nu se aprinde: fără tensiune'):'atinge priza ca să bagi o lampă','#8a949b',28);s.position.set(p.x,y-80,20);g.add(s);}
+   const s=roomLabel(nm,'#33414a',38);s.position.set(p.x,y+(p.k==='switch'?90:62),20);g.add(s);
+   if(p.k==='switch'){const hs=roomLabel(`H ${ROOM.SW/1000} m`,'#8a949b',26);hs.position.set(p.x+100,y-40,20);g.add(hs);}}
+  else if(p.k==='bulb'){const rose=reg(new THREE.Mesh(new THREE.CylinderGeometry(55,55,18,28),M('#f4f4f1')));rose.position.set(p.x,ceilY-9,p.z);grp.add(rose);
+   const cord=new THREE.Mesh(new THREE.CylinderGeometry(3,3,320,8),M('#2b2f33'));cord.position.set(p.x,ceilY-178,p.z);grp.add(cord);
+   const sock=new THREE.Mesh(new THREE.CylinderGeometry(18,18,50,16),M('#2b2f33'));sock.position.set(p.x,ceilY-360,p.z);grp.add(sock);
+   const on_=!!e.lit;const bulb=reg(new THREE.Mesh(new THREE.SphereGeometry(42,28,20),new THREE.MeshStandardMaterial({color:on_?'#fff6da':'#e9ebe8',emissive:on_?'#ffd27a':'#000',emissiveIntensity:on_?1.4:0,roughness:.2,transparent:true,opacity:on_?1:.85})));bulb.position.set(p.x,ceilY-420,p.z);grp.add(bulb);
+   if(on_){const hal=new THREE.Mesh(new THREE.SphereGeometry(95,20,14),new THREE.MeshBasicMaterial({color:'#ffd27a',transparent:true,opacity:.18,depthWrite:false}));hal.position.copy(bulb.position);g.add(hal);lights.push([p.x,ceilY-440,p.z,'#ffd9a0',1.25,5200]);}
+   const s=roomLabel(nm+(on_?' · aprins':' · stins'),on_?'#b36b00':'#5b666d',38);s.position.set(p.x,ceilY-540,p.z);g.add(s);}
+  else if(p.k==='strip'){const len=Math.min(2600,Math.max(600,(+c.p.len||2)*300));const on_=!!e.lit;const col=on_?stripColor(c,e):'#d9dcd8';
+   const prof=reg(new THREE.Mesh(new THREE.BoxGeometry(len,14,20),M('#c9cdd0',{metalness:.6,roughness:.35})));prof.position.set(p.x,ceilY-30,40);grp.add(prof);
+   const led=new THREE.Mesh(new THREE.BoxGeometry(len-10,6,8),new THREE.MeshStandardMaterial({color:col,emissive:on_?col:'#000',emissiveIntensity:on_?1.6:0}));led.position.set(p.x,ceilY-40,40);grp.add(led);
+   if(on_){const gl=new THREE.Mesh(new THREE.PlaneGeometry(len,420),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:.22,depthWrite:false}));gl.position.set(p.x,ceilY-240,-5);g.add(gl);lights.push([p.x,ceilY-120,120,col,.8,3000]);}
+   const s=roomLabel(nm+(on_?' · aprinsă':' · stinsă'),'#5b666d',34);s.position.set(p.x,ceilY-110,60);g.add(s);}
+  else{const Wd=WPX(c),Hd=H(c),dep=Math.max(30,Math.min(120,DEFS[c.t].depth?DEFS[c.t].depth(c):40));const y=aY(c,p);
+   const bx=reg(new THREE.Mesh(new THREE.BoxGeometry(Wd,Hd,dep),[M('#dfe1dd'),M('#dfe1dd'),M('#dfe1dd'),M('#dfe1dd'),new THREE.MeshStandardMaterial({map:faceTex(c,Wd,e),roughness:.7}),M('#dfe1dd')]));bx.position.set(p.x,y,dep/2);bx.castShadow=true;grp.add(bx);
+   const on_=onOfK(e);const led=new THREE.Mesh(new THREE.SphereGeometry(5,12,10),new THREE.MeshBasicMaterial({color:on_?'#39d353':'#9aa1a4'}));led.position.set(p.x+Wd/2-10,y+Hd/2-10,dep+2);g.add(led);
+   const s=roomLabel(nm+(on_?' · pornit':''),'#33414a',36);s.position.set(p.x,y+Hd/2+50,20);g.add(s);}
+  if(sel===c.id){const bb=new THREE.Box3().setFromObject(grp);const hl=new THREE.Box3Helper(bb,0xE3A008);g.add(hl);}}
+ lights.slice(0,8).forEach(([x,y,z,col,i,dist])=>{const pl=new THREE.PointLight(col,i,dist,2);pl.position.set(x,y,z);g.add(pl);});
+ // panou: cota de montaj
+ {const s=roomLabel(`Tablou: sus la ${ROOM.TOP/1000} m`,'#8a949b',30);s.position.set((boxL+boxR)/2,topW+70,D+10);g.add(s);}}
+function roomView(){if(!R3||!R3.roomBox)return recenter3d();const b=R3.roomBox,cam=R3.cam;const w=Math.min(b.x1-b.x0,9000);const t=Math.tan(19*Math.PI/180);const dist=Math.max(3800,(w/2)/(t*Math.max(.5,cam.aspect))+300,(b.ceilY-b.floorY)/2/t+400);FLY=null;
+ const cx=(b.x0+b.x1)/2;cam.position.set(cx,b.floorY+1450,dist);R3.ctl.target.set(cx,b.floorY+1350,0);R3.ctl.update();}
 /* cameră */
 function compBox3d(id){if(!R3||!R3.root)return null;const b=new THREE.Box3();let any=false;R3.root.children.forEach(x=>{if(x.userData&&x.userData.cid===id){b.expandByObject(x);any=true;}});return any?b:null;}
 function flyTo(p1,q1,dur){if(!R3)return;FLY={t0:performance.now(),dur:reduceMotion?1:(dur||650),p0:R3.cam.position.clone(),q0:R3.ctl.target.clone(),p1,q1};}
@@ -3281,14 +3394,14 @@ function compScreen(c){if(tab==='3d'&&R3){const bx=compBox3d(c.id);if(bx){const 
  const el=document.querySelector(`#world [data-c="${c.id}"]`);if(el){const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};}return {x:innerWidth/2,y:innerHeight/2};}
 function nav3d(k){if(!R3)return;const cam=R3.cam,t=R3.ctl.target;FLY=null;const off=cam.position.clone().sub(t),dist=off.length();
  if(k==='in'||k==='out'){cam.position.copy(t.clone().add(off.setLength(Math.max(60,Math.min(20000,dist*(k==='in'?.82:1.22))))));R3.ctl.update();return;}
- if(k==='home'){if(TRACE){TRACE=null;render();}recenter3d();return;}
+ if(k==='home'){if(TRACE){TRACE=null;render();}if(R3.room!==false&&R3.roomBox)roomView();else recenter3d();return;}
  if(k==='mode'){R3.panMode=!R3.panMode;R3.ctl.touches.ONE=R3.panMode?THREE.TOUCH.PAN:THREE.TOUCH.ROTATE;R3.ctl.mouseButtons.LEFT=R3.panMode?THREE.MOUSE.PAN:THREE.MOUSE.ROTATE;navModeLbl();toast(R3.panMode?'Un deget (sau mouse-ul) mută acum vederea. Două degete apropie.':'Un deget (sau mouse-ul) rotește acum vederea.');return;}
  cam.updateMatrixWorld();const right=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,0),upv=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,1),s=dist*.1;
  const v=k==='left'?right.multiplyScalar(-s):k==='right'?right.multiplyScalar(s):k==='up'?upv.multiplyScalar(s):upv.multiplyScalar(-s);cam.position.add(v);t.add(v);R3.ctl.update();}
 function navModeLbl(){const b=document.querySelector('#nav3d [data-nv=mode]');if(b)b.textContent=R3&&R3.panMode?'☝ Deget: mută':'☝ Deget: rotește';}
 /* prim plan */
 function openKeyPad(c){const K=KEYS(c);if(!K)return;TRACE=null;hideKres();KP={id:c.id};let wait=0;
- if(tab==='3d'&&R3){if(!R3.showField){R3.showField=true;const f=$('#field3d');if(f)f.setAttribute('aria-pressed',true);}render();flyToComp(c);wait=reduceMotion?0:690;}
+ if(TRACE===null&&tab==='3d')render();
  setTimeout(()=>drawKeyPad(c),wait);}
 function drawKeyPad(c){const K=KEYS(c);if(!K||!KP||KP.id!==c.id)return;const el=$('#kpad');const ch=traceComp(c.id).chain.filter(id=>id!==c.id).map(byId).filter(Boolean);const p=ch.filter(x=>PROT_B.has(B(x)));
  const circ=p.length?'Circuit: '+compName(p[p.length-1]):ch.length?'Alimentat din '+compName(ch[ch.length-1]):'Nelegat la tablou';
@@ -3307,8 +3420,7 @@ function showKeyResult(r){if(!r)return;const c=r.c;KRES=r;
  const comps=new Set([c.id,...up.chain,...dn.comps,...r.ctrl.map(x=>x.id)]);for(const id of up.comps){const x=byId(id);if(x&&x.zone!=='field')comps.add(id);}
  const other=new Set(DEFS[c.t].terms(c).filter(t=>!r.out.includes(t.id)&&!r.inp.includes(t.id)&&t.kind!=='N'&&t.kind!=='PE').map(t=>tk(c,t.id)));
  const wires=new Set(dn.wires);for(const wid of up.wires){const w=model.wires.find(x=>x.id===wid);if(!w||other.has(w.a)||other.has(w.b))continue;const A=term(w.a),Bt=term(w.b);if(A&&Bt&&comps.has(A.c.id)&&comps.has(Bt.c.id))wires.add(wid);}
- if(tab==='3d'&&R3){R3.showField=true;FLY=null;}
- TRACE={comps,wires,loads:dn.loads,chain:up.chain,mode:'key',t0:performance.now(),paths:[],cam:null};
+ const linked=r.ctrl.length>0&&!r.errs.length;FLY=null;TRACE=linked?{comps,wires,loads:dn.loads,chain:up.chain,mode:'key',t0:performance.now(),paths:[],cam:null}:null;
  const ids=r.onNow.concat(r.offNow).map(x=>x.id);if(ids.length){FLASH={ids:new Set(ids),until:Date.now()+2600};setTimeout(()=>{if(FLASH&&Date.now()>=FLASH.until){FLASH=null;render();}},2700);}
  render();
  const S=solve(),nm=x=>esc(compName(x));const st=r.mom?'apăsat':r.on?'PORNIT':'OPRIT';
@@ -3316,10 +3428,12 @@ function showKeyResult(r){if(!r)return;const c=r.c;KRES=r;
  let h=`<div class="kr-h"><b>${nm(c)} · ${esc(r.label)}: ${st}</b><button class="kx" data-krx aria-label="Închide">✕</button></div><p class="kr-f">Alimentat din: ${ch}</p>`;
  if(r.autoSim)h+=`<p class="kr-f">Am pus tabloul sub tensiune ca să vezi efectul.</p>`;
  if(r.ctrl.length)h+=`<p class="kr-c"><b>Comandă:</b> ${r.ctrl.map(x=>{const o=onOfK(S.ev[x.id]);return `${nm(x)} <em class="${o?'on':''}">${o?'aprins':'stins'}</em>`;}).join(', ')}</p>`;
+ if(r.inOk&&r.errs.length)h+=`<div class="kr-ok">✓ Faza ajunge la întrerupător.</div>`;
  for(const e of r.errs)h+=`<div class="kr-e"><b>⚠ ${esc(e.m)}</b><span><b style="display:inline">Cum rezolvi:</b> ${esc(e.h)}</span></div>`;
+ for(const e of r.infos||[])h+=`<div class="kr-i"><b>ℹ ${esc(e.m)}</b><span>${esc(e.h)}</span>${e.cid?`<button class="btn sm" data-kract="${e.cid}" style="margin-top:6px">${esc(e.act)} acum</button>`:''}</div>`;
  for(const e of r.warns)h+=`<div class="kr-w"><b>${esc(e.m)}</b><span>${esc(e.h)}</span></div>`;
- if(!r.errs.length&&!r.warns.length&&(r.ctrl.length||r.mom))h+=`<div class="kr-ok">✓ Cablare corectă pentru ${esc(r.label.toLowerCase())}.</div>`;
- h+=`<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm primary" data-kragain>Apasă din nou</button><button class="btn sm" data-krx>Închide</button></div>`;
+ if(!r.errs.length&&!r.warns.length&&!(r.infos||[]).length&&(r.ctrl.length||r.mom))h+=`<div class="kr-ok">✓ Cablare corectă pentru ${esc(r.label.toLowerCase())}.</div>`;
+ h+=`<div class="row" style="gap:6px;margin-top:8px"><button class="btn sm primary" data-kragain>Apasă din nou</button>${r.errs.length?'<button class="btn sm" data-kr2d>Arată în schemă</button>':''}<button class="btn sm" data-krx>Închide</button></div>`;
  const k=$('#kres');k.innerHTML=h;k.hidden=false;k.scrollTop=0;}
 function kStrip(){const s=$('#kstrip');if(!s)return;const list=tab==='3d'?model.comps.filter(c=>c.zone==='field'&&KEYS(c)&&!KEYS(c)[0].generic):[];s.hidden=!list.length;if(!list.length)return;
  const html='<span class="ks-t">Întrerupătoare:</span>'+list.map(c=>`<button class="ks" data-ks="${c.id}">${esc(compName(c))}</button>`).join('');if(s.dataset.h!==html){s.innerHTML=html;s.dataset.h=html;}}
@@ -3407,17 +3521,20 @@ function setupKeys(){const st=document.createElement('style');st.textContent=`
 .kr-f{margin:4px 0;color:var(--muted)}.kr-c{margin:6px 0}
 .kr-c em{font-style:normal;font-weight:700;color:#8a949b}.kr-c em.on{color:#b36b00}
 .kr-e,.kr-w,.kr-ok{border-radius:8px;padding:8px 10px;margin:6px 0}
+.kr-i{border-radius:8px;padding:8px 10px;margin:6px 0;background:#e8f1fb;border:1px solid #a9c7ea}.kr-i>b{display:block}.kr-i span{display:block;margin-top:3px;color:#3b474f}
 .kr-e{background:#fdecea;border:1px solid #f1b5ae}.kr-w{background:#fff6e0;border:1px solid #f0d58c}.kr-ok{background:#e8f6ec;border:1px solid #a9dbb6;font-weight:600;color:#1e7a3e}
 .kr-e>b,.kr-w>b{display:block}.kr-e span,.kr-w span{display:block;margin-top:3px;color:#3b474f}
 #world .comp.grp{filter:drop-shadow(0 0 2.5px #e0218a) drop-shadow(0 0 1px #e0218a)}
 .grpbar{position:absolute;left:50%;top:12px;transform:translateX(-50%);background:#fff;border:1.5px solid #e0218a;border-radius:10px;padding:6px 8px 6px 12px;display:flex;gap:8px;align-items:center;font-size:13px;z-index:5;max-width:calc(100% - 24px);box-shadow:0 4px 14px rgba(0,0,0,.12)}
-.grpbar[hidden]{display:none}`;document.head.appendChild(st);
+.grpbar[hidden]{display:none}
+.tools3d,.nav3d,.kstrip,.kpad,.kres,.hint3d{user-select:none;-webkit-user-select:none}
+@media (min-width:900px){.kres{left:16px;transform:none;bottom:16px;width:400px}}`;document.head.appendChild(st);
  const v3=$('#view3d');v3.insertAdjacentHTML('beforeend',`<div class="kstrip" id="kstrip" hidden></div><div class="nav3d" id="nav3d"><span></span><button data-nv="up" aria-label="Mută în sus">▲</button><span></span><button data-nv="left" aria-label="Mută la stânga">◀</button><button data-nv="home" aria-label="Vedere de ansamblu">⌂</button><button data-nv="right" aria-label="Mută la dreapta">▶</button><button data-nv="out" aria-label="Depărtează">−</button><button data-nv="down" aria-label="Mută în jos">▼</button><button data-nv="in" aria-label="Apropie">+</button><button data-nv="mode" class="nvm">☝ Deget: rotește</button></div>`);
- const h3=v3.querySelector('.hint3d');if(h3)h3.textContent='Atinge un întrerupător (sau alege-l din banda de jos) ca să-l comanzi din prim plan. Săgețile mută vederea, + și − apropie, ⌂ revine la tot tabloul.';
+ const h3=v3.querySelector('.hint3d');if(h3)h3.textContent='Ești în cameră: atinge direct o tastă a întrerupătorului și se aprinde becul de pe tavan. Atinge o priză ca să bagi o lampă. Săgețile mută vederea, + și − apropie, ⌂ revine la toată camera.';
  $('#view2d').insertAdjacentHTML('beforeend',`<div class="grpbar" id="grpbar" hidden><span></span><button class="btn sm" data-gcopy>⧉ Copiază iar</button><button class="btn sm primary" data-gdone>Gata</button></div>`);
  document.body.insertAdjacentHTML('beforeend',`<div class="kpad" id="kpad" hidden><div class="kcard"></div></div><div class="kres" id="kres" hidden></div>`);
  $('#kpad').addEventListener('click',e=>{const k=e.target.closest('[data-kkey]');if(k){kpadPress(+k.dataset.kkey);return;}if(e.target.closest('[data-kclose]')||e.target.id==='kpad')closeKeyPad(true);});
- $('#kres').addEventListener('click',e=>{if(e.target.closest('[data-krx]')){hideKres();if(TRACE){TRACE=null;render();}return;}if(e.target.closest('[data-kragain]')&&KRES){const c=byId(KRES.c.id);if(c)openKeyPad(c);}});
+ $('#kres').addEventListener('click',e=>{if(e.target.closest('[data-krx]')){hideKres();if(TRACE){TRACE=null;render();}return;}{const ka=e.target.closest('[data-kract]');if(ka&&KRES){const x=byId(ka.dataset.kract),c=byId(KRES.c.id);if(x&&c){const S0=solve(),before={},protOn={};for(const y of model.comps){before[y.id]=onOfK(S0.ev[y.id]);if(DEFS[y.t].trip)protOn[y.id]=on(y);}DEFS[x.t].act(x);try{simSettle();}catch(_){}save();showKeyResult(diagKey(c,KRES.i,before,protOn));}return;}}if(e.target.closest('[data-kr2d]')&&KRES){const id=KRES.c.id;hideKres();setTab('2d');sel=id;openInsp();render();return;}if(e.target.closest('[data-kragain]')&&KRES){const c=byId(KRES.c.id);if(c)openKeyPad(c);}});
  $('#kstrip').addEventListener('click',e=>{const b=e.target.closest('[data-ks]');if(b){const c=byId(b.dataset.ks);if(c)openKeyPad(c);}});
  let rep=null;const stop=()=>{if(rep){clearTimeout(rep.t);clearInterval(rep.i);rep=null;}};
  $('#nav3d').addEventListener('pointerdown',e=>{const b=e.target.closest('[data-nv]');if(!b)return;e.preventDefault();const k=b.dataset.nv;nav3d(k);if(['mode','home'].includes(k))return;stop();rep={t:setTimeout(()=>{rep.i=setInterval(()=>nav3d(k),70);},350)};});
