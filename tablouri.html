@@ -1705,7 +1705,7 @@ function render2d(S){$('#world').innerHTML=worldSVG(S);$('#cv').classList.toggle
 
 /* ---------- bibliotecă ---------- */
 let libQ='';
-const APP_VER='29.09.2026 · v22 (plan de cablare PDF)';
+const APP_VER='29.09.2026 · v23 (plan de cablare: sens și marcaje)';
 {const e=document.getElementById('appver');if(e)e.textContent=APP_VER;}
 const MEDIA_PL=[['VS218PZF','aparent',375,390,99,0,'Hager'],['VS318PZF','aparent',500,390,99,0,'Hager'],['VS418PZF','aparent',645,390,99,0,'Hager'],['VF318PZF','îngropat',543,460,98,72,'Hager'],['VF418PZF','îngropat',688,460,98,72,'Hager'],['BK080752','aparent',361,287,112,0,'Schrack','plastic','multimedia 24 module (2×12), IP40',12],['BK080758','aparent',655,396,112,0,'Schrack','plastic','multimedia 72 module (4 rânduri), IP40',18]];
 const BOX_CAT=[{g:'Schrack · tablouri din plastic (distribuție)',items:[['BK080109','aparent',236,503,112,0,'Schrack','plastic','24 module, 1 rând, IP40, ușă transparentă',24],['BK080206','aparent',259,428,144,0,'Schrack','plastic','18 module, IP65',18],['12M IP65','aparent',259,319,144,0,'Schrack','plastic','12 module, IP65',12],['24M IP65','aparent',384,319,144,0,'Schrack','plastic','24 module (2×12), IP65',12]]},
@@ -2617,28 +2617,43 @@ async function doorSchemaPDF(fmt){const list=doorCircuits();if(!list.length){toa
  const per=12,npg=Math.ceil(list.length/per);for(let p=0;p<npg;p++){if(p)pdf.addPage(A3?'a3':'a4','landscape');const svg=doorPageSVG(list.slice(p*per,p*per+per),p+1,npg,fmt);const cv=await rasterSVG(svg,px[0],px[1]);pdf.addImage(cv.toDataURL('image/jpeg',.92),'JPEG',0,0,PW,PH);}
  return pdf.output('blob');}
 /* === plan de cablare (aparatele reale + firele numerotate), PDF A4 / A3 === */
-function wirePlanData(){const L=layout(),S=solve(),N=posNums();const ws=model.wires.filter(w=>!w.cordHide);const key=w=>{const a=termAbs(w.a,L);return a?[a.c.zone==='panel'?0:1,a.y,a.x]:[2,0,0];};
- const sorted=ws.slice().sort((p,q)=>{const a=key(p),b=key(q);return a[0]-b[0]||a[1]-b[1]||a[2]-b[2];});const nr=new Map();sorted.forEach((w,i)=>nr.set(w.id,i+1));
- const rows=sorted.map(w=>{const A=term(w.a),Bt=term(w.b);const nm=o=>o?`${N.get(o.c.id)||''}. ${compName(o.c)} · ${tLab(o.c,o.t)}`:'?';const col=(WC[w.color]||WC.negru);return {w,n:nr.get(w.id),from:nm(A),to:nm(Bt),col:col.n,hex:col.c||col.hex||'#333',sec:w.sec?fmtN(w.sec)+' mm²':'',lab:w.label||(w.cord?'cablu cu ștecher':w.jmp?'punte':w.cable||''),field:(A&&A.c.zone==='field')||(Bt&&Bt.c.zone==='field')};});
- return {L,S,rows,nr};}
+function wirePlanData(){const L=layout(),S=solve(),N=posNums();const ws=model.wires.filter(w=>!w.cordHide);
+ const depth=new Map(),adj=new Map();const cid=k=>k.split(':')[0];for(const w of ws){const a=cid(w.a),b=cid(w.b);if(!adj.has(a))adj.set(a,[]);if(!adj.has(b))adj.set(b,[]);adj.get(a).push(b);adj.get(b).push(a);}
+ const q=model.comps.filter(c=>/^src/.test(B(c))).map(c=>c.id);q.forEach(id=>depth.set(id,0));for(let h=0;h<q.length;h++){const id=q[h];for(const n of adj.get(id)||[])if(!depth.has(n)){depth.set(n,depth.get(id)+1);q.push(n);}}
+ const dep=c=>depth.has(c.id)?depth.get(c.id):99;const PROT=/^(mcb|rcbo)/,UPP=/^(mcb|rcbo|rcd|isol)/;const SEC={6:1.5,10:1.5,13:2.5,16:2.5,20:2.5,25:4,32:6,40:10,63:16};
+ const circOf=(id,re)=>{try{for(const x of traceComp(id).chain){const c=byId(x);if(c&&re.test(B(c)))return c;}}catch(_){}return null;};
+ const cname=c=>c?(c.label||compName(c)).replace(/^Siguranță |^Diferențial /,''):'ALIM';
+ const chainC=new Map();const chainOf=id=>{if(!chainC.has(id)){let ch=[];try{ch=traceComp(id).chain.slice(1);}catch(_){}chainC.set(id,new Set(ch));}return chainC.get(id);};
+ const rank=c=>{const b=B(c);if(/^src/.test(b))return 0;if(/^(isol|rcd)/.test(b))return 1;if(/^(mcb|rcbo)/.test(b))return 2;if(/bar|^pe|^nbar|^busbar/.test(b))return 2.5;if(/^clamp/.test(b))return 3;return c.zone==='panel'?4:5;};
+ const isBar=c=>/bar/.test(B(c))||/^Bară/.test(compName(c));
+ const rows0=ws.map(w=>{let A=term(w.a),Bt=term(w.b);if(!A||!Bt)return null;let swap=false;
+  if(A.c.id===Bt.c.id)swap=A.t.side==='bot'&&Bt.t.side==='top';else if(chainOf(A.c.id).has(Bt.c.id))swap=true;else if(chainOf(Bt.c.id).has(A.c.id))swap=false;else{const ra=rank(A.c),rb=rank(Bt.c);swap=ra>rb||(ra===rb&&dep(A.c)>dep(Bt.c));}
+  if(swap){const t=A;A=Bt;Bt=t;}
+  const D=Bt.c;const upOf=c=>{try{for(const x of traceComp(c.id).chain){const q=byId(x);if(q&&q.id!==c.id&&UPP.test(B(q)))return q;}}catch(_){}return null;};const feed=()=>UPP.test(B(A.c))?(A.t.side==='top'?upOf(A.c):A.c):(circOf(A.c.id,PROT)||circOf(A.c.id,UPP));let pc=null;if(UPP.test(B(A.c))&&A.t.side==='top'&&A.c.id!==D.id)pc=upOf(A.c);else if((UPP.test(B(D))&&Bt.t.side==='top')||isBar(D))pc=feed();else pc=circOf(D.id,PROT)||circOf(D.id,UPP);
+  const cn=(WC[w.color]||{}).n||'';const lbl=(Bt.t.label||A.t.label||'').replace(/IN$|V$/,'');const cond=/maro|negru|gri|roșu închis/.test(cn)&&!/^[+−~-]/.test(lbl)&&Bt.t.kind!=='DATA'?'L':/albastru/.test(cn)&&!/^[+−~-]/.test(lbl)?'N':/galben/.test(cn)?'PE':Bt.t.kind==='DATA'?'DATE':lbl;
+  const mark=w.jmp?'punte':w.cord?'ștecher':`${cname(pc)}-${cond}`;const rt=pc&&DEFS[pc.t].prot?+DEFS[pc.t].prot(pc):0;const sec=w.sec?fmtN(w.sec)+' mm²':(rt&&SEC[rt]&&/^(L|N|PE)$/.test(cond)?fmtN(SEC[rt])+' mm² *':'');
+  const nm=o=>`${N.get(o.c.id)||''}. ${compName(o.c)} · ${tLab(o.c,o.t)}${o.c.zone==='panel'&&DEFS[o.c.t].mount==='din'?(o.t.side==='top'?' (sus)':' (jos)'):''}`;
+  const col=(WC[w.color]||WC.negru);return {w,A,Bt,from:nm(A),to:nm(Bt),col:col.n,hex:col.c||'#333',sec,lab:w.label||mark,mark:w.label||mark,field:A.c.zone==='field'||Bt.c.zone==='field',key:[rank(A.c),A.c.zone==='panel'?0:1,compOrigin(A.c,L).y,compOrigin(A.c,L).x]};}).filter(Boolean);
+ rows0.sort((p,q)=>{for(let i=0;i<4;i++){const d=p.key[i]-q.key[i];if(d)return d;}return 0;});rows0.forEach((r,i)=>r.n=i+1);const nr=new Map(rows0.map(r=>[r.w.id,r.n]));
+ return {L,S,rows:rows0,nr};}
 function planClean(w){return w.replace(/<g data-addrail="1"[^>]*>[\s\S]*?<\/g>/g,'').replace(/<g data-duct="[^"]*" style="cursor:(?:ns|ew)-resize">[\s\S]*?<\/g>/g,'').replace(/<(line|path|rect|circle)\b[^>]*(?:stroke|fill)="#(?:7b3fb3|2e7d32)"[^>]*\/>/g,'').replace(/<text\b[^>]*fill="#(?:7b3fb3|2e7d32|2f7fd1)"[^>]*>[^<]*<\/text>/g,'').replace(/<rect\b[^>]*fill="rgba\(47,127,209,\.10\)"[^>]*\/>/g,'');}
 function wirePlanOverlay(D){const {L,rows}=D;let s='<g font-family="Arial, Helvetica, sans-serif">';const placed=[];
  const hit=(x,y,w,h)=>placed.some(p=>x<p[0]+p[2]&&x+w>p[0]&&y<p[1]+p[3]&&y+h>p[1]);
- const tag=(x,y,n,hex,vert,big)=>{const t='F'+n,fs=big?10:7.6,h=big?13:10.5,w=(big?8:6)+t.length*fs*.58;const bw=vert?h:w,bh=vert?w:h;
+ const tag=(x,y,n,hex,vert,big,mk)=>{const t='F'+n+(mk?' '+mk:''),fs=big?10:7.6,h=big?13:10.5,w=(big?8:6)+t.length*fs*.56;const bw=vert?h:w,bh=vert?w:h;
   return {box:[x-bw/2,y-bh/2,bw,bh],svg:`<g transform="translate(${x.toFixed(1)},${y.toFixed(1)})${vert?' rotate(-90)':''}"><rect x="${(-w/2).toFixed(1)}" y="${(-h/2).toFixed(1)}" width="${w.toFixed(1)}" height="${h}" rx="${h/2}" fill="#fff" stroke="${hex}" stroke-width="${big?2:1.6}"/><text x="0" y="${(fs*.36).toFixed(1)}" font-size="${fs}" font-weight="700" text-anchor="middle" fill="#111">${t}</text></g>`};};
- const put=(cands,n,hex,big)=>{for(const [x,y,vert] of cands){const T=tag(x,y,n,hex,vert,big);const [bx,by,bw,bh]=T.box;if(!hit(bx,by,bw,bh)){placed.push(T.box);s+=T.svg;return true;}}return false;};
+ const put=(cands,n,hex,big,mk)=>{for(const [x,y,vert] of cands){const T=tag(x,y,n,hex,vert,big,mk);const [bx,by,bw,bh]=T.box;if(!hit(bx,by,bw,bh)){placed.push(T.box);s+=T.svg;return true;}}return false;};
  const along=(pts,fromEnd)=>{const P=fromEnd?pts.slice().reverse():pts;const out=[];let acc=0;const want=[12,24,36,50,64];let wi=0;for(let k=1;k<P.length&&wi<want.length;k++){const [x0,y0]=P[k-1],[x1,y1]=P[k];const l=Math.hypot(x1-x0,y1-y0);if(!l)continue;while(wi<want.length&&acc+l>=want[wi]){const t=(want[wi]-acc)/l;out.push([x0+(x1-x0)*t,y0+(y1-y0)*t,Math.abs(y1-y0)>Math.abs(x1-x0)]);wi++;}acc+=l;}return out;};
  for(const r of rows){const w=r.w;const pts=route(w,model.wires.indexOf(w),L);if(!pts||pts.length<2)continue;const hex=(WC[w.color]||WC.negru).c||'#333';
-  put(along(pts,false),r.n,hex,false);put(along(pts,true),r.n,hex,false);
-  if(!pts.rear&&!pts.cord&&pts.length>3){const segs=[];for(let k=1;k<pts.length;k++){const l=Math.hypot(pts[k][0]-pts[k-1][0],pts[k][1]-pts[k-1][1]);if(l>80)segs.push([l,k]);}segs.sort((a,b)=>b[0]-a[0]);for(const [l,k] of segs.slice(0,1)){const c=[];for(const f of [.5,.35,.65,.2,.8]){c.push([pts[k-1][0]+(pts[k][0]-pts[k-1][0])*f,pts[k-1][1]+(pts[k][1]-pts[k-1][1])*f,Math.abs(pts[k][1]-pts[k-1][1])>Math.abs(pts[k][0]-pts[k-1][0])]);}put(c,r.n,hex,true);}}}
+  put(along(pts,false),r.n,hex,false,r.mark);put(along(pts,true),r.n,hex,false,r.mark);
+  if(!pts.rear&&!pts.cord&&pts.length>3){const segs=[];for(let k=1;k<pts.length;k++){const l=Math.hypot(pts[k][0]-pts[k-1][0],pts[k][1]-pts[k-1][1]);if(l>80)segs.push([l,k]);}segs.sort((a,b)=>b[0]-a[0]);for(const [l,k] of segs.slice(0,1)){const c=[];for(const f of [.5,.35,.65,.2,.8]){c.push([pts[k-1][0]+(pts[k][0]-pts[k-1][0])*f,pts[k-1][1]+(pts[k][1]-pts[k-1][1])*f,Math.abs(pts[k][1]-pts[k-1][1])>Math.abs(pts[k][0]-pts[k-1][0])]);}put(c,r.n,hex,true,r.mark);}}}
  return s+'</g>';}
 function wirePlanTableSVG(rows,pg,npg,A3){const W=297,Hh=210,M=10;const co=model.company||{};let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${Hh}" font-family="Arial, Helvetica, sans-serif"><rect width="${W}" height="${Hh}" fill="#fff"/>`;
  s+=`<rect x="${M}" y="${M}" width="${W-2*M}" height="12" rx="2" fill="#1F2B33"/><text x="${M+4}" y="${M+8}" font-size="5" font-weight="700" fill="#fff">LISTA FIRELOR — ${esc((model.name||'Tablou').toUpperCase())}</text><text x="${W-M-4}" y="${M+8}" font-size="3.4" fill="#cfd8dd" text-anchor="end">${esc(co.name||'')} · pagina ${pg}/${npg}</text>`;
- const cols=[['Fir',14],['De la (aparat · bornă)',92],['La (aparat · bornă)',92],['Culoare',24],['Secțiune',22],['Etichetă',33]];const tw=cols.reduce((a,c)=>a+c[1],0),tx=M+(W-2*M-tw)/2,ty=M+16,rh=6.4;
+ const cols=[['Fir',13],['Marcaj',24],['De la (spre alimentare)',82],['La (spre consumator)',80],['Culoare',31],['Secțiune',23]];const tw=cols.reduce((a,c)=>a+c[1],0),tx=M+(W-2*M-tw)/2,ty=M+16,rh=6.4;
  let cx=tx;s+=`<rect x="${tx}" y="${ty}" width="${tw}" height="7" fill="#1F2B33"/>`;for(const [t,w] of cols){s+=`<text x="${cx+1.8}" y="${ty+4.9}" font-size="3.2" font-weight="700" fill="#fff">${t}</text>`;cx+=w;}
  const cut=(t,n)=>t.length>n?t.slice(0,n-1)+'…':t;rows.forEach((r,k)=>{const y=ty+7+k*rh;if(k%2)s+=`<rect x="${tx}" y="${y}" width="${tw}" height="${rh}" fill="#F3F5F6"/>`;let c2=tx;
-  const vals=['F'+r.n,cut(r.from,52),cut(r.to,52),r.col,r.sec||'—',cut(r.lab||'',18)];vals.forEach((v,ci)=>{if(ci===3)s+=`<rect x="${c2+1.8}" y="${y+1.6}" width="3.2" height="3.2" rx=".6" fill="${r.hex}" stroke="#333" stroke-width=".2"/>`;s+=`<text x="${c2+(ci===3?6.2:1.8)}" y="${y+rh*.66}" font-size="${ci===0?3.5:3.1}" ${ci===0?'font-weight="700"':''} fill="#1F2B33">${esc(String(v))}</text>`;c2+=cols[ci][1];});});
- s+=`<rect x="${tx}" y="${ty}" width="${tw}" height="${7+rows.length*rh}" fill="none" stroke="#1F2B33" stroke-width=".35"/></svg>`;return s;}
+  const vals=['F'+r.n,cut(r.mark||'',14),cut(r.from,48),cut(r.to,48),r.col,r.sec||'—'];vals.forEach((v,ci)=>{if(ci===4)s+=`<rect x="${c2+1.8}" y="${y+1.6}" width="3.2" height="3.2" rx=".6" fill="${r.hex}" stroke="#333" stroke-width=".2"/>`;s+=`<text x="${c2+(ci===4?6.2:1.8)}" y="${y+rh*.66}" font-size="${ci<2?3.4:3.1}" ${ci<2?'font-weight="700"':''} fill="#1F2B33">${esc(String(v))}</text>`;c2+=cols[ci][1];});});
+ s+=`<rect x="${tx}" y="${ty}" width="${tw}" height="${7+rows.length*rh}" fill="none" stroke="#1F2B33" stroke-width=".35"/><text x="${tx}" y="${ty+7+rows.length*rh+6}" font-size="2.9" fill="#555">Marcaj = eticheta de pus pe fir la ambele capete (circuit-conductor). De la = capătul dinspre alimentare. * secțiune după calibrul siguranței (nu e setată pe fir).</text></svg>`;return s;}
 async function wirePlanPDF(fmt){const D=wirePlanData();if(!D.rows.length){toast('Tabloul nu are fire.','warn');throw new Error('fara fire');}toast('Pregătesc planul de cablare…');const {jsPDF}=await loadJsPDF();
  const A3=fmt==='a3';const L=D.L;const F=A3?'a3':'a4';const MM=A3?[420,297]:[297,210];const PXL=A3?[4134,2923]:[3508,2480];
  const world=planClean(worldSVG(D.S).replace(/<circle class="pulse"[^>]*\/>|<line id="pline"[^>]*\/>/g,''));const ov=wirePlanOverlay(D);const defs=$('#cv defs')?$('#cv defs').outerHTML:'';
