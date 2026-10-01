@@ -2634,7 +2634,149 @@ function LineItemsEditor({ items, setItems, materials }) {
             React.createElement(Icon, null, "+"),
             " Adaug\u0103 articol")));
 }
-function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
+/* PARTEA SCRISĂ A DOCUMENTULUI — descrierea, ce cuprinde, garanția, condițiile.
+   Cerută de patron: „îmi place ce ai pus acolo, descrierea sistemului, garanție și condiții,
+   aia vreau să rămână, dar să le pot modifica în funcție de nevoi." A cerut toate patru
+   lucrurile: să scrie de la zero fără listă, să-și salveze variantele lui, să apară și pe
+   devize, și să poată corecta definitiv cele cinci șabloane venite din fabrică.
+
+   Cum e rezolvat, și de ce așa:
+   • Cele cinci din fabrică rămân scrise în cod (SISTEME_OFERTA) și nu se șterg niciodată.
+     Sunt plasa de siguranță: orice ar încurca cineva, textul original e tot acolo.
+   • Ce salvează el stă în cheia 'sabloaneOferta'. Dacă salvează peste unul din fabrică,
+     păstrez o variantă cu ACELAȘI id, care îl acoperă. De aceea „readu textul din fabrică"
+     înseamnă doar să șterg acoperirea — nu rescriu textul de mână, deci nu-l pot greși.
+   • Editorul e scris o singură dată și folosit și la ofertă, și la deviz. Dacă îl scriam de
+     două ori, a doua oară l-aș fi scris altfel, iar peste o lună cele două ar fi divergat. */
+const SISTEM_PROPRIU = '__propriu__';
+function sistemGol(id) {
+    return { id: id || '', subtitlu: '', garantieLuni: GARANTIE_IMPLICITA_LUNI, garantieText: '',
+        descriereTitlu: '', descriereText: '', puncte: [], conditii: [] };
+}
+function listaSisteme(sabloane) {
+    const mele = Array.isArray(sabloane) ? sabloane : [];
+    const baza = SISTEME_OFERTA.map((S) => {
+        const peste = mele.find((x) => x && x.id === S.id);
+        return peste ? Object.assign({}, S, peste, { dinFabrica: true, modificat: true }) : Object.assign({}, S, { dinFabrica: true });
+    });
+    const aleMele = mele.filter((x) => x && x.id && !SISTEME_OFERTA.some((S) => S.id === x.id));
+    return baza.concat(aleMele.map((x) => Object.assign({}, x, { dinFabrica: false })));
+}
+function ParteaScrisaEditor({ sistem, setSistem, sabloane, setSabloane, persist, titlu }) {
+    const [vedeText, setVedeText] = useState(false);
+    const [mesaj, setMesaj] = useState('');
+    const toate = listaSisteme(sabloane);
+    const ales = toate.find((x) => x.id === sistem.id) || null;
+    const spune = (t) => { setMesaj(t); setTimeout(() => setMesaj(''), 3200); };
+    const salveazaLista = (next) => {
+        setSabloane(next);
+        if (typeof persist === 'function')
+            persist('sabloaneOferta', next);
+    };
+    const puneSistem = (id) => {
+        if (id === SISTEM_PROPRIU) {
+            setSistem(Object.assign(sistemGol(SISTEM_PROPRIU), { garantieLuni: sistem.garantieLuni || GARANTIE_IMPLICITA_LUNI }));
+            setVedeText(true);
+            return;
+        }
+        const S = toate.find((x) => x.id === id);
+        if (!S) { setSistem(sistemGol('')); setVedeText(false); return; }
+        const luni = Number(sistem.garantieLuni) || GARANTIE_IMPLICITA_LUNI;
+        setSistem({ id: S.id, subtitlu: S.subtitlu || '', garantieLuni: luni,
+            garantieText: String(S.garantieText || '').replace('{LUNI}', String(luni)),
+            descriereTitlu: S.descriereTitlu || '', descriereText: S.descriereText || '',
+            puncte: (S.puncte || []).slice(), conditii: (S.conditii || []).slice() });
+        setVedeText(true);
+    };
+    const puneLuni = (val) => {
+        const luni = Number(val) || 0;
+        const sablon = ales && String(ales.garantieText || '');
+        setSistem(Object.assign({}, sistem, { garantieLuni: val,
+            garantieText: sablon && sablon.indexOf('{LUNI}') >= 0 ? sablon.replace('{LUNI}', String(luni)) : sistem.garantieText }));
+    };
+    const campuriCurente = () => ({
+        subtitlu: sistem.subtitlu || '', descriereTitlu: sistem.descriereTitlu || '',
+        descriereText: sistem.descriereText || '', garantieText: sistem.garantieText || '',
+        puncte: (sistem.puncte || []).map((x) => String(x).trim()).filter(Boolean),
+        conditii: (sistem.conditii || []).map((x) => String(x).trim()).filter(Boolean),
+    });
+    const salveazaNou = () => {
+        const nume = String(window.prompt('Cum se numește șablonul? Așa îl vei găsi în listă data viitoare.', sistem.subtitlu || '') || '').trim();
+        if (!nume)
+            return;
+        const id = uid();
+        salveazaLista([...(sabloane || []), Object.assign({ id, nume }, campuriCurente())]);
+        setSistem(Object.assign({}, sistem, { id }));
+        spune('Gata. „' + nume + '" e acum în listă, îl poți folosi oriunde.');
+    };
+    const salveazaPeste = () => {
+        if (!ales)
+            return;
+        const lista = (sabloane || []).slice();
+        const i = lista.findIndex((x) => x && x.id === ales.id);
+        const nou = Object.assign({ id: ales.id, nume: ales.nume }, campuriCurente());
+        if (i >= 0)
+            lista[i] = nou;
+        else
+            lista.push(nou);
+        salveazaLista(lista);
+        spune('„' + ales.nume + '" s-a schimbat pentru toate documentele de aici înainte. Cele deja salvate rămân cum erau.');
+    };
+    const readuOriginalul = () => {
+        if (!ales || !ales.dinFabrica)
+            return;
+        salveazaLista((sabloane || []).filter((x) => !x || x.id !== ales.id));
+        const S = SISTEME_OFERTA.find((x) => x.id === ales.id);
+        if (S) {
+            const luni = Number(sistem.garantieLuni) || GARANTIE_IMPLICITA_LUNI;
+            setSistem({ id: S.id, subtitlu: S.subtitlu || '', garantieLuni: luni,
+                garantieText: String(S.garantieText || '').replace('{LUNI}', String(luni)),
+                descriereTitlu: S.descriereTitlu || '', descriereText: S.descriereText || '',
+                puncte: (S.puncte || []).slice(), conditii: (S.conditii || []).slice() });
+        }
+        spune('Am pus la loc textul din fabrică.');
+    };
+    const stergeSablonul = () => {
+        if (!ales || ales.dinFabrica)
+            return;
+        if (!window.confirm('Ștergi șablonul „' + ales.nume + '"?\n\nDocumentele deja salvate nu se schimbă — textul rămâne pe ele.'))
+            return;
+        salveazaLista((sabloane || []).filter((x) => !x || x.id !== ales.id));
+        setSistem(sistemGol(''));
+        spune('Șablon șters.');
+    };
+    const st = { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' };
+    const camp = (text, val, pune, randuri) => React.createElement('label', { className: 'block text-[11px]', style: { color: 'var(--muted)' } }, text, React.createElement(randuri ? 'textarea' : 'input', { rows: randuri || undefined, value: val, onChange: (e) => pune(e.target.value), className: 'w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none', style: st }));
+    const buton = (text, la, culoare) => React.createElement('button', { type: 'button', onClick: la, className: 'text-xs px-2.5 py-1.5 rounded-lg font-semibold', style: { color: culoare || 'var(--acc1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, text);
+    return React.createElement('div', { className: 'rounded-xl p-3 mt-3', style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+        React.createElement('div', { className: 'text-sm font-medium mb-1', style: { color: 'var(--text)' } }, '📋 ' + (titlu || 'Partea scrisă')),
+        React.createElement('p', { className: 'text-[11px] mb-2', style: { color: 'var(--muted)' } }, 'Alege un șablon și intră gata scrise descrierea, garanția și condițiile — sau alege „Text propriu" și scrii tu. Modificările de aici se văd doar pe documentul ăsta; dacă vrei să le păstrezi pentru data viitoare, apeși unul din butoanele de salvare.'),
+        React.createElement('div', { className: 'flex flex-wrap items-center gap-2 mb-2' },
+            React.createElement('select', { value: sistem.id || '', onChange: (e) => puneSistem(e.target.value), className: 'flex-1 min-w-[180px] rounded-lg px-3 py-2 text-sm outline-none', style: st },
+                React.createElement('option', { value: '', style: { background: 'var(--panel)' } }, '— fără parte scrisă (doar tabelul) —'),
+                toate.map((S) => React.createElement('option', { key: S.id, value: S.id, style: { background: 'var(--panel)' } }, (S.dinFabrica ? '' : '★ ') + S.nume + (S.modificat ? ' (modificat de tine)' : ''))),
+                React.createElement('option', { value: SISTEM_PROPRIU, style: { background: 'var(--panel)' } }, '✍️ Text propriu — îl scriu eu')),
+            React.createElement('div', { className: 'flex items-center gap-2 rounded-lg px-3', style: st },
+                React.createElement('span', { className: 'text-xs', style: { color: 'var(--muted)' } }, 'Garanție'),
+                React.createElement('input', { type: 'number', inputMode: 'numeric', value: sistem.garantieLuni, onChange: (e) => puneLuni(e.target.value), className: 'w-14 bg-transparent outline-none text-sm py-2 text-center', style: { color: 'var(--text)' } }),
+                React.createElement('span', { className: 'text-xs', style: { color: 'var(--muted)' } }, 'luni'))),
+        sistem.id ? React.createElement(React.Fragment, null,
+            buton(vedeText ? '▴ Ascunde textul' : '▾ Vezi și modifică textul', () => setVedeText(!vedeText)),
+            vedeText ? React.createElement('div', { className: 'mt-2 space-y-2' },
+                camp('Subtitlul de sub titlul documentului', sistem.subtitlu || '', (v) => setSistem(Object.assign({}, sistem, { subtitlu: v }))),
+                camp('Titlul descrierii (lasă gol pentru „Descrierea sistemului")', sistem.descriereTitlu || '', (v) => setSistem(Object.assign({}, sistem, { descriereTitlu: v }))),
+                camp('Descrierea', sistem.descriereText || '', (v) => setSistem(Object.assign({}, sistem, { descriereText: v })), 3),
+                camp('Ce cuprinde — câte un lucru pe rând', (sistem.puncte || []).join('\n'), (v) => setSistem(Object.assign({}, sistem, { puncte: v.split('\n') })), 5),
+                camp('Garanție — textul de pe document', sistem.garantieText || '', (v) => setSistem(Object.assign({}, sistem, { garantieText: v })), 3),
+                camp('Condiții — câte una pe rând', (sistem.conditii || []).join('\n'), (v) => setSistem(Object.assign({}, sistem, { conditii: v.split('\n') })), 3),
+                React.createElement('div', { className: 'flex flex-wrap gap-2 pt-1' },
+                    buton('💾 Salvează ca șablon nou', salveazaNou),
+                    ales ? buton('♻️ Salvează peste „' + ales.nume + '"', salveazaPeste) : null,
+                    (ales && ales.dinFabrica && ales.modificat) ? buton('↩️ Readu textul din fabrică', readuOriginalul, 'var(--muted)') : null,
+                    (ales && !ales.dinFabrica) ? buton('🗑 Șterge șablonul', stergeSablonul, 'var(--acc4)') : null),
+                mesaj ? React.createElement('div', { className: 'text-[11px] pt-1', style: { color: 'var(--acc2)' } }, mesaj) : null) : null) : null);
+}
+function DocForm({ kind, clients, materials, initial, onCancel, onSave, sabloane, setSabloane, persist }) {
     const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
     const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire: '', um: 'buc', cantitate: 1, pretUnitar: 0, adaos: 0 }]);
     const [tva, setTva] = useState(initial?.tva ?? TVA_IMPLICIT);
@@ -2698,35 +2840,7 @@ function DocForm({ kind, clients, materials, initial, onCancel, onSave }) {
                 React.createElement(RoCalendarPicker, { value: scadenta, onChange: setScadenta }),
                 React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Dup\u0103 data asta, factura devine automat \u201ERestant\u0103\" \u0219i te anun\u021B\u0103 aplica\u021Bia."))),
             React.createElement(LineItemsEditor, { items: items, setItems: setItems, materials: materials }),
-            kind === 'Ofertă' && (React.createElement("div", { className: "rounded-xl p-3 mt-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
-                React.createElement("div", { className: "text-sm font-medium mb-1", style: { color: 'var(--text)' } }, "\uD83D\uDCCB Partea scris\u0103 a ofertei"),
-                React.createElement("p", { className: "text-[11px] mb-2", style: { color: 'var(--muted)' } }, "Alege sistemul \u0219i intr\u0103 gata scrise garan\u021Bia, descrierea \u0219i condi\u021Biile. Le po\u021Bi modifica aici \u2014 se schimb\u0103 doar pe oferta asta."),
-                React.createElement("div", { className: "flex flex-wrap items-center gap-2 mb-2" },
-                    React.createElement("select", { value: sistem.id, onChange: (e) => puneSistem(e.target.value), className: "flex-1 min-w-[180px] rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } },
-                        React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "\u2014 f\u0103r\u0103 parte scris\u0103 (doar tabelul) \u2014"),
-                        SISTEME_OFERTA.map((S) => React.createElement("option", { key: S.id, value: S.id, style: { background: 'var(--panel)' } }, S.nume))),
-                    React.createElement("div", { className: "flex items-center gap-2 rounded-lg px-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-                        React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "Garan\u021Bie"),
-                        React.createElement("input", { type: "number", inputMode: "numeric", value: sistem.garantieLuni, onChange: (e) => puneLuni(e.target.value), className: "w-14 bg-transparent outline-none text-sm py-2 text-center", style: { color: 'var(--text)' } }),
-                        React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "luni"))),
-                sistem.id && (React.createElement(React.Fragment, null,
-                    React.createElement("button", { onClick: () => setVedeText(!vedeText), className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, vedeText ? 'Ascunde textele' : '✏️ Vezi și modifică textele'),
-                    vedeText && (React.createElement("div", { className: "mt-2 space-y-2" },
-                        React.createElement("label", { className: "block text-[11px]", style: { color: 'var(--muted)' } },
-                            "Subtitlul de sub \u201EOFERT\u0102\"",
-                            React.createElement("input", { value: sistem.subtitlu, onChange: (e) => setSistem({ ...sistem, subtitlu: e.target.value }), className: "w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } })),
-                        React.createElement("label", { className: "block text-[11px]", style: { color: 'var(--muted)' } },
-                            "Garan\u021Bie \u2014 textul de pe ofert\u0103",
-                            React.createElement("textarea", { rows: 3, value: sistem.garantieText, onChange: (e) => setSistem({ ...sistem, garantieText: e.target.value }), className: "w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } })),
-                        React.createElement("label", { className: "block text-[11px]", style: { color: 'var(--muted)' } },
-                            "Descrierea sistemului",
-                            React.createElement("textarea", { rows: 3, value: sistem.descriereText, onChange: (e) => setSistem({ ...sistem, descriereText: e.target.value }), className: "w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } })),
-                        React.createElement("label", { className: "block text-[11px]", style: { color: 'var(--muted)' } },
-                            "Ce face sistemul \u2014 c\u00E2te un lucru pe r\u00E2nd",
-                            React.createElement("textarea", { rows: 5, value: (sistem.puncte || []).join('\n'), onChange: (e) => setSistem({ ...sistem, puncte: e.target.value.split('\n') }), className: "w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } })),
-                        React.createElement("label", { className: "block text-[11px]", style: { color: 'var(--muted)' } },
-                            "Condi\u021Bii \u2014 c\u00E2te una pe r\u00E2nd",
-                            React.createElement("textarea", { rows: 3, value: (sistem.conditii || []).join('\n'), onChange: (e) => setSistem({ ...sistem, conditii: e.target.value.split('\n') }), className: "w-full mt-1 rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } })))))))),
+            kind === 'Ofertă' && React.createElement(ParteaScrisaEditor, { sistem: sistem, setSistem: setSistem, sabloane: sabloane, setSabloane: setSabloane, persist: persist, titlu: 'Partea scrisă a ofertei' }),
             React.createElement("div", { className: "flex justify-end gap-6 mt-3 px-2 text-sm" },
                 React.createElement("span", { style: { color: 'var(--muted)' } },
                     "Subtotal: ",
@@ -3423,7 +3537,8 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     })))))));
 }
 const DEVIZ_STATUSES = ['Ciornă', 'Emis', 'Semnat'];
-function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) {
+function DevizForm({ clients, materials, santiere, initial, onCancel, onSave, sabloane, setSabloane, persist }) {
+    const [sistem, setSistem] = useState(initial?.sistem || sistemGol(''));
     const [clientId, setClientId] = useState(initial?.clientId || clients[0]?.id || '');
     const [items, setItems] = useState(initial?.items || [{ id: uid(), denumire: '', um: 'buc', cantitate: 1, pretUnitar: 0, adaos: 0 }]);
     const [tva, setTva] = useState(initial?.tva ?? TVA_IMPLICIT);
@@ -3460,14 +3575,15 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave }) 
     const subtotal = calcSubtotal(items);
     const total = subtotal * (1 + tva / 100);
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
-    return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-3" }, React.createElement("h3", { className: "text-sm font-medium", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, initial?.numar ? 'Editare deviz' : 'Deviz nou'), React.createElement("button", { onClick: onCancel, style: { color: 'var(--muted)' } }, React.createElement(Icon, null, "✕"))), clients.length === 0 ? (React.createElement("p", { className: "text-sm", style: { color: 'var(--muted)' } }, "Adaugă mai întâi un client (Beneficiar) în tab-ul „Clienți\".")) : (React.createElement(React.Fragment, null, React.createElement("div", { className: "flex gap-3 mb-3" }, React.createElement("select", { value: clientId, onChange: (e) => setClientId(e.target.value), className: "flex-1 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, clients.map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("div", { className: "flex items-center gap-2 rounded-lg px-3", style: inputStyle }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "TVA"), React.createElement("input", { type: "number", value: tva, onChange: (e) => setTva(e.target.value), className: "w-12 bg-transparent outline-none text-sm py-2", style: { color: 'var(--text)' } }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "%"))), React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-3" }, React.createElement("input", { placeholder: "Nr. contract", value: nrContract, onChange: (e) => setNrContract(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data contract", React.createElement(RoCalendarPicker, { value: dataContract, onChange: setDataContract })), React.createElement("input", { placeholder: "Act adițional", value: actAditional, onChange: (e) => setActAditional(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data act adițional", React.createElement(RoCalendarPicker, { value: dataActAditional, onChange: setDataActAditional })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "🏗 Șantier ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— alege-l și se completează singure adresa și lucrarea")), React.createElement("select", { value: santierId, onChange: (e) => alegeSantier(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "— fără șantier / scriu manual —"), (santiere || []).map((sx) => (React.createElement("option", { key: sx.id, value: sx.id, style: { background: 'var(--panel)' } }, sx.nume)))), !santierId && (React.createElement("input", { placeholder: "sau scrie numele șantierului", value: santierNume, onChange: (e) => setSantierNume(e.target.value), className: "w-full mt-1.5 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Obiectiv ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— apare pe devizul clientului (în locul numelui de șantier)")), React.createElement("input", { placeholder: "ex: Bloc rezidențial „Polus Residence”", value: obiectiv, onChange: (e) => setObiectiv(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Adresa șantierului"), React.createElement("input", { placeholder: "ex: Str. Memorandumului 28, Cluj-Napoca", value: adresaLucrare, onChange: (e) => setAdresaLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Lucrarea"), React.createElement("input", { placeholder: "ex: Instalații electrice interioare", value: lucrare, onChange: (e) => setLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), React.createElement(LineItemsEditor, { items: items, setItems: setItems, materials: materials }), React.createElement("div", { className: "flex justify-end gap-6 mt-3 px-2 text-sm" }, React.createElement("span", { style: { color: 'var(--muted)' } }, "Total: ", React.createElement("span", { style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, money(subtotal))), React.createElement("span", { style: { color: 'var(--muted)' } }, "Total cu TVA: ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)))), React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renunță"), React.createElement("button", { onClick: () => onSave({
+    return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-3" }, React.createElement("h3", { className: "text-sm font-medium", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, initial?.numar ? 'Editare deviz' : 'Deviz nou'), React.createElement("button", { onClick: onCancel, style: { color: 'var(--muted)' } }, React.createElement(Icon, null, "✕"))), clients.length === 0 ? (React.createElement("p", { className: "text-sm", style: { color: 'var(--muted)' } }, "Adaugă mai întâi un client (Beneficiar) în tab-ul „Clienți\".")) : (React.createElement(React.Fragment, null, React.createElement("div", { className: "flex gap-3 mb-3" }, React.createElement("select", { value: clientId, onChange: (e) => setClientId(e.target.value), className: "flex-1 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, clients.map((c) => React.createElement("option", { key: c.id, value: c.id, style: { background: 'var(--panel)' } }, c.nume))), React.createElement("div", { className: "flex items-center gap-2 rounded-lg px-3", style: inputStyle }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "TVA"), React.createElement("input", { type: "number", value: tva, onChange: (e) => setTva(e.target.value), className: "w-12 bg-transparent outline-none text-sm py-2", style: { color: 'var(--text)' } }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "%"))), React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-3" }, React.createElement("input", { placeholder: "Nr. contract", value: nrContract, onChange: (e) => setNrContract(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data contract", React.createElement(RoCalendarPicker, { value: dataContract, onChange: setDataContract })), React.createElement("input", { placeholder: "Act adițional", value: actAditional, onChange: (e) => setActAditional(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data act adițional", React.createElement(RoCalendarPicker, { value: dataActAditional, onChange: setDataActAditional })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "🏗 Șantier ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— alege-l și se completează singure adresa și lucrarea")), React.createElement("select", { value: santierId, onChange: (e) => alegeSantier(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "— fără șantier / scriu manual —"), (santiere || []).map((sx) => (React.createElement("option", { key: sx.id, value: sx.id, style: { background: 'var(--panel)' } }, sx.nume)))), !santierId && (React.createElement("input", { placeholder: "sau scrie numele șantierului", value: santierNume, onChange: (e) => setSantierNume(e.target.value), className: "w-full mt-1.5 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Obiectiv ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— apare pe devizul clientului (în locul numelui de șantier)")), React.createElement("input", { placeholder: "ex: Bloc rezidențial „Polus Residence”", value: obiectiv, onChange: (e) => setObiectiv(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Adresa șantierului"), React.createElement("input", { placeholder: "ex: Str. Memorandumului 28, Cluj-Napoca", value: adresaLucrare, onChange: (e) => setAdresaLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Lucrarea"), React.createElement("input", { placeholder: "ex: Instalații electrice interioare", value: lucrare, onChange: (e) => setLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), React.createElement(LineItemsEditor, { items: items, setItems: setItems, materials: materials }), React.createElement(ParteaScrisaEditor, { sistem: sistem, setSistem: setSistem, sabloane: sabloane, setSabloane: setSabloane, persist: persist, titlu: 'Partea scrisă a devizului' }), React.createElement("div", { className: "flex justify-end gap-6 mt-3 px-2 text-sm" }, React.createElement("span", { style: { color: 'var(--muted)' } }, "Total: ", React.createElement("span", { style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, money(subtotal))), React.createElement("span", { style: { color: 'var(--muted)' } }, "Total cu TVA: ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)))), React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renunță"), React.createElement("button", { onClick: () => onSave({
             ...(initial || {}),
             id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || dataLocala(new Date()),
             clientId, items, tva: Number(tva), status: initial?.status || 'Ciornă',
             nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, obiectiv, santierId, santierNume,
+            sistem: sistem.id ? Object.assign({}, sistem, { puncte: (sistem.puncte || []).map((x) => String(x).trim()).filter(Boolean), conditii: (sistem.conditii || []).map((x) => String(x).trim()).filter(Boolean) }) : undefined,
         }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salvează"))))));
 }
-function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill, onFactureaza, onProcesVerbal }) {
+function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill, onFactureaza, onProcesVerbal, sabloane, setSabloane }) {
     const [form, setForm] = useState(prefill || null);
     useEffect(() => {
         if (prefill) {
@@ -3614,7 +3730,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
         XLSX.utils.book_append_sheet(wb, ws, 'Deviz ' + String(numarDoc(d)).replace(/[\\/*?:\[\]]/g, '').slice(0, 25));
         XLSX.writeFile(wb, `deviz_${String(numarDoc(d)).replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`);
     };
-    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-4" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Devize"), React.createElement("div", { className: "flex items-center gap-2" }, devize.length > 0 && React.createElement("button", { onClick: () => exportDevizeExcel(devize), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: '#14181C', background: 'var(--acc2)' } }, "📊 Exportă toate în Excel"), devize.length > 0 && React.createElement("button", { onClick: () => printAll(devize), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "📚 Exportă toate în PDF"), !form && React.createElement("button", { onClick: () => setForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Deviz nou"))), form && React.createElement(PaginaFormular, { titlu: form.id && form.numar ? '✏️ Modifici devizul ' + form.numar : '📑 Deviz nou', onInchide: () => setForm(null) }, React.createElement(DevizForm, { clients: clients, materials: materials, santiere: santiere, initial: form, onCancel: () => setForm(null), onSave: save })), devize.length === 0 && !form ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun deviz încă. Apasă „Deviz nou\" pentru a crea primul.")) : (React.createElement("div", { className: "space-y-2" }, devize.slice().sort((a, b) => a.numar < b.numar ? 1 : -1).map((d) => {
+    return (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-4" }, React.createElement("h2", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Devize"), React.createElement("div", { className: "flex items-center gap-2" }, devize.length > 0 && React.createElement("button", { onClick: () => exportDevizeExcel(devize), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: '#14181C', background: 'var(--acc2)' } }, "📊 Exportă toate în Excel"), devize.length > 0 && React.createElement("button", { onClick: () => printAll(devize), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "📚 Exportă toate în PDF"), !form && React.createElement("button", { onClick: () => setForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Deviz nou"))), form && React.createElement(PaginaFormular, { titlu: form.id && form.numar ? '✏️ Modifici devizul ' + form.numar : '📑 Deviz nou', onInchide: () => setForm(null) }, React.createElement(DevizForm, { clients: clients, materials: materials, santiere: santiere, initial: form, onCancel: () => setForm(null), onSave: save, sabloane: sabloane, setSabloane: setSabloane, persist: persist })), devize.length === 0 && !form ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun deviz încă. Apasă „Deviz nou\" pentru a crea primul.")) : (React.createElement("div", { className: "space-y-2" }, devize.slice().sort((a, b) => a.numar < b.numar ? 1 : -1).map((d) => {
         const total = calcSubtotal(d.items) * (1 + d.tva / 100);
         return (React.createElement("div", { key: d.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between gap-4" }, React.createElement("div", { className: "flex flex-col gap-0.5 min-w-0" }, React.createElement("span", { className: "text-sm font-medium truncate", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, numarDoc(d)), React.createElement("span", { className: "text-xs truncate", style: { color: 'var(--muted)' } }, clientName(d.clientId), " · ", fmtData(d.data), d.santierNume ? ` · 🏗 ${d.santierNume}` : '', d.adresaLucrare ? ` · 📍 ${d.adresaLucrare}` : '', d.lucrare ? ` · ${d.lucrare}` : '')), React.createElement("span", { className: "text-sm shrink-0", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)), React.createElement("div", { className: "shrink-0" }, React.createElement(StatusSwitch, { status: d.status, options: DEVIZ_STATUSES, onChange: (s) => setStatus(d.id, s) })), React.createElement("div", { className: "flex items-center gap-2 shrink-0" }, onFactureaza && React.createElement("button", { onClick: () => onFactureaza(d), className: "text-xs flex items-center gap-1 px-2 py-1 rounded-lg", style: { color: 'var(--acc2)', background: 'var(--panel2)' }, title: "Factură cu un singur rând — conform contract, anexă și deviz — cu totalul devizului" }, React.createElement(Icon, null, "→"), " Facturează"), React.createElement("button", { onClick: () => printOne(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, React.createElement(Icon, null, "🖨"), " PDF"), React.createElement("button", { onClick: () => exportUnDevizExcel(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Exportă acest deviz în Excel" }, React.createElement(Icon, null, "📊"), " Excel"), d.santierId && onProcesVerbal && React.createElement("button", { onClick: () => onProcesVerbal(d), className: "text-xs px-2 py-1 rounded-lg flex items-center gap-1", style: { color: 'var(--acc1)', background: 'var(--panel2)' }, title: "Fă procesul-verbal de recepție pentru acest deviz" }, React.createElement(Icon, null, "📜"), " Proces-verbal"), React.createElement("button", { onClick: () => setForm(d), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editează"), React.createElement("button", { onClick: () => del(d.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, null, "🗑")))), d.stocMesaj && (React.createElement("div", { className: "text-xs mt-2", style: { color: d.stocMesaj.startsWith('Nepotrivite') ? 'var(--acc3)' : 'var(--acc2)' } }, d.stocMesaj))));
     })))));
@@ -18465,6 +18581,7 @@ const NUME_CHEI_RO = {
     normativPdf: 'Normativul I7', normativIndexFile: 'Cuprinsul normativului',
     planificareSantier: 'Planificare', sterse: 'Registrul de ștergeri', noutatiAnuntate: 'Noutăți anunțate',
     categoriiTimp: 'Motive de timp mort', checklistSablon: 'Șablon de checklist',
+    sabloaneOferta: 'Șabloanele tale de ofertă și deviz',
     tablouri: 'Tablouri și rack-uri (lista)',
 };
 function CatLocOcupa() {
@@ -19229,7 +19346,9 @@ const PRINT_CSS = `
               display:flex; flex-direction:column; page-break-after:always; box-shadow:0 1px 6px rgba(0,0,0,.22); }
   .pp-foaie:last-child { page-break-after:auto; }
   .pp-corp { flex:1 1 auto; overflow:hidden; }
-  .pp-numar { flex:none; padding-top:2.5mm; text-align:center; font-size:9px; letter-spacing:.4px; color:#5b6773; }
+  .pp-subsol { flex:none; margin-top:2.5mm; padding-top:2mm; border-top:1.1px solid #00A8E8; text-align:center;
+               font-size:9px; font-weight:700; letter-spacing:.2px; color:#14202b; }
+  .pp-numar { flex:none; padding-top:1.4mm; text-align:center; font-size:9px; letter-spacing:.4px; color:#5b6773; }
   body.cu-foi { background:#8f959c; }
   @media print { body.cu-foi { background:#fff; } .pp-foaie { margin:0; box-shadow:none; } }
   .print-page:last-child { page-break-after:auto; }
@@ -19577,8 +19696,8 @@ function pageHtmlOfertaPremium({ doc, client, company }) {
     const td = 'padding:2mm 2.2mm;border-bottom:0.3mm solid #E2E7EC;font-size:9.5pt;color:#14202b;';
     const rows = sectiuni.map((s, si) => {
         const subS = calcSubtotal(s.items);
-        const cap = `<tr><td colspan="6" style="padding:2.4mm 3mm;background:${TINT};border-left:1.6mm solid ${CYAN};font-weight:800;font-size:10pt;color:${NAVY};letter-spacing:.04em;">
-            ${si + 1}. ${esc(s.nume.toUpperCase())}<span style="float:right;color:${CYAN};">${esc(money(subS))}</span></td></tr>`;
+        const cap = `<tr><td colspan="6" style="padding:2.4mm 3mm;background:${TINT};border-left:1.6mm solid ${CYAN};font-weight:800;font-size:10pt;color:${NAVY};letter-spacing:.04em;text-align:left;">
+            ${si + 1}. ${esc(s.nume.toUpperCase())}<span style="float:right;color:${CYAN};padding-left:5mm;">${esc(money(subS))}</span></td></tr>`;
         const linii = s.items.map((it, i) => `<tr>
             <td style="${td}text-align:center;color:#5F6E80;width:12mm;">${si + 1}.${i + 1}</td>
             <td style="${td}text-align:left;">${esc(it.denumire)}</td>
@@ -19607,25 +19726,25 @@ function pageHtmlOfertaPremium({ doc, client, company }) {
         ${client?.adresa ? `<div>${esc(client.adresa)}</div>` : ''}${client?.cui ? `<div>${client.tip === 'fizica' ? 'CNP' : 'CUI'}: ${esc(client.cui)}</div>` : ''}${client?.contact ? `<div>Tel:${esc(client.contact)}</div>` : ''}
       </div>
     </div>
-    <div style="background:${NAVY};color:#fff;text-align:center;padding:4mm 3mm;border-radius:2mm;margin:3mm 0;">
-      <div style="font-size:15pt;font-weight:800;letter-spacing:.14em;">OFERTĂ DE PREȚ</div>
-      ${doc.sistem?.subtitlu ? `<div style="font-size:9.5pt;color:#BFE6F7;margin-top:1mm;">${esc(doc.sistem.subtitlu)}</div>` : ''}
-      <div style="font-size:9.5pt;margin-top:1.5mm;color:${CYAN};font-weight:700;">${nrText}</div>
-      ${doc.lucrare ? `<div style="font-size:9.5pt;margin-top:1mm;text-decoration:underline;">${esc(doc.lucrare)}</div>` : ''}
+    <div style="text-align:center;margin:4mm 0 3mm;padding:0 0 2.2mm;border-bottom:0.8mm solid ${CYAN};">
+      <div style="font-size:15pt;font-weight:800;letter-spacing:.16em;color:${NAVY};">OFERTĂ DE PREȚ</div>
+      ${doc.sistem?.subtitlu ? `<div style="font-size:9pt;color:#5F6E80;margin-top:1mm;">${esc(doc.sistem.subtitlu)}</div>` : ''}
+      <div style="font-size:9.5pt;margin-top:1.2mm;color:${NAVY};font-weight:700;">${nrText}</div>
+      ${doc.lucrare ? `<div style="font-size:9.5pt;margin-top:1mm;color:#14202b;text-decoration:underline;">${esc(doc.lucrare)}</div>` : ''}
     </div>
-    <table style="width:100%;border-collapse:collapse;margin:0 0 3mm;"><tr>
+    <div style="margin:0 0 3mm;"><table style="width:100%;border-collapse:collapse;"><tr>
       ${card('TOTAL OFERTĂ (CU TVA)', esc(money(total)), true)}
       ${card('DATA OFERTEI', eCiorna ? '— ciornă —' : esc(dataDoc(doc.data)))}
       ${card('VALABILITATE', 'până la ' + esc(valab))}
-    </tr></table>
+    </tr></table></div>
     <table class="pp-table" style="width:100%;border-collapse:collapse;"><thead><tr style="background:${NAVY};">
-      ${['Nr.', 'Denumire', 'UM', 'Cantitate', 'Preț unitar', 'Valoare'].map((h, i) => `<th style="padding:2.2mm;color:#fff;font-size:8.5pt;letter-spacing:.06em;text-align:${i === 1 ? 'left' : i > 2 ? 'right' : 'center'};">${h}</th>`).join('')}
+      ${['Nr.', 'Denumire', 'UM', 'Cantitate', 'Preț unitar', 'Valoare'].map((h, i) => `<th style="padding:2.2mm;color:#fff;font-size:8.5pt;line-height:1.25;letter-spacing:.06em;text-align:${i === 1 ? 'left' : i > 2 ? 'right' : 'center'};">${h}</th>`).join('')}
     </tr></thead><tbody>${rows}</tbody></table>
-    <table style="width:80mm;margin:3mm 0 0 auto;border-collapse:collapse;font-size:10pt;">
+    <div style="margin:3mm 0 0;"><table style="width:80mm;margin:0 0 0 auto;border-collapse:collapse;font-size:10pt;">
       <tr><td style="padding:1.6mm 3mm;color:#5F6E80;">Total fără TVA</td><td style="padding:1.6mm 3mm;text-align:right;">${esc(money(subtotal))}</td></tr>
       <tr><td style="padding:1.6mm 3mm;color:#5F6E80;">TVA ${esc(doc.tva)}%</td><td style="padding:1.6mm 3mm;text-align:right;">${esc(money(tvaVal))}</td></tr>
       <tr style="background:${NAVY};color:#fff;font-weight:800;"><td style="padding:2.4mm 3mm;">TOTAL CU TVA</td><td style="padding:2.4mm 3mm;text-align:right;color:${CYAN};">${esc(money(total))}</td></tr>
-    </table>
+    </table></div>
     ${sectiuniOferta(doc)}
     <div class="pp-signatures">
       <div class="pp-sign-col">
@@ -19701,7 +19820,222 @@ function pageHtml({ doc, kind, client, company }) {
     <div class="pp-status">Status: ${esc(doc.status)}</div>
   </div>`;
 }
+/* DEVIZ PREMIUM — exact stilul ofertei (navy + cyan, carduri sus, bare de secțiune,
+   numerotare 1.1 / 1.2). Cerut de patron: „si devizul il vreau la fel ca si oferta".
+   A ales: toate patru tipurile de deviz; al treilea card = perioada lucrărilor (cu data
+   documentului ca rezervă, când devizul nu are perioadă); obiectiv / adresă / lucrare /
+   contract intră în banda navy, sub titlu.
+   De ce stilurile sunt inline și nu într-un <style>: paginatorul mută blocurile de pe o
+   foaie pe alta, iar un <style> pus în pagină s-ar pierde la mutare.
+   De ce bucățile sunt scrise o dată și refolosite de toate patru: dacă le scriu de patru
+   ori, le scriu greșit de patru ori — și la a cincea schimbare uit una. */
+const DEVIZ_NAVY = '#0B2545', DEVIZ_CYAN = '#00A8E8', DEVIZ_TINT = '#EEF6FB';
+const DEVIZ_TD = 'padding:2mm 2.2mm;border-bottom:0.3mm solid #E2E7EC;font-size:9.5pt;color:#14202b;';
+function devizCardPremium(eticheta, valoare, mare) {
+    return `<td style="width:33%;padding:0 1.5mm;">
+        <div style="border-radius:2mm;overflow:hidden;border:0.3mm solid #D5E3EE;">
+          <div style="background:${DEVIZ_NAVY};color:#fff;font-size:7.5pt;font-weight:700;letter-spacing:.12em;padding:1.6mm 3mm;">${eticheta}</div>
+          <div style="background:${DEVIZ_TINT};color:${DEVIZ_NAVY};font-size:${mare ? '13pt' : '10.5pt'};font-weight:800;padding:2.4mm 3mm;">${valoare}</div>
+        </div></td>`;
+}
+function devizPerioadaTextPremium(perioada) {
+    if (!perioada || (!perioada.de && !perioada.la))
+        return '';
+    return `${dataDoc(perioada.de) || '…'}-${dataDoc(perioada.la) || '…'}`;
+}
+function devizExecLiniiPremium(company) {
+    return `${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}${company?.cui ? `<div>CUI: ${esc(company.cui)}</div>` : ''}${company?.regCom ? `<div>Reg. com.: ${esc(company.regCom)}</div>` : ''}${company?.iban ? `<div>IBAN: ${esc(company.iban)}</div>` : ''}${company?.telefon ? `<div>Tel: ${esc(company.telefon)}</div>` : ''}`;
+}
+function devizMetaPremium({ lucrare, obiectiv, adresa, contract, contractData, actAditional, actData }) {
+    const parti = [];
+    if (lucrare)
+        parti.push(`<div style="font-size:9.5pt;margin-top:1mm;color:#14202b;text-decoration:underline;">${esc(lucrare)}</div>`);
+    const mici = [];
+    if (obiectiv)
+        mici.push('Obiectiv: ' + obiectiv);
+    if (adresa)
+        mici.push(adresa);
+    if (contract)
+        mici.push('Contract nr. ' + contract + (contractData ? ' / ' + dataDoc(contractData) : ''));
+    if (actAditional)
+        mici.push('Act adițional ' + actAditional + (actData ? ' / ' + dataDoc(actData) : ''));
+    if (mici.length)
+        parti.push(`<div style="font-size:8.5pt;margin-top:1.2mm;color:#5F6E80;">${mici.map((x) => esc(x)).join('  ·  ')}</div>`);
+    return parti.join('');
+}
+function devizAntetPremium({ titlu, nr, data, perioada, total, company, benefNume, benefLinii, meta, contract, contractData }) {
+    const per = devizPerioadaTextPremium(perioada);
+    const dataT = esc(dataDoc(data)) || '—';
+    /* Al treilea card: perioada facturată — asta caută patronul întâi pe hârtie, ca să
+       știe ce interval decontează. Devizele scoase din șantier o poartă mereu cu ele.
+       Doar dacă devizul chiar n-are perioadă trec pe contract, ca să nu rămână cardul gol
+       sau să repete data documentului din cardul de lângă. */
+    const cardTrei = per ? { e: 'PERIOADA FACTURATĂ', v: esc(per) }
+        : (contract ? { e: 'CONTRACT', v: esc('Nr. ' + contract + (contractData ? ' / ' + dataDoc(contractData) : '')) }
+            : { e: 'PERIOADA FACTURATĂ', v: dataT });
+    return `<div class="pp-toprow">
+      <div class="pp-party-col pp-exec">
+        <div class="pp-label">Executant</div>
+        <div class="pp-party-name">${esc(company?.nume) || ''}</div>
+        ${devizExecLiniiPremium(company)}
+      </div>
+      <div class="pp-logo-mid"><img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" /></div>
+      <div class="pp-party-col pp-benef">
+        <div class="pp-label">Beneficiar</div>
+        <div class="pp-party-name">${benefNume || '—'}</div>
+        ${benefLinii || ''}
+      </div>
+    </div>
+    <div style="text-align:center;margin:4mm 0 3mm;padding:0 0 2.2mm;border-bottom:0.8mm solid ${DEVIZ_CYAN};">
+      <div style="font-size:15pt;font-weight:800;letter-spacing:.16em;color:${DEVIZ_NAVY};">${esc(titlu)}</div>
+      <div style="font-size:9.5pt;margin-top:1.2mm;color:${DEVIZ_NAVY};font-weight:700;">Nr. ${esc(nr || '—')} / ${dataT}</div>
+      ${meta || ''}
+    </div>
+    <div style="margin:0 0 3mm;"><table style="width:100%;border-collapse:collapse;"><tr>
+      ${devizCardPremium('TOTAL DEVIZ (CU TVA)', esc(money(total)), true)}
+      ${devizCardPremium('DATA DEVIZULUI', dataT)}
+      ${devizCardPremium(cardTrei.e, cardTrei.v)}
+    </tr></table></div>`;
+}
+function devizCapTabelPremium(coloane) {
+    return `<thead><tr style="background:${DEVIZ_NAVY};">${coloane.map((c) => `<th style="padding:2.2mm;color:#fff;font-size:8.5pt;line-height:1.25;letter-spacing:.06em;text-align:${c.a || 'center'};${c.w ? 'width:' + c.w + ';' : ''}">${esc(c.t)}</th>`).join('')}</tr></thead>`;
+}
+function devizBaraPremium(nrCol, idx, nume, valoare) {
+    return `<tr><td colspan="${nrCol}" style="padding:2.4mm 3mm;background:${DEVIZ_TINT};border-left:1.6mm solid ${DEVIZ_CYAN};font-weight:800;font-size:10pt;color:${DEVIZ_NAVY};letter-spacing:.04em;text-align:left;">
+            ${idx}. ${esc(String(nume || '').toUpperCase())}${valoare ? `<span style="float:right;color:${DEVIZ_CYAN};padding-left:5mm;">${esc(valoare)}</span>` : ''}</td></tr>`;
+}
+function devizNrPremium(text) {
+    return `<td style="${DEVIZ_TD}text-align:center;color:#5F6E80;width:12mm;">${esc(text)}</td>`;
+}
+function devizCelulaPremium(text, aliniere, lat, gras) {
+    return `<td style="${DEVIZ_TD}text-align:${aliniere || 'center'};${lat ? 'width:' + lat + ';' : ''}${gras ? 'font-weight:700;' : ''}">${text}</td>`;
+}
+function devizGolPremium(nrCol, mesaj) {
+    return `<tr><td colspan="${nrCol}" style="${DEVIZ_TD}text-align:center;color:#5F6E80;">${esc(mesaj)}</td></tr>`;
+}
+function devizTotaluriPremium({ subtotal, tva, tvaVal, total }) {
+    return `<div style="margin:3mm 0 0;"><table style="width:80mm;margin:0 0 0 auto;border-collapse:collapse;font-size:10pt;">
+      <tr><td style="padding:1.6mm 3mm;color:#5F6E80;">Total fără TVA</td><td style="padding:1.6mm 3mm;text-align:right;">${esc(money(subtotal))}</td></tr>
+      <tr><td style="padding:1.6mm 3mm;color:#5F6E80;">TVA ${esc(tva)}%</td><td style="padding:1.6mm 3mm;text-align:right;">${esc(money(tvaVal))}</td></tr>
+      <tr style="background:${DEVIZ_NAVY};color:#fff;font-weight:800;"><td style="padding:2.4mm 3mm;">TOTAL CU TVA</td><td style="padding:2.4mm 3mm;text-align:right;color:${DEVIZ_CYAN};">${esc(money(total))}</td></tr>
+    </table></div>`;
+}
+/* DEVIZUL MANUAL (din tab-ul Devize) — are secțiuni ca oferta, deci iese identic cu ea. */
+function devizPageHtmlPremium({ doc, client, company }) {
+    const subtotal = calcSubtotal(doc.items);
+    const tvaVal = subtotal * (doc.tva / 100);
+    const total = subtotal + tvaVal;
+    const sectiuni = [];
+    (doc.items || []).forEach((it) => {
+        const nume = String(it.sectiune || '').trim() || 'ARTICOLE DEVIZ';
+        let s = sectiuni.find((x) => x.nume === nume);
+        if (!s) { s = { nume, items: [] }; sectiuni.push(s); }
+        s.items.push(it);
+    });
+    const rows = sectiuni.map((s, si) => devizBaraPremium(6, si + 1, s.nume, money(calcSubtotal(s.items)))
+        + s.items.map((it, i) => `<tr>${devizNrPremium((si + 1) + '.' + (i + 1))}${devizCelulaPremium(esc(it.denumire), 'left')}${devizCelulaPremium(esc(it.um), 'center', '12mm')}${devizCelulaPremium(esc(it.cantitate), 'right', '18mm')}${devizCelulaPremium(esc(bani(pretFinal(it))), 'right', '24mm')}${devizCelulaPremium(esc(bani((Number(it.cantitate) || 0) * pretFinal(it))), 'right', '26mm', true)}</tr>`).join('')).join('');
+    const benefLinii = `${client?.cui ? `<div>${client.tip === 'fizica' ? 'CNP' : 'CUI'}: ${esc(client.cui)}</div>` : ''}${client?.adresa ? `<div>${esc(client.adresa)}</div>` : ''}${client?.contact ? `<div>Tel: ${esc(client.contact)}</div>` : ''}`;
+    return `<div class="print-page">
+    ${devizAntetPremium({ titlu: 'DEVIZ LUCRĂRI', nr: numarDoc(doc), data: doc.data, perioada: doc.perioada, total, company,
+        contract: doc.nrContract, contractData: doc.dataContract,
+        benefNume: esc(client?.nume), benefLinii,
+        meta: devizMetaPremium({ lucrare: doc.lucrare, obiectiv: doc.obiectiv, adresa: doc.adresaLucrare,
+            contract: doc.nrContract, contractData: doc.dataContract, actAditional: doc.actAditional, actData: doc.dataActAditional }) })}
+    <table class="pp-table" style="width:100%;border-collapse:collapse;">
+      ${devizCapTabelPremium([{ t: 'Nr.' }, { t: 'Denumire', a: 'left' }, { t: 'UM', w: '12mm' }, { t: 'Cantitate', a: 'right', w: '18mm' }, { t: 'Preț unitar', a: 'right', w: '24mm' }, { t: 'Valoare', a: 'right', w: '26mm' }])}
+      <tbody>${rows || devizGolPremium(6, 'Devizul nu are nicio poziție.')}</tbody>
+    </table>
+    ${devizTotaluriPremium({ subtotal, tva: doc.tva, tvaVal, total })}
+    ${sectiuniOferta(doc)}
+    <div class="pp-signatures">
+      <div class="pp-sign-col">
+        <div class="pp-sign-label">Executant</div>
+        <div>${esc(company?.nume) || ''}</div>
+        ${company?.administrator ? `<div>${esc(company.administrator)}</div>` : ''}
+        <img src="${company?.stampila || STAMPILA_EXECUTANT}" alt="" style="height:26mm;width:auto;display:block;margin:1mm 0 0;" />
+      </div>
+      <div class="pp-sign-col" style="text-align:right;">
+        <div class="pp-sign-label">Beneficiar</div>
+        <div>${esc(client?.nume) || ''}</div>
+        ${client?.administrator ? `<div>${esc(client.administrator)}</div>` : ''}
+        <div class="pp-sign-line" style="margin-left:auto;"></div>
+      </div>
+    </div>
+    ${letterheadHtml(company)}
+    ${doc.status ? `<div class="pp-status">Status: ${esc(doc.status)}</div>` : ''}
+  </div>`;
+}
+/* Antetul comun celor trei devize scoase din rapoarte (ore / poziții / materiale). */
+function devizAntetSantierPremium({ titlu, santier, company, nr, data, perioada, total }) {
+    return devizAntetPremium({ titlu, nr, data, perioada, total, company,
+        contract: santier?.contract,
+        benefNume: esc(santier?.benefNume),
+        benefLinii: String(santier?.benefInfo || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => `<div>${esc(l)}</div>`).join(''),
+        meta: devizMetaPremium({ lucrare: santier?.lucrare || 'Instalații electrice interioare',
+            obiectiv: santier?.obiectiv, adresa: santier?.adresaDeviz || santier?.adresa,
+            contract: santier?.contract, actAditional: santier?.actAditional }) });
+}
+/* DEVIZ PE ORE. */
+function devizOrarPageHtmlPremium({ santier, company, nr, data, detaliu, sistem }) {
+    const d = detaliu || {};
+    const randuri = d.randuri || [];
+    const areLucrari = randuri.some((x) => String(x.lucrari || '').trim());
+    const nrCol = areLucrari ? 8 : 7;
+    const coloane = [{ t: 'Nr.' }, { t: 'Data', w: '20mm' }];
+    if (areLucrari)
+        coloane.push({ t: 'Lucrări efectuate', a: 'left' });
+    coloane.push({ t: 'Nr. pers.', w: '16mm' }, { t: 'Ore / pers.', a: 'right', w: '18mm' }, { t: 'Total ore', a: 'right', w: '18mm' }, { t: 'Preț unitar', a: 'right', w: '22mm' }, { t: 'Valoare', a: 'right', w: '24mm' });
+    const linii = randuri.map((x, i) => `<tr>${devizNrPremium('1.' + (i + 1))}${devizCelulaPremium(esc(dataDoc(x.data)), 'center', '20mm')}${areLucrari ? devizCelulaPremium(esc(x.lucrari || ''), 'left') : ''}${devizCelulaPremium(esc(x.nrPers), 'center', '16mm')}${devizCelulaPremium(Number(x.ore).toFixed(2), 'right', '18mm')}${devizCelulaPremium(Number(x.totalOre).toFixed(2), 'right', '18mm')}${devizCelulaPremium(esc(bani(x.pret)), 'right', '22mm')}${devizCelulaPremium(esc(bani(x.valoare)), 'right', '24mm', true)}</tr>`).join('');
+    const bara = devizBaraPremium(nrCol, 1, 'Manoperă — ore lucrate', money(d.subtotal || 0));
+    const totalOre = `<tr><td colspan="${nrCol - 3}" style="${DEVIZ_TD}text-align:right;font-weight:800;color:${DEVIZ_NAVY};">Total ore</td>${devizCelulaPremium(Number(d.totalOre || 0).toFixed(2), 'right', '18mm', true)}${devizCelulaPremium('', 'right', '22mm')}${devizCelulaPremium(esc(money(d.subtotal || 0)), 'right', '24mm', true)}</tr>`;
+    return `<div class="print-page">
+    ${devizAntetSantierPremium({ titlu: 'DEVIZ LUCRĂRI', santier, company, nr, data, perioada: d.perioada, total: d.total || 0 })}
+    <table class="pp-table" style="width:100%;border-collapse:collapse;">
+      ${devizCapTabelPremium(coloane)}
+      <tbody>${linii ? bara + linii + totalOre : devizGolPremium(nrCol, 'Niciun raport în perioada selectată.')}</tbody>
+    </table>
+    ${devizTotaluriPremium({ subtotal: d.subtotal || 0, tva: d.tva, tvaVal: d.tvaVal || 0, total: d.total || 0 })}
+    ${sectiuniOferta({ sistem })}
+    ${semnaturiDevizHtml({ santier, company })}
+    ${letterheadHtml(company)}
+  </div>`;
+}
+/* DEVIZ PE POZIȚII (manoperă). */
+function devizPozPageHtmlPremium({ santier, company, nr, data, detaliu, sistem }) {
+    const d = detaliu || {};
+    const randuri = d.randuri || [];
+    const linii = randuri.map((x, i) => `<tr>${devizNrPremium('1.' + (i + 1))}${devizCelulaPremium(esc(x.denumire), 'left')}${devizCelulaPremium(esc(x.um), 'center', '12mm')}${devizCelulaPremium(esc(x.cantitate), 'right', '18mm')}${devizCelulaPremium(esc(bani(x.pret)), 'right', '24mm')}${devizCelulaPremium(esc(bani(x.valoare)), 'right', '26mm', true)}</tr>`).join('');
+    return `<div class="print-page">
+    ${devizAntetSantierPremium({ titlu: 'DEVIZ MANOPERĂ', santier, company, nr, data, perioada: d.perioada, total: d.total || 0 })}
+    <table class="pp-table" style="width:100%;border-collapse:collapse;">
+      ${devizCapTabelPremium([{ t: 'Nr.' }, { t: 'Denumire poziție (manoperă)', a: 'left' }, { t: 'UM', w: '12mm' }, { t: 'Cantitate', a: 'right', w: '18mm' }, { t: 'Preț unitar', a: 'right', w: '24mm' }, { t: 'Valoare', a: 'right', w: '26mm' }])}
+      <tbody>${linii ? devizBaraPremium(6, 1, 'Manoperă executată', money(d.subtotal || 0)) + linii : devizGolPremium(6, 'Nicio poziție executată în perioada selectată.')}</tbody>
+    </table>
+    ${devizTotaluriPremium({ subtotal: d.subtotal || 0, tva: d.tva, tvaVal: d.tvaVal || 0, total: d.total || 0 })}
+    ${sectiuniOferta({ sistem })}
+    ${semnaturiDevizHtml({ santier, company })}
+    ${letterheadHtml(company)}
+  </div>`;
+}
+/* DEVIZ MATERIALE / REAL EXECUTAT. */
+function devizMatPageHtmlPremium({ santier, company, nr, data, detaliu, real, sistem }) {
+    const d = detaliu || {};
+    const randuri = d.randuri || [];
+    const linii = randuri.map((g, i) => `<tr>${devizNrPremium('1.' + (i + 1))}${devizCelulaPremium(esc(g.denumire), 'left')}${devizCelulaPremium(esc(g.um), 'center', '12mm')}${devizCelulaPremium(esc(g.cantitate), 'right', '18mm')}${devizCelulaPremium(esc(bani(g.pret)), 'right', '24mm')}${devizCelulaPremium(esc(bani(g.valoare)), 'right', '26mm', true)}</tr>`).join('');
+    return `<div class="print-page">
+    ${devizAntetSantierPremium({ titlu: real ? 'DEVIZ REAL EXECUTAT' : 'DEVIZ MATERIALE', santier, company, nr, data, perioada: d.perioada, total: d.total || 0 })}
+    <table class="pp-table" style="width:100%;border-collapse:collapse;">
+      ${devizCapTabelPremium([{ t: 'Nr.' }, { t: real ? 'Denumire (operațiune / material)' : 'Denumire material', a: 'left' }, { t: 'UM', w: '12mm' }, { t: 'Cantitate', a: 'right', w: '18mm' }, { t: real ? 'Preț manoperă' : 'Preț unitar', a: 'right', w: '24mm' }, { t: 'Valoare', a: 'right', w: '26mm' }])}
+      <tbody>${linii ? devizBaraPremium(6, 1, real ? 'Real executat' : 'Materiale folosite', money(d.subtotal || 0)) + linii : devizGolPremium(6, real ? 'Nicio cantitate raportată în perioada selectată.' : 'Niciun material folosit raportat în perioada selectată.')}</tbody>
+    </table>
+    ${devizTotaluriPremium({ subtotal: d.subtotal || 0, tva: d.tva, tvaVal: d.tvaVal || 0, total: d.total || 0 })}
+    ${sectiuniOferta({ sistem })}
+    ${semnaturiDevizHtml({ santier, company })}
+    ${letterheadHtml(company)}
+  </div>`;
+}
 function devizPageHtml({ doc, client, company }) {
+    return devizPageHtmlPremium({ doc, client, company });
     const subtotal = calcSubtotal(doc.items);
     const tvaVal = subtotal * (doc.tva / 100);
     const total = subtotal + tvaVal;
@@ -19798,7 +20132,11 @@ const PAGINATOR_TIPAR = `
   function foaieNoua(unde) {
     var f = document.createElement('div');
     f.className = 'pp-foaie';
-    f.innerHTML = '<div class="pp-corp"></div><div class="pp-numar"></div>';
+    // Subsolul firmei se ia din blocul ascuns al documentului si se pune pe FIECARE foaie,
+    // deasupra numarului de pagina. Daca documentul n-are datele firmei, nu punem nimic.
+    var lh = unde.querySelector ? unde.querySelector('.pp-letterhead') : null;
+    var jos = lh && lh.innerHTML.trim() ? '<div class="pp-subsol">' + lh.innerHTML + '</div>' : '';
+    f.innerHTML = '<div class="pp-corp"></div>' + jos + '<div class="pp-numar"></div>';
     unde.parentNode.insertBefore(f, unde);
     return f.querySelector('.pp-corp');
   }
@@ -19839,19 +20177,81 @@ const PAGINATOR_TIPAR = `
     });
     sursa.parentNode.removeChild(sursa);
   });
+  // PLASĂ DE SIGURANȚĂ. Măsurătoarea de mai sus se face în timp ce tabelul încă își caută
+  // lățimile coloanelor: un rând pus mai târziu poate lăți o coloană, capul de tabel se rupe
+  // pe două rânduri, și foaia crește cu câțiva milimetri DUPĂ ce am hotărât că încape.
+  // Cu overflow:hidden, acei milimetri înseamnă un rând care dispare de pe hârtie fără ca
+  // nimeni să afle. Așa că la final mai trec o dată prin foi și cobor ce nu încape.
+  function corpul(f) { return f.querySelector('.pp-corp'); }
+  function foaieDupa(f) {
+    var n = document.createElement('div');
+    n.className = 'pp-foaie';
+    var s = f.querySelector('.pp-subsol');
+    n.innerHTML = '<div class="pp-corp"></div>' + (s ? '<div class="pp-subsol">' + s.innerHTML + '</div>' : '') + '<div class="pp-numar"></div>';
+    f.parentNode.insertBefore(n, f.nextSibling);
+    return n;
+  }
+  function tabelGol(t) { var x = t.cloneNode(true); var tb = x.querySelector('tbody'); if (tb) tb.innerHTML = ''; return x; }
+  function coboaraUnul(cDe, cLa) {
+    var ultim = cDe.lastElementChild;
+    if (!ultim) return false;
+    if (ultim.tagName === 'TABLE' && ultim.querySelector('tbody > tr')) {
+      var rr = ultim.querySelectorAll('tbody > tr');
+      var r = rr[rr.length - 1];
+      var primul = cLa.firstElementChild;
+      var tinta = (primul && primul.tagName === 'TABLE' && primul.querySelector('tbody')) ? primul : cLa.insertBefore(tabelGol(ultim), cLa.firstChild);
+      var tb = tinta.querySelector('tbody');
+      tb.insertBefore(r, tb.firstChild);
+      if (!ultim.querySelector('tbody > tr')) cDe.removeChild(ultim);
+      return true;
+    }
+    cLa.insertBefore(ultim, cLa.firstChild);
+    return true;
+  }
+  function aseazaCeNuIncape() {
+    for (var paz = 0; paz < 400; paz++) {
+      var toate = Array.prototype.slice.call(document.querySelectorAll('.pp-foaie'));
+      var mutat = false;
+      for (var k = 0; k < toate.length; k++) {
+        var cc = corpul(toate[k]);
+        if (!prea(cc)) continue;
+        // un singur bloc, mai înalt decât o foaie: nu-l pot sparge, îl las și merg mai departe
+        if (cc.children.length === 1 && !(cc.firstElementChild.tagName === 'TABLE' && cc.firstElementChild.querySelectorAll('tbody > tr').length > 1)) continue;
+        var urm = toate[k + 1] && corpul(toate[k + 1]);
+        if (!urm) urm = corpul(foaieDupa(toate[k]));
+        if (coboaraUnul(cc, urm)) mutat = true;
+      }
+      if (!mutat) break;
+    }
+  }
+  aseazaCeNuIncape();
   // O foaie de final cu un singur bloc arată a greșeală de tipar: cobor și ultimul bloc
   // de pe foaia dinainte, ca pagina de final să pară intenționată.
   var foi = document.querySelectorAll('.pp-foaie');
   if (foi.length > 1) {
     var u = foi[foi.length - 1].querySelector('.pp-corp');
     var p = foi[foi.length - 2].querySelector('.pp-corp');
-    if (u.children.length === 1 && p.children.length > 1) u.insertBefore(p.lastElementChild, u.firstChild);
+    if (u.children.length === 1 && p.children.length > 1) {
+      u.insertBefore(p.lastElementChild, u.firstChild);
+      aseazaCeNuIncape(); // regula de mai sus a îngroșat ultima foaie; verific din nou că încape
+    }
   }
-  foi = document.querySelectorAll('.pp-foaie');
-  for (var i = 0; i < foi.length; i++) {
-    foi[i].querySelector('.pp-numar').textContent = 'Pagina ' + (i + 1) + ' din ' + foi.length;
+  function numeroteaza() {
+    var f = document.querySelectorAll('.pp-foaie');
+    for (var i = 0; i < f.length; i++) {
+      f[i].querySelector('.pp-numar').textContent = 'Pagina ' + (i + 1) + ' din ' + f.length;
+    }
   }
+  numeroteaza();
   document.body.classList.add('cu-foi');
+  // A DOUA TRECERE, după ce s-a încărcat tot. Pozele (sigla, ștampila) și fonturile pot sosi
+  // după ce am măsurat foile, iar atunci o foaie crește cu câțiva milimetri și taie un rând
+  // pe tăcute. Mai verific o dată la „load" și încă o dată după o clipă, apoi renumerotez.
+  function dinNou() { aseazaCeNuIncape(); numeroteaza(); }
+  if (document.readyState === 'complete') dinNou();
+  else window.addEventListener('load', dinNou);
+  setTimeout(dinNou, 350);
+  if (document.fonts && document.fonts.ready && document.fonts.ready.then) document.fonts.ready.then(dinNou);
 })();
 `;
 function openPrintWindow(items) {
@@ -20134,11 +20534,16 @@ function totaluriDevizHtml({ subtotal, tva, tvaVal, total }) {
     </div>`;
 }
 function letterheadHtml(company) {
-    const p = [company?.nume, company?.cui ? `CUI ${company.cui}` : '', company?.regCom ? `Reg. com. ${company.regCom}` : '', company?.iban ? `IBAN ${company.iban}` : '', company?.telefon ? `Tel ${company.telefon}` : '', company?.email || '']
+    /* SUBSOLUL DE PE FIECARE FOAIE. Cerut de patron, cu poză: numele firmei, adresa, e-mailul
+       și telefonul, despărțite prin •, sub o linie cyan, peste numărul paginii.
+       Blocul ăsta rămâne ascuns în corpul documentului (vezi .pp-letterhead în PRINT_CSS);
+       paginatorul îl copiază jos pe fiecare foaie. Îl țin aici, și nu în paginator, pentru că
+       paginatorul e un text de JS trimis în fereastra de tipar și n-are de unde ști datele firmei. */
+    const p = [company?.nume, company?.adresa, company?.email, company?.telefon]
         .map((x) => String(x || '').trim()).filter(Boolean).map((x) => esc(x));
     if (!p.length)
         return '';
-    return `<div class="pp-letterhead">${p.join(' &middot; ')}</div>`;
+    return `<div class="pp-letterhead">${p.join(' &bull; ')}</div>`;
 }
 function semnaturiDevizHtml({ santier, company }) {
     return `<div class="pp-signatures">
@@ -20212,8 +20617,9 @@ function devizOrarDetaliu({ santier, rapoarte, toateRapoartele, structura, inclu
     const tvaVal = subtotal * tva / 100;
     return { tip: 'orar', tarif, tva, includeLucrari: !!includeLucrari, randuri, totalOre, subtotal, tvaVal, total: subtotal + tvaVal };
 }
-function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, structura, nr, data, includeLucrari, detaliu }) {
+function devizOrarPageHtml({ santier, company, rapoarte, toateRapoartele, structura, nr, data, includeLucrari, detaliu, sistem }) {
     const d = detaliu || devizOrarDetaliu({ santier, rapoarte, toateRapoartele, structura, includeLucrari });
+    return devizOrarPageHtmlPremium({ santier, company, nr, data, detaliu: d, sistem });
     const { tva, randuri, totalOre: totalOreGeneral, subtotal, tvaVal, total } = d;
     const areLucrari = randuri.some((x) => String(x.lucrari || '').trim());
     const rows = randuri.map((x, i) => {
@@ -20338,8 +20744,9 @@ function devizPozDetaliu({ rapoarte, pozitii, dinLucrari }) {
     const tvaVal = subtotal * tva / 100;
     return { tip: 'pozitie', tva, randuri, subtotal, tvaVal, total: subtotal + tvaVal };
 }
-function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data, detaliu }) {
+function devizPozPageHtml({ santier, company, rapoarte, pozitii, dinLucrari, nr, data, detaliu, sistem }) {
     const d = detaliu || devizPozDetaliu({ rapoarte, pozitii, dinLucrari });
+    return devizPozPageHtmlPremium({ santier, company, nr, data, detaliu: d, sistem });
     const { tva, randuri, subtotal, tvaVal, total } = d;
     const rows = randuri.map((x, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(x.denumire)}</td><td>${esc(x.um)}</td><td>${x.cantitate}</td><td>${esc(bani(x.pret))}</td><td>${esc(bani(x.valoare))}</td></tr>`).join('');
     return `<div class="print-page">
@@ -20427,8 +20834,9 @@ function devizMatDetaliu({ rapoarte, materialeLista, materials, materialClient, 
     const tvaVal = subtotal * tva / 100;
     return { tip: 'materiale', tva, realExecutat: !!realExecutat, randuri, subtotal, tvaVal, total: subtotal + tvaVal };
 }
-function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data, detaliu }) {
+function devizMatPageHtml({ santier, company, rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari, nr, data, detaliu, sistem }) {
     const d = detaliu || devizMatDetaliu({ rapoarte, materialeLista, materials, materialClient, realExecutat, dinLucrari });
+    return devizMatPageHtmlPremium({ santier, company, nr, data, detaliu: d, sistem, real: (detaliu ? !!d.realExecutat : !!realExecutat) });
     const { tva, randuri, subtotal, tvaVal, total } = d;
     const real = detaliu ? !!d.realExecutat : !!realExecutat;
     const rows = randuri.map((g, i) => `<tr><td>${i + 1}</td><td style="text-align:left">${esc(g.denumire)}</td><td>${esc(g.um)}</td><td>${g.cantitate}</td><td>${esc(bani(g.pret))}</td><td>${esc(bani(g.valoare))}</td></tr>`).join('');
@@ -20474,7 +20882,8 @@ function devizArhivaPageHtml({ doc, client, company, detaliu, santierSnap }) {
     if (!d || !Array.isArray(d.randuri) || !d.randuri.length)
         return devizPageHtml({ doc, client, company });
     const args = { santier: santierSnap || (doc && doc.santierSnap) || {}, company,
-        nr: (doc && doc.numar) || '—', data: (doc && doc.data) || '', detaliu: d };
+        nr: (doc && doc.numar) || '—', data: (doc && doc.data) || '', detaliu: d,
+        sistem: doc && doc.sistem };
     if (d.tip === 'orar')
         return devizOrarPageHtml(args);
     if (d.tip === 'pozitie')
@@ -24074,6 +24483,7 @@ function App() {
     const [checklistSantier, setChecklistSantier] = useState([]);
     const [checklistConfirmari, setChecklistConfirmari] = useState([]);
     const [checklistSablon, setChecklistSablon] = useState(CHECKLIST_SABLON_DEFAULT);
+    const [sabloaneOferta, setSabloaneOferta] = useState([]);
     const [offerForm, setOfferForm] = useState(null);
     const [invoiceForm, setInvoiceForm] = useState(null);
     const [devizPrefill, setDevizPrefill] = useState(null);
@@ -24193,6 +24603,7 @@ function App() {
                 ['checklistSantier', [], setChecklistSantier],
                 ['checklistConfirmari', [], setChecklistConfirmari],
                 ['checklistSablon', CHECKLIST_SABLON_DEFAULT, setChecklistSablon],
+                ['sabloaneOferta', [], setSabloaneOferta],
                 ['concedii', [], setConcedii],
                 ...(eMgrDate ? [['soldConcediu', [], setSoldConcediu]] : []),
                 ['pontajCorectii', [], setPontajCorectii],
@@ -25486,7 +25897,7 @@ function App() {
                                 "."),
                             React.createElement("button", { onClick: () => setTab('santiere'), className: "mt-4 text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83C\uDFD7 Mergi la \u0218antiere"))) : (React.createElement(React.Fragment, null,
                             HELP[tab] && React.createElement(HelpNote, { text: HELP[tab], isManager: effectiveUser.rol === 'Manager' }),
-                            tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, clients: clients, materials: materials, santiere: santiere, onProcesVerbal: (d) => { setPendingSiteNav({ santierId: d.santierId, siteView: 'pv', pvDinDeviz: d.id, origine: { tab: 'devize', pagina: null, eticheta: 'Devize' } }); setTab('santiere'); }, onFactureaza: facturaDinDeviz, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => deductStock(doc.items, `Deviz ${doc.numar}`), onReverse: (doc) => reverseStock(doc.items, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null) })),
+                            tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, sabloane: sabloaneOferta, setSabloane: setSabloaneOferta, clients: clients, materials: materials, santiere: santiere, onProcesVerbal: (d) => { setPendingSiteNav({ santierId: d.santierId, siteView: 'pv', pvDinDeviz: d.id, origine: { tab: 'devize', pagina: null, eticheta: 'Devize' } }); setTab('santiere'); }, onFactureaza: facturaDinDeviz, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => deductStock(doc.items, `Deviz ${doc.numar}`), onReverse: (doc) => reverseStock(doc.items, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null) })),
                             tab === 'antemasuratoare' && effectiveUser.rol === 'Manager' && (React.createElement(AntemasuratoareTab, { antemasuratori: antemasuratori, setAntemasuratori: setAntemasuratori, clients: clients, santiere: santiere, persist: persist, currentUser: effectiveUser, onOferta: ofertaDinAntemasuratoare })),
                             tab === 'oferte' && (React.createElement("div", null,
                                 React.createElement("div", { className: "flex justify-between items-center mb-4" },
@@ -25495,7 +25906,7 @@ function App() {
                                         offers.length > 0 && React.createElement("button", { onClick: () => printAll(offers, 'Ofertă'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
                                         !offerForm && React.createElement("button", { onClick: () => setOfferForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 ofert\u0103"))),
                                 offerForm && React.createElement(PaginaFormular, { titlu: offerForm.id && offerForm.numar ? '✏️ Modifici oferta ' + offerForm.numar : '📄 Ofertă nouă', onInchide: () => setOfferForm(null) },
-                                    React.createElement(DocForm, { kind: "Ofert\u0103", clients: clients, materials: materials, initial: (offerForm.id || offerForm.items) ? offerForm : null, onCancel: () => setOfferForm(null), onSave: saveOffer })),
+                                    React.createElement(DocForm, { kind: "Ofert\u0103", sabloane: sabloaneOferta, setSabloane: setSabloaneOferta, persist: persist, clients: clients, materials: materials, initial: (offerForm.id || offerForm.items) ? offerForm : null, onCancel: () => setOfferForm(null), onSave: saveOffer })),
                                 React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: devizDinOferta, onPrint: printOne('Ofertă'), onDuplica: duplicaDoc('Ofertă') }))),
                             tab === 'facturi' && (React.createElement("div", null,
                                 React.createElement("div", { className: "flex justify-between items-center mb-4" },
@@ -25504,7 +25915,7 @@ function App() {
                                         invoices.length > 0 && React.createElement("button", { onClick: () => printAll(invoices, 'Factură'), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)', border: '1px solid var(--border)' } }, "\uD83D\uDCDA Export\u0103 toate \u00EEn PDF"),
                                         !invoiceForm && React.createElement("button", { onClick: () => setInvoiceForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "+ Adaug\u0103 factur\u0103"))),
                                 invoiceForm && React.createElement(PaginaFormular, { titlu: invoiceForm.id && invoiceForm.numar ? '✏️ Modifici factura ' + invoiceForm.numar : '🧾 Factură nouă', onInchide: () => setInvoiceForm(null) },
-                                    React.createElement(DocForm, { kind: "Factur\u0103", clients: clients, materials: materials, initial: invoiceForm.id ? invoiceForm : null, onCancel: () => setInvoiceForm(null), onSave: saveInvoice })),
+                                    React.createElement(DocForm, { kind: "Factur\u0103", sabloane: sabloaneOferta, setSabloane: setSabloaneOferta, persist: persist, clients: clients, materials: materials, initial: invoiceForm.id ? invoiceForm : null, onCancel: () => setInvoiceForm(null), onSave: saveInvoice })),
                                 React.createElement(DocTable, { kind: "Factur\u0103", docs: invoices, clients: clients, statuses: INVOICE_STATUSES, onEdit: setInvoiceForm, onDelete: deleteInvoice, onStatusChange: invoiceStatus, onPrint: printOne('Factură'), onSmartBill: sendInvoiceToSmartBill, onDuplica: duplicaDoc('Factură') }))),
                             tab === 'clienti' && React.createElement(ClientsTab, { clients: clients, setClients: setClients, persist: persist }),
                             tab === 'notite' && effectiveUser.rol === 'Manager' && React.createElement(NotiteTab, { notite: notite, setNotite: setNotite, persist: persist, clients: clients, santiere: santiere, currentUser: effectiveUser, onOfertaDinNota: (n) => {
