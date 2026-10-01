@@ -19556,7 +19556,96 @@ function sectiuniOferta(doc) {
     }
     return parti.join('');
 }
+/* OFERTA PREMIUM — antet navy, card rezumat, secțiuni cu bară cyan, numerotare 1.1, 1.2...
+   Stilurile sunt puse direct pe elemente (inline), pentru că paginatorul mută blocurile
+   pe foi și ar pierde un <style> pus în pagină. */
+function pageHtmlOfertaPremium({ doc, client, company }) {
+    const NAVY = '#0B2545', CYAN = '#00A8E8', TINT = '#EEF6FB';
+    const subtotal = calcSubtotal(doc.items);
+    const tvaVal = subtotal * (doc.tva / 100);
+    const total = subtotal + tvaVal;
+    const eCiorna = doc.status === 'Ciornă';
+    const nrText = eCiorna ? 'Nr. ___ / ciornă' : `Nr. ${esc(numarDoc(doc))} / ${esc(dataDoc(doc.data))}`;
+    const valab = (() => { try { const d = new Date(doc.data + 'T00:00:00'); d.setDate(d.getDate() + 30); return dataDoc(dataLocala(d)); } catch (_) { return '30 zile'; } })();
+    const sectiuni = [];
+    (doc.items || []).forEach((it) => {
+        const nume = String(it.sectiune || '').trim() || 'ARTICOLE OFERTATE';
+        let s = sectiuni.find((x) => x.nume === nume);
+        if (!s) { s = { nume, items: [] }; sectiuni.push(s); }
+        s.items.push(it);
+    });
+    const td = 'padding:2mm 2.2mm;border-bottom:0.3mm solid #E2E7EC;font-size:9.5pt;color:#14202b;';
+    const rows = sectiuni.map((s, si) => {
+        const subS = calcSubtotal(s.items);
+        const cap = `<tr><td colspan="6" style="padding:2.4mm 3mm;background:${TINT};border-left:1.6mm solid ${CYAN};font-weight:800;font-size:10pt;color:${NAVY};letter-spacing:.04em;">
+            ${si + 1}. ${esc(s.nume.toUpperCase())}<span style="float:right;color:${CYAN};">${esc(money(subS))}</span></td></tr>`;
+        const linii = s.items.map((it, i) => `<tr>
+            <td style="${td}text-align:center;color:#5F6E80;width:12mm;">${si + 1}.${i + 1}</td>
+            <td style="${td}text-align:left;">${esc(it.denumire)}</td>
+            <td style="${td}text-align:center;width:12mm;">${esc(it.um)}</td>
+            <td style="${td}text-align:right;width:18mm;">${esc(it.cantitate)}</td>
+            <td style="${td}text-align:right;width:24mm;">${esc(bani(pretFinal(it)))}</td>
+            <td style="${td}text-align:right;width:26mm;font-weight:700;">${esc(bani((Number(it.cantitate) || 0) * pretFinal(it)))}</td></tr>`).join('');
+        return cap + linii;
+    }).join('');
+    const card = (eticheta, valoare, mare) => `<td style="width:33%;padding:0 1.5mm;">
+        <div style="border-radius:2mm;overflow:hidden;border:0.3mm solid #D5E3EE;">
+          <div style="background:${NAVY};color:#fff;font-size:7.5pt;font-weight:700;letter-spacing:.12em;padding:1.6mm 3mm;">${eticheta}</div>
+          <div style="background:${TINT};color:${NAVY};font-size:${mare ? '13pt' : '10.5pt'};font-weight:800;padding:2.4mm 3mm;">${valoare}</div>
+        </div></td>`;
+    return `<div class="print-page">
+    <div class="pp-toprow">
+      <div class="pp-party-col pp-exec">
+        <div class="pp-label">Executant</div>
+        <div class="pp-party-name">${esc(company?.nume) || ''}</div>
+        ${company?.adresa ? `<div>${esc(company.adresa)}</div>` : ''}${company?.cui ? `<div>CUI: ${esc(company.cui)}</div>` : ''}${company?.telefon ? `<div>Tel:${esc(company.telefon)}</div>` : ''}
+      </div>
+      <div class="pp-logo-mid"><img class="pp-logo" src="${company?.logo || (window.location.origin + '/logo.png')}" alt="Logo" /></div>
+      <div class="pp-party-col pp-benef">
+        <div class="pp-label">Beneficiar</div>
+        <div class="pp-party-name">${esc(client?.nume) || '—'}</div>
+        ${client?.adresa ? `<div>${esc(client.adresa)}</div>` : ''}${client?.cui ? `<div>${client.tip === 'fizica' ? 'CNP' : 'CUI'}: ${esc(client.cui)}</div>` : ''}${client?.contact ? `<div>Tel:${esc(client.contact)}</div>` : ''}
+      </div>
+    </div>
+    <div style="background:${NAVY};color:#fff;text-align:center;padding:4mm 3mm;border-radius:2mm;margin:3mm 0;">
+      <div style="font-size:15pt;font-weight:800;letter-spacing:.14em;">OFERTĂ DE PREȚ</div>
+      ${doc.sistem?.subtitlu ? `<div style="font-size:9.5pt;color:#BFE6F7;margin-top:1mm;">${esc(doc.sistem.subtitlu)}</div>` : ''}
+      <div style="font-size:9.5pt;margin-top:1.5mm;color:${CYAN};font-weight:700;">${nrText}</div>
+      ${doc.lucrare ? `<div style="font-size:9.5pt;margin-top:1mm;text-decoration:underline;">${esc(doc.lucrare)}</div>` : ''}
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin:0 0 3mm;"><tr>
+      ${card('TOTAL OFERTĂ (CU TVA)', esc(money(total)), true)}
+      ${card('DATA OFERTEI', eCiorna ? '— ciornă —' : esc(dataDoc(doc.data)))}
+      ${card('VALABILITATE', 'până la ' + esc(valab))}
+    </tr></table>
+    <table class="pp-table" style="width:100%;border-collapse:collapse;"><thead><tr style="background:${NAVY};">
+      ${['Nr.', 'Denumire', 'UM', 'Cantitate', 'Preț unitar', 'Valoare'].map((h, i) => `<th style="padding:2.2mm;color:#fff;font-size:8.5pt;letter-spacing:.06em;text-align:${i === 1 ? 'left' : i > 2 ? 'right' : 'center'};">${h}</th>`).join('')}
+    </tr></thead><tbody>${rows}</tbody></table>
+    <table style="width:80mm;margin:3mm 0 0 auto;border-collapse:collapse;font-size:10pt;">
+      <tr><td style="padding:1.6mm 3mm;color:#5F6E80;">Total fără TVA</td><td style="padding:1.6mm 3mm;text-align:right;">${esc(money(subtotal))}</td></tr>
+      <tr><td style="padding:1.6mm 3mm;color:#5F6E80;">TVA ${esc(doc.tva)}%</td><td style="padding:1.6mm 3mm;text-align:right;">${esc(money(tvaVal))}</td></tr>
+      <tr style="background:${NAVY};color:#fff;font-weight:800;"><td style="padding:2.4mm 3mm;">TOTAL CU TVA</td><td style="padding:2.4mm 3mm;text-align:right;color:${CYAN};">${esc(money(total))}</td></tr>
+    </table>
+    ${sectiuniOferta(doc)}
+    <div class="pp-signatures">
+      <div class="pp-sign-col">
+        <div class="pp-sign-label">Executant</div>
+        <div>${esc(company?.nume) || ''}</div>
+        ${company?.administrator ? `<div>${esc(company.administrator)}</div>` : ''}
+        <img src="${company?.stampila || STAMPILA_EXECUTANT}" alt="" style="height:26mm;width:auto;display:block;margin:1mm 0 0;" />
+      </div>
+      <div class="pp-sign-col" style="text-align:right;">
+        <div class="pp-sign-label">Beneficiar</div>
+        <div>${esc(client?.nume) || ''}</div>
+        ${client?.administrator ? `<div>${esc(client.administrator)}</div>` : ''}
+        <div class="pp-sign-line" style="margin-left:auto;"></div>
+      </div>
+    </div>
+    ${letterheadHtml(company)}
+  </div>`;
+}
 function pageHtml({ doc, kind, client, company }) {
+    if (kind === 'Ofertă') return pageHtmlOfertaPremium({ doc, client, company });
     const subtotal = calcSubtotal(doc.items);
     const tvaVal = subtotal * (doc.tva / 100);
     const total = subtotal + tvaVal;
