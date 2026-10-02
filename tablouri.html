@@ -1300,6 +1300,7 @@ const FCAP=160,GAP=14,M0=14;
 const DUCT_SIZES=[[25,25],[25,40],[40,40],[40,60],[60,40],[60,60],[80,60],[80,80],[100,60],[100,80],[120,80]];
 const DUCT_MIN=DUCT_SIZES.findIndex(s=>s[0]===40&&s[1]===40);
 const OD={0.75:2.3,1:2.5,1.5:2.9,2.5:3.5,4:4.1,6:4.8,10:6.2,16:7.4,25:9};
+const RESERVE=1.3;/* minimum 30% rezervă la alegerea automată a cutiei / rack-ului */
 const BOXES=[[200,200],[250,200],[300,200],[300,250],[300,300],[350,250],[400,300],[400,400],[500,300],[500,400],[500,500],[600,400],[600,500],[600,600],[700,500],[700,700],[800,600],[800,800],[900,600],[1000,600],[1000,800],[1000,1000],[1200,600],[1200,800],[1200,1000],[1400,800],[1400,1000],[1600,1000],[1600,1200],[1800,800],[1800,1000],[1800,1200],[2000,800],[2000,1000],[2000,1200]];
 function wireOD(w){if(w.color==='utp')return 6.2;if(w.color==='coax')return 6.8;if(w.color==='fibra')return 3;return OD[w.sec]||3;}
 function WPX(c){const d=DEFS[c.t];return d.mount==='rack'?RACKW:d.w(c)*U;}
@@ -1341,7 +1342,9 @@ const LVK=['DATA','COAX','FO','SIG','SENS','BUS','DALI','DC+','DC-','LV'];
 const isOv=k=>model.ducts&&model.ducts[k]&&model.ducts[k]!=='auto';
 function boxM(){const v=model.cfg.boxMargin;return v===undefined||v===null||v===''?5:Math.max(0,+v);}
 function layout(){if(LC&&LC.m===model&&LC.s===STAMP)return LC.L;if(model.cfg.box==='rack'){const L=layoutRack();LC={m:model,s:STAMP,L};return L;}
- const cfg=model.cfg,nb=model.bands.length,metal=cfg.box!=='modular',modA=!metal&&cfg.modAuto;let modsA=0;if(modA){let e=0;for(const c of model.comps)if(c.zone==='panel')e=Math.max(e,(c.x+DEFS[c.t].w(c))/2);modsA=nb<=1?([4,8,12,18].find(m=>m>=e)||18):(e<=12?12:18);}const dinU=modA?modsA*2:cfg.modules*2;
+ const cfg=model.cfg,metal=cfg.box!=='modular',modA=!metal&&cfg.modAuto;let nb=model.bands.length,modsA=0;if(modA){let e=0,u=0;for(const c of model.comps)if(c.zone==='panel'){const w_=DEFS[c.t].w(c)/2;e=Math.max(e,c.x/2+w_);if(DEFS[c.t].mount==='din')u+=w_;}
+  /* rezervă minimă 30%: capacitatea totală (rânduri × module) ≥ ocupat × 1,3; dacă nici 18 module pe rând nu ajung, se adaugă un rând (max. 6) */
+  const need=Math.ceil(u*RESERVE-1e-9);const pickM=()=>nb<=1?[4,8,12,18].find(m=>m>=e&&m>=need):[12,18].find(m=>m>=e&&m*nb>=need);modsA=pickM();while(!modsA&&nb<6&&u>0){model.bands.push({id:uid(),type:'din'});nb=model.bands.length;modsA=pickM();}if(!modsA)modsA=nb<=1?([4,8,12,18].find(m=>m>=e)||18):(e<=12?12:18);}const dinU=modA?modsA*2:cfg.modules*2;
  let needU=dinU;for(const c of model.comps)if(c.zone==='panel')needU=Math.max(needU,bandOff(c.band)/U+c.x+DEFS[c.t].w(c));
  for(const b of model.bands){const o=bandOff(b.id)/U;if(b.type==='din'&&metal&&+b.len>0)needU=Math.max(needU,o+(+b.len)/U);if(b.type==='mix')needU=Math.max(needU,o+railMods(b)*2+2);if(b.type==='dual'){const S_=segs(b);needU=Math.max(needU,o+S_.full[1]);}}
  const area={},lists={},topo={};const add=(k,w,o)=>{(lists[k]=lists[k]||[]).push([w.id,o]);area[k]=(area[k]||0)+Math.PI/4*wireOD(w)**2;};
@@ -1361,7 +1364,7 @@ function layout(){if(LC&&LC.m===model&&LC.s===STAMP)return LC.L;if(model.cfg.box
  let box=null,PW=PWneed,PH=needH,overflow=false;
  if(metal){var BM=boxM();const Dsel=+cfg.boxDepth>0?+cfg.boxDepth:0;const D=Dsel||[150,200,250,300,400].find(x=>x>=dep+60)||400;const fx=cfg.boxFix;
   if(fx&&+fx.h>0&&+fx.w>0){box={h:+fx.h,w:+fx.w,d:+fx.d||D,std:true,fixed:true};if(PWneed>box.w-2*BM+.5||needH>box.h-2*BM+.5)overflow=true;}
-  else{const bb=BOXES.find(([h,w])=>h-2*BM>=needH&&w-2*BM>=PWneed);box=bb?{h:bb[0],w:bb[1],d:D,std:true}:{h:Math.ceil((needH+2*BM)/100)*100,w:Math.ceil((PWneed+2*BM)/100)*100,d:D,std:false};}
+  else{/* rezervă minimă 30% pe tot tabloul: suprafața utilă a plăcii ≥ suprafața ocupată × 1,3 */const bb=BOXES.find(([h,w])=>h-2*BM>=needH&&w-2*BM>=PWneed&&(h-2*BM)*(w-2*BM)>=needH*PWneed*RESERVE);box=bb?{h:bb[0],w:bb[1],d:D,std:true}:{h:Math.ceil((needH*Math.sqrt(RESERVE)+2*BM)/100)*100,w:Math.ceil((PWneed*Math.sqrt(RESERVE)+2*BM)/100)*100,d:D,std:false};}
   PW=Math.max(PWneed,box.w-2*BM);PH=Math.max(needH,box.h-2*BM);}
  const extra=Math.max(0,PH-needH),autos=[];model.bands.forEach((b,i)=>{if(!ex(b.gapTop)&&!axOK(b))autos.push(i+'t');if(!ex(b.gapBot)&&!axOK(b))autos.push(i+'b');});const per=autos.length?extra/autos.length:0;
  const gap=(b,i,w)=>(w==='t'?gTa(b,i):gBa(b,i))+(autos.includes(i+w)?per:0);
@@ -1550,7 +1553,7 @@ const rackKey=m=>`${m.U}-${m.w}-${m.d}-${m.floor?'p':'w'}`;
 function layoutRack(){const cfg=model.cfg;let rb=model.bands.find(b=>b.type==='rack');if(!rb){rb={id:uid(),type:'rack'};model.bands=[rb];}
  let used=0;for(const c of model.comps)if(c.zone==='panel'&&c.band===rb.id)used=Math.max(used,c.x+DEFS[c.t].w(c));
  let dmax=0,dname='';for(const c of model.comps)if(c.zone==='panel'&&c.band===rb.id){const dd=DEFS[c.t].depth(c);if(dd>dmax){dmax=dd;dname=compName(c);}}
- let mdl=cfg.rackModel?RACK_MODELS.find(m=>rackKey(m)===cfg.rackModel):(+cfg.rackU>0?RACK_MODELS.find(m=>m.U===+cfg.rackU):null);const fixed=!!mdl;if(!mdl)mdl=RACK_MODELS.find(m=>m.U>=used&&m.d-100>=dmax)||RACK_MODELS[RACK_MODELS.length-1];
+ let mdl=cfg.rackModel?RACK_MODELS.find(m=>rackKey(m)===cfg.rackModel):(+cfg.rackU>0?RACK_MODELS.find(m=>m.U===+cfg.rackU):null);const fixed=!!mdl;if(!mdl){/* rezervă 30%, dar fără exagerări: dacă aparatele încap într-un rack de perete de 22U, rămâne acela; de podea doar de la 22U ocupați în sus */const need=Math.ceil(used*RESERVE-1e-9),dOk=m=>m.d-100>=dmax;mdl=RACK_MODELS.find(m=>m.U>=need&&!m.floor&&dOk(m))||(used<22?RACK_MODELS.find(m=>m.U===22&&!m.floor&&dOk(m)):null)||RACK_MODELS.find(m=>m.U>=need&&dOk(m));}if(!mdl)mdl=RACK_MODELS.find(m=>m.U>=used&&m.d-100>=dmax)||RACK_MODELS[RACK_MODELS.length-1];
  const fixU=fixed?mdl.U:0,U_=mdl.U,overflow=fixed&&used>fixU,depthOver=dmax>mdl.d-100?{name:dname,d:dmax,max:mdl.d-100}:null;
  const area={},lists={},topo={};const add=(k,w,o)=>{(lists[k]=lists[k]||[]).push([w.id,o]);area[k]=(area[k]||0)+Math.PI/4*wireOD(w)**2;};
  for(const w of model.wires){const A=tposU(w.a),B=tposU(w.b);if(!A||!B)continue;if(w.route==='direct'){topo[w.id]={direct:1};continue;}if(A.g==='rk'&&B.g==='rk'&&w.route!=='L'&&w.route!=='R'){topo[w.id]={org:1};continue;}let side=null;if(A.g!==B.g||A.g==='rk')side=(w.route==='L'||w.route==='R')?w.route:((A.u+B.u)/2<RACKW/U/2)?'L':'R';topo[w.id]={side};if(A.g!=='rk')add(A.g,w,A.u);if(B.g!=='rk'&&B.g!==A.g)add(B.g,w,B.u);if(A.g==='rk')add('rk',w,A.u);if(side)add(side,w,Math.min(A.gi,B.gi)*1000+(side==='L'?-1:1)*Math.max(A.u,B.u));}
@@ -3020,7 +3023,7 @@ function freeFinish(L){const cfg=model.cfg;L.free=true;const FD=model.fducts||[]
  for(const d of FD){maxX=Math.max(maxX,d.dir==='h'?d.x2:d.x+d.w/2);maxY=Math.max(maxY,d.dir==='h'?d.y+d.w/2:d.y2);}
  for(const c of model.comps)if(c.zone==='panel'&&plateB&&c.band===plateB.id){maxX=Math.max(maxX,c.x*U+WPX(c));maxY=Math.max(maxY,(+c.py||0)+H(c));}
  const BM=boxM();let box=L.box;const fx=cfg.boxFix;const D=box?box.d:150;
- if(fx&&+fx.h>0&&+fx.w>0)box={h:+fx.h,w:+fx.w,d:+fx.d||D,std:true,fixed:true};else{const MB=model.freeMinBox||{h:0,w:0};const bb=BOXES.find(([h,w])=>h-2*BM>=maxY-.5&&w-2*BM>=maxX-.5&&h>=MB.h&&w>=MB.w);box=bb?{h:bb[0],w:bb[1],d:D,std:true}:{h:Math.ceil((maxY+2*BM)/100)*100,w:Math.ceil((maxX+2*BM)/100)*100,d:D,std:false};}
+ if(fx&&+fx.h>0&&+fx.w>0)box={h:+fx.h,w:+fx.w,d:+fx.d||D,std:true,fixed:true};else{const MB=model.freeMinBox||{h:0,w:0};const bb=BOXES.find(([h,w])=>h-2*BM>=maxY-.5&&w-2*BM>=maxX-.5&&(h-2*BM)*(w-2*BM)>=maxY*maxX*RESERVE&&h>=MB.h&&w>=MB.w);box=bb?{h:bb[0],w:bb[1],d:D,std:true}:{h:Math.ceil((maxY*Math.sqrt(RESERVE)+2*BM)/100)*100,w:Math.ceil((maxX*Math.sqrt(RESERVE)+2*BM)/100)*100,d:D,std:false};}
  const PW=box.w-2*BM,PH=box.h-2*BM;const bx=(box.w-PW)/2,by=(box.h-PH)/2,BW=box.w,BH=box.h;
  L.box=box;L.needW=maxX;L.needH=maxY;L.PW=PW;L.PH=PH;L.bx=bx;L.by=by;L.BW=BW;L.BH=BH;L.overflow=maxX>PW+1||maxY>PH+1;L.x0=0;L.innerW=PW;L.innerU=Math.floor(PW/U);L.hx1=0;L.hx2=PW;L.sTop=0;L.sBot=PH;
  L.bands=[];for(const b of model.bands){if(b.type==='din'){let h=MH;for(const c of model.comps)if(c.zone==='panel'&&c.band===b.id)h=Math.max(h,H(c));const len=+b.len>0?+b.len:300;cap[b.id]=Math.max(1,Math.floor(len/U+1e-6));L.bands.push({id:b.id,type:'din',top:+b.fy-h/2,h,cy:+b.fy,i:L.bands.length,off:+b.fx,gt:30,gb:30,railLen:len,full:false});}
