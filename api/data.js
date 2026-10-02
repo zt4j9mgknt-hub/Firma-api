@@ -70,7 +70,7 @@ const CHEI_DOAR_MANAGER_SCRIE = new Set([
    căuta în cererile colegilor și nu are voie să-și aprobe singur concediul. Deci cheia
    rămâne deschisă la scriere, dar serverul compară ce era cu ce vine și acceptă doar
    modificări pe rândurile LUI, cu status „Cerut". */
-const CHEI_RANDURI_PROPRII = new Set(['concedii']);
+const CHEI_RANDURI_PROPRII = new Set(['concedii', 'prezenta']);
 
 /* Câte însemnări ținem în jurnal. 500 acoperă câteva luni de lucru normal. */
 const JURNAL_MAX = 500;
@@ -208,6 +208,58 @@ function pazaConcedii(vechi, nou, userId) {
   return null;
 }
 
+/* ===== PAZA PE PREZENȚĂ (sosire / plecare / poziție, cu locație) =====
+   Un rând de prezență e o dovadă: odată scris, nu se mai schimbă. Un NEmanager poate doar
+   ADĂUGA rânduri pe numele LUI. Ce lipsește din lista trimisă nu se pierde: pun la loc
+   (lista trimisă poate fi doar mai veche cu câteva secunde decât a colegului). Singurele
+   rânduri care au voie să dispară: pozițiile LUI de la 10 minute și ce e trecut de termenul
+   de păstrare. Întoarce { motiv } dacă e refuz, sau { lista } — lista care se scrie. */
+const PREZ_TIPURI = new Set(['sosire', 'plecare', 'pozitie']);
+const PREZ_POZITIE_MS = 14 * 864e5;
+const PREZ_MAX_MS = 400 * 864e5;
+function tsPrezenta(r) {
+  const t = Number(r && r.ts);
+  if (t > 0) return t;
+  const d = Date.parse(String((r && r.data) || '') + 'T12:00:00Z');
+  return d > 0 ? d : 0;
+}
+function prezentaExpirata(r, acum) {
+  const t = tsPrezenta(r);
+  if (!t) return false;
+  if (t < acum - PREZ_MAX_MS) return true;
+  return r.tip === 'pozitie' && t < acum - PREZ_POZITIE_MS;
+}
+/* Curățenia o face serverul pentru toată lumea, ca lista să nu crească la nesfârșit. */
+function curataPrezentaServer(lista, acum) {
+  return (Array.isArray(lista) ? lista : []).filter((r) => r && typeof r === 'object' && r.id != null && !prezentaExpirata(r, acum));
+}
+function pazaPrezenta(vechi, nou, userId, acum = Date.now()) {
+  if (!Array.isArray(nou)) return { motiv: 'Prezența trebuie trimisă ca listă.' };
+  const v = Array.isArray(vechi) ? vechi : [];
+  const alMeu = (r) => r && String(r.userId) === String(userId);
+  const dupaId = (l) => { const m = new Map(); l.forEach((r) => { if (r && r.id != null) m.set(String(r.id), r); }); return m; };
+  const mv = dupaId(v), mn = dupaId(nou);
+  for (const [id, rn] of mn) {
+    const rv = mv.get(id);
+    if (rv) {
+      // 1. Un rând deja scris nu se rescrie — nici al tău, nici al altcuiva.
+      if (JSON.stringify(rn) !== JSON.stringify(rv)) return { motiv: 'Prezența deja notată nu se poate modifica.' };
+      continue;
+    }
+    // 2. Rânduri noi: doar pe numele tău și doar de felul cunoscut.
+    if (!alMeu(rn)) return { motiv: 'Nu poți nota prezența în numele altcuiva.' };
+    if (!PREZ_TIPURI.has(String(rn.tip))) return { motiv: 'Fel de rând de prezență necunoscut.' };
+  }
+  // 3. Ce lipsește: pozițiile tale și ce a expirat pot pleca; restul se pune la loc.
+  const lista = nou.slice();
+  for (const [id, rv] of mv) {
+    if (mn.has(id)) continue;
+    const poatePleca = prezentaExpirata(rv, acum) || (alMeu(rv) && rv.tip === 'pozitie');
+    if (!poatePleca) lista.push(rv);
+  }
+  return { lista: curataPrezentaServer(lista, acum) };
+}
+
 /* ===== ROLUL ADEVĂRAT, NU CEL DIN BILET =====
    AICI AM GREȘIT IERI. Lacătul se uita la „rol" din biletul de acces — iar biletul ține
    30 DE ZILE. Deci un om logat de mult umblă cu un bilet vechi: dacă în el nu scrie rolul
@@ -313,13 +365,25 @@ export default async function handler(req, res) {
       if (CHEI_DOAR_MANAGER_SCRIE.has(key) && !eManager) return res.status(403).json({ error: 'Doar Managerul poate modifica asta.', interzis: true });
 
       // Concediile: omul își depune și își modifică DOAR cererea lui, și nu și-o aprobă singur.
+      // Prezența: omul doar ADAUGĂ rânduri pe numele lui; nimic deja scris nu se schimbă.
+      let deScris = value;
       if (CHEI_RANDURI_PROPRII.has(key) && !eManager) {
         const inainte = await redisGet(base, token, `firma:${key}`);
-        const motiv = pazaConcedii(inainte, value, auth.userId);
-        if (motiv) return res.status(403).json({ error: motiv, interzis: true });
+        if (key === 'prezenta') {
+          const rez = pazaPrezenta(inainte, value, auth.userId);
+          if (rez.motiv) return res.status(403).json({ error: rez.motiv, interzis: true });
+          deScris = rez.lista;
+        } else {
+          const motiv = pazaConcedii(inainte, value, auth.userId);
+          if (motiv) return res.status(403).json({ error: motiv, interzis: true });
+        }
+      } else if (key === 'prezenta') {
+        // Managerul n-are restricții, dar lista tot se curăță de ce a expirat.
+        if (!Array.isArray(value)) return res.status(400).json({ error: 'Prezența trebuie trimisă ca listă.' });
+        deScris = curataPrezentaServer(value, Date.now());
       }
 
-      const ok = await redisSet(base, token, `firma:${key}`, value);
+      const ok = await redisSet(base, token, `firma:${key}`, deScris);
 
       if (ok) {
         await scrieJurnal(base, token, {
@@ -327,8 +391,8 @@ export default async function handler(req, res) {
           uid: auth.userId || '',
           rol: rolReal || auth.rol || '',   // rolul adevărat, nu cel scris în biletul vechi
           cheie: key,
-          n: Array.isArray(value) ? value.length : (value && typeof value === 'object' ? Object.keys(value).length : 1),
-          octeti: JSON.stringify(value ?? null).length,
+          n: Array.isArray(deScris) ? deScris.length : (deScris && typeof deScris === 'object' ? Object.keys(deScris).length : 1),
+          octeti: JSON.stringify(deScris ?? null).length,
         });
         const p = getPusher();
         if (p) {
