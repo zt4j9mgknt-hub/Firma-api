@@ -1841,10 +1841,12 @@ const echipaUserIds = (echipa) => echipaNormalizata(echipa).map((e) => e.userId)
    sub cheile „tablouri” (lista) și „tablou_<id>” (fiecare tablou). */
 function TablouriFrame({ currentUser, onClose }) {
     window.__tablouriUser = currentUser ? { id: currentUser.id, nume: currentUser.nume, rol: currentUser.rol } : null;
-    window.__tablouriInchide = () => { window.__tablouriSantier = null; onClose(); };
+    window.__tablouriInchide = () => { window.__tablouriSantier = null; window.__tablouriTablou = null; onClose(); };
     const s = window.__tablouriSantier || '';
+    /* din codul QR lipit pe tablou: tablouri.html știe singur să deschidă ?tablou=<id> */
+    const t = window.__tablouriTablou || '';
     return React.createElement("div", { style: { position: 'fixed', inset: 0, zIndex: 300, background: '#F4F5F2' } },
-        React.createElement("iframe", { src: '/tablouri.html' + (s ? '?santier=' + encodeURIComponent(s) : ''), title: 'Tablouri', allow: 'camera; xr-spatial-tracking; fullscreen; autoplay', allowFullScreen: true, style: { width: '100%', height: '100%', border: 0, display: 'block' } }));
+        React.createElement("iframe", { src: '/tablouri.html' + (s ? '?santier=' + encodeURIComponent(s) + (t ? '&tablou=' + encodeURIComponent(t) : '') : ''), title: 'Tablouri', allow: 'camera; xr-spatial-tracking; fullscreen; autoplay', allowFullScreen: true, style: { width: '100%', height: '100%', border: 0, display: 'block' } }));
 }
 /* ═══ PROIECTE INSTALAȚII: proiectarea instalației electrice (fișierul proiecte.html) ═══
    Planuri, Plan 3D, plimbare și film, tablouri 3D, planșe A3, materiale, recepție.
@@ -2813,7 +2815,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.09-preturi-pv';
+const APP_VERSION = 'v04.10-portal-client';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -9530,7 +9532,7 @@ function SemneazaPvPeTelefon({ pv, company, currentUser, onSalvat, onInchide }) 
         pas === 1 && React.createElement(PadSemnaturaEcran, { key: "e", titlu: '✍ Executantul semnează · ' + ((company && company.nume) || ''), numeEticheta: "Numele executantului", nume: numeE, setNume: setNumeE, butonGata: "✓ Gata — salvează", onInapoi: () => setPas(0), onGata: finalizeaza }),
         pas === 2 && React.createElement("div", { className: "flex items-center justify-center text-sm", style: { position: 'absolute', inset: 0, color: 'var(--muted)' } }, stare)));
 }
-function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSantier, restanteSantier, setRestanteSantier, devize, proceseVerbale, setProceseVerbale, persist, currentUser, isManager, devizInitial }) {
+function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSantier, restanteSantier, setRestanteSantier, devize, proceseVerbale, setProceseVerbale, persist, currentUser, isManager, devizInitial, onPvSemnat }) {
     const [formOpen, setFormOpen] = useState(false);
     const [numeBenef, setNumeBenef] = useState(client?.persoana || santier?.benefResponsabil || '');
     const [calitate, setCalitate] = useState('Beneficiar');
@@ -9707,6 +9709,8 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
         catch (e) { tacut('pv-semnat-telefon', e); }
         setSemnezPv(null);
         arataSalvat(neincarcat ? '✅ PV semnat · semnăturile au rămas în document (fără net la încărcare)' : '✅ PV semnat de ambele părți');
+        if (onPvSemnat)
+            setTimeout(onPvSemnat, 600);   // lucrarea s-a predat — e momentul bun pentru o recenzie
     };
     /* 📧 Nu trimitem noi e-mailul (nu există rută de trimis): deschidem fereastra de tipar ca să
        salveze PDF-ul și programul de e-mail cu textul gata scris — atașarea o face omul. */
@@ -9757,6 +9761,11 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
             // semnăturile de pe telefon rămân cât timp semnătura beneficiarului nu s-a schimbat
             ...(vechi && !peTelefon && vechi.semnaturaExecutant && vechi.semnatura === semnatura
                 ? { semnaturaBeneficiar: vechi.semnaturaBeneficiar, semnaturaExecutant: vechi.semnaturaExecutant, status: vechi.status, semnatLa: vechi.semnatLa, semnatPeTelefon: vechi.semnatPeTelefon } : {}),
+            /* Ce a scris clientul la semnarea de la distanță e al LUI: o corectură de-a noastră nu-l
+               șterge. Urma semnării la distanță rămâne cât timp semnătura e tot aceea. */
+            ...(vechi && Array.isArray(vechi.obiectiuniClient) ? { obiectiuniClient: vechi.obiectiuniClient } : {}),
+            ...(vechi && vechi.semnatLaDistanta && !peTelefon && vechi.semnatura === semnatura
+                ? { semnatLaDistanta: true, semnatLa: vechi.semnatLa, semnatIp: vechi.semnatIp, semnatDispozitiv: vechi.semnatDispozitiv } : {}),
         };
         const noi = vechi ? (proceseVerbale || []).map((x) => (x.id === pv.id ? pv : x)) : [...(proceseVerbale || []), pv];
         setProceseVerbale(noi);
@@ -9778,6 +9787,9 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
             return;
         }
         printProcesVerbal({ pv, santier, client, company, lucrari: pv.lucrari, obiectiuni: pv.obiectiuni, executant: pv.creatDe });
+        /* semnat acum pe loc (nu o simplă corectură a unuia deja semnat) */
+        if (onPvSemnat && semnatura && (!vechi || vechi.semnatura !== semnatura))
+            setTimeout(onPvSemnat, 600);
     };
     return (React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         !formOpen && (React.createElement("button", { onClick: () => { setFormOpen(true); setStare(''); }, className: "w-full text-sm px-3 py-3 rounded-lg font-bold mb-3", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u270D\uFE0F Proces-verbal nou \u2014 semnat pe loc")),
@@ -10493,7 +10505,29 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
         setSantiere(next);
         persist('santiere', next);
         notifica('manageri', { title: 'Șantier finalizat', body: `${currentUser?.nume || 'Un coleg'} a marcat „${s0?.nume || 'un șantier'}" ca finalizat.`, tag: 'finalizat' }, currentUser?.id);
+        if (s0 && s0.status !== 'Finalizat')
+            setTimeout(() => cereRecenzieSantier(santierId), 300);
     };
+    /* ⭐ Recenzia și linkul clientului se scriu pe șantier din lista PROASPĂTĂ (ref), nu din cea
+       prinsă când s-a deschis fereastra — între timp s-ar fi putut salva altceva pe șantier. */
+    const santiereRef = useRef(santiere);
+    santiereRef.current = santiere;
+    const scrieSantier = (santierId, campuri) => {
+        const next = (santiereRef.current || []).map((x) => x.id === santierId ? { ...x, ...campuri } : x);
+        santiereRef.current = next;
+        setSantiere(next);
+        persist('santiere', next);
+    };
+    const cereRecenzieSantier = (santierId) => {
+        if (currentUser?.rol !== 'Manager')
+            return;
+        const sx = (santiereRef.current || []).find((x) => x.id === santierId);
+        if (!sx)
+            return;
+        const cl = (clients || []).find((c) => c.id === sx.benefClientId) || null;
+        cereRecenzie({ santier: sx, client: cl, company, onCerut: (la) => scrieSantier(santierId, { recenzieCerutaLa: la }) });
+    };
+    const [qrSantier, setQrSantier] = useState(null);
     const addToEchipa = (santierId, userId) => {
         const s = santiere.find((x) => x.id === santierId);
         const echipa = echipaNormalizata(s.echipa);
@@ -10514,7 +10548,7 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
         const vechi = santiere.find((x) => x.id === s.id) || null;
         /* „incasari" se scriu din ecranul șantierului, nu din formularul ăsta. Dacă n-ar fi
            trecute aici, o simplă editare a numelui le-ar șterge pe toate, fără un cuvânt. */
-        const CAMPURI_DIN_AFARA = ['ultimNrDeviz', 'lat', 'lng', 'locatieLa', 'finalizatDe', 'finalizatLa', 'statusSchimbatLa', 'incasari', 'lucrariMici', 'ultimaRevizie'];
+        const CAMPURI_DIN_AFARA = ['ultimNrDeviz', 'lat', 'lng', 'locatieLa', 'finalizatDe', 'finalizatLa', 'statusSchimbatLa', 'incasari', 'lucrariMici', 'ultimaRevizie', 'portalVersiune', 'portalReinnoitLa', 'recenzieCerutaLa'];
         const dinAfara = {};
         if (vechi)
             CAMPURI_DIN_AFARA.forEach((k) => {
@@ -10528,6 +10562,8 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
         setSantiere(next);
         persist('santiere', next);
         setForm(null);
+        if (vechi && vechi.status !== 'Finalizat' && s2.status === 'Finalizat')
+            setTimeout(() => cereRecenzieSantier(s2.id), 300);
     };
     const creeazaSantierRapid = () => {
         const nume = String(quickForm?.nume || '').trim();
@@ -10881,7 +10917,7 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
                     }
                 }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
             }, className: "w-full text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: pinLoading ? '#6b7683' : 'var(--acc1)' } }, pinLoading ? '⏳ Se caută locația...' : '📍 Ia coordonatele actuale'), pinCoords && (React.createElement("div", { className: "mt-3 rounded-lg p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Coordonatele tale acum (", pinCoords.method, ", ±", Math.round(pinCoords.accuracy), "m):"), React.createElement("div", { className: "text-lg", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, pinCoords.lat.toFixed(6), ", ", pinCoords.lng.toFixed(6)), React.createElement("button", { onClick: () => { setSantierLocatie(santier.id, pinCoords.lat, pinCoords.lng); setPinCoords(null); setPinStatus(''); setPinPanelOpen(false); }, className: "w-full mt-2 text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "💾 Salvează pin la aceste coordonate"))), santier?.lat && (React.createElement("div", { className: "mt-3 rounded-lg p-3", style: { background: 'rgba(76,175,125,.12)', border: '1px solid #4CAF7D66' } }, React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--acc2)' } }, "✅ Pin exact setat"), React.createElement("div", { className: "text-sm mb-2", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, Number(santier.lat).toFixed(6), ", ", Number(santier.lng).toFixed(6)), React.createElement("div", { className: "flex gap-1.5" }, React.createElement("a", { href: `https://www.google.com/maps/dir/?api=1&destination=${santier.lat},${santier.lng}`, target: "_blank", rel: "noopener noreferrer", className: "flex-1 text-center text-sm px-3 py-2 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc2)' } }, "🧭 Deschide navigația"), React.createElement("button", { onClick: () => { setSantierLocatie(santier.id, null, null); setPinCoords(null); setPinStatus('Pin șters — navigația va folosi din nou adresa text.'); }, className: "text-sm px-3 py-2 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525244' } }, "Șterge")))), pinStatus && React.createElement("p", { className: "text-sm mt-2 font-medium", style: { color: pinStatus.startsWith('Nu am putut') ? 'var(--acc4)' : 'var(--text)' } }, pinStatus)))))), React.createElement("div", { className: "space-y-1.5" }), siteView === '__closed__' && !reportForm && (React.createElement("button", { onClick: () => setReportForm({}), className: "w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Raport zilnic nou")), /* SECȚIUNILE, PE TREI RAFTURI: ce faci azi, ce citești, ce administrează managerul.
-                   Fiecare secțiune își păstrează id-ul, numărul și drepturile — s-a schimbat doar ordinea. */ siteView === '__closed__' && grupSectiuni("Azi pe șantier"), accHeader('rapoarte', '📋', 'Rapoarte zilnice', rapoarteSantier.length), ((!RESTANTE_DOAR_MANAGER || currentUser?.rol === 'Manager') ? accHeader('restante', '🔴', 'Restanțe / De rezolvat', ((restanteSantier || []).filter((r) => r.santierId === selected && !r.rezolvat && !r.sters).length || null), true) : null), accHeader('probleme', '❓', 'Întrebări și probleme', (problemeSantier.filter((p) => p.santierId === selected && (currentUser?.rol === 'Manager' ? !raspunsCorectQA(p) : raspunsuriQA(p).length === 0)).length || null)), accHeader('media', '📸', 'Foto / Video', (mediaSantier.filter((x) => x.santierId === selected).length || null)), accHeader('materiale', '📦', 'Materiale', (miscariSantier.filter((m) => m.santierId === selected).length || null)), accHeader('scule', '🔧', 'Scule', (sculeSantier.filter((x) => x.santierId === selected).length || null)), !esteMgrS ? (accHeader('echipa', '👥', 'Echipă', echipaNormalizata(santier?.echipa).length)) : null, !esteMgrS ? ((!TIMPI_MORTI_DOAR_MANAGER || currentUser?.rol === 'Manager') && accHeader('timpimorti', '⏱', 'Timpi morți', ((rapoarte || []).filter((r) => r.santierId === selected).reduce((sTM, r) => sTM + ((r.timpNeproductiv || []).filter((t) => minutePierduteRand(t) > 0).length), 0) || null))) : null, siteView === '__closed__' && grupSectiuni("Documente"), accHeader('planse', '📐', 'Planșe', (planseSantier.filter((x) => x.santierId === selected).length || null)), accHeader('pv', '📜', 'Proces-verbal', ((proceseVerbale || []).filter((x) => String(x.santierId) === String(selected)).length || null)), accHeader('checklist', '✅', 'Checklist', (checklistSantier.filter((x) => x.santierId === selected).length || null)), siteView === '__closed__' && React.createElement("button", { onClick: () => { window.__instalatiiSantier = selected; setTab('instalatii'); }, className: "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1.5 font-medium", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' } }, "\uD83D\uDCD0 Proiect instalație: planuri, 3D, plimbare, planșe ↗"), siteView === '__closed__' && React.createElement("button", { onClick: () => { window.__tablouriSantier = selected; setTab('tablouri'); }, className: "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1.5 font-medium", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' } }, "\u26A1 Tablouri electrice, media și rack-uri ↗"), esteMgrS && siteView === '__closed__' && React.createElement("button", { onClick: situatieSaptamanala, "data-act": "situatie-saptamanala", className: "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1.5 font-medium", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' } }, "🗓 Situație săptămânală (PDF)"), !esteMgrS ? (accHeader('structura', '🏢', 'Structură — etaje', (structuraSantier.filter((x) => x.santierId === selected).length || null))) : null, !esteMgrS ? (accHeader('devizpoz', '📋', 'Poziții / Materiale', ((pozitiiSantier.filter((x) => x.santierId === selected).length + materialeListaSantier.filter((x) => x.santierId === selected).length) || null))) : null, esteMgrS && siteView === '__closed__' && grupSectiuni("Administrare"), /* 💹 profitul șantierului, primul la Administrare — doar managerul */ esteMgrS && siteView === '__closed__' && currentUser?.rol === 'Manager' && santier && React.createElement(BaraProfitSantier, { key: 'profit-santier', santier, devize, offers, invoices, rapoarte, stockMoves, materials, company, santiere }),esteMgrS ? (accHeader('echipa', '👥', 'Echipă', echipaNormalizata(santier?.echipa).length)) : null, esteMgrS ? (accHeader('structura', '🏢', 'Structură — etaje', (structuraSantier.filter((x) => x.santierId === selected).length || null))) : null, esteMgrS ? (accHeader('devizpoz', '📋', 'Poziții / Materiale', ((pozitiiSantier.filter((x) => x.santierId === selected).length + materialeListaSantier.filter((x) => x.santierId === selected).length) || null))) : null, currentUser?.rol === 'Manager' && accHeader('incasari', '💵', 'Încasări (numerar / factură)', (incasariSantier(santier).length || null)), esteMgrS ? ((!TIMPI_MORTI_DOAR_MANAGER || currentUser?.rol === 'Manager') && accHeader('timpimorti', '⏱', 'Timpi morți', ((rapoarte || []).filter((r) => r.santierId === selected).reduce((sTM, r) => sTM + ((r.timpNeproductiv || []).filter((t) => minutePierduteRand(t) > 0).length), 0) || null))) : null, esteMgrS ? accHeader('deviz', '🧾', 'Deviz / facturare', ((devize || []).filter((d) => d.santierId === selected).length || null)) : null, siteView === 'rapoarte' && !reportForm && React.createElement(CardPrezenta, { santierId: santier?.id, compact: true }), siteView === 'rapoarte' && !reportForm && (React.createElement("button", { onClick: () => setReportForm({}), className: "w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Raport zilnic nou")), siteView === 'rapoarte' && React.createElement(HelpNote, { text: HELP.rapoarte, isManager: currentUser?.rol === 'Manager' }), siteView === 'rapoarte' && (React.createElement(React.Fragment, null, currentUser?.rol === 'Manager' && (React.createElement("div", { className: "flex items-center gap-2 mb-4 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Raport pentru perioada:"), React.createElement(RoCalendarPicker, { value: exportFrom, onChange: setExportFrom }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "—"), React.createElement(RoCalendarPicker, { value: exportTo, onChange: setExportTo }), React.createElement("button", { onClick: () => exportExcel(selected, unificaRapoarte(rapoarte).filter((r) => r.santierId === selected), etapeSantier), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "📊 Exportă Excel"), rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)).some((r) => (r.materialeFolosite || []).length > 0) && (React.createElement("button", { onClick: () => onExportMaterialeFolosite(rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)), santier?.nume), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc2)' } }, "🧾 Exportă materiale folosite în Deviz")))), /* Devizul are acum secțiunea lui, la Administrare — aici doar drumul spre el. */ currentUser?.rol === 'Manager' && React.createElement("button", { onClick: () => navTo('deviz'), className: "w-full text-left text-sm px-3 py-2 rounded-lg mb-3 font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "🧾 Deviz / facturare →"), (() => {
+                   Fiecare secțiune își păstrează id-ul, numărul și drepturile — s-a schimbat doar ordinea. */ siteView === '__closed__' && grupSectiuni("Azi pe șantier"), accHeader('rapoarte', '📋', 'Rapoarte zilnice', rapoarteSantier.length), ((!RESTANTE_DOAR_MANAGER || currentUser?.rol === 'Manager') ? accHeader('restante', '🔴', 'Restanțe / De rezolvat', ((restanteSantier || []).filter((r) => r.santierId === selected && !r.rezolvat && !r.sters).length || null), true) : null), accHeader('probleme', '❓', 'Întrebări și probleme', (problemeSantier.filter((p) => p.santierId === selected && (currentUser?.rol === 'Manager' ? !raspunsCorectQA(p) : raspunsuriQA(p).length === 0)).length || null)), accHeader('media', '📸', 'Foto / Video', (mediaSantier.filter((x) => x.santierId === selected).length || null)), accHeader('materiale', '📦', 'Materiale', (miscariSantier.filter((m) => m.santierId === selected).length || null)), accHeader('scule', '🔧', 'Scule', (sculeSantier.filter((x) => x.santierId === selected).length || null)), !esteMgrS ? (accHeader('echipa', '👥', 'Echipă', echipaNormalizata(santier?.echipa).length)) : null, !esteMgrS ? ((!TIMPI_MORTI_DOAR_MANAGER || currentUser?.rol === 'Manager') && accHeader('timpimorti', '⏱', 'Timpi morți', ((rapoarte || []).filter((r) => r.santierId === selected).reduce((sTM, r) => sTM + ((r.timpNeproductiv || []).filter((t) => minutePierduteRand(t) > 0).length), 0) || null))) : null, siteView === '__closed__' && grupSectiuni("Documente"), accHeader('planse', '📐', 'Planșe', (planseSantier.filter((x) => x.santierId === selected).length || null)), accHeader('pv', '📜', 'Proces-verbal', ((proceseVerbale || []).filter((x) => String(x.santierId) === String(selected)).length || null)), accHeader('checklist', '✅', 'Checklist', (checklistSantier.filter((x) => x.santierId === selected).length || null)), siteView === '__closed__' && React.createElement("button", { onClick: () => { window.__instalatiiSantier = selected; setTab('instalatii'); }, className: "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1.5 font-medium", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' } }, "\uD83D\uDCD0 Proiect instalație: planuri, 3D, plimbare, planșe ↗"), siteView === '__closed__' && React.createElement("button", { onClick: () => { window.__tablouriSantier = selected; setTab('tablouri'); }, className: "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1.5 font-medium", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' } }, "\u26A1 Tablouri electrice, media și rack-uri ↗"), /* 🔳 cod QR de lipit pe șantier și pe fiecare tablou */ siteView === '__closed__' && santier && React.createElement("button", { onClick: () => setQrSantier(santier), "data-act": "qr-santier", className: "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1.5 font-medium", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' } }, "🔳 Cod QR — șantier și tablouri"), /* 🔗 pagina lucrării pentru client — doar Managerul */ esteMgrS && siteView === '__closed__' && santier && React.createElement(PortalClientSantier, { key: 'portal-' + santier.id, santier, company, client: (clients || []).find((c) => c.id === santier.benefClientId) || null, onVersiune: (v) => scrieSantier(santier.id, { portalVersiune: v, portalReinnoitLa: new Date().toISOString() }) }), qrSantier && React.createElement(FereastraQrSantier, { santier: qrSantier, company, onInchide: () => setQrSantier(null) }), esteMgrS && siteView === '__closed__' && React.createElement("button", { onClick: situatieSaptamanala, "data-act": "situatie-saptamanala", className: "w-full text-left text-sm px-3 py-2.5 rounded-lg mb-1.5 font-medium", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)' } }, "🗓 Situație săptămânală (PDF)"), !esteMgrS ? (accHeader('structura', '🏢', 'Structură — etaje', (structuraSantier.filter((x) => x.santierId === selected).length || null))) : null, !esteMgrS ? (accHeader('devizpoz', '📋', 'Poziții / Materiale', ((pozitiiSantier.filter((x) => x.santierId === selected).length + materialeListaSantier.filter((x) => x.santierId === selected).length) || null))) : null, esteMgrS && siteView === '__closed__' && grupSectiuni("Administrare"), /* 💹 profitul șantierului, primul la Administrare — doar managerul */ esteMgrS && siteView === '__closed__' && currentUser?.rol === 'Manager' && santier && React.createElement(BaraProfitSantier, { key: 'profit-santier', santier, devize, offers, invoices, rapoarte, stockMoves, materials, company, santiere }),esteMgrS ? (accHeader('echipa', '👥', 'Echipă', echipaNormalizata(santier?.echipa).length)) : null, esteMgrS ? (accHeader('structura', '🏢', 'Structură — etaje', (structuraSantier.filter((x) => x.santierId === selected).length || null))) : null, esteMgrS ? (accHeader('devizpoz', '📋', 'Poziții / Materiale', ((pozitiiSantier.filter((x) => x.santierId === selected).length + materialeListaSantier.filter((x) => x.santierId === selected).length) || null))) : null, currentUser?.rol === 'Manager' && accHeader('incasari', '💵', 'Încasări (numerar / factură)', (incasariSantier(santier).length || null)), esteMgrS ? ((!TIMPI_MORTI_DOAR_MANAGER || currentUser?.rol === 'Manager') && accHeader('timpimorti', '⏱', 'Timpi morți', ((rapoarte || []).filter((r) => r.santierId === selected).reduce((sTM, r) => sTM + ((r.timpNeproductiv || []).filter((t) => minutePierduteRand(t) > 0).length), 0) || null))) : null, esteMgrS ? accHeader('deviz', '🧾', 'Deviz / facturare', ((devize || []).filter((d) => d.santierId === selected).length || null)) : null, siteView === 'rapoarte' && !reportForm && React.createElement(CardPrezenta, { santierId: santier?.id, compact: true }), siteView === 'rapoarte' && !reportForm && (React.createElement("button", { onClick: () => setReportForm({}), className: "w-full flex items-center justify-center gap-2 text-base px-4 py-3 rounded-xl font-semibold mb-4", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Raport zilnic nou")), siteView === 'rapoarte' && React.createElement(HelpNote, { text: HELP.rapoarte, isManager: currentUser?.rol === 'Manager' }), siteView === 'rapoarte' && (React.createElement(React.Fragment, null, currentUser?.rol === 'Manager' && (React.createElement("div", { className: "flex items-center gap-2 mb-4 flex-wrap" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Raport pentru perioada:"), React.createElement(RoCalendarPicker, { value: exportFrom, onChange: setExportFrom }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "—"), React.createElement(RoCalendarPicker, { value: exportTo, onChange: setExportTo }), React.createElement("button", { onClick: () => exportExcel(selected, unificaRapoarte(rapoarte).filter((r) => r.santierId === selected), etapeSantier), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "📊 Exportă Excel"), rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)).some((r) => (r.materialeFolosite || []).length > 0) && (React.createElement("button", { onClick: () => onExportMaterialeFolosite(rapoarte.filter((r) => r.santierId === selected && (!exportFrom || r.data >= exportFrom) && (!exportTo || r.data <= exportTo)), santier?.nume), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc2)' } }, "🧾 Exportă materiale folosite în Deviz")))), /* Devizul are acum secțiunea lui, la Administrare — aici doar drumul spre el. */ currentUser?.rol === 'Manager' && React.createElement("button", { onClick: () => navTo('deviz'), className: "w-full text-left text-sm px-3 py-2 rounded-lg mb-3 font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "🧾 Deviz / facturare →"), (() => {
             const normT = (x) => String(x == null ? '' : x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
                 .replace(/,/g, '.').replace(/\s+/g, ' ').trim();
             const textRaport = (r) => {
@@ -10980,7 +11016,7 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
                 navTo('rapoarte');
                 setLunaFolder(null);
                 setRaportFull({ r: r0, lista: alSau.map((x) => x.id) });
-            } } })), siteView === 'materiale' && React.createElement(HelpNote, { text: HELP.materiale, isManager: currentUser?.rol === 'Manager' }), siteView === 'materiale' && (React.createElement(SiteMaterialsTab, { santierId: selected, santierNume: santier?.nume || '', company: company, materials: materials, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, persist: persist, onExportToDeviz: onExportToDeviz, onCerereMaterial: onCerereMaterial, currentUser: currentUser })), siteView === 'scule' && React.createElement(HelpNote, { text: HELP.scule, isManager: currentUser?.rol === 'Manager' }), siteView === 'scule' && (React.createElement(SiteToolsTab, { santierId: selected, santierNume: santier?.nume || '', sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, persist: persist, currentUser: currentUser })), siteView === 'planse' && React.createElement(HelpNote, { text: HELP.planse, isManager: currentUser?.rol === 'Manager' }), siteView === 'planse' && (React.createElement(SitePlanseTab, { santierId: selected, santierNume: santier?.nume || '', planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, persist: persist, currentUser: currentUser })), siteView === 'media' && React.createElement(HelpNote, { text: HELP.media, isManager: currentUser?.rol === 'Manager' }), siteView === 'media' && (React.createElement(SiteMediaTab, { santierId: selected, santierNume: santier?.nume || '', mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, persist: persist, currentUser: currentUser })), siteView === 'checklist' && React.createElement(HelpNote, { text: HELP.checklist, isManager: currentUser?.rol === 'Manager' }), siteView === 'checklist' && (React.createElement(ChecklistTab, { santier: santier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected), pozitii: pozitiiSantier.filter((p) => p.santierId === selected), cereri: cereriSantier.filter((c) => c.santierId === selected), materials: materials, sculeSantier: sculeSantier, rapoarte: rapoarte, allUsers: allUsers, currentUser: currentUser, isManager: currentUser?.rol === 'Manager', persist: persist, onFinalizeSantier: finalizeSantier })), siteView === 'pv' && (React.createElement(SitePvTab, { santierId: selected, santier: santier, client: (clients || []).find((c) => c.id === santier?.benefClientId) || null, company: company, rapoarte: rapoarte, pozitiiSantier: pozitiiSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, devize: devize, devizInitial: pvDinDeviz, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, persist: persist, currentUser: currentUser, isManager: currentUser?.rol === 'Manager' })), siteView === 'probleme' && React.createElement(HelpNote, { text: HELP.probleme, isManager: currentUser?.rol === 'Manager' }), siteView === 'probleme' && (React.createElement(SiteProblemeTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, persist: persist, currentUser: currentUser })), siteView === 'restante' && (!RESTANTE_DOAR_MANAGER || currentUser?.rol === 'Manager') && (React.createElement(SiteRestanteTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), restante: restanteSantier, setRestante: setRestanteSantier, structura: structuraSantier.filter((e) => e.santierId === selected), persist: persist, currentUser: currentUser, mediaSantier: mediaSantier })), siteView === 'echipa' && React.createElement(HelpNote, { text: HELP.echipa, isManager: currentUser?.rol === 'Manager' }), siteView === 'echipa' && (currentUser?.rol === 'Manager' ? (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-2" }, React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "Echipă asignată"), React.createElement("button", { onClick: () => setTeamPickerOpen(!teamPickerOpen), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, teamPickerOpen ? 'Închide' : '+ Asignează')), React.createElement("div", { className: "space-y-1 mb-2" }, echipaNormalizata(santier?.echipa).length === 0 && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun electrician asignat."), echipaNormalizata(santier?.echipa).map((e) => {
+            } } })), siteView === 'materiale' && React.createElement(HelpNote, { text: HELP.materiale, isManager: currentUser?.rol === 'Manager' }), siteView === 'materiale' && (React.createElement(SiteMaterialsTab, { santierId: selected, santierNume: santier?.nume || '', company: company, materials: materials, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, persist: persist, onExportToDeviz: onExportToDeviz, onCerereMaterial: onCerereMaterial, currentUser: currentUser })), siteView === 'scule' && React.createElement(HelpNote, { text: HELP.scule, isManager: currentUser?.rol === 'Manager' }), siteView === 'scule' && (React.createElement(SiteToolsTab, { santierId: selected, santierNume: santier?.nume || '', sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, persist: persist, currentUser: currentUser })), siteView === 'planse' && React.createElement(HelpNote, { text: HELP.planse, isManager: currentUser?.rol === 'Manager' }), siteView === 'planse' && (React.createElement(SitePlanseTab, { santierId: selected, santierNume: santier?.nume || '', planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, persist: persist, currentUser: currentUser })), siteView === 'media' && React.createElement(HelpNote, { text: HELP.media, isManager: currentUser?.rol === 'Manager' }), siteView === 'media' && (React.createElement(SiteMediaTab, { santierId: selected, santierNume: santier?.nume || '', mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, persist: persist, currentUser: currentUser })), siteView === 'checklist' && React.createElement(HelpNote, { text: HELP.checklist, isManager: currentUser?.rol === 'Manager' }), siteView === 'checklist' && (React.createElement(ChecklistTab, { santier: santier, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, materialeLista: materialeListaSantier.filter((m) => m.santierId === selected), pozitii: pozitiiSantier.filter((p) => p.santierId === selected), cereri: cereriSantier.filter((c) => c.santierId === selected), materials: materials, sculeSantier: sculeSantier, rapoarte: rapoarte, allUsers: allUsers, currentUser: currentUser, isManager: currentUser?.rol === 'Manager', persist: persist, onFinalizeSantier: finalizeSantier })), siteView === 'pv' && (React.createElement(SitePvTab, { santierId: selected, santier: santier, client: (clients || []).find((c) => c.id === santier?.benefClientId) || null, company: company, rapoarte: rapoarte, pozitiiSantier: pozitiiSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, devize: devize, devizInitial: pvDinDeviz, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, persist: persist, currentUser: currentUser, isManager: currentUser?.rol === 'Manager', onPvSemnat: () => cereRecenzieSantier(selected) })), siteView === 'probleme' && React.createElement(HelpNote, { text: HELP.probleme, isManager: currentUser?.rol === 'Manager' }), siteView === 'probleme' && (React.createElement(SiteProblemeTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, persist: persist, currentUser: currentUser })), siteView === 'restante' && (!RESTANTE_DOAR_MANAGER || currentUser?.rol === 'Manager') && (React.createElement(SiteRestanteTab, { santierId: selected, santierNume: santier?.nume || '', echipaIds: echipaUserIds(santier?.echipa), restante: restanteSantier, setRestante: setRestanteSantier, structura: structuraSantier.filter((e) => e.santierId === selected), persist: persist, currentUser: currentUser, mediaSantier: mediaSantier })), siteView === 'echipa' && React.createElement(HelpNote, { text: HELP.echipa, isManager: currentUser?.rol === 'Manager' }), siteView === 'echipa' && (currentUser?.rol === 'Manager' ? (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-2" }, React.createElement("div", { className: "text-sm font-medium", style: { color: 'var(--text)' } }, "Echipă asignată"), React.createElement("button", { onClick: () => setTeamPickerOpen(!teamPickerOpen), className: "text-sm px-3 py-1.5 rounded-lg font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, teamPickerOpen ? 'Închide' : '+ Asignează')), React.createElement("div", { className: "space-y-1 mb-2" }, echipaNormalizata(santier?.echipa).length === 0 && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun electrician asignat."), echipaNormalizata(santier?.echipa).map((e) => {
             const u = allUsers.find((x) => x.id === e.userId);
             return (React.createElement("div", { key: e.userId, className: "flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { style: { color: 'var(--text)' } }, "👷 ", u?.nume || '(cont șters)'), React.createElement("div", { className: "flex items-center gap-1" }, concediuActiv(concedii, { userId: e.userId, nume: u?.nume }, dataLocala(new Date())) && React.createElement("span", { className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: '#C08CE0', fontWeight: 700 } }, "🏖 Concediu"), u?.telefon && React.createElement("a", { href: `tel:${String(u.telefon).replace(/\s/g, '')}`, title: u.telefon, className: "px-2 py-0.5 rounded", style: { color: '#14181C', background: 'var(--acc2)' } }, "📞"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'activ'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'activ' ? '#14181C' : 'var(--muted)', background: e.status === 'activ' ? 'var(--acc2)' : 'var(--panel)' } }, "Activ"), React.createElement("button", { onClick: () => setEchipaMemberStatus(santier.id, e.userId, 'pauza'), className: "px-2 py-0.5 rounded", style: { color: e.status === 'pauza' ? '#14181C' : 'var(--muted)', background: e.status === 'pauza' ? 'var(--acc3)' : 'var(--panel)' } }, "Pauză"), React.createElement("button", { onClick: () => removeFromEchipa(santier.id, e.userId), style: { color: 'var(--acc4)', opacity: 0.8 } }, "✕"))));
         })), teamPickerOpen && (React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-2", style: { borderTop: '1px solid var(--border)' } }, allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Toți electricienii sunt deja asignați (sau nu există niciunul înregistrat).")) : allUsers.filter((u) => !inEchipa(santier?.echipa, u.id)).map((u) => (React.createElement("button", { key: u.id, onClick: () => addToEchipa(santier.id, u.id), className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "+ 👷 ", u.nume))))))) : (React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "Colegi asignați la acest șantier"), React.createElement("div", { className: "space-y-1" }, echipaNormalizata(santier?.echipa).length === 0 ? (React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Niciun coleg asignat.")) : echipaNormalizata(santier?.echipa).map((e) => {
@@ -18639,6 +18675,8 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
                 React.createElement("span", { className: "text-[10px]", style: { color: totalDeFacut > 0 ? 'var(--acc4)' : 'var(--muted2)' } }, totalDeFacut > 0 ? 'apasă să vezi lista' : 'deschide Activitatea mea')))));
 }
 const NOUTATI = [
+    { id: 'v0410-portal-client-v1', aud: 'manager', data: '02.10.2026', titlu: '🔗 v04.10: pagina lucrării pentru client, recenzii și coduri QR',
+        text: 'Pe șantier, la Documente → „🔗 Pagina pentru client”, îi trimiți beneficiarului pe WhatsApp un link unde vede, fără cont, stadiul lucrării, poze, ce mai e de rezolvat și facturile — fără nume de oameni și fără prețuri.\n\n⭐ După predare aplicația te întreabă dacă îi ceri clientului o recenzie Google (pune linkul în Firma mea → Date firmă), iar „🔳 Cod QR” face etichete de lipit pe șantier și pe tablouri.' },
     { id: 'v0409-preturi-pv-v1', aud: 'manager', data: '02.10.2026', titlu: '📥 v04.09: prețuri din oferta furnizorului și PV semnat pe telefon',
         text: 'La Materiale → „📥 Prețuri din oferta furnizorului” încarci Excelul primit (ex. Promelek), vezi ce material se potrivește și cât s-a scumpit, și actualizezi catalogul dintr-o apăsare — devizele pornesc de acum de la prețul nou.\n\n✍ Procesul-verbal se semnează pe tot ecranul telefonului, de beneficiar și de executant, iar „📧 Trimite clientului” deschide PDF-ul și e-mailul gata scris.' },
     { id: 'v0408-profit-cashflow-v1', aud: 'manager', data: '02.10.2026', titlu: '💹 v04.08: profitul pe șantier și banii pe 30 de zile',
@@ -21739,7 +21777,7 @@ function CompanyTab({ company, setCompany, persist, santiere, setSantiere, rapoa
        doar le-am împărțit pe file, ca pe telefon să nu mai fie un perete lung de câmpuri. */
     const GRUPE = [
         ['Identificare', [['nume', 'Denumire firmă'], ['cui', 'CUI'], ['regCom', 'Nr. Registrul Comerțului'], ['adresa', 'Adresă sediu']], 'date'],
-        ['Contact', [['email', 'E-mail'], ['telefon', 'Telefon'], ['administrator', 'Administrator (nume)'], ['emailContabil', 'E-mail contabilă (pentru concedii și adeverințe)']], 'date'],
+        ['Contact', [['email', 'E-mail'], ['telefon', 'Telefon'], ['administrator', 'Administrator (nume)'], ['emailContabil', 'E-mail contabilă (pentru concedii și adeverințe)'], ['linkRecenzieGoogle', 'Link recenzie Google (îl trimiți clientului după predare)']], 'date'],
         ['Facturare', [['iban', 'IBAN']], 'date'],
         ['Adaos', [['adaosMaterial', 'Adaos la materiale % (implicit 15)']], 'costuri'],
         ['Costuri (pentru Consilier)', [
@@ -27170,6 +27208,391 @@ function SculeGlobalTab({ sculeSantier, santiere }) {
                 React.createElement("span", { className: "text-[10px] px-2 py-0.5 rounded-full", style: { background: 'var(--panel2)', color: 'var(--muted2)' } }, sNume)));
         })))));
 }
+/* ═══ v04.10 · ⭐ RECENZIE GOOGLE DUPĂ PREDARE ═════════════════════════════════════
+   Momentul în care clientul e cel mai mulțumit e chiar la predare. Atunci întrebăm o dată
+   (șantier finalizat sau PV semnat) — și doar dacă firma și-a pus linkul în Date firmă.
+   Ținem minte pe șantier (recenzieCerutaLa) ca să nu-l batem la cap a doua oară. */
+const mesajRecenzie = (company, santier, link) => [
+    'Bună ziua!',
+    '',
+    'Vă mulțumim că ați ales ' + ((company && company.nume) || 'firma noastră') + (santier && santier.nume ? ' pentru lucrarea „' + santier.nume + '”' : '') + '.',
+    'Dacă sunteți mulțumit de lucrare, ne-ar ajuta mult o recenzie scurtă pe Google — durează un minut:',
+    link,
+    '',
+    'Cu respect,',
+    (company && company.nume) || '',
+].join('\n');
+async function cereRecenzie({ santier, client, company, onCerut }) {
+    const link = String((company && company.linkRecenzieGoogle) || '').trim();
+    if (!link || !santier || santier.recenzieCerutaLa)
+        return null;
+    const tel = telefonWa(client && client.telefon);
+    const email = String((client && client.email) || '').trim();
+    const r = await alege({ titlu: '⭐ Ceri o recenzie clientului?',
+        text: 'Lucrarea „' + (santier.nume || '') + '” s-a predat. Îi trimiți ' + ((client && client.nume) ? client.nume : 'beneficiarului') + ' un mesaj scurt, politicos, cu linkul de recenzie Google.',
+        variante: [{ valoare: 'wa', eticheta: '💬 WhatsApp' + (tel ? '' : ' (alegi tu contactul)'), principal: true },
+            { valoare: 'mail', eticheta: '✉️ E-mail' + (email ? '' : ' (scrii tu adresa)') },
+            { valoare: 'nu', eticheta: 'Mai târziu' }] });
+    const mesaj = mesajRecenzie(company, santier, link);
+    if (r === 'wa')
+        window.open('https://wa.me/' + tel + '?text=' + encodeURIComponent(mesaj), '_blank');
+    else if (r === 'mail') {
+        try {
+            const a = document.createElement('a');
+            a.href = 'mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent('Părerea dumneavoastră contează — ' + ((company && company.nume) || '')) + '&body=' + encodeURIComponent(mesaj);
+            a.setAttribute('data-mail-recenzie', '1');
+            a.click();
+        }
+        catch (e) { tacut('recenzie-mailto', e); }
+    }
+    else
+        return null;   // „Mai târziu": întrebăm din nou la următoarea predare
+    if (onCerut)
+        onCerut(new Date().toISOString());
+    return r;
+}
+/* ═══ v04.10 · 🔳 CODURI QR (șantier și tablou) ══════════════════════════════════════
+   Eticheta lipită pe ușa tabloului: electricianul o scanează și aplicația îl duce direct la
+   tabloul ăla (după logare). Biblioteca de QR (qrcodejs) se încarcă doar când e nevoie. */
+let __qrPromis = null;
+function incarcaQr() {
+    if (window.QRCode)
+        return Promise.resolve(window.QRCode);
+    if (__qrPromis)
+        return __qrPromis;
+    __qrPromis = new Promise((rez, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+        s.async = true;
+        s.onload = () => window.QRCode ? rez(window.QRCode) : rej(new Error('QR indisponibil'));
+        s.onerror = () => { __qrPromis = null; rej(new Error('Nu am putut încărca generatorul de coduri QR (fără net?).')); };
+        document.head.appendChild(s);
+    });
+    return __qrPromis;
+}
+const adresaQr = (santierId, tablouId) => window.location.origin + '/?santier=' + encodeURIComponent(santierId) + (tablouId ? '&tablou=' + encodeURIComponent(tablouId) : '');
+const escTipar = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function tiparesteEticheta({ qr, titlu, subtitlu, firma, format }) {
+    const a6 = format === 'a6';
+    /* 60×40 mm = eticheta de imprimantă termică; A6 = o foaie mică, de lipit pe ușă */
+    const html = `<!doctype html><html lang="ro"><head><meta charset="utf-8"><title>Etichetă QR — ${escTipar(titlu)}</title>
+<style>
+  @page { size: ${a6 ? '105mm 148mm' : '60mm 40mm'}; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; color: #111; font-family: Arial, Helvetica, sans-serif; }
+  .et { width: ${a6 ? '105mm' : '60mm'}; height: ${a6 ? '148mm' : '40mm'}; padding: ${a6 ? '10mm' : '2.5mm'}; display: flex; ${a6 ? 'flex-direction: column; align-items: center; justify-content: center; text-align: center;' : 'align-items: center; gap: 2.5mm;'} overflow: hidden; }
+  .et img { width: ${a6 ? '70mm' : '35mm'}; height: ${a6 ? '70mm' : '35mm'}; image-rendering: pixelated; flex: none; }
+  .t { font-weight: 700; font-size: ${a6 ? '16pt' : '8.5pt'}; line-height: 1.15; margin-top: ${a6 ? '6mm' : '0'}; word-break: break-word; }
+  .s { font-size: ${a6 ? '11pt' : '6.5pt'}; color: #333; margin-top: 1mm; word-break: break-word; }
+  .f { font-size: ${a6 ? '10pt' : '6pt'}; color: #555; margin-top: ${a6 ? '4mm' : '1.5mm'}; text-transform: uppercase; letter-spacing: .03em; }
+  .txt { min-width: 0; }
+</style></head><body><div class="et"><img src="${qr}" alt="cod QR"><div class="txt"><div class="t">${escTipar(titlu)}</div>${subtitlu ? `<div class="s">${escTipar(subtitlu)}</div>` : ''}<div class="f">${escTipar(firma || '')}</div>${a6 ? '<div class="s">Scanați cu telefonul — se deschide în aplicația firmei.</div>' : ''}</div></div>
+<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) {
+        window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.');
+        return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+}
+function CodQr({ text, marime }) {
+    const ref = useRef(null);
+    const [eroare, setEroare] = useState('');
+    useEffect(() => {
+        let viu = true;
+        setEroare('');
+        incarcaQr().then((QR) => {
+            if (!viu || !ref.current)
+                return;
+            ref.current.innerHTML = '';
+            new QR(ref.current, { text, width: marime || 220, height: marime || 220, colorDark: '#000000', colorLight: '#ffffff', correctLevel: QR.CorrectLevel.M });
+        }).catch((e) => { if (viu)
+            setEroare(e.message || 'Eroare la codul QR.'); });
+        return () => { viu = false; };
+    }, [text, marime]);
+    return React.createElement("div", { className: "flex flex-col items-center" },
+        React.createElement("div", { ref, "data-cod-qr": text, style: { background: '#fff', padding: 10, borderRadius: 10, minWidth: (marime || 220) + 20, minHeight: (marime || 220) + 20, display: 'flex', alignItems: 'center', justifyContent: 'center' } }),
+        eroare && React.createElement("div", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, eroare));
+}
+/* Fereastra cu codul QR: șantierul + fiecare tablou de pe el, cu tipar de etichetă. */
+function FereastraQrSantier({ santier, company, onInchide }) {
+    const [tablouri, setTablouri] = useState(null);
+    const [ales, setAles] = useState(null);   // null = șantierul; altfel id-ul tabloului
+    useInapoiTelefon(true, () => { onInchide(); return true; });
+    useEffect(() => {
+        let viu = true;
+        authFetch('/api/data?key=tablouri').then((r) => r.ok ? r.json() : { value: [] }).then((d) => {
+            if (viu)
+                setTablouri((Array.isArray(d && d.value) ? d.value : []).filter((x) => x && String(x.santierId) === String(santier.id)));
+        }).catch(() => { if (viu)
+            setTablouri([]); });
+        return () => { viu = false; };
+    }, [santier.id]);
+    const tablou = ales ? (tablouri || []).find((x) => x.id === ales) : null;
+    const text = adresaQr(santier.id, tablou ? tablou.id : null);
+    const titlu = tablou ? ((tablou.box === 'rack' ? '🗄 ' : '⚡ ') + (tablou.nume || 'Tablou')) : (santier.nume || 'Șantier');
+    const titluTipar = tablou ? (tablou.nume || 'Tablou') : (santier.nume || 'Șantier');
+    const subtitlu = tablou ? (santier.nume || '') : (santier.adresa || '');
+    const tipar = (format) => {
+        const c = document.querySelector('[data-fereastra-qr] [data-cod-qr] canvas');
+        const img = document.querySelector('[data-fereastra-qr] [data-cod-qr] img');
+        let qr = '';
+        try {
+            qr = c ? c.toDataURL('image/png') : (img && img.src) || '';
+        }
+        catch (e) { tacut('qr-tipar', e); }
+        if (!qr) {
+            window.alert('Codul QR nu e gata încă. Mai încearcă o dată.');
+            return;
+        }
+        tiparesteEticheta({ qr, titlu: titluTipar, subtitlu, firma: (company && company.nume) || '', format });
+    };
+    const chip = (id, eticheta) => React.createElement("button", { key: id || 'santier', onClick: () => setAles(id), "data-qr-alege": id || 'santier', className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold", style: { color: ales === id ? '#14181C' : 'var(--muted)', background: ales === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, eticheta);
+    return React.createElement("div", { "data-fereastra-qr": "1", style: { position: 'fixed', inset: 0, zIndex: 400, background: 'rgba(0,0,0,.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }, onClick: (e) => { if (e.target === e.currentTarget)
+            onInchide(); } },
+        React.createElement("div", { className: "rounded-xl p-4 w-full", style: { background: 'var(--panel)', border: '1px solid var(--border)', maxWidth: 380, maxHeight: '92vh', overflowY: 'auto' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2 mb-2" },
+                React.createElement("div", { className: "text-sm font-bold", style: { color: 'var(--text)' } }, "🔳 Cod QR"),
+                React.createElement("button", { onClick: onInchide, className: "text-xs px-2.5 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "✕ Închide")),
+            React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-3" },
+                chip(null, '🏗 Șantierul'),
+                tablouri === null ? React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "se caută tablourile…")
+                    : tablouri.map((t) => chip(t.id, (t.box === 'rack' ? '🗄 ' : '⚡ ') + (t.nume || 'Tablou')))),
+            React.createElement(CodQr, { text, marime: 220 }),
+            React.createElement("div", { className: "text-sm font-semibold text-center mt-2", style: { color: 'var(--text)' } }, titlu),
+            subtitlu && React.createElement("div", { className: "text-xs text-center", style: { color: 'var(--muted)' } }, subtitlu),
+            React.createElement("div", { className: "text-[11px] text-center mt-1 mb-3", style: { color: 'var(--muted2)', wordBreak: 'break-all' } }, text),
+            React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, tablou ? 'Scanat cu telefonul, deschide aplicația direct pe tabloul ăsta (după logare).' : 'Scanat cu telefonul, deschide aplicația direct pe șantier (după logare). Lipește-l la intrare sau în dosarul lucrării.'),
+            React.createElement("div", { className: "grid grid-cols-2 gap-2" },
+                React.createElement("button", { onClick: () => tipar('mic'), "data-act": "qr-tipar-mic", className: "btnPrim" }, "🖨 Etichetă 60×40"),
+                React.createElement("button", { onClick: () => tipar('a6'), "data-act": "qr-tipar-a6", className: "btnSec" }, "🖨 Foaie A6"))));
+}
+/* ═══ v04.10 · 🔗 PAGINA PENTRU CLIENT (partea Managerului, pe șantier) ═══════════════
+   Linkul îl face serverul (api/client.js), semnat — aici doar îl arătăm, îl copiem și îl
+   trimitem. „Link nou" crește versiunea de pe șantier: linkurile vechi nu mai deschid nimic. */
+function PortalClientSantier({ santier, client, company, onVersiune }) {
+    const [deschis, setDeschis] = useState(false);
+    const [link, setLink] = useState('');
+    const [expira, setExpira] = useState('');
+    const [stare, setStare] = useState('');
+    const [lucru, setLucru] = useState(false);
+    const cere = async (nou) => {
+        setLucru(true);
+        setStare(nou ? 'Fac linkul nou…' : 'Pregătesc linkul…');
+        try {
+            const r = await authFetch('/api/client?action=link&santier=' + encodeURIComponent(santier.id) + (nou ? '&nou=1&v=' + encodeURIComponent(Number(santier.portalVersiune) || 1) : ''));
+            const t = await r.text();
+            let d = {};
+            try {
+                d = JSON.parse(t);
+            }
+            catch (_) {
+                throw new Error('Fișierul „api/client.js" nu e pe server. Urcă-l în folderul „api".');
+            }
+            if (!r.ok)
+                throw new Error(d.error || 'Nu am putut face linkul.');
+            setLink(d.link || '');
+            setExpira(d.expira || '');
+            if (nou && onVersiune && d.versiune)
+                onVersiune(d.versiune);
+            setStare(nou ? '✅ Link nou făcut — cel vechi nu mai merge.' : '');
+        }
+        catch (e) {
+            setStare('⚠ ' + ((e && e.message) || 'Eroare.'));
+        }
+        setLucru(false);
+    };
+    const deschide = () => { setDeschis(!deschis); if (!deschis && !link)
+        cere(false); };
+    const tel = telefonWa(client && client.telefon);
+    const mesaj = [
+        'Bună ziua!',
+        '',
+        'Aici puteți urmări oricând lucrarea „' + (santier.nume || '') + '”: stadiul, pozele de pe șantier, ce mai e de rezolvat și documentele.',
+        link,
+        '',
+        'Cu respect,',
+        (company && company.nume) || '',
+        (company && company.telefon) ? 'Tel: ' + company.telefon : '',
+    ].join('\n').replace(/\n+$/, '');
+    const copiaza = async () => {
+        try {
+            await navigator.clipboard.writeText(link);
+            setStare('✅ Link copiat.');
+        }
+        catch (_) {
+            setStare('Selectează linkul și copiază-l cu mâna.');
+        }
+    };
+    const linkNou = () => {
+        if (!window.confirm('Faci un link nou pentru client?\n\nLinkul trimis până acum NU va mai funcționa — cine îl are vede doar că a fost înlocuit.'))
+            return;
+        cere(true);
+    };
+    const btn = { className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', textDecoration: 'none' } };
+    return React.createElement("div", { "data-portal-client": "1", className: "mb-1.5" },
+        React.createElement("button", { onClick: deschide, "data-act": "portal-client", className: "w-full text-left text-sm px-3 py-2.5 rounded-lg font-medium", style: { background: 'var(--panel)', border: '1px solid ' + (deschis ? 'var(--acc1)' : 'var(--border)'), color: 'var(--text)' } }, "🔗 Pagina pentru client " + (deschis ? '▴' : '▾')),
+        deschis && React.createElement("div", { className: "rounded-lg p-3 mt-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Beneficiarul deschide linkul pe telefon, fără cont: vede stadiul, ultimele lucrări, pozele, restanțele, procesele-verbale și facturile cu restul de plată. Nu vede nume de oameni și nici prețuri de manoperă."),
+            link ? React.createElement("div", { "data-portal-link": link, className: "rounded-lg px-2.5 py-2 text-xs mb-2", style: { background: 'var(--panel)', color: 'var(--muted)', wordBreak: 'break-all' } }, link) : null,
+            expira && React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, "Valabil până la " + fmtData(String(expira).slice(0, 10)) + '.'),
+            React.createElement("div", { className: "flex flex-wrap gap-2" },
+                link && React.createElement("button", Object.assign({}, btn, { onClick: copiaza, "data-act": "portal-copiaza", style: Object.assign({}, btn.style, { background: 'var(--acc1)' }) }), "📋 Copiază"),
+                link && React.createElement("a", Object.assign({}, btn, { href: 'https://wa.me/' + tel + '?text=' + encodeURIComponent(mesaj), target: '_blank', rel: 'noopener noreferrer', "data-act": "portal-whatsapp", style: Object.assign({}, btn.style, { background: 'var(--acc2)' }) }), "💬 Trimite pe WhatsApp"),
+                link && React.createElement("a", Object.assign({}, btn, { href: link, target: '_blank', rel: 'noopener noreferrer', style: Object.assign({}, btn.style, { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' }) }), "👁 Vezi pagina"),
+                React.createElement("button", { onClick: linkNou, disabled: lucru, "data-act": "portal-link-nou", className: "text-sm px-3 py-2 rounded-lg", style: { color: 'var(--acc3)', background: 'var(--panel)', border: '1px solid #E9A23B66' } }, "♻ Link nou (anulează vechiul)")),
+            !tel && link && React.createElement("div", { className: "text-[11px] mt-2", style: { color: 'var(--muted2)' } }, "Beneficiarul nu are telefon trecut — WhatsApp te lasă să alegi tu contactul."),
+            stare && React.createElement("div", { className: "text-xs mt-2", style: { color: stare.startsWith('✅') ? 'var(--acc2)' : (stare.startsWith('⚠') ? 'var(--acc4)' : 'var(--muted)') } }, stare)));
+}
+/* ═══ v04.10 · 📄 PAGINA LUCRĂRII (ce vede clientul, la /?client=<bilet>) ═════════════
+   Fără logare, fără meniu, temă deschisă, gândită pentru telefon. Toate datele vin de la
+   /api/client — serverul a ales deja ce are voie să vadă clientul; aici doar le așezăm. */
+function PaginaClient({ bilet }) {
+    const [date, setDate] = useState(null);
+    const [eroare, setEroare] = useState(null);
+    const [poza, setPoza] = useState(null);
+    const [toate, setToate] = useState(false);
+    useEffect(() => {
+        try {
+            document.body.style.background = '#F3F5F8';
+            document.documentElement.style.colorScheme = 'light';
+        }
+        catch (_) { }
+        let viu = true;
+        fetch('/api/client?action=date&t=' + encodeURIComponent(bilet), { cache: 'no-store' })
+            .then((r) => r.text().then((t) => { let d = {}; try {
+            d = JSON.parse(t);
+        }
+        catch (_) {
+            d = { error: 'Pagina nu poate fi încărcată acum. Încercați mai târziu.' };
+        } return { ok: r.ok, d }; }))
+            .then(({ ok, d }) => { if (!viu)
+            return; if (!ok || !d.ok) {
+            setEroare({ cod: d.cod || 'eroare', mesaj: d.error || 'Pagina nu poate fi încărcată acum.' });
+            try {
+                document.title = 'Pagina lucrării';
+            }
+            catch (_) { }
+        }
+        else {
+            setDate(d);
+            try {
+                document.title = (d.santier.nume || 'Lucrarea') + ' — ' + (d.firma.nume || '');
+            }
+            catch (_) { }
+        } })
+            .catch(() => { if (viu)
+            setEroare({ cod: 'retea', mesaj: 'Nu există conexiune la internet. Încercați din nou.' }); });
+        return () => { viu = false; };
+    }, [bilet]);
+    const C = { text: '#16202B', muted: '#5F6E80', border: '#DCE3EE', acc: '#1F6FB2', ok: '#2E8B57', warn: '#B7791F', bad: '#B03030' };
+    const card = (titlu, copii, atr) => React.createElement("section", { "data-sectiune": atr, style: { background: '#fff', border: '1px solid ' + C.border, borderRadius: 14, padding: 16, marginBottom: 12 } },
+        titlu && React.createElement("h2", { style: { fontSize: 16, fontWeight: 700, margin: '0 0 10px', color: C.text } }, titlu), copii);
+    const lei = (v) => (Number(v) || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' lei';
+    const zi = (iso) => fmtData(String(iso || '').slice(0, 10));
+    const ore = (v) => (Number(v) || 0).toLocaleString('ro-RO', { maximumFractionDigits: 1 });
+    const pagina = (copii) => React.createElement("div", { "data-pagina-client": "1", style: { minHeight: '100vh', background: '#F3F5F8', color: C.text, fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif", fontSize: 15, lineHeight: 1.5, overflowX: 'hidden' } },
+        React.createElement("div", { style: { maxWidth: 640, margin: '0 auto', padding: '16px 16px 32px' } }, ...(Array.isArray(copii) ? copii : [copii])));
+    if (eroare) {
+        const titluri = { expirat: '⏳ Linkul a expirat', anulat: '♻ Linkul a fost înlocuit', invalid: '🔒 Link nevalid', sters: 'Lucrarea nu mai e disponibilă', prea_des: 'Prea multe încercări', retea: 'Fără conexiune' };
+        return pagina(card(null, React.createElement("div", { "data-eroare-client": eroare.cod, style: { textAlign: 'center', padding: '20px 4px' } },
+            React.createElement("div", { style: { fontSize: 19, fontWeight: 700, marginBottom: 8 } }, titluri[eroare.cod] || 'Pagina nu se poate deschide'),
+            React.createElement("div", { style: { color: C.muted } }, eroare.mesaj),
+            React.createElement("div", { style: { color: C.muted, fontSize: 13, marginTop: 12 } }, "Dacă aveți nevoie de un link nou, contactați firma care execută lucrarea."))));
+    }
+    if (!date)
+        return pagina(React.createElement("div", { style: { textAlign: 'center', color: C.muted, padding: '60px 0' } }, "Se încarcă pagina lucrării…"));
+    const f = date.firma || {}, s = date.santier || {}, st = date.stadiu || {}, doc = date.documente || {};
+    const wa = telefonWa(f.telefon);
+    const btnContact = (href, eticheta, culoare, atr) => React.createElement("a", { href, target: href.startsWith('http') ? '_blank' : undefined, rel: 'noopener noreferrer', "data-contact": atr, style: { flex: '1 1 0', minWidth: 0, textAlign: 'center', padding: '11px 6px', borderRadius: 12, background: culoare, color: '#fff', fontWeight: 700, fontSize: 14, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, eticheta);
+    const culoareStatus = s.status === 'Finalizat' ? C.ok : (s.status === 'Pauză' ? C.warn : C.acc);
+    const cifra = (val, eticheta) => React.createElement("div", { style: { flex: '1 1 0', minWidth: 0, background: '#F3F6FA', borderRadius: 12, padding: '10px 6px', textAlign: 'center' } },
+        React.createElement("div", { style: { fontSize: 19, fontWeight: 800, color: C.text } }, val),
+        React.createElement("div", { style: { fontSize: 12, color: C.muted } }, eticheta));
+    const lucrari = date.lucrari || [];
+    const lucrariVazute = toate ? lucrari : lucrari.slice(0, 10);
+    const azi = dataLocala(new Date());
+    const rand = (stanga, dreapta, sub, culoareDreapta, atr) => React.createElement("div", { key: atr, "data-rand": atr, style: { padding: '9px 0', borderTop: '1px solid #EEF2F7' } },
+        React.createElement("div", { style: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' } },
+            React.createElement("span", { style: { fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere' } }, stanga),
+            React.createElement("span", { style: { fontWeight: 700, color: culoareDreapta || C.text, whiteSpace: 'nowrap' } }, dreapta)),
+        sub && React.createElement("div", { style: { fontSize: 13, color: C.muted } }, sub));
+    return pagina([
+        React.createElement("header", { key: 'h', style: { background: '#fff', border: '1px solid ' + C.border, borderRadius: 14, padding: 16, marginBottom: 12 } },
+            React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 12 } },
+                React.createElement("img", { src: f.logo || '/logo.png', alt: '', style: { height: 44, width: 'auto', maxWidth: 120, objectFit: 'contain', flex: 'none' }, onError: (e) => { e.currentTarget.style.display = 'none'; } }),
+                React.createElement("div", { style: { minWidth: 0 } },
+                    React.createElement("div", { style: { fontWeight: 800, fontSize: 16, overflowWrap: 'anywhere' } }, f.nume || ''),
+                    React.createElement("div", { style: { fontSize: 13, color: C.muted } }, "Pagina lucrării"))),
+            (f.telefon || f.email) && React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 12 } },
+                f.telefon && btnContact('tel:' + String(f.telefon).replace(/[^\d+]/g, ''), '📞 Sună', C.acc, 'tel'),
+                wa && btnContact('https://wa.me/' + wa, 'WhatsApp', '#25A35A', 'wa'),
+                f.email && btnContact('mailto:' + f.email, '✉️ E-mail', '#5A6B7F', 'email'))),
+        card(null, [
+            React.createElement("div", { key: 'n', style: { display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' } },
+                React.createElement("h1", { style: { fontSize: 20, fontWeight: 800, margin: 0, overflowWrap: 'anywhere', minWidth: 0 } }, s.nume || 'Lucrarea'),
+                s.status && React.createElement("span", { style: { flex: 'none', fontSize: 12, fontWeight: 700, color: '#fff', background: culoareStatus, borderRadius: 999, padding: '3px 10px' } }, s.status === 'Activ' ? 'În lucru' : s.status)),
+            s.adresa && React.createElement("div", { key: 'a', style: { color: C.muted, marginTop: 4 } }, '📍 ' + s.adresa),
+            s.lucrare && React.createElement("div", { key: 'l', style: { color: C.muted } }, '🔧 ' + s.lucrare),
+        ], 'antet'),
+        card('📊 Stadiu', [
+            React.createElement("div", { key: 'c', style: { display: 'flex', gap: 8 } },
+                cifra(st.zileLucrate || 0, 'zile lucrate'),
+                cifra(ore(st.oreTotal), 'ore de lucru'),
+                cifra((date.restante && date.restante.deschise) || 0, 'de rezolvat')),
+            React.createElement("div", { key: 'u', style: { fontSize: 13, color: C.muted, marginTop: 10 } },
+                st.ultimaActualizare ? 'Ultima zi de lucru: ' + zi(st.ultimaActualizare) + (st.primaZi ? ' · început: ' + zi(st.primaZi) : '') : 'Lucrarea nu a început încă.',
+                st.finalizatLa ? ' · finalizată: ' + zi(st.finalizatLa) : ''),
+        ], 'stadiu'),
+        card('🛠 Ultimele lucrări', lucrari.length === 0 ? React.createElement("div", { style: { color: C.muted } }, "Nicio zi de lucru în ultimele 60 de zile.") : [
+            ...lucrariVazute.map((z) => React.createElement("div", { key: z.data, "data-zi": z.data, style: { display: 'flex', gap: 10, padding: '10px 0', borderTop: '1px solid #EEF2F7' } },
+                React.createElement("div", { style: { flex: 'none', width: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 6 } },
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 99, background: C.acc } })),
+                React.createElement("div", { style: { minWidth: 0, flex: 1 } },
+                    React.createElement("div", { style: { fontWeight: 700 } }, zi(z.data)),
+                    React.createElement("div", { style: { fontSize: 13, color: C.muted } }, z.oameni + (z.oameni === 1 ? ' om' : ' oameni') + ' · ' + ore(z.ore) + ' ore'),
+                    (z.tipuriLucrari || []).length > 0 && React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 } }, z.tipuriLucrari.map((t, i) => React.createElement("span", { key: i, style: { fontSize: 12, background: '#EAF2FB', color: '#1B4F80', borderRadius: 8, padding: '2px 8px', overflowWrap: 'anywhere' } }, t))),
+                    z.explicatii && React.createElement("div", { style: { fontSize: 14, marginTop: 6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, z.explicatii)))),
+            lucrari.length > 10 && !toate && React.createElement("button", { key: 'mai', onClick: () => setToate(true), style: { width: '100%', marginTop: 8, padding: 11, borderRadius: 10, border: '1px solid ' + C.border, background: '#F7FAFD', color: C.acc, fontWeight: 700, fontSize: 14 } }, 'Arată toate cele ' + lucrari.length + ' zile'),
+        ], 'lucrari'),
+        (date.poze || []).length > 0 && card('📷 Poze', React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 } }, date.poze.map((p) => React.createElement("button", { key: p.id, onClick: () => setPoza(p), "data-poza": p.id, style: { padding: 0, border: 0, background: '#E6ECF3', borderRadius: 8, overflow: 'hidden', aspectRatio: '1 / 1', cursor: 'zoom-in' } },
+            React.createElement("img", { src: p.url, alt: 'poză ' + zi(p.data), loading: 'lazy', style: { width: '100%', height: '100%', objectFit: 'cover', display: 'block' } })))), 'poze'),
+        card('📌 De rezolvat', (date.restante && date.restante.lista || []).length === 0 ? React.createElement("div", { style: { color: C.ok, fontWeight: 600 } }, "✓ Nimic deschis în acest moment.")
+            : date.restante.lista.map((r, i) => React.createElement("div", { key: i, style: { padding: '8px 0', borderTop: i ? '1px solid #EEF2F7' : 0 } },
+                React.createElement("div", { style: { overflowWrap: 'anywhere' } }, '• ' + r.text),
+                (r.loc || r.termen) && React.createElement("div", { style: { fontSize: 13, color: C.muted } }, [r.loc, r.termen ? 'termen ' + zi(r.termen) : ''].filter(Boolean).join(' · ')))), 'restante'),
+        card('📄 Documente', [
+            React.createElement("div", { key: 'pvt', style: { fontSize: 13, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '.03em', marginTop: 2 } }, "Procese-verbale"),
+            (doc.pv || []).length === 0 ? React.createElement("div", { key: 'pv0', style: { color: C.muted, padding: '6px 0' } }, "Încă niciunul.")
+                : React.createElement("div", { key: 'pvl' }, doc.pv.map((p, i) => rand('Nr. ' + p.numar + ' · ' + zi(p.data), p.semnat ? '✓ Semnat' : 'De semnat', p.semnat && p.semnatLa ? 'semnat la ' + zi(p.semnatLa) : null, p.semnat ? C.ok : C.warn, 'pv' + i))),
+            React.createElement("div", { key: 'ft', style: { fontSize: 13, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '.03em', marginTop: 14 } }, "Facturi"),
+            (doc.facturi || []).length === 0 ? React.createElement("div", { key: 'f0', style: { color: C.muted, padding: '6px 0' } }, "Încă nicio factură.")
+                : React.createElement("div", { key: 'fl' }, doc.facturi.map((x, i) => {
+                    const restanta = x.rest > 0 && x.scadenta && x.scadenta < azi;
+                    return rand('Factura ' + x.numar + ' · ' + zi(x.data), x.rest > 0 ? 'Rest: ' + lei(x.rest) : '✓ Achitată', 'Total ' + lei(x.total) + (x.rest > 0 && x.scadenta ? ' · scadență ' + zi(x.scadenta) + (restanta ? ' (depășită)' : '') : ''), x.rest > 0 ? (restanta ? C.bad : C.warn) : C.ok, 'f' + i);
+                })),
+            (doc.facturi || []).some((x) => x.rest > 0) && React.createElement("div", { key: 'ftot', style: { marginTop: 8, padding: '10px 12px', borderRadius: 10, background: '#FFF6E3', color: '#6B5410', fontWeight: 700 } }, 'Total rest de plată: ' + lei(doc.facturi.reduce((a, x) => a + (Number(x.rest) || 0), 0))),
+            (doc.devize || []).length > 0 && React.createElement("div", { key: 'dt', style: { fontSize: 13, fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '.03em', marginTop: 14 } }, "Devize"),
+            (doc.devize || []).length > 0 && React.createElement("div", { key: 'dl' }, doc.devize.map((d, i) => rand('Deviz ' + d.numar + ' · ' + zi(d.data), lei(d.total), d.status ? 'stare: ' + d.status : null, C.text, 'd' + i))),
+        ], 'documente'),
+        React.createElement("div", { key: 'sub', style: { textAlign: 'center', fontSize: 12, color: C.muted, marginTop: 8 } },
+            'Actualizat ' + new Date(date.generatLa).toLocaleString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + (date.expira ? ' · link valabil până la ' + zi(date.expira) : ''),
+            React.createElement("br"), 'Vă mulțumim pentru încredere! — ', React.createElement("b", null, f.nume || '')),
+        poza && React.createElement("div", { key: 'zoom', "data-poza-mare": "1", onClick: () => setPoza(null), style: { position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12, cursor: 'zoom-out' } },
+            React.createElement("img", { src: poza.url, alt: '', style: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 6 } }),
+            React.createElement("button", { onClick: () => setPoza(null), "aria-label": "Închide", style: { position: 'absolute', top: 12, right: 12, width: 44, height: 44, borderRadius: 99, border: 0, background: 'rgba(255,255,255,.9)', fontSize: 20, fontWeight: 700 } }, '✕')),
+    ]);
+}
+/* biletul de client din adresă — dacă există, pornim DOAR pagina lucrării, nu aplicația */
+const BILET_CLIENT = (() => { try {
+    return new URLSearchParams(window.location.search || '').get('client');
+}
+catch (_) {
+    return null;
+} })();
 function App() {
     const [tab, setTab] = useState(null);
     const [qaTarget, setQaTarget] = useState(null);
@@ -27181,6 +27604,31 @@ function App() {
     } });
     const [pendingRaportId, setPendingRaportId] = useState(() => { try {
         return new URLSearchParams(window.location.search || '').get('raport');
+    }
+    catch {
+        return null;
+    } });
+    /* 🔳 din codul QR lipit pe șantier sau pe tablou: /?santier=<id>[&tablou=<id>].
+       Adresa rămâne până după logare; abia atunci deschidem șantierul (sau tabloul) și o curățăm. */
+    const [pendingQrNav, setPendingQrNav] = useState(() => { try {
+        const p = new URLSearchParams(window.location.search || '');
+        const s = p.get('santier');
+        if (s) {
+            const nav = { santierId: s, tablouId: p.get('tablou') || null };
+            /* Curățăm adresa imediat, dar ținem ținta în sesiunea tabului: ferestrele de tip
+               „Pornești Face ID?" fac un pas înapoi în istoric și ar readuce adresa veche. */
+            try {
+                sessionStorage.setItem('qrNav', JSON.stringify(nav));
+            }
+            catch (_) { }
+            const u = new URL(window.location.href);
+            u.searchParams.delete('santier');
+            u.searchParams.delete('tablou');
+            window.history.replaceState(window.history.state, '', u.pathname + (u.search || '') + u.hash);
+            return nav;
+        }
+        const t = sessionStorage.getItem('qrNav');
+        return t ? JSON.parse(t) : null;
     }
     catch {
         return null;
@@ -27597,6 +28045,29 @@ function App() {
             setPendingQaId(null);
         }
     }, [pendingQaId, problemeSantier]);
+    useEffect(() => {
+        if (!pendingQrNav || !currentUser || loading)
+            return;
+        const { santierId, tablouId } = pendingQrNav;
+        setPendingQrNav(null);
+        try {
+            sessionStorage.removeItem('qrNav');
+        }
+        catch (_) { }
+        if (!(santiere || []).some((s) => String(s.id) === String(santierId))) {
+            arataSalvat('⚠ Șantierul din codul QR nu există sau nu ai acces la el.');
+            return;
+        }
+        if (tablouId) {
+            /* tabloul se deschide în configurator, care știe singur să încarce ?tablou=<id> */
+            window.__tablouriSantier = santierId;
+            window.__tablouriTablou = tablouId;
+            setTab('tablouri');
+            return;
+        }
+        setPendingSiteNav({ santierId });
+        setTab('santiere');
+    }, [pendingQrNav, currentUser, loading, santiere]);
     const [concedii, setConcedii] = useState([]);
     /* „✓ Aprobă / ✕ Respinge" apăsat pe notificarea de concediu: vine ori prin adresă
        (/?concediu=<id>&actiune=aproba), ori ca mesaj de la sw.js când aplicația e deja deschisă. */
@@ -29715,7 +30186,7 @@ function App() {
                             tab === 'scule-global' && React.createElement(SculeGlobalTab, { sculeSantier: sculeSantier, santiere: santiere }))))))))));
 }
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(Prinde, { full: true },
-    React.createElement(App, null)));
+    BILET_CLIENT ? React.createElement(PaginaClient, { bilet: BILET_CLIENT }) : React.createElement(App, null)));
 </script>
 </body>
 </html>
