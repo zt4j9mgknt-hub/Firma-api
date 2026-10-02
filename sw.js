@@ -3,7 +3,7 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v285';
+const CACHE = 'firma-cache-v286';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
@@ -126,15 +126,22 @@ self.addEventListener('push', (e) => {
   try { data = e.data ? e.data.json() : {}; }
   catch (_) { try { data = { title: 'SC SMART ELECTROCONECT', body: e.data ? e.data.text() : '' }; } catch (__) {} }
   const title = data.title || 'SC SMART ELECTROCONECT';
+  /* Cererea de concediu vine cu butoane: managerul aprobă din notificare, fără să caute. */
+  const extra = (data.data && typeof data.data === 'object') ? data.data : {};
+  const idConcediu = extra.tip === 'concediu' && extra.id ? String(extra.id) : null;
   const options = {
     body: data.body || '',
     icon: '/logo.png',
     badge: '/logo.png',
-    data: { url: data.url || '/' },
+    data: { url: data.url || '/', tip: extra.tip || null, id: extra.id || null },
     tag: data.tag || undefined,
     renotify: !!data.tag,
     vibrate: [80, 40, 80],
   };
+  if (idConcediu) {
+    options.actions = [{ action: 'aproba', title: '✓ Aprobă' }, { action: 'respinge', title: '✕ Respinge' }];
+    options.tag = 'concediu-' + idConcediu; // fiecare cerere separat, ca butoanele să țină de cererea ei
+  }
   e.waitUntil(
     self.registration.showNotification(title, options).then(() => crestBadge())
   );
@@ -142,10 +149,23 @@ self.addEventListener('push', (e) => {
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const target = (e.notification.data && e.notification.data.url) || '/';
+  const nd = e.notification.data || {};
+  let target = nd.url || '/';
+  /* Buton „Aprobă / Respinge" de pe notificarea de concediu: aplicația întreabă încă o dată
+     (fereastră de confirmare) și abia apoi scrie — nu se aprobă nimic din greșeală. */
+  const actiune = (e.action === 'aproba' || e.action === 'respinge') && nd.tip === 'concediu' && nd.id ? e.action : null;
+  if (actiune) target = '/?concediu=' + encodeURIComponent(nd.id) + '&actiune=' + actiune;
   e.waitUntil((async () => {
     await reseteazaBadge();
     const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (actiune) {
+      for (const c of list) {
+        if ('focus' in c) {
+          try { c.postMessage({ type: 'concediu-actiune', id: String(nd.id), actiune }); } catch (_) {}
+          return c.focus();
+        }
+      }
+    }
     for (const c of list) {
       if ('focus' in c) { try { if (c.navigate) c.navigate(target); } catch (_) {} return c.focus(); }
     }
