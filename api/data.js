@@ -187,6 +187,14 @@ function pazaConcedii(vechi, nou, userId) {
   for (const [id, cn] of mn) {
     if (!mv.has(id) && !alMeu(cn)) return 'Nu poți depune cerere în numele altcuiva.';
   }
+  // 2b. O cerere a ta care a primit deja răspuns (aprobată/respinsă) rămâne cum a hotărât
+  //     Managerul: n-o mai poți șterge și n-o mai poți rescrie. Doar cele „Cerut" se schimbă.
+  for (const [id, cv] of mv) {
+    if (!alMeu(cv) || String(cv.status || 'Cerut') === 'Cerut') continue;
+    const cn = mn.get(id);
+    if (!cn) return 'Cererea a primit deja răspuns — n-o mai poți șterge. Vorbește cu Managerul.';
+    if (JSON.stringify(cn) !== JSON.stringify(cv)) return 'Cererea a primit deja răspuns — n-o mai poți modifica. Vorbește cu Managerul.';
+  }
   // 3. Aprobarea o dă Managerul, nu solicitantul.
   for (const [id, cn] of mn) {
     if (!alMeu(cn)) continue;
@@ -269,6 +277,19 @@ export default async function handler(req, res) {
       if (req.query.marime) {
         if ((await rolulAdevarat(base, token, auth)) !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea asta.' });
         return res.status(200).json(await masoara(base, token));
+      }
+      // Soldul de concediu: lista întreagă rămâne a Managerului, dar fiecare om își primește
+      // rândul LUI. Altfel electricianul vedea un sold socotit din oficiu (21 zile), nu cel
+      // pus de patron. Rândul se găsește după nume, scris oricum (litere, diacritice, ordine).
+      if (req.query.soldulMeu) {
+        const cheie = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .split(/\s+/).filter(Boolean).sort().join(' ');
+        const u = await redisGet(base, token, 'firma:users');
+        const eu = (Array.isArray(u) ? u : []).find((x) => x && String(x.id) === String(auth.userId));
+        if (!eu || !eu.nume) return res.status(200).json({ value: [] });
+        const toate = await redisGet(base, token, 'firma:soldConcediu');
+        const ale = (Array.isArray(toate) ? toate : []).filter((s) => s && cheie(s.nume) === cheie(eu.nume));
+        return res.status(200).json({ value: ale });
       }
       const key = normalizeazaCheia(req.query.key);
       if (!key) return res.status(400).json({ error: 'Lipseste parametrul key.' });

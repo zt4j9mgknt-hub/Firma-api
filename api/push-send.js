@@ -319,7 +319,12 @@ export default async function handler(req, res) {
     const text = String(corp.body || '').slice(0, 400);
     const url = String(corp.url || '/').slice(0, 300);
     const tag = corp.tag ? String(corp.tag).slice(0, 60) : undefined;
-    const mesaj = JSON.stringify({ title: titlu, body: text, url, tag });
+    /* „data" mic (tip + id) trece mai departe, ca telefonul să poată pune butoane pe
+       notificare (ex. ✓ Aprobă / ✕ Respinge la concediu). Doar text scurt, nimic altceva. */
+    const dateExtra = (corp.data && typeof corp.data === 'object')
+      ? { tip: String(corp.data.tip || '').slice(0, 30), id: String(corp.data.id || '').slice(0, 80) }
+      : undefined;
+    const mesaj = JSON.stringify({ title: titlu, body: text, url, tag, data: dateExtra });
 
     /* CINE PRIMEȘTE. Întâi întrebăm serverul — el are lista adevărată. Lista trimisă de
        telefon rămâne ca rezervă: dacă serverul n-a putut citi (sau e goală), folosim ce a
