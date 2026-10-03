@@ -17,6 +17,7 @@
 // Cere pe Vercel: KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET. Toate există deja.
 
 import crypto from 'crypto';
+import portalClient from '../lib/client.js';
 
 const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
 function verifyToken(token) {
@@ -106,6 +107,10 @@ function pagina({ titlu, corp }) {
 }
 
 export default async function handler(req, res) {
+  /* Pagina lucrării pentru client trece pe aici: planul Vercel dă cel mult 12 funcții în
+     /api, iar a 13-a (api/client.js) oprea toate publicările. Codul ei stă în lib/client.js;
+     /api/client e trimis aici de vercel.json, cu ?portal=1. */
+  if (req.query && req.query.portal) return portalClient(req, res);
   res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
