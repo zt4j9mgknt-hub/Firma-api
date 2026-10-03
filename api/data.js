@@ -65,6 +65,8 @@ const CHEI_DOAR_MANAGER_SCRIE = new Set([
   'pontajCorectii',   // corecțiile de ore — omul își vede orele, dar nu și le umflă
   'categoriiTimp',    // motivele proprii de timp mort
   'noutatiAnuntate',  // registrul de noutăți deja anunțate
+  'masini',           // dubele firmei și șoferii lor — șoferul își vede mașina, dar n-o rescrie
+                      // (livrările lui din mașină merg prin stockMoves, care rămâne deschisă)
 ]);
 
 /* CONCEDIILE sunt caz aparte: omul TREBUIE să-și poată depune cererea, dar nu are ce
