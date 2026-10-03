@@ -17,7 +17,25 @@
 // Cere pe Vercel: KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET. Toate există deja.
 
 import crypto from 'crypto';
+import Pusher from 'pusher';
 import portalClient from '../lib/client.js';
+
+/* Semnalul instant către telefoanele firmei (același ca în data.js). Fără el, semnătura
+   venită de la client stătea în bază, dar aplicația deschisă n-o vedea — și la următoarea
+   salvare o copie veche, nesemnată, o putea acoperi. */
+let pusher = null;
+function getPusher() {
+  if (pusher) return pusher;
+  const { PUSHER_APP_ID, PUSHER_KEY, PUSHER_SECRET, PUSHER_CLUSTER } = process.env;
+  if (!PUSHER_APP_ID || !PUSHER_KEY || !PUSHER_SECRET || !PUSHER_CLUSTER) return null;
+  pusher = new Pusher({ appId: PUSHER_APP_ID, key: PUSHER_KEY, secret: PUSHER_SECRET, cluster: PUSHER_CLUSTER, useTLS: true });
+  return pusher;
+}
+
+/* Ce primim de la pagina publică: o poză PNG ca text base64 (cum o dă canvas.toDataURL),
+   nu orice. ~400 000 de caractere ajung lejer pentru o semnătură; peste asta e altceva. */
+const SEMNATURA_OK = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
+const SEMNATURA_MAX = 400000;
 
 const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
 function verifyToken(token) {
@@ -149,32 +167,52 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
       if (pv.semnatura) return res.status(409).json({ error: 'Documentul e deja semnat.' });
-      if (!body.semnatura || String(body.semnatura).length < 200) return res.status(400).json({ error: 'Lipsește semnătura.' });
-      if (!String(body.nume || '').trim()) return res.status(400).json({ error: 'Scrie numele.' });
+      const semnatura = typeof body.semnatura === 'string' ? body.semnatura : '';
+      if (semnatura.length < 200) return res.status(400).json({ error: 'Lipsește semnătura.' });
+      if (semnatura.length > SEMNATURA_MAX || !SEMNATURA_OK.test(semnatura)) return res.status(400).json({ error: 'Semnătura nu e validă. Reîncărcați pagina și semnați din nou.' });
+      const numeCurat = String(body.nume || '').trim().slice(0, 120);
+      const calitateCurata = String(body.calitate || '').trim().slice(0, 120);
+      if (!numeCurat) return res.status(400).json({ error: 'Scrie numele.' });
 
-      const acum = new Date();
-      /* Recitim chiar acum: între trimiterea linkului și semnătură, cineva din firmă
-         poate fi modificat documentul. Scriem peste versiunea proaspătă, nu peste una veche. */
-      const proaspete = await citeste('proceseVerbale', []);
-      /* Ce a scris clientul: câte un lucru pe rând. Le curățăm de rânduri goale și le
-         tăiem la o lungime rezonabilă, ca nimeni să nu poată umple baza de date de aici. */
-      const obiClientNoi = String(body.obiectiuni || '')
-        .split(/\r?\n/).map((t) => t.trim()).filter(Boolean).slice(0, 30)
-        .map((t, i) => ({ id: 'oc' + Date.now() + '-' + i, text: t.slice(0, 400), deLaClient: true }));
+      /* Două apăsări („Semnez" de două ori, sau două telefoane deodată): doar prima trece.
+         Încuietoare scurtă în bază (SET NX, 30 s), apoi verificăm DIN NOU, pe copia proaspătă. */
+      const lacat = 'lock:semnare:' + idCerut;
+      const amLacat = await redis(['SET', lacat, '1', 'NX', 'EX', '30']);
+      if (amLacat !== 'OK') return res.status(409).json({ error: 'Documentul se semnează chiar acum. Reîncărcați pagina peste câteva secunde.' });
+      try {
+        const acum = new Date();
+        /* Recitim chiar acum: între trimiterea linkului și semnătură, cineva din firmă
+           poate fi modificat documentul. Scriem peste versiunea proaspătă, nu peste una veche. */
+        const proaspete = await citeste('proceseVerbale', []);
+        const tinta = (Array.isArray(proaspete) ? proaspete : []).find((x) => x && x.id === idCerut);
+        if (!tinta) return res.status(404).json({ error: 'Documentul nu mai există.' });
+        if (tinta.semnatura) return res.status(409).json({ error: 'Documentul e deja semnat.' });
+        /* Ce a scris clientul: câte un lucru pe rând. Le curățăm de rânduri goale și le
+           tăiem la o lungime rezonabilă, ca nimeni să nu poată umple baza de date de aici. */
+        const obiClientNoi = String(body.obiectiuni || '')
+          .split(/\r?\n/).map((t) => t.trim()).filter(Boolean).slice(0, 30)
+          .map((t, i) => ({ id: 'oc' + Date.now() + '-' + i, text: t.slice(0, 400), deLaClient: true }));
 
-      const noi = (Array.isArray(proaspete) ? proaspete : []).map((x) => x.id === idCerut ? {
-        ...x,
-        obiectiuniClient: obiClientNoi,
-        semnatura: String(body.semnatura),
-        numeBeneficiar: String(body.nume).trim(),
-        calitate: String(body.calitate || '').trim() || x.calitate || 'Beneficiar',
-        semnatLaDistanta: true,
-        semnatLa: acum.toISOString(),
-        semnatIp: String(req.headers['x-forwarded-for'] || '').split(',')[0].trim(),
-        semnatDispozitiv: String(req.headers['user-agent'] || '').slice(0, 160),
-      } : x);
-      await scrie('proceseVerbale', noi);
-      return res.status(200).json({ ok: true, obiectiuni: obiClientNoi.length });
+        const noi = proaspete.map((x) => x && x.id === idCerut ? {
+          ...x,
+          obiectiuniClient: obiClientNoi,
+          semnatura,
+          numeBeneficiar: numeCurat,
+          calitate: calitateCurata || x.calitate || 'Beneficiar',
+          semnatLaDistanta: true,
+          semnatLa: acum.toISOString(),
+          semnatIp: String(req.headers['x-forwarded-for'] || '').split(',')[0].trim(),
+          semnatDispozitiv: String(req.headers['user-agent'] || '').slice(0, 160),
+        } : x);
+        await scrie('proceseVerbale', noi);
+        const p = getPusher();
+        if (p) {
+          try { await p.trigger('firma-updates', 'data-changed', { key: 'proceseVerbale' }); } catch (_) {}
+        }
+        return res.status(200).json({ ok: true, obiectiuni: obiClientNoi.length });
+      } finally {
+        try { await redis(['DEL', lacat]); } catch (_) {}
+      }
     }
 
     const randLucrari = (pv.lucrari || []).length

@@ -183,12 +183,40 @@ function cripteazaMesajul(p256dhB64, authB64, text) {
   ]);
 }
 
+/* ---------- DOAR serviciile adevărate de notificări ----------
+   Adresa „endpoint" vine din telefon (lista pushSubs e scrisă de aplicație, iar rezerva
+   „subscriptions" vine direct în cerere). Fără verificarea asta, oricine logat putea pune
+   serverul să trimită cereri POST oriunde — inclusiv spre adrese interne (SSRF). Acum plecăm
+   doar spre Google, Apple, Mozilla și Microsoft, doar pe https. */
+const GAZDE_PUSH_EXACT = new Set(['fcm.googleapis.com', 'android.googleapis.com', 'updates.push.services.mozilla.com', 'push.services.mozilla.com']);
+const GAZDE_PUSH_SUFIX = ['.push.apple.com', '.notify.windows.com', '.push.services.mozilla.com'];
+export function endpointPermis(endpoint) {
+  let u;
+  try { u = new URL(String(endpoint || '')); } catch (_) { return false; }
+  if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return false;
+  const h = u.hostname.toLowerCase();
+  return GAZDE_PUSH_EXACT.has(h) || GAZDE_PUSH_SUFIX.some((s) => h.endsWith(s));
+}
+
+/* ---------- unde duce atingerea notificării ----------
+   Doar o cale din aplicația noastră („/ceva"). O adresă întreagă (https://alt-site…) sau
+   „//alt-site" ar fi dus omul, dintr-o notificare cu numele firmei, pe orice pagină — bun de
+   înșelat lumea. Orice altceva devine „/". */
+export function urlSigur(u) {
+  const s = String(u == null ? '/' : u).trim().slice(0, 300);
+  if (!s.startsWith('/') || s.startsWith('//') || s.startsWith('/\\') || /[\u0000-\u001f\\]/.test(s)) return '/';
+  return s;
+}
+
 /* ---------- trimiterea către un singur telefon ---------- */
 async function trimiteLaUnul(sub, text, acum) {
   const endpoint = sub && sub.endpoint;
   const chei = (sub && sub.keys) || {};
   if (!endpoint || !chei.p256dh || !chei.auth) {
     return { ok: false, cod: 0, motiv: 'abonament incomplet' };
+  }
+  if (!endpointPermis(endpoint)) {
+    return { ok: false, cod: 0, motiv: 'adresă de abonament nepermisă' };
   }
   const corp = cripteazaMesajul(chei.p256dh, chei.auth, text);
   const jwt = semnaturaVapid(endpoint, acum);
@@ -317,7 +345,7 @@ export default async function handler(req, res) {
     const corp = citesteCorpul(req);
     const titlu = String(corp.title || 'SC SMART ELECTROCONECT').slice(0, 120);
     const text = String(corp.body || '').slice(0, 400);
-    const url = String(corp.url || '/').slice(0, 300);
+    const url = urlSigur(corp.url || '/');
     const tag = corp.tag ? String(corp.tag).slice(0, 60) : undefined;
     /* „data" mic (tip + id) trece mai departe, ca telefonul să poată pune butoane pe
        notificare (ex. ✓ Aprobă / ✕ Respinge la concediu). Doar text scurt, nimic altceva. */
@@ -337,7 +365,7 @@ export default async function handler(req, res) {
     let alesi = alege(lista, corp.destinatar, corp.exceptUserId).map((x) => x.sub);
     let dinRezerva = false;
     if (!alesi.length && Array.isArray(corp.subscriptions) && corp.subscriptions.length) {
-      alesi = corp.subscriptions.filter((s) => s && s.endpoint);
+      alesi = corp.subscriptions.filter((s) => s && s.endpoint && endpointPermis(s.endpoint)).slice(0, 50);
       dinRezerva = true;
     }
     if (!alesi.length) {

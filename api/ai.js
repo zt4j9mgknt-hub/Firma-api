@@ -41,19 +41,21 @@ const REZERVE = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-li
 // Cele noi nu merg întotdeauna trimise în adresă, așa că le trimitem în antet și, dacă
 // serverul le refuză, mai încercăm o dată pe vechea cale. Așa merg amândouă.
 /* Rolul adevărat (același raționament ca în data.js): biletul ține 30 de zile și poate avea
-   rolul vechi. Dacă nu scrie „Manager", întrebăm lista de utilizatori din bază. */
+   rolul vechi — sau omul poate fi fost șters între timp. Întrebăm MEREU lista de utilizatori
+   din bază (când baza e configurată). Rolul e cel de acolo; omul care nu mai e în listă →
+   null (cel care cheamă dă 401). Lista lipsă cu totul → rolul din bilet. */
 async function rolulAdevarat(auth) {
-  if (!auth) return '';
-  if (auth.rol === 'Manager') return 'Manager';
+  if (!auth) return null;
   const base = process.env.KV_REST_API_URL, token = process.env.KV_REST_API_TOKEN;
-  if (!base || !token) return auth.rol || '';
-  try {
-    const r = await fetch(`${base}/get/${encodeURIComponent('firma:users')}`, { headers: { Authorization: `Bearer ${token}` } });
-    const d = await r.json();
-    const lista = d && d.result ? JSON.parse(d.result) : [];
-    const eu = (Array.isArray(lista) ? lista : []).find((x) => x && String(x.id) === String(auth.userId));
-    return (eu && eu.rol) || auth.rol || '';
-  } catch (_) { return auth.rol || ''; }
+  if (!base || !token) return String(auth.rol || '');
+  const r = await fetch(`${base}/get/${encodeURIComponent('firma:users')}`, { headers: { Authorization: `Bearer ${token}` } });
+  const d = await r.json();
+  if (!d || d.result == null) return String(auth.rol || '');
+  let lista = [];
+  try { lista = JSON.parse(d.result); } catch (_) { lista = []; }
+  const eu = (Array.isArray(lista) ? lista : []).find((x) => x && String(x.id) === String(auth.userId));
+  if (!eu) return null;
+  return String(eu.rol || '');
 }
 
 /* Extragerea listei din PDF-ul / poza clientului. Vercel taie cererile peste 4,5 MB,
@@ -181,13 +183,16 @@ export default async function handler(req, res) {
   }
 
   try {
+    /* Omul șters din firmă nu mai folosește asistentul (cota e a firmei). */
+    const rolReal = await rolulAdevarat(sesiune);
+    if (rolReal == null) return res.status(401).json({ error: 'Contul nu mai există — te rog reloghează-te.', contSters: true });
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     /* Acțiunea nouă: lista de materiale din PDF-ul / poza clientului. Doar Managerul —
        ofertele sunt treaba lui, iar un fișier mare consumă cota mult mai repede. */
     const extrage = body.actiune === 'extrageLista';
     let fisier = null;
     if (extrage) {
-      if ((await rolulAdevarat(sesiune)) !== 'Manager') {
+      if (rolReal !== 'Manager') {
         return res.status(403).json({ error: 'Doar Managerul poate face oferte din fișiere.' });
       }
       const f = body.fisier || {};

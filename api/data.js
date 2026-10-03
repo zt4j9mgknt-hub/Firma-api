@@ -190,6 +190,14 @@ function pazaConcedii(vechi, nou, userId) {
   for (const [id, cn] of mn) {
     if (!mv.has(id) && !alMeu(cn)) return 'Nu poți depune cerere în numele altcuiva.';
   }
+  // 2a. Nici nu poți MUTA cererea ta pe numele altcuiva. Altfel: îți schimbai userId-ul pe
+  //     cererea proprie cu al unui coleg și puneai „Aprobat" — pasul 3 se uita doar la
+  //     cererile tale, deci nu mai vedea nimic, iar colegul se trezea cu concediu aprobat.
+  for (const [id, cv] of mv) {
+    if (!alMeu(cv)) continue;
+    const cn = mn.get(id);
+    if (cn && !alMeu(cn)) return 'Nu poți trece cererea ta pe numele altcuiva.';
+  }
   // 2b. O cerere a ta care a primit deja răspuns (aprobată/respinsă) rămâne cum a hotărât
   //     Managerul: n-o mai poți șterge și n-o mai poți rescrie. Doar cele „Cerut" se schimbă.
   for (const [id, cv] of mv) {
@@ -250,11 +258,16 @@ function pazaPrezenta(vechi, nou, userId, acum = Date.now()) {
       continue;
     }
     // 2. Rânduri noi: doar pe numele tău și doar de felul cunoscut.
-    if (!alMeu(rn)) return { motiv: 'Nu poți nota prezența în numele altcuiva.' };
+    //    Un rând al ALTCUIVA care nu (mai) e pe server nu se scrie — dar nici nu refuzăm toată
+    //    salvarea: de când angajatul primește doar rândurile lui, un rând străin în lista lui
+    //    poate fi doar o rămășiță veche din memoria telefonului (pe care Managerul a șters-o
+    //    între timp). Îl lăsăm deoparte, în tăcere; nimic nu se scrie pe numele altcuiva.
+    if (!alMeu(rn)) { mn.delete(id); continue; }
     if (!PREZ_TIPURI.has(String(rn.tip))) return { motiv: 'Fel de rând de prezență necunoscut.' };
   }
   // 3. Ce lipsește: pozițiile tale și ce a expirat pot pleca; restul se pune la loc.
-  const lista = nou.slice();
+  // (rândurile străine lăsate deoparte la pasul 2 nu mai sunt în „mn" — nu intră nici aici)
+  const lista = nou.filter((r) => r && r.id != null && mn.get(String(r.id)) === r);
   for (const [id, rv] of mv) {
     if (mn.has(id)) continue;
     const poatePleca = prezentaExpirata(rv, acum) || (alMeu(rv) && rv.tip === 'pozitie');
@@ -270,20 +283,51 @@ function pazaPrezenta(vechi, nou, userId, acum = Date.now()) {
    patronul putea rămâne peste noapte fără cifrele lui, fără să se fi schimbat nimic la el.
    Iar aplicația, primind refuz, arăta zero — ca și cum n-ar avea facturi.
 
-   Acum: dacă biletul spune „Manager", îl credem. Dacă NU spune asta, nu refuzăm imediat —
-   întrebăm lista de utilizatori care e rolul adevărat al omului. O singură citire în plus,
-   doar pe cheile încuiate, și doar când biletul nu e deja lămuritor. */
+   Și A DOUA GREȘEALĂ, mai mare: „dacă biletul spune Manager, îl credem". Un Manager
+   retrogradat la Electrician își păstra 30 de zile facturile și salariile; un om ȘTERS din
+   firmă intra mai departe cu biletul vechi.
+
+   Acum: întrebăm MEREU lista de utilizatori. Rolul e cel scris acolo, nu cel din bilet.
+   Omul care nu mai e în listă → null → cel care cheamă răspunde 401 (ca la bilet expirat).
+   Singura excepție: dacă lista nu există deloc în bază (firmă nouă, încă fără utilizatori
+   salvați), rămânem la rolul din bilet — altfel n-ar mai putea intra nimeni.
+   O eroare de citire NU se înghite: mai bine „încearcă din nou" decât acces dat orbește. */
+async function utilizatorulAdevarat(base, token, auth) {
+  if (!auth) return null;
+  const u = await redisGet(base, token, 'firma:users');
+  if (u == null) return { rol: String(auth.rol || ''), nume: String(auth.nume || '') };
+  const lista = Array.isArray(u) ? u : [];
+  const eu = lista.find((x) => x && String(x.id) === String(auth.userId));
+  if (!eu) return null;
+  return { rol: String(eu.rol || ''), nume: String(eu.nume || '') };
+}
 async function rolulAdevarat(base, token, auth) {
-  if (!auth) return '';
-  if (auth.rol === 'Manager') return 'Manager';
-  try {
-    const u = await redisGet(base, token, 'firma:users');
-    const lista = Array.isArray(u) ? u : [];
-    const eu = lista.find((x) => x && String(x.id) === String(auth.userId));
-    return (eu && eu.rol) || auth.rol || '';
-  } catch (_) {
-    return auth.rol || '';
-  }
+  const eu = await utilizatorulAdevarat(base, token, auth);
+  return eu ? eu.rol : null;
+}
+
+/* ===== PAZA PE ABONAMENTELE LA NOTIFICĂRI (pushSubs) =====
+   Un rând: { id: endpoint, userId, nume, rol, sub: {endpoint, keys}, data }.
+   Cheia trebuie să rămână deschisă (fiecare telefon se înscrie singur), dar până acum un
+   angajat putea: (a) să-și pună „rol: Manager" pe rândul lui — și primea notificările
+   Managerului (rapoarte, cereri de concediu cu nume); (b) să șteargă sau să rescrie
+   abonamentele colegilor. Acum: NEmanagerul atinge DOAR rândurile cu userId-ul LUI, iar rolul
+   de pe ele e pus de server (cel adevărat). Toate celelalte rânduri rămân exact cum sunt pe
+   server, orice ar trimite telefonul. */
+function pazaPushSubs(vechi, nou, userId, rolReal, numeReal) {
+  if (!Array.isArray(nou)) return { motiv: 'Abonamentele trebuie trimise ca listă.' };
+  const alMeu = (r) => r && typeof r === 'object' && String(r.userId) === String(userId);
+  const aleAltora = (Array.isArray(vechi) ? vechi : []).filter((r) => !alMeu(r));
+  const aleMele = nou.filter((r) => alMeu(r) && r.sub && typeof r.sub === 'object' && r.sub.endpoint)
+    .slice(0, 20)   // un om, câteva dispozitive — nu o mie de rânduri
+    .map((r) => ({
+      ...r,
+      id: String(r.sub.endpoint),
+      userId: r.userId,
+      nume: numeReal || String(r.nume || '').slice(0, 120),
+      rol: rolReal || '',
+    }));
+  return { lista: [...aleAltora, ...aleMele] };
 }
 
 let pusher = null;
@@ -321,16 +365,23 @@ export default async function handler(req, res) {
   }
 
   try {
+    /* Cine e omul ACUM, după lista de utilizatori — o singură citire, folosită mai jos peste tot.
+       Șters din firmă → 401, ca la bilet expirat (aplicația îl trimite la logare). */
+    const eu = await utilizatorulAdevarat(base, token, auth);
+    if (!eu) return res.status(401).json({ error: 'Contul nu mai există - te rog reloghează-te.', contSters: true });
+    const rolReal = eu.rol;
+    const eManager = rolReal === 'Manager';
+
     if (req.method === 'GET') {
       // Jurnalul: cine ce a modificat. Doar Managerul, și niciodată prin „key".
       if (req.query.jurnal) {
-        if ((await rolulAdevarat(base, token, auth)) !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea jurnalul.' });
+        if (!eManager) return res.status(403).json({ error: 'Doar Managerul poate vedea jurnalul.' });
         const j = (await redisGet(base, token, 'log:jurnal')) || [];
         return res.status(200).json({ jurnal: Array.isArray(j) ? j : [] });
       }
       // Cât loc ocupă fiecare lucru în baza de date. Doar Managerul.
       if (req.query.marime) {
-        if ((await rolulAdevarat(base, token, auth)) !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate vedea asta.' });
+        if (!eManager) return res.status(403).json({ error: 'Doar Managerul poate vedea asta.' });
         return res.status(200).json(await masoara(base, token));
       }
       // Soldul de concediu: lista întreagă rămâne a Managerului, dar fiecare om își primește
@@ -349,11 +400,21 @@ export default async function handler(req, res) {
       const key = normalizeazaCheia(req.query.key);
       if (!key) return res.status(400).json({ error: 'Lipseste parametrul key.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
-      if (CHEI_DOAR_MANAGER.has(key) && (await rolulAdevarat(base, token, auth)) !== 'Manager') {
+      if (CHEI_DOAR_MANAGER.has(key) && !eManager) {
         return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
       }
 
       const value = await redisGet(base, token, `firma:${key}`);
+      /* PREZENȚA are poziția GPS a fiecărui om. Angajatul își primește doar rândurile LUI;
+         la salvare, pazaPrezenta pune la loc rândurile colegilor, pe care el nu le-a văzut. */
+      if (key === 'prezenta' && !eManager && Array.isArray(value)) {
+        return res.status(200).json({ value: value.filter((r) => r && String(r.userId) === String(auth.userId)) });
+      }
+      /* ABONAMENTELE DE NOTIFICĂRI au cheile telefoanelor tuturor. Angajatul își vede doar
+         abonamentul lui; la salvare, pazaPushSubs păstrează neatinse rândurile celorlalți. */
+      if (key === 'pushSubs' && !eManager && Array.isArray(value)) {
+        return res.status(200).json({ value: value.filter((r) => r && String(r.userId) === String(auth.userId)) });
+      }
       return res.status(200).json({ value });
     }
 
@@ -362,8 +423,6 @@ export default async function handler(req, res) {
       const key = normalizeazaCheia(cheieBruta);
       if (!key) return res.status(400).json({ error: 'Lipseste key in body.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
-      const rolReal = await rolulAdevarat(base, token, auth);
-      const eManager = rolReal === 'Manager';
       if (CHEI_DOAR_MANAGER.has(key) && !eManager) return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
       if (CHEI_DOAR_MANAGER_SCRIE.has(key) && !eManager) return res.status(403).json({ error: 'Doar Managerul poate modifica asta.', interzis: true });
 
@@ -384,6 +443,13 @@ export default async function handler(req, res) {
         // Managerul n-are restricții, dar lista tot se curăță de ce a expirat.
         if (!Array.isArray(value)) return res.status(400).json({ error: 'Prezența trebuie trimisă ca listă.' });
         deScris = curataPrezentaServer(value, Date.now());
+      }
+      // Abonamentele la notificări: angajatul își atinge doar rândurile lui, cu rolul adevărat.
+      if (key === 'pushSubs' && !eManager) {
+        const inainte = await redisGet(base, token, 'firma:pushSubs');
+        const rez = pazaPushSubs(inainte, value, auth.userId, rolReal, eu.nume);
+        if (rez.motiv) return res.status(400).json({ error: rez.motiv });
+        deScris = rez.lista;
       }
 
       const ok = await redisSet(base, token, `firma:${key}`, deScris);
