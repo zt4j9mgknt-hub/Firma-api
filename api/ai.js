@@ -40,14 +40,91 @@ const REZERVE = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-li
 // Cheile de la AI Studio vin în două formate: cele vechi („AIza…") și cele noi („AQ.Ab8…").
 // Cele noi nu merg întotdeauna trimise în adresă, așa că le trimitem în antet și, dacă
 // serverul le refuză, mai încercăm o dată pe vechea cale. Așa merg amândouă.
-async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandire }) {
+/* Rolul adevărat (același raționament ca în data.js): biletul ține 30 de zile și poate avea
+   rolul vechi. Dacă nu scrie „Manager", întrebăm lista de utilizatori din bază. */
+async function rolulAdevarat(auth) {
+  if (!auth) return '';
+  if (auth.rol === 'Manager') return 'Manager';
+  const base = process.env.KV_REST_API_URL, token = process.env.KV_REST_API_TOKEN;
+  if (!base || !token) return auth.rol || '';
+  try {
+    const r = await fetch(`${base}/get/${encodeURIComponent('firma:users')}`, { headers: { Authorization: `Bearer ${token}` } });
+    const d = await r.json();
+    const lista = d && d.result ? JSON.parse(d.result) : [];
+    const eu = (Array.isArray(lista) ? lista : []).find((x) => x && String(x.id) === String(auth.userId));
+    return (eu && eu.rol) || auth.rol || '';
+  } catch (_) { return auth.rol || ''; }
+}
+
+/* Extragerea listei din PDF-ul / poza clientului. Vercel taie cererile peste 4,5 MB,
+   iar base64 umflă fișierul cu o treime — de aceea plafonul e 3,5 MB de text. */
+const LIMITA_FISIER_B64 = 3.5 * 1024 * 1024;
+const TIPURI_FISIER = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+const SISTEM_EXTRAGERE =
+  'Ești devizierul unei firme de instalații electrice din România. Primești un document de la client ' +
+  '(listă de cantități, antemăsurătoare, caiet de sarcini, comandă, poză cu o listă scrisă de mână). ' +
+  'Extragi DOAR materialele și lucrările de instalații electrice (cabluri, conductori, tuburi, doze, aparataj, ' +
+  'tablouri, siguranțe, corpuri de iluminat, prize, întrerupătoare, împământare, manoperă electrică etc.).\n' +
+  'Răspunzi DOAR cu JSON valid, exact cu structura: ' +
+  '{"lucrare":"","adresa":"","observatii":"","randuri":[{"denumire":"","um":"","cantitate":0,"cod":""}]}\n' +
+  'Reguli obligatorii:\n' +
+  '1. IGNORI complet prețurile, valorile și totalurile din document — nu le pui nicăieri.\n' +
+  '2. „denumire" se scrie corect în română, cu diacritice, păstrând tipul și secțiunea exact cum apar (ex.: „Cablu CYY-F 3x2,5 mm²").\n' +
+  '3. „um" e unitatea de măsură scurtă (buc, m, ml, kg, set, ore, mp). Dacă lipsește, pui „buc".\n' +
+  '4. „cantitate" e număr (zecimale cu punct). Dacă lipsește sau nu se citește, pui 1 și scrii asta în „observatii".\n' +
+  '5. „cod" doar dacă documentul are un cod de produs; altfel text gol.\n' +
+  '6. „lucrare" = denumirea lucrării/proiectului, „adresa" = adresa șantierului, dacă apar; altfel text gol.\n' +
+  '7. Nu inventa rânduri. Nu uni rânduri diferite. Rândurile de titlu sau subtotal nu se iau.';
+
+function curataLista(brut) {
+  let o = brut;
+  if (typeof o === 'string') {
+    const s = o.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    o = JSON.parse(s);
+  }
+  if (Array.isArray(o)) o = { randuri: o };
+  o = o || {};
+  const randuri = (Array.isArray(o.randuri) ? o.randuri : []).map((x) => {
+    const c = Number(String((x && x.cantitate) != null ? x.cantitate : '').replace(',', '.'));
+    return {
+      denumire: String((x && x.denumire) || '').trim().slice(0, 300),
+      um: String((x && x.um) || 'buc').trim().slice(0, 20) || 'buc',
+      cantitate: isFinite(c) && c > 0 ? c : 1,
+      cod: String((x && x.cod) || '').trim().slice(0, 60),
+    };
+  }).filter((x) => x.denumire).slice(0, 500);
+  return {
+    lucrare: String(o.lucrare || '').trim().slice(0, 300),
+    adresa: String(o.adresa || '').trim().slice(0, 300),
+    observatii: String(o.observatii || '').trim().slice(0, 1000),
+    randuri,
+  };
+}
+
+/* Răspunsul AI → lista curată. Dacă JSON-ul e stricat (rar, de obicei tăiat), spunem
+   clar, în loc să dăm aplicației un text pe care nu-l poate folosi. */
+function trimiteLista(res, raspuns, model, finish) {
+  try {
+    const lista = curataLista(raspuns);
+    return res.status(200).json({ lista, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
+  } catch (_) {
+    return res.status(502).json({
+      error: finish === 'MAX_TOKENS'
+        ? 'Lista e prea lungă și răspunsul AI s-a tăiat. Împarte documentul în bucăți mai mici (câteva pagini).'
+        : 'AI a răspuns, dar nu într-un format citibil. Mai încearcă o dată sau folosește varianta Excel.',
+    });
+  }
+}
+
+async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandire, fisier }) {
   const baza = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent';
   const url = inAdresa ? (baza + '?key=' + encodeURIComponent(key)) : baza;
   const generationConfig = {
     // Extragerea raportului scoate un JSON cu lucrări, materiale, oameni și apartamente.
     // Analiza consultantului e un text de câteva sute de cuvinte. Cu 800 de tokeni se
     // tăia după titlu și omul rămânea cu o propoziție ruptă pe ecran.
-    maxOutputTokens: json ? 8192 : 4096,
+    // O listă de cantități din PDF poate avea sute de rânduri — îi dăm loc dublu.
+    maxOutputTokens: fisier ? 16384 : json ? 8192 : 4096,
     temperature: json ? 0.1 : 0.3,
   };
   // Modul JSON: Gemini garantează că răspunsul e JSON valid, fără ``` în jur.
@@ -63,7 +140,10 @@ async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandir
     headers,
     body: JSON.stringify({
       system_instruction: { parts: [{ text: sistem }] },
-      contents: [{ role: 'user', parts: [{ text }] }],
+      /* Cu fișier: documentul merge ca inline_data înaintea textului. */
+      contents: [{ role: 'user', parts: fisier
+        ? [{ inline_data: { mime_type: fisier.mime, data: fisier.base64 } }, { text }]
+        : [{ text }] }],
       generationConfig,
     }),
   });
@@ -102,9 +182,31 @@ export default async function handler(req, res) {
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-    const intrebare = String(body.intrebare || '').slice(0, 8000).trim();
-    const context = Array.isArray(body.context) ? body.context.slice(0, 20).map((x) => String(x).slice(0, 1500)) : [];
-    const json = body.json === true;
+    /* Acțiunea nouă: lista de materiale din PDF-ul / poza clientului. Doar Managerul —
+       ofertele sunt treaba lui, iar un fișier mare consumă cota mult mai repede. */
+    const extrage = body.actiune === 'extrageLista';
+    let fisier = null;
+    if (extrage) {
+      if ((await rolulAdevarat(sesiune)) !== 'Manager') {
+        return res.status(403).json({ error: 'Doar Managerul poate face oferte din fișiere.' });
+      }
+      const f = body.fisier || {};
+      const mime = String(f.mime || '').toLowerCase().trim();
+      const b64 = String(f.base64 || '').replace(/^data:[^,]*,/, '');
+      if (!b64) return res.status(400).json({ error: 'N-a venit niciun fișier.' });
+      if (!TIPURI_FISIER.includes(mime)) {
+        return res.status(400).json({ error: 'Tip de fișier neacceptat (' + (mime || 'necunoscut') + '). Merg PDF, JPG, PNG sau WEBP. Pentru Excel folosește importul direct din aplicație.' });
+      }
+      if (b64.length > LIMITA_FISIER_B64) {
+        return res.status(413).json({ error: 'Fișierul e prea mare (' + (b64.length / 1048576).toFixed(1) + ' MB după codare; maxim 3,5 MB). Trimite doar paginile cu lista de materiale sau o poză mai mică.', preaMare: true });
+      }
+      fisier = { mime, base64: b64 };
+    }
+    const intrebare = extrage
+      ? ('Extrage lista de materiale și lucrări electrice din documentul atașat' + (body.nume ? (' („' + String(body.nume).slice(0, 120) + '")') : '') + '. Răspunde doar cu JSON-ul cerut.')
+      : String(body.intrebare || '').slice(0, 8000).trim();
+    const context = (!extrage && Array.isArray(body.context)) ? body.context.slice(0, 20).map((x) => String(x).slice(0, 1500)) : [];
+    const json = extrage || body.json === true;
     if (!intrebare) return res.status(400).json({ error: 'Fără întrebare.' });
 
     // Regulile de exprimare, aceleași peste tot: textul care iese din aplicație ajunge la
@@ -124,7 +226,7 @@ export default async function handler(req, res) {
       '5. Fără exagerări și fără date inventate. Cifrele, denumirile și cantitățile rămân exact cele primite; ' +
       'doar formularea se schimbă. Ce nu s-a spus nu se completează.';
 
-    const sistem = json
+    const sistem = extrage ? SISTEM_EXTRAGERE : json
       ? 'Ești redactorul tehnic al unei firme de instalații electrice din România. Răspunzi DOAR cu JSON valid, ' +
         'exact în structura cerută de utilizator, fără text în afara lui.\n' + REGISTRU + '\n' +
         '6. Fiecare text din JSON (denumiri de lucrări, denumiri de materiale, rezumat) se rescrie în registrul de mai sus, ' +
@@ -150,15 +252,15 @@ export default async function handler(req, res) {
     let ultimaEroare = 'AI a răspuns cu eroare.';
     let supraincarcat = false, eraSupraincarcat = false;
     for (const model of deIncercat) {
-      let { r, d } = await cereGemini({ key, model, sistem, text, json, inAdresa: false });
+      let { r, d } = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: false });
       // Vreun model mai vechi care nu știe de „thinkingConfig"? Reîncercăm fără el.
       if (!r.ok && r.status === 400 && /thinking/i.test((d && d.error && d.error.message) || '')) {
-        const dinNou = await cereGemini({ key, model, sistem, text, json, inAdresa: false, faraGandire: true });
+        const dinNou = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: false, faraGandire: true });
         r = dinNou.r; d = dinNou.d;
       }
       // Cheie refuzată în antet? Mai încercăm o dată cu ea pusă în adresă (formatul vechi).
       if (!r.ok && (r.status === 401 || r.status === 403)) {
-        const dinNou = await cereGemini({ key, model, sistem, text, json, inAdresa: true });
+        const dinNou = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: true });
         r = dinNou.r; d = dinNou.d;
       }
       if (r.ok) {
@@ -179,6 +281,7 @@ export default async function handler(req, res) {
         // Îi spunem aplicației dacă răspunsul s-a oprit din lipsă de spațiu, ca să știe
         // că JSON-ul poate fi incomplet și să-l repare în loc să arunce totul.
         const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
+        if (extrage) return trimiteLista(res, raspuns, model, finish);
         return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
       }
       const msg = (d && d.error && d.error.message) ? d.error.message : '';
@@ -218,7 +321,7 @@ export default async function handler(req, res) {
     if (eraSupraincarcat) {
       await new Promise((r2) => setTimeout(r2, 1500));
       for (const model of deIncercat.slice(0, 2)) {
-        const { r, d } = await cereGemini({ key, model, sistem, text, json, inAdresa: false });
+        const { r, d } = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: false });
         if (r.ok) {
           let raspuns = '';
           try {
@@ -227,6 +330,7 @@ export default async function handler(req, res) {
           } catch (_) {}
           if (raspuns) {
             const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
+            if (extrage) return trimiteLista(res, raspuns, model, finish);
             return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', dupaAsteptare: true });
           }
         }
