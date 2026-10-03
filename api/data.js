@@ -58,6 +58,7 @@ const CHEI_DOAR_MANAGER = new Set([
   'cheltuieliFirma', // cheltuielile firmei
   'antemasuratori',  // antemăsurătorile (prețuri de intrare)
   'soldConcediu',    // soldul de concediu al fiecărui om
+  'salarii',         // salariile — colegii nu au ce căuta în leafa celuilalt
 ]);
 const CHEI_DOAR_MANAGER_SCRIE = new Set([
   'company',          // datele firmei (antet, IBAN, ștampilă)
