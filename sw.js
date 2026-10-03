@@ -3,7 +3,7 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v287';
+const CACHE = 'firma-cache-v288';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
@@ -69,7 +69,12 @@ self.addEventListener('fetch', (e) => {
         return res;
       });
       // Fallback-ul încearcă AMBELE chei ('/', '/index.html') — oricum a apucat să se salveze.
-      const dinCache = () => caches.match(req).then((c) => c || caches.match('/index.html')).then((c) => c || caches.match('/'));
+      // DOAR pagina aplicației cade pe index.html. Altfel /proiecte.html (5,5 MB, care trece
+      // lesne de 3,5s) primea ecranul de logare al aplicației în locul paginii lui.
+      const ePaginaAplicatiei = url.pathname === '/' || url.pathname === '/index.html';
+      const dinCache = () => ePaginaAplicatiei
+        ? caches.match(req).then((c) => c || caches.match('/index.html')).then((c) => c || caches.match('/'))
+        : caches.match(req, { ignoreSearch: true });
       const pauza = new Promise((r) => setTimeout(() => r('lent'), 3500));
       const primul = await Promise.race([dinRetea.catch(() => 'picat'), pauza]);
       if (primul !== 'lent' && primul !== 'picat') {
@@ -82,6 +87,8 @@ self.addEventListener('fetch', (e) => {
       }
       const cache = await dinCache();
       if (cache) { dinRetea.catch(() => {}); return cache; }
+      // altă pagină, încă nesalvată: așteptăm rețeaua oricât, nu dăm altă pagină în locul ei
+      if (!ePaginaAplicatiei) return dinRetea.catch(() => new Response('Fără net și pagina nu e salvată pe telefon.', { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } }));
       return dinRetea.catch(() => new Response('Fără net și fără versiune salvată.', { status: 503 }));
     })());
   } else {
