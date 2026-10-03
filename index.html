@@ -2113,6 +2113,9 @@ try {
 catch { }
 function setAuthToken(t) {
     AUTH_TOKEN = t;
+    /* logare nouă (alt cont) pe același telefon → nu mai e „cont șters" */
+    if (t)
+        CONT_STERS = false;
     try {
         if (t)
             localStorage.setItem('authToken', t);
@@ -2121,18 +2124,52 @@ function setAuthToken(t) {
     }
     catch { }
 }
+/* CONT ȘTERS: serverul răspunde 401 {contSters:true} când omul a fost scos din firmă.
+   Atunci ieșim din cont (ca la /api/auth) și nu mai punem scrieri la coadă la nesfârșit. */
+let CONT_STERS = false;
+let LA_CONT_STERS = null;   // App pune aici ieșirea din cont (setCurrentUser(null))
+function contulAFostSters() {
+    if (CONT_STERS)
+        return;
+    CONT_STERS = true;
+    try {
+        localStorage.removeItem('currentUser');
+    }
+    catch (_) { }
+    try {
+        localStorage.removeItem(PENDING_KEY);
+    }
+    catch (_) { }
+    setAuthToken(null);
+    try {
+        if (typeof LA_CONT_STERS === 'function')
+            LA_CONT_STERS();
+    }
+    catch (_) { }
+}
+async function verificaContSters(res) {
+    if (res && res.status === 401) {
+        try {
+            const d = await res.clone().json();
+            if (d && d.contSters)
+                contulAFostSters();
+        }
+        catch (_) { }
+    }
+    return res;
+}
 function authFetch(url, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (AUTH_TOKEN)
         headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
     if (options.signal || typeof AbortController === 'undefined')
-        return fetch(url, { ...options, headers });
+        return fetch(url, { ...options, headers }).then(verificaContSters);
     const ac = new AbortController();
     const t = setTimeout(() => { try {
         ac.abort();
     }
     catch (_) { } }, options.timeoutMs || 12000);
-    return fetch(url, { ...options, headers, signal: ac.signal }).finally(() => clearTimeout(t));
+    return fetch(url, { ...options, headers, signal: ac.signal }).finally(() => clearTimeout(t)).then(verificaContSters);
 }
 /* LISTA DE UTILIZATORI, O SINGURĂ CERERE. O cereau separat vreo zece ecrane, pe telefon
    fiecare cu drumul lui la server. Acum se ține minte 60 de secunde (pentru același cont
@@ -2263,7 +2300,8 @@ catch {
 }
 catch { } if (plina)
     semnaleazaMemoriePlina(); }
-function enqueueWrite(key, value) { const q = getPending().filter((x) => x.key !== key); q.push({ key, value }); setPending(q); }
+function enqueueWrite(key, value) { if (CONT_STERS)
+    return; /* cont șters: nu mai e nimeni care să le trimită */ const q = getPending().filter((x) => x.key !== key); q.push({ key, value }); setPending(q); }
 function dequeueWrite(key) { const q = getPending(); const q2 = q.filter((x) => x.key !== key); if (q2.length !== q.length)
     setPending(q2); }
 const STERSE_KEY = 'sm_sterse_v1';
@@ -2469,7 +2507,13 @@ function mergeById(serverVal, clientVal, key) {
         return clientVal;
     const map = new Map();
     serverVal.forEach((x) => map.set(x.id, x));
-    clientVal.forEach((x) => map.set(x.id, x));
+    clientVal.forEach((x) => {
+        /* PV semnat de client la distanță: copia veche de pe telefon (fără semnătură) nu-l șterge */
+        const s = map.get(x.id);
+        if (key === 'proceseVerbale' && s && s.semnatura && !x.semnatura)
+            return;
+        map.set(x.id, x);
+    });
     const out = Array.from(map.values());
     return key ? faraSterse(key, out) : out;
 }
@@ -2531,6 +2575,8 @@ function saveKey(key, value) {
     return p;
 }
 async function saveKeyIntern(key, value) {
+    if (CONT_STERS)
+        return;
     const cachePrec = cacheGet(key);
     noteazaSterse(key, cachePrec, value);
     cacheSet(key, value);
@@ -2590,6 +2636,10 @@ async function saveKeyIntern(key, value) {
         if (cachePrec !== undefined)
             cacheSet(key, cachePrec);
         throw new Error(data.error || 'Nu ai dreptul să modifici asta.');
+    }
+    if (res.status === 401 && data && data.contSters) {
+        contulAFostSters();
+        throw new Error('Contul tău nu mai există în firmă.');
     }
     if (!res.ok || !data.ok) {
         enqueueWrite(key, value);
@@ -2694,10 +2744,12 @@ async function notifica(audience, msg, exceptUserId, faraCoada) {
             sel = list.filter((x) => audience.includes(x.userId));
         else
             sel = list.filter((x) => x.userId === audience);
+        /* lista locală poate fi goală (angajatul vede doar abonarea lui) — serverul găsește singur destinatarii */
         const subs = sel.map((x) => x.sub).filter(Boolean);
-        if (!subs.length)
-            return { ok: false, reason: 'fara-abonati' };
-        const r = await authFetch(`/api/push-send?token=${encodeURIComponent(AUTH_TOKEN || '')}`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinatar: audience, exceptUserId: exceptUserId || null, subscriptions: subs, title: msg.title, body: msg.body, url: msg.url || '/', tag: msg.tag, data: msg.data || undefined }) });
+        /* doar cale din aplicație ('/...'), niciodată adresă completă */
+        const urlSigur = (typeof msg.url === 'string' && msg.url.startsWith('/') && !msg.url.startsWith('//')) ? msg.url : '/';
+        /* fără ?token= în adresă: authFetch trimite deja Bearer */
+        const r = await authFetch('/api/push-send', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinatar: audience, exceptUserId: exceptUserId || null, subscriptions: subs, title: msg.title, body: msg.body, url: urlSigur, tag: msg.tag, data: msg.data || undefined }) });
         let data = {};
         try {
             data = await r.json();
@@ -2721,7 +2773,7 @@ async function notifica(audience, msg, exceptUserId, faraCoada) {
 }
 let syncingQueue = false;
 async function syncQueue() {
-    if (syncingQueue || (typeof navigator !== 'undefined' && !navigator.onLine))
+    if (CONT_STERS || syncingQueue || (typeof navigator !== 'undefined' && !navigator.onLine))
         return;
     if (!getPending().length)
         return;
@@ -2866,7 +2918,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.14-reincarcare-logare';
+const APP_VERSION = 'v04.15-reparatii';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -3312,7 +3364,8 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
         const t = normC([d.numar, d.sbNumarComplet, clientName(d.clientId), d.data, d.santierNume, d.lucrare].join(' '));
         return normC(cauta).split(/\s+/).filter(Boolean).every((w) => t.includes(w));
     });
-    const totalVizibil = vizibile.reduce((a, d) => a + calcSubtotal(d.items) * (1 + (Number(d.tva) || 0) / 100), 0);
+    /* documentele vechi pot veni fără items/tva → nu NaN, nu crash */
+    const totalVizibil = vizibile.reduce((a, d) => a + calcSubtotal(d.items || []) * (1 + (Number(d.tva) || 0) / 100), 0);
     const nrPeStare = (st) => docs.filter((d) => stareDoc(d) === st).length;
     if (docs.length === 0)
         return React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } },
@@ -3327,7 +3380,7 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
         setSbState((s) => ({ ...s, [d.id]: { status: 'loading', message: '' } }));
         try {
             const result = await onSmartBill(d);
-            setSbState((s) => ({ ...s, [d.id]: { status: 'done', message: `Trimisă (${result.series || ''}${result.number || ''})` } }));
+            setSbState((s) => ({ ...s, [d.id]: { status: 'done', message: `Trimisă (${(result && (result.series || result.serie)) || ''}${(result && (result.number ?? result.numar)) ?? ''})` } }));
         }
         catch (e) {
             setSbState((s) => ({ ...s, [d.id]: { status: 'error', message: e.message || 'Eroare la trimitere.' } }));
@@ -3358,7 +3411,7 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
                 money(totalVizibil))),
         vizibile.length === 0 && React.createElement("div", { className: "text-center py-10 text-sm", style: { color: 'var(--muted)' } }, "Niciun rezultat. Schimb\u0103 c\u0103utarea sau filtrul."),
         React.createElement("div", { className: "space-y-2" }, vizibile.slice().sort((a, b) => a.numar < b.numar ? 1 : -1).map((d) => {
-            const total = calcSubtotal(d.items) * (1 + d.tva / 100);
+            const total = calcSubtotal(d.items || []) * (1 + (Number(d.tva) || 0) / 100);
             const sb = sbState[d.id];
             return (React.createElement("div", { key: d.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
                 React.createElement("div", { className: "flex flex-wrap md:flex-nowrap items-center justify-between gap-x-3 gap-y-2" },
@@ -5034,7 +5087,8 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
         /* REGULA STOCULUI la „Emis": nu se scade iar ce s-a livrat deja pe șantier; restul doar după
            confirmare (onEmis → scoateLaDocument). Devizul din consumul șantierului (stocDinSantier) nu mișcă stocul.
            Se întreabă o singură dată (stocIntrebat); revenirea la ciornă pune la loc și resetează. */
-        if (status === 'Emis' && doc && !doc.stocDedus && !doc.stocIntrebat && !doc.stocDinSantier) {
+        /* și Ciornă → Semnat direct trece prin stoc, altfel materialele nu ies niciodată */
+        if ((status === 'Emis' || status === 'Semnat') && doc && !doc.stocDedus && !doc.stocIntrebat && !doc.stocDinSantier) {
             extra = onEmis(doc) || {};
         }
         else if (status === 'Ciornă' && doc && (doc.stocDedus || doc.stocIntrebat)) {
@@ -5155,7 +5209,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
             React.createElement("div", { className: "space-y-2" }, vizibile.slice().sort((a, b) => a.numar < b.numar ? 1 : -1).map((d) => {
                 const total = calcSubtotal(d.items || []) * (1 + (Number(d.tva) || 0) / 100);
                 const valoare = rotunjLei(calcSubtotal(d.items || []));
-                const facturat = facturatDinDeviz(d, invoices);
+                const facturat = facturatDinDeviz(d, invoices, devize);
                 const restFact = rotunjLei(valoare - facturat);
                 /* acțiunea principală: facturezi un deviz emis/semnat cu rest; altfel îl editezi */
                 const deFacturat = !!onFactureaza && d.status !== 'Ciornă' && restFact > 0.005;
@@ -5174,7 +5228,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
                                 : React.createElement("button", { onClick: () => setForm(d), "data-act": "editeaza", className: "text-xs px-2.5 py-1 rounded-lg", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "✎ Editează"),
                             React.createElement("button", { onClick: () => setMeniuId(deschis ? null : d.id), "data-act": "meniu-deviz", title: "Mai multe", className: "text-sm px-2 py-0.5 rounded-lg font-bold", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "⋯"),
                             deschis && React.createElement("div", { "data-meniu-deviz": d.id, className: "absolute right-0 top-full mt-1 rounded-xl p-1 shadow-lg", style: { background: 'var(--panel)', border: '1px solid var(--border)', minWidth: 190, zIndex: 32, boxShadow: '0 8px 30px rgba(0,0,0,.45)' } },
-                                !deFacturat && onFactureaza && butonMeniu('🧾 Facturează', () => onFactureaza(d), 'var(--acc2)'),
+                                !deFacturat && onFactureaza && d.status !== 'Ciornă' && butonMeniu('🧾 Facturează', () => onFactureaza(d), 'var(--acc2)'),
                                 deFacturat && butonMeniu('✎ Editează', () => setForm(d)),
                                 butonMeniu('🖨 PDF', () => printOne(d)),
                                 butonMeniu('📊 Excel', () => exportUnDevizExcel(d)),
@@ -7503,9 +7557,11 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
                 const min = personMinutes(p);
                 if (!min)
                     return;
-                altundeva[n] = (altundeva[n] || 0) + min;
-                lucratAlt[n] = (lucratAlt[n] || 0) + minuteLucrate(p);
-                (unde[n] = unde[n] || []).push({ santierId: r.santierId, raportId: r.id, inceput: p.oraInceput || r.oraInceput || '', sfarsit: p.oraSfarsit || r.oraSfarsit || '', min: minuteLucrate(p) });
+                /* cheie numeCheieCO: „Pop Ion" și „Ion Pop" sunt același om */
+                const k = numeCheieCO(n);
+                altundeva[k] = (altundeva[k] || 0) + min;
+                lucratAlt[k] = (lucratAlt[k] || 0) + minuteLucrate(p);
+                (unde[k] = unde[k] || []).push({ santierId: r.santierId, raportId: r.id, inceput: p.oraInceput || r.oraInceput || '', sfarsit: p.oraSfarsit || r.oraSfarsit || '', min: minuteLucrate(p) });
             });
         });
         Object.keys(unde).forEach((n) => unde[n].sort((a, b) => String(a.inceput) < String(b.inceput) ? -1 : 1));
@@ -7519,19 +7575,20 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
             const n = String(p?.nume || '').trim();
             if (!n)
                 return;
-            brut[n] = (brut[n] || 0) + personMinutes(p);
-            net[n] = (net[n] || 0) + minuteLucrate(p);
+            const k = numeCheieCO(n);
+            brut[k] = (brut[k] || 0) + personMinutes(p);
+            net[k] = (net[k] || 0) + minuteLucrate(p);
         });
         return { altundeva, brut, net, unde };
     }, [alteRapoarteZi, persoane]);
     const numeSantier = (id) => (santiere || []).find((s) => s.id === id)?.nume || 'alt șantier';
-    const numeDejaAdaugate = new Set(persoane.map((p) => p.nume));
+    const numeDejaAdaugate = new Set(persoane.map((p) => numeCheieCO(p.nume)).filter(Boolean));
     const iconFor = (rol) => ROLES.find((r) => r.id === rol)?.icon || '👤';
     const usersEchipa = (echipaPermisa && echipaPermisa.length > 0) ? users.filter((u) => echipaPermisa.includes(u.id)) : [];
     const peConcediu = (u) => concediuActiv(concedii, { userId: u.id, nume: u.nume }, data);
     const eInvoit = (nume) => concediuPeOre(concedii, { nume }, data);
-    const disponibili = usersEchipa.filter((u) => !numeDejaAdaugate.has(u.nume) && !peConcediu(u));
-    const inConcediu = usersEchipa.filter((u) => !numeDejaAdaugate.has(u.nume) && peConcediu(u));
+    const disponibili = usersEchipa.filter((u) => !numeDejaAdaugate.has(numeCheieCO(u.nume)) && !peConcediu(u));
+    const inConcediu = usersEchipa.filter((u) => !numeDejaAdaugate.has(numeCheieCO(u.nume)) && peConcediu(u));
     const addPerson = (u) => {
         if (peConcediu(u)) {
             window.alert(`${u.nume} este în concediu aprobat în ziua asta și nu poate fi pontat.`);
@@ -7564,11 +7621,12 @@ function PersonHoursEditor({ persoane, setPersoane, defaultInceput, defaultSfars
             const nume = String(p.nume || '').trim();
             if (!nume || concediuActiv(concedii, { nume }, data))
                 return null;
-            const brutZi = oreZi.brut[nume] || 0;
-            const netZi = oreZi.net[nume] || 0;
+            const kN = numeCheieCO(nume);
+            const brutZi = oreZi.brut[kN] || 0;
+            const netZi = oreZi.net[kN] || 0;
             const pauzaZi = Math.max(0, brutZi - netZi);
-            const altundeva = oreZi.altundeva[nume] || 0;
-            const unde = oreZi.unde[nume] || [];
+            const altundeva = oreZi.altundeva[kN] || 0;
+            const unde = oreZi.unde[kN] || [];
             const randAlte = altundeva > 0 ? (React.createElement("div", { className: "text-[11px] mt-1.5", style: { color: 'var(--muted)' } }, "🔁 ", React.createElement("b", null, nume), " a mai fost pontat azi și:", React.createElement("div", { className: "mt-1 space-y-1" }, unde.map((u, i) => (React.createElement("button", { key: i, onClick: () => {
                     if (onMergiLaSantier)
                         onMergiLaSantier(u.santierId, u.raportId, data);
@@ -8788,7 +8846,10 @@ function PozeLegate({ santierId, raportId, restantaId, mediaSantier, setMediaSan
         return React.createElement("div", { ref: vadFsRef, style: { position: 'fixed', inset: 0, zIndex: 400, background: '#0c0f13', display: 'flex', flexDirection: 'column' } }, React.createElement(ZoomImage, { src: blobViewUrl(vad.pathname), alt: vad.nume || 'poză', onClose: () => setVad(null), onFull: () => toggleFullscreen(vadFsRef.current) }));
     if (faraButon && !legate.length)
         return null;
-    return React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap", "data-poze-legate": raportId || restantaId || '' }, !faraButon && setMediaSantier && React.createElement("label", { className: "shrink-0 text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer", style: { background: 'var(--panel2)', color: incarc ? 'var(--acc1)' : 'var(--text)', border: '1px solid var(--border)', minHeight: 34, display: 'inline-flex', alignItems: 'center' } }, incarc ? `⏳ urc ${incarc}…` : (eticheta || '📷 Poză'), React.createElement("input", { type: "file", accept: "image/*", capture: "environment", multiple: true, className: "hidden", disabled: !!incarc, onChange: (e) => { const fl = e.target.files; const copie = fl ? Array.from(fl) : []; e.target.value = ''; incarca(copie); } })), legate.map((m) => React.createElement("img", { key: m.id, src: blobViewUrl(m.pathname), alt: m.nume || 'poză', loading: "lazy", onClick: () => setVad(m), className: "rounded-md cursor-pointer", style: { width: 44, height: 44, objectFit: 'cover', border: '1px solid var(--border)' } })));
+    /* două butoane: capture deschide doar camera pe telefon, deci galeria are butonul ei (fără capture) */
+    const stilBtnPoza = { background: 'var(--panel2)', color: incarc ? 'var(--acc1)' : 'var(--text)', border: '1px solid var(--border)', minHeight: 34, display: 'inline-flex', alignItems: 'center' };
+    const laAles = (e) => { const fl = e.target.files; const copie = fl ? Array.from(fl) : []; e.target.value = ''; incarca(copie); };
+    return React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap", "data-poze-legate": raportId || restantaId || '' }, !faraButon && setMediaSantier && React.createElement("label", { "data-poza-camera": true, className: "shrink-0 text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer", style: stilBtnPoza }, incarc ? `⏳ urc ${incarc}…` : (eticheta || '📷 Fă poză'), React.createElement("input", { type: "file", accept: "image/*", capture: "environment", multiple: true, className: "hidden", disabled: !!incarc, onChange: laAles })), !faraButon && setMediaSantier && !incarc && React.createElement("label", { "data-poza-galerie": true, className: "shrink-0 text-xs font-semibold px-2.5 py-1.5 rounded-lg cursor-pointer", style: stilBtnPoza, title: 'Din galerie' }, (eticheta && eticheta.length <= 3) ? '🖼' : '🖼 Din galerie', React.createElement("input", { type: "file", accept: "image/*", multiple: true, className: "hidden", onChange: laAles })), legate.map((m) => React.createElement("img", { key: m.id, src: blobViewUrl(m.pathname), alt: m.nume || 'poză', loading: "lazy", onClick: () => setVad(m), className: "rounded-md cursor-pointer", style: { width: 44, height: 44, objectFit: 'cover', border: '1px solid var(--border)' } })));
 }
 function RaportForm({ initial, dataInitiala, precompleteazaDinUltimul, etape, echipaPermisa, echipaNume, materials, materialeLista, pozitii, structura, structuraSantier, setStructuraSantier, persist, santierId, mod, isManager, concedii, rapoarte, santiere, restanteSantier, setRestanteSantier, currentUser, santierNume, onMergiLaSantier, mediaSantier, setMediaSantier, onCancel, onSave }) {
     /* Id-ul raportului îl știm din prima clipă, ca pozele făcute înainte de salvare să aibă de ce se lega. */
@@ -8938,10 +8999,19 @@ function RaportForm({ initial, dataInitiala, precompleteazaDinUltimul, etape, ec
        Când omul vine din butonul „📋 Raport" de jos, nu-l mai pun să apese „Folosește":
        echipa și orele vin direct din ultimul raport de pe șantierul ăsta. Nu umblu dacă
        are o ciornă începută — acolo hotărăște el ce continuă. */
+    const refPozaDupaAuto = useRef(false);
     useEffect(() => {
-        if (precompleteazaDinUltimul && !initial && !ciorna && ultimulRaport && persoane.length === 0)
+        if (precompleteazaDinUltimul && !initial && !ciorna && ultimulRaport && persoane.length === 0) {
             preiaDinUltimul();
+            refPozaDupaAuto.current = true;
+        }
     }, []);
+    /* completarea automată nu e „modificare": altfel se salva ciornă, cerea confirmare la ieșire
+       și data viitoare nu se mai completa singur (ciorna o bloca) */
+    if (refPozaDupaAuto.current && persoane.length > 0) {
+        refPozaStart.current = JSON.stringify(stareRaport());
+        refPozaDupaAuto.current = false;
+    }
     const rezumatUltim = ultimulRaport
         ? (ultimulRaport.persoane || []).filter((x) => x.nume && String(x.nume).trim())
             .map((x) => String(x.nume).split(' ')[0]).join(', ')
@@ -9189,7 +9259,8 @@ function RaportForm({ initial, dataInitiala, precompleteazaDinUltimul, etape, ec
                 return;
             refSalvat.current = true;
             stergeCiorna();
-            onSave({ id: idRaport.current, data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, timpNeproductiv, explicatii });
+            /* _idUnite: ziua contopită din mai multe rapoarte brute → saveReport le înlocuiește pe toate, nu dublează orele */
+            onSave({ id: idRaport.current, data, oraInceput, oraSfarsit, etapaId, persoane, materialeFolosite, pozitiiExecutate, tipuriLucrari, lucrariApartamente, timpNeproductiv, explicatii, _idUnite: initial?._idUnite });
             arataSalvat('✅ Raportul e salvat');
         }, className: "px-3 sm:px-4 py-2.5 rounded-xl text-base font-bold min-w-0 leading-tight", style: { color: '#14181C', background: 'var(--acc1)' } }, "💾 Salvează raportul")))));
 }
@@ -9744,13 +9815,37 @@ function SiteDevizPozTab({ santierId, pozitiiSantier, setPozitiiSantier, materia
     };
     return (React.createElement("div", { className: "space-y-2" }, React.createElement("div", { className: "grid grid-cols-2 gap-2" }, React.createElement("button", { onClick: () => setInnerTab('pozitii'), className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: isPoz ? '#14181C' : 'var(--muted1)', background: isPoz ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, "📋 Poziții"), React.createElement("button", { onClick: () => setInnerTab('materiale'), className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { color: !isPoz ? '#14181C' : 'var(--muted1)', background: !isPoz ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, "🧱 Listă cantități (materiale)")), isManager && (React.createElement("div", { className: "rounded-lg p-2.5 flex items-center gap-2 flex-wrap", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("label", { className: "text-xs px-3 py-2 rounded-lg font-semibold cursor-pointer", style: { color: '#14181C', background: 'var(--acc2)' } }, "📥 Importă din Excel", React.createElement("input", { type: "file", accept: ".xlsx,.xls", onChange: (e) => { importExcel(e.target.files[0]); e.target.value = ''; }, style: { display: 'none' } })), items.length > 0 && React.createElement("button", { onClick: golesteTot, className: "text-xs px-3 py-2 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "🗑 Golește lista"), React.createElement("span", { className: "text-[11px] w-full", style: { color: 'var(--muted2)' } }, "Coloane așteptate: Nr. crt · Denumire · U.M. · Cantitate · Preț unitar · Valoare. Importul înlocuiește lista curentă a acestui șantier."), sheetPick && (React.createElement("div", { className: "w-full rounded-lg p-2.5 mt-1", style: { background: 'var(--panel2)', border: '1px solid #E9A23B66' } }, React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--text)' } }, "📑 Fișierul are mai multe foi. Alege foaia de importat:"), React.createElement("div", { className: "flex flex-wrap gap-2" }, sheetPick.names.map((n) => (React.createElement("button", { key: n, onClick: () => importaFoaia(sheetPick.wb, n), className: "text-xs px-3 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "📄 ", n))), React.createElement("button", { onClick: () => setSheetPick(null), className: "text-xs px-3 py-2 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel)' } }, "Renunță")))))), items.length > 0 && (React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, React.createElement("input", { value: cautaLista, onChange: (e) => setCautaLista(e.target.value), placeholder: `🔍 Caută în ${isPoz ? 'poziții' : 'materiale'} (ex: doze, cablu...)`, className: "flex-1 min-w-[160px] rounded-lg px-2.5 py-1.5 text-sm outline-none", style: inputStyle }), React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, qLista ? `${filtrate.length} din ${items.length}` : `${items.length} rânduri`))), items.length === 0 ? (React.createElement("div", { className: "text-center py-8 text-sm", style: { color: 'var(--muted)' } }, isManager ? `Nicio ${isPoz ? 'poziție' : 'listă de materiale'} încă. Importă din Excel sau adaugă manual mai jos.` : 'Nimic adăugat încă la acest șantier.')) : filtrate.length === 0 ? (React.createElement("div", { className: "text-center py-6 text-sm", style: { color: 'var(--muted)' } }, "Niciun rezultat pentru „", cautaLista, "\".")) : (React.createElement("div", { className: "rounded-lg overflow-hidden", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "grid gap-1 px-2 py-1.5 text-[10px] uppercase tracking-wide", style: { gridTemplateColumns: gridCols, color: 'var(--muted)', background: 'var(--panelA)' } }, React.createElement("span", null, "Nr"), React.createElement("span", null, "Denumire"), React.createElement("span", null, "U.M."), React.createElement("span", null, "Cant."), isManager && React.createElement("span", null, "Preț"), isManager && React.createElement("span", null, "Valoare"), React.createElement("span", null)), vizibile.map((x, i) => editId === x.id ? (React.createElement("div", { key: x.id, className: "grid gap-1 px-2 py-1.5 items-center", style: { gridTemplateColumns: gridCols, borderTop: '1px solid var(--border)', background: 'var(--panelA)' } }, React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, i + 1), React.createElement("input", { value: editRow.denumire, onChange: (e) => setEditRow({ ...editRow, denumire: e.target.value }), className: "rounded px-1.5 py-1 text-xs outline-none", style: inputStyle }), React.createElement("input", { value: editRow.um, onChange: (e) => setEditRow({ ...editRow, um: e.target.value }), className: "rounded px-1 py-1 text-xs outline-none text-center", style: inputStyle }), React.createElement("input", { type: "number", value: editRow.cantitate, onChange: (e) => setEditRow({ ...editRow, cantitate: e.target.value }), className: "rounded px-1 py-1 text-xs outline-none text-center", style: inputStyle }), isManager && React.createElement("input", { type: "number", value: editRow.pretUnitar, onChange: (e) => setEditRow({ ...editRow, pretUnitar: e.target.value }), className: "rounded px-1 py-1 text-xs outline-none text-center", style: inputStyle }), isManager && React.createElement("span", { className: "text-xs text-right", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money((Number(editRow.cantitate) || 0) * (Number(editRow.pretUnitar) || 0))), React.createElement("div", { className: "flex items-center gap-1.5 justify-end" }, React.createElement("button", { onClick: saveEdit, style: { color: 'var(--acc2)' } }, "✓"), React.createElement("button", { onClick: () => setEditId(null), style: { color: 'var(--muted)' } }, "✕")))) : (React.createElement("div", { key: x.id, className: "grid gap-1 px-2 py-1.5 items-center", style: { gridTemplateColumns: gridCols, borderTop: '1px solid var(--border)' } }, React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, i + 1), React.createElement("span", { className: "text-xs truncate", style: { color: 'var(--text)' } }, x.denumire), React.createElement("span", { className: "text-[11px] text-center", style: { color: 'var(--muted)' } }, x.um), React.createElement("span", { className: "text-xs text-center", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, x.cantitate), isManager && React.createElement("span", { className: "text-xs text-center", style: { color: 'var(--muted)', fontFamily: "'JetBrains Mono', monospace" } }, x.pretUnitar), isManager && React.createElement("span", { className: "text-xs text-right", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money((Number(x.cantitate) || 0) * (Number(x.pretUnitar) || 0))), React.createElement("div", { className: "flex items-center gap-1.5 justify-end shrink-0" }, React.createElement("button", { onClick: () => startEdit(x), title: "Editează", style: { color: 'var(--muted)' } }, React.createElement(Icon, { size: 11 }, "✎")), React.createElement("button", { onClick: () => delRow(x.id), title: "Șterge", style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 11 }, "🗑")))))), isManager && (React.createElement("div", { className: "grid gap-1 px-2 py-1.5 items-center", style: { gridTemplateColumns: gridCols, borderTop: '1.5px solid var(--border)', background: 'var(--panelA)' } }, React.createElement("span", null), React.createElement("span", { className: "text-xs font-semibold", style: { color: 'var(--text)' } }, "TOTAL (fără TVA)"), React.createElement("span", null), React.createElement("span", null), React.createElement("span", null), React.createElement("span", { className: "text-xs text-right font-semibold", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(totalVal)), React.createElement("span", null))), !qLista && filtrate.length > LIM_LISTA && (React.createElement("button", { onClick: () => setShowAllLista(!showAllLista), className: "w-full text-xs py-2 font-medium", style: { color: 'var(--acc1)', background: 'var(--panelA)', borderTop: '1px solid var(--border)' } }, showAllLista ? '▲ Restrânge' : `▼ Arată toate (${filtrate.length})`)))), React.createElement("div", { className: "rounded-lg p-2.5", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-xs mb-1.5", style: { color: 'var(--muted)' } }, "Adaugă manual un rând:"), React.createElement("div", { className: "flex gap-1.5 flex-wrap" }, React.createElement("input", { placeholder: isPoz ? 'Denumire poziție' : 'Denumire material', value: addRow.denumire, onChange: (e) => setAddRow({ ...addRow, denumire: e.target.value }), className: "flex-1 min-w-[140px] rounded-lg px-2 py-1.5 text-xs outline-none", style: inputStyle }), React.createElement("input", { placeholder: "U.M.", value: addRow.um, onChange: (e) => setAddRow({ ...addRow, um: e.target.value }), className: "w-14 rounded-lg px-2 py-1.5 text-xs outline-none text-center", style: inputStyle }), React.createElement("input", { type: "number", placeholder: "Cant.", value: addRow.cantitate, onChange: (e) => setAddRow({ ...addRow, cantitate: e.target.value }), className: "w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center", style: inputStyle }), isManager && React.createElement("input", { type: "number", placeholder: "Preț", value: addRow.pretUnitar, onChange: (e) => setAddRow({ ...addRow, pretUnitar: e.target.value }), className: "w-16 rounded-lg px-2 py-1.5 text-xs outline-none text-center", style: inputStyle }), React.createElement("button", { onClick: addNew, disabled: !addRow.denumire.trim(), className: "text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "+ Adaugă")))));
 }
+/* zilele unui șantier, cu rapoartele brute din aceeași zi contopite (_idUnite = id-urile brute) */
+function rapoarteZileContopite(rapoarte, santierId) {
+    const peZi = new Map();
+    (rapoarte || []).filter((r) => r && r.santierId === santierId).forEach((r) => {
+        const k = r.data || '';
+        const ex = peZi.get(k);
+        if (!ex)
+            peZi.set(k, { ...r, _idUnite: [r.id] });
+        else {
+            const c = contopesteRapoarte(ex, r);
+            c._idUnite = [...(ex._idUnite || [ex.id]), r.id];
+            peZi.set(k, c);
+        }
+    });
+    return Array.from(peZi.values()).sort((a, b) => a.data < b.data ? 1 : -1);
+}
+/* ziua e verificată doar când TOATE rapoartele brute din ea sunt verificate; observația oricăruia contează */
+function verificareZi(r, rapoarte) {
+    const ids = (r && r._idUnite && r._idUnite.length) ? r._idUnite : [r && r.id];
+    const brute = ids.map((id) => (rapoarte || []).find((x) => x.id === id) || {});
+    const toate = brute.length > 0 && brute.every((x) => x.verificat);
+    const obs = (brute.find((x) => x.observatieManager) || {}).observatieManager || null;
+    return { ids, verificat: toate ? brute[0].verificat : null, observatieManager: obs };
+}
 function RaportCitire({ r, santier, rapoarte, mediaSantier, structura, etape, isManager, currentUser, onInchide, onVerifica, onObservatie, onAnterior, onUrmator, pozitia, dinCate, onEditeaza, onSterge, dataAnterioara, dataUrmatoare }) {
     const [obs, setObs] = useState('');
     const [scrieObs, setScrieObs] = useState(false);
     if (!r)
         return null;
     const ids = (r._idUnite && r._idUnite.length > 1) ? r._idUnite : [r.id];
-    const verif = (rapoarte.find((x) => x.id === ids[0]) || {}).verificat;
+    const verif = verificareZi(r, rapoarte).verificat;
     const oameni = (r.persoane || []).filter((p) => String(p.nume || '').trim());
     const totalMin = oameni.reduce((s, p) => s + minuteFacturabile(rapoarte, r, p), 0);
     const etapaN = (etape || []).find((e) => e.id === r.etapaId)?.nume;
@@ -10812,6 +10907,9 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
         if (onSiteView)
             onSiteView(selected ? siteView : null);
     }, [selected, siteView]);
+    /* la ieșirea din Șantiere App nu mai crede că ești într-o secțiune de șantier */
+    useEffect(() => () => { if (onSiteView)
+        onSiteView(null); }, []);
     const [viewHistory, setViewHistory] = useState([]);
     const [viewForward, setViewForward] = useState([]);
     const [origine, setOrigine] = useState(null);
@@ -11031,8 +11129,9 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
             setReportForm({ data: pendingSiteNav.raportData, ...(pendingSiteNav.raportNou ? { _precompleteaza: true } : {}) });
         if (pendingSiteNav.deschideRaportId) {
             const cerut = pendingSiteNav.deschideRaportId;
-            const alSau = rapoarte.filter((x) => x.santierId === pendingSiteNav.santierId);
-            const r0 = alSau.find((x) => x.id === cerut) || alSau.find((x) => (x._idUnite || []).includes(cerut));
+            /* caut în zilele contopite: ziua cu 2 rapoarte brute se deschide întreagă (editare/verificare pe toate id-urile) */
+            const alSau = rapoarteZileContopite(rapoarte, pendingSiteNav.santierId);
+            const r0 = alSau.find((x) => (x._idUnite || [x.id]).includes(cerut));
             /* Raportul de azi există deja: cu editeazaRaport îl deschid direct în formular,
                nu în pagina de citit — omul a venit să-l completeze, nu să-l privească. */
             if (r0 && pendingSiteNav.editeazaRaport) {
@@ -11214,7 +11313,15 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
     const saveReport = (r) => {
         const santier = santiere.find((s) => s.id === selected);
         const esteNou = !rapoarte.some((x) => x.id === r.id);
-        const withSite = { ...r, santierId: selected };
+        /* la editare păstrăm ce nu e în formular (cine l-a trimis și când, observația managerului) */
+        const vechi = esteNou ? null : rapoarte.find((x) => x.id === r.id);
+        const withSite = { ...(vechi || {}), ...r, santierId: selected };
+        delete withSite._idUnite;
+        /* modificat → se verifică din nou, ca până acum */
+        if (!esteNou) {
+            withSite.verificat = null;
+            (Array.isArray(r._idUnite) ? r._idUnite : [r.id]).forEach((id) => VERIF_IN_ZBOR.delete(String(id)));
+        }
         if (esteNou && !withSite.trimisTs) {
             withSite.trimisTs = Date.now();
             withSite.trimisLa = new Date().toISOString();
@@ -11229,9 +11336,14 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
         let next;
         if (!esteNou && Array.isArray(r._idUnite) && r._idUnite.length > 1) {
             const curat = { ...withSite };
-            delete curat._idUnite;
             const fara = rapoarte.filter((x) => !r._idUnite.includes(x.id));
             next = [...fara, curat];
+            /* pozele de pe rapoartele brute care dispar trec pe cel care rămâne */
+            if (setMediaSantier && (mediaSantier || []).some((m) => m.raportId && m.raportId !== curat.id && r._idUnite.includes(m.raportId))) {
+                const mNou = (mediaSantier || []).map((m) => m.raportId && m.raportId !== curat.id && r._idUnite.includes(m.raportId) ? { ...m, raportId: curat.id } : m);
+                setMediaSantier(mNou);
+                persist('mediaSantier', mNou);
+            }
             setRapoarte(next);
             persist('rapoarte', next);
             setReportForm(null);
@@ -11240,7 +11352,10 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
         }
         const existent = esteNou ? rapoarte.find((x) => x.santierId === selected && x.data === withSite.data) : null;
         if (existent) {
-            next = rapoarte.map((x) => x.id === existent.id ? contopesteRapoarte(existent, withSite) : x);
+            /* s-a adăugat ceva la o zi deja verificată → trebuie verificată din nou */
+            VERIF_IN_ZBOR.delete(String(existent.id));
+            const stampMod = { verificat: null, modificatLa: new Date().toISOString(), modificatTs: Date.now(), modificatDe: currentUser?.nume || '' };
+            next = rapoarte.map((x) => x.id === existent.id ? { ...contopesteRapoarte(existent, withSite), ...stampMod } : x);
         }
         else {
             next = esteNou ? [...rapoarte, withSite] : rapoarte.map((x) => x.id === r.id ? withSite : x);
@@ -11380,7 +11495,7 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
             });
             return Array.from(peZi.values()).sort((a, b) => a.data < b.data ? 1 : -1);
         })();
-        const totalOreSantierMin = rapoarteSantier.reduce((s, r) => s + r.persoane.reduce((s2, p) => s2 + minuteFacturabile(rapoarte, r, p), 0), 0);
+        const totalOreSantierMin = rapoarteSantier.reduce((s, r) => s + (r.persoane || []).filter(Boolean).reduce((s2, p) => s2 + minuteFacturabile(rapoarte, r, p), 0), 0);
         const esteMgrS = currentUser?.rol === 'Manager';
         /* săptămâna o alegi din 4 variante; implicit cea trecută (luni–duminică), cum o cere clientul */
         const situatieSaptamanala = async () => {
@@ -11493,7 +11608,7 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
                     buc.push(fmtData(r.data));
                 }
                 (r.persoane || []).forEach((p) => {
-                    if (p.nume)
+                    if (p && p.nume)
                         buc.push(p.nume);
                 });
                 (r.tipuriLucrari || []).forEach((t) => {
@@ -11531,13 +11646,15 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
             const LUNI_N = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'];
             const numeLuna = (cheie) => { const [an, l] = cheie.split('-'); return `${LUNI_N[Number(l) - 1]} ${an}`; };
             const randRaport = (r) => {
-                const totalOreMinRow = r.persoane.reduce((s, p) => s + minuteFacturabile(rapoarte, r, p), 0);
-                const nrPersoane = r.persoane.filter((p) => p.nume.trim()).length;
-                const numePers = r.persoane.filter((p) => p.nume.trim()).map((p) => p.nume).join(', ');
+                /* rapoarte vechi/stricate pot veni fără persoane sau cu nume lipsă → nu cade lista */
+                const persR = (r.persoane || []).filter((p) => p && String(p.nume || '').trim());
+                const totalOreMinRow = (r.persoane || []).filter(Boolean).reduce((s, p) => s + minuteFacturabile(rapoarte, r, p), 0);
+                const nrPersoane = persR.length;
+                const numePers = persR.map((p) => p.nume).join(', ');
                 const etapaN = etapeSantier.find((e) => e.id === r.etapaId)?.nume;
-                const idsR = (r._idUnite && r._idUnite.length > 1) ? r._idUnite : [r.id];
-                const v = (rapoarte.find((x) => x.id === idsR[0]) || {}).verificat;
-                const areObs = !!(rapoarte.find((x) => x.id === idsR[0]) || {}).observatieManager;
+                const vz = verificareZi(r, rapoarte);
+                const v = vz.verificat;
+                const areObs = !!vz.observatieManager;
                 return (React.createElement("button", { key: r.id, onClick: () => deschideRaport(r),
                     className: "w-full text-left rounded-xl px-3 py-3 flex items-center gap-3",
                     style: { background: 'var(--panel)', border: '1px solid ' + (areObs ? 'var(--acc4)' : (r.data === aziStr ? '#4CAF7D66' : 'var(--border)')) } }, React.createElement("span", { className: "min-w-0 flex-1" }, React.createElement("span", { className: "text-sm font-medium block", style: { color: 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, fmtData(r.data), r.data === aziStr && React.createElement("span", { className: "ml-2 text-[10px] px-1.5 py-0.5 rounded", style: { background: 'var(--acc2)', color: '#14181C', fontFamily: "'Inter', sans-serif", fontWeight: 700 } }, "AZI")), React.createElement("span", { className: "text-[11px] block truncate", style: { color: 'var(--muted)' } }, nrPersoane, " ", nrPersoane === 1 ? 'persoană' : 'persoane', numePers ? ` · ${numePers}` : '', etapaN ? ` · ${etapaN}` : ''), React.createElement("span", { className: "text-[11px] block mt-0.5", style: { color: areObs ? 'var(--acc4)' : (v ? 'var(--acc2)' : 'var(--acc3)') } }, areObs ? '⚠ Are o observație' : (v ? `✓ Verificat de ${v.de}` : '⏳ Neverificat'))), React.createElement("span", { className: "text-sm shrink-0", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, minutesToHM(totalOreMinRow)), React.createElement("span", { className: "shrink-0", style: { fontSize: 12, color: 'var(--muted2)' } }, "›")));
@@ -11559,10 +11676,9 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
                 peLuni.get(k).push(r);
             });
             const luniSortate = Array.from(peLuni.keys()).sort().reverse();
-            const oreDin = (lista) => lista.reduce((s2, r) => s2 + r.persoane.reduce((s3, p) => s3 + minuteFacturabile(rapoarte, r, p), 0), 0);
+            const oreDin = (lista) => lista.reduce((s2, r) => s2 + (r.persoane || []).filter(Boolean).reduce((s3, p) => s3 + minuteFacturabile(rapoarte, r, p), 0), 0);
             const cateNeverificate = (lista) => lista.filter((r) => {
-                const id = (r._idUnite && r._idUnite.length > 1) ? r._idUnite[0] : r.id;
-                const x = rapoarte.find((y) => y.id === id) || {};
+                const x = verificareZi(r, rapoarte);
                 return !x.verificat || x.observatieManager;
             }).length;
             const cautaInput = React.createElement("input", { value: rapSearch, onChange: (e) => setRapSearch(e.target.value), placeholder: "🔍 Caută în rapoarte (ex: doze 410, cablu 3x1,5, Bogdan)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mb-3", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } });
@@ -11578,7 +11694,7 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
                     className: "w-full text-left rounded-xl px-3 py-3 flex items-center gap-3",
                     style: { background: 'var(--panel2)', border: '1px solid var(--border)' } }, React.createElement("span", { style: { fontSize: 18 } }, "📁"), React.createElement("span", { className: "min-w-0 flex-1" }, React.createElement("span", { className: "text-sm font-semibold block", style: { color: 'var(--text)' } }, numeLuna(k)), React.createElement("span", { className: "text-[11px] block", style: { color: 'var(--muted2)' } }, lista.length, " ", lista.length === 1 ? 'zi' : 'zile', " · ", minutesToHM(oreDin(lista)))), nev > 0 && React.createElement("span", { className: "text-[11px] px-2 py-1 rounded-lg shrink-0", style: { color: '#14181C', background: 'var(--acc3)', fontWeight: 700 } }, nev, " de citit"), React.createElement("span", { className: "shrink-0", style: { fontSize: 12, color: 'var(--muted2)' } }, "›")));
             }))));
-        })())), siteView === 'timpimorti' && (!TIMPI_MORTI_DOAR_MANAGER || currentUser?.rol === 'Manager') && (React.createElement(SiteTimpiMortiTab, { santierId: selected, santierNume: santier?.nume || '', santier: santier, rapoarte: rapoarte, company: company, isManager: currentUser?.rol === 'Manager', onDeschideRaport: (rid) => { const alSau = rapoarte.filter((x) => x.santierId === selected); const r0 = alSau.find((x) => x.id === rid) || alSau.find((x) => (x._idUnite || []).includes(rid)); if (r0) {
+        })())), siteView === 'timpimorti' && (!TIMPI_MORTI_DOAR_MANAGER || currentUser?.rol === 'Manager') && (React.createElement(SiteTimpiMortiTab, { santierId: selected, santierNume: santier?.nume || '', santier: santier, rapoarte: rapoarte, company: company, isManager: currentUser?.rol === 'Manager', onDeschideRaport: (rid) => { const alSau = rapoarteZileContopite(rapoarte, selected); const r0 = alSau.find((x) => (x._idUnite || [x.id]).includes(rid)); if (r0) {
                 navTo('rapoarte');
                 setLunaFolder(null);
                 setRaportFull({ r: r0, lista: alSau.map((x) => x.id) });
@@ -15075,7 +15191,12 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
         }
         const pentruAltul = isManager && !form.id && !!String(form.pentruNume || '').trim();
         const idTinta = pentruAltul ? (form.pentruUserId || null) : currentUser?.id;
-        const eAlTintei = (c) => pentruAltul ? (idTinta ? c.userId === idTinta : numeCheieCO(c.nume) === numeCheieCO(form.pentruNume)) : c.userId === currentUser?.id;
+        /* managerul care modifică cererea altcuiva: suprapunerea se caută la omul acela, nu la manager */
+        const vecheEd = form.id ? (concedii || []).find((c) => c.id === form.id) : null;
+        const editMgrAltul = isManager && !!vecheEd && vecheEd.userId !== currentUser?.id;
+        const eAlTintei = (c) => pentruAltul ? (idTinta ? c.userId === idTinta : numeCheieCO(c.nume) === numeCheieCO(form.pentruNume))
+            : editMgrAltul ? (vecheEd.userId ? c.userId === vecheEd.userId : numeCheieCO(c.nume) === numeCheieCO(vecheEd.nume))
+                : c.userId === currentUser?.id;
         const overl = (concedii || []).filter((c) => c.status === 'Aprobat' && c.id !== form.id && c.dataInceput && c.dataSfarsit && form.dataInceput <= c.dataSfarsit && c.dataInceput <= form.dataSfarsit);
         const eu = overl.filter(eAlTintei);
         const altii = overl.filter((c) => !eAlTintei(c));
@@ -15095,12 +15216,12 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
             return;
         }
         if (eu.length) {
-            if (!window.confirm('Ai deja un concediu APROBAT care se suprapune cu această perioadă. Trimiți totuși cererea?'))
+            if (!window.confirm((editMgrAltul ? (vecheEd.nume || 'Omul') + ' are' : 'Ai') + ' deja un concediu APROBAT care se suprapune cu această perioadă. ' + (editMgrAltul ? 'Salvezi totuși?' : 'Trimiți totuși cererea?')))
                 return;
         }
         else if (altii.length) {
             const nume = [...new Set(altii.map((c) => c.nume).filter(Boolean))].join(', ');
-            if (!window.confirm(`Atenție: în această perioadă ${altii.length === 1 ? 'mai este în concediu' : 'mai sunt în concediu'}: ${nume}.\nCererea se trimite spre aprobare la birou. Continui?`))
+            if (!window.confirm(`Atenție: în această perioadă ${altii.length === 1 ? 'mai este în concediu' : 'mai sunt în concediu'}: ${nume}.\n${editMgrAltul ? '' : 'Cererea se trimite spre aprobare la birou. '}Continui?`))
                 return;
         }
         if (form.id) {
@@ -15110,14 +15231,21 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
                 setForm(null);
                 return;
             }
-            if (veche && veche.status === 'Aprobat') {
+            /* managerul care corectează nu scoate cererea din aprobare — el e cel care aprobă */
+            if (veche && veche.status === 'Aprobat' && !isManager) {
                 if (!window.confirm('Concediul ăsta e deja APROBAT. Dacă îl modifici, iese din aprobare și managerul trebuie să îl aprobe din nou. Continui?'))
                     return;
             }
-            const next = concedii.map((c) => c.id === form.id ? { ...c, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', oraInceput, oraSfarsit, status: 'Cerut' } : c);
+            const statusNou = isManager && veche ? veche.status : 'Cerut';
+            const next = concedii.map((c) => c.id === form.id ? { ...c, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', oraInceput, oraSfarsit, status: statusNou } : c);
             setConcedii(next);
             persist('concedii', next);
-            notifica('manageri', { title: veche && veche.status === 'Aprobat' ? 'Concediu modificat — de reaprobat' : 'Cerere de concediu modificată', body: `${currentUser?.nume || 'Un coleg'}: ${cumScriuPerioada({ ...form, oraInceput, oraSfarsit })}.`, tag: 'concediu', url: '/?concediu=' + encodeURIComponent(form.id), data: { tip: 'concediu', id: form.id } }, currentUser?.id);
+            /* corectat de birou → află omul, nu ceilalți manageri */
+            if (editMgrAltul) {
+                if (veche.userId)
+                    notifica(veche.userId, { title: 'Concediu modificat de birou', body: `${cumScriuPerioada({ ...form, oraInceput, oraSfarsit })} — ${statusNou} · modificat de ${currentUser?.nume || 'birou'}.`, tag: 'concediu-raspuns' }, currentUser?.id);
+            }
+            else notifica('manageri', { title: veche && veche.status === 'Aprobat' ? 'Concediu modificat — de reaprobat' : 'Cerere de concediu modificată', body: `${currentUser?.nume || 'Un coleg'}: ${cumScriuPerioada({ ...form, oraInceput, oraSfarsit })}.`, tag: 'concediu', url: '/?concediu=' + encodeURIComponent(form.id), data: { tip: 'concediu', id: form.id } }, currentUser?.id);
         }
         else {
             const c = { id: uid(), userId: currentUser.id, nume: currentUser.nume, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', oraInceput, oraSfarsit, status: 'Cerut', creatLa: new Date().toISOString() };
@@ -18628,14 +18756,17 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
         (clients || []).forEach((c) => {
             const factC = invoices.filter((i) => i.clientId === c.id);
             const ultimaF = factC.map((i) => i.data).sort().slice(-1)[0] || null;
+            /* un deviz cu doar avansul facturat rămâne „de facturat" cât timp are rest */
+            const restDev = (d) => rotunjLei(calcSubtotal(d.items || []) - facturatDinDeviz(d, invoices, devize));
             const devNefact = devize.filter((d) => d.clientId === c.id && d.status !== 'Ciornă'
-                && !devizePeFacturi.has(d.id) && String(d.data || '') <= zileInUrma(7));
+                && restDev(d) > 0.005 && String(d.data || '') <= zileInUrma(7));
             const areFacturaLuna = factC.some((i) => String(i.data || '').startsWith(lunaCur));
             const santC = santiere.filter((s) => s.benefClientId === c.id);
             const lucruLuna = santC.some((s) => rapoarte.some((r) => r.santierId === s.id && String(r.data || '').startsWith(lunaCur)));
             if (devNefact.length) {
                 const vechi = devNefact.map((d) => String(d.data || '')).sort()[0];
-                deFacturat.push({ c, motiv: `deviz din ${fmtData(vechi)}, netrecut pe nicio factură`, suma: devNefact.reduce((s, d) => s + totalDoc(d), 0), ultimaF });
+                const partial = devNefact.some((d) => devizePeFacturi.has(d.id));
+                deFacturat.push({ c, motiv: partial ? `deviz din ${fmtData(vechi)}, facturat doar parțial` : `deviz din ${fmtData(vechi)}, netrecut pe nicio factură`, suma: devNefact.reduce((s, d) => s + restDev(d) * (1 + (Number(d.tva) || 0) / 100), 0), ultimaF });
             }
             else if (lucruLuna && !areFacturaLuna)
                 deFacturat.push({ c, motiv: 'lucrări luna asta, fără factură emisă', suma: null, ultimaF });
@@ -23899,7 +24030,9 @@ function printSituatieSaptamanala({ santier, client, company, rapoarte, de, la, 
         const lucrari = (r.tipuriLucrari || []).map((t) => String(t.denumire || '').trim()).filter(Boolean);
         return `<tr><td style="white-space:nowrap">${esc(fmtData(r.data))}</td><td style="text-align:left">${esc(pers.map((p) => String(p.nume).trim()).join(', '))}</td><td style="white-space:nowrap">${minutesToHM(min)}</td><td style="text-align:left">${esc(lucrari.join(', ') || '—')}</td><td style="text-align:left">${esc(r.explicatii || '')}</td></tr>`;
     }).join('');
-    const poze = (mediaSantier || []).filter((m) => m.santierId === sid && m.tip !== 'video' && m.url && m.data >= de && m.data <= la).slice(-12);
+    /* blobul e privat: m.url nu se deschide în fereastra de tipar → prin /api/files cu pathname */
+    const poze = (mediaSantier || []).filter((m) => m.santierId === sid && m.tip !== 'video' && (m.pathname || m.url) && m.data >= de && m.data <= la).slice(-12);
+    const srcPoza = (m) => m.pathname ? location.origin + blobViewUrl(m.pathname) : m.url;
     const restante = (restanteSantier || []).filter((x) => x.santierId === sid && !x.rezolvat && !x.sters);
     const livrate = (miscariSantier || []).filter((x) => x.santierId === sid && x.tip === 'intrare' && x.data >= de && x.data <= la);
     const titluClient = client?.nume || santier?.beneficiar || '';
@@ -23931,7 +24064,7 @@ function printSituatieSaptamanala({ santier, client, company, rapoarte, de, la, 
       <div class="pp-meta-left"><b>Obiectiv:</b> ${esc(santier?.nume || '')}${santier?.adresa ? `<br/><b>Adresă:</b> ${esc(santier.adresa)}` : ''}${santier?.lucrare ? `<br/><b>Lucrare:</b> ${esc(santier.lucrare)}` : ''}</div>
       <div class="ss-kpi"><div>Ore lucrate<b>${minutesToHM(totalMin)} h</b></div><div>Oameni<b>${oameniCheie.size}</b></div><div>Zile cu lucru<b>${zile.length}</b></div></div>
       ${sectiune('Zi cu zi', zile.length ? `<table class="pp-table ss"><thead><tr><th>Data</th><th style="text-align:left">Oameni</th><th>Ore</th><th style="text-align:left">Lucrări</th><th style="text-align:left">Explicații</th></tr></thead><tbody>${randuri}</tbody></table>` : '<p class="pp-sect-text">Niciun raport de lucru în perioada aceasta.</p>')}
-      ${poze.length ? sectiune('Poze din săptămână', `<div class="ss-poze">${poze.map((m) => `<img src="${esc(m.url)}" alt="" />`).join('')}</div>`) : ''}
+      ${poze.length ? sectiune('Poze din săptămână', `<div class="ss-poze">${poze.map((m) => `<img src="${esc(srcPoza(m))}" alt="" />`).join('')}</div>`) : ''}
       ${sectiune('Rămas de rezolvat', restante.length ? `<ul class="pp-sect-lista">${restante.map((x) => `<li>${esc(x.text || '')}${x.locNume ? ` <span style="color:#5b6773">(${esc(x.locNume)})</span>` : ''}</li>`).join('')}</ul>` : '<p class="pp-sect-text">Nimic deschis.</p>')}
       ${sectiune('Materiale livrate pe șantier', livrate.length ? `<ul class="pp-sect-lista">${livrate.map((x) => `<li>${esc(fmtData(x.data))} — ${esc(x.denumire || '')}: ${esc(x.cantitate)} ${esc(x.um || '')}</li>`).join('')}</ul>` : '<p class="pp-sect-text">Nicio livrare în perioada aceasta.</p>')}
       ${letterheadHtml(company)}
@@ -27207,8 +27340,13 @@ function CheltuieliTab({ cheltuieliFirma, setCheltuieliFirma, persist }) {
         ...cheltuieliFirma.filter(c => c.recurent && Number(c.suma) > 0).map(c => {
             const zi = String(c.ziLuna || 1).padStart(2, '0');
             const dataLuna = `${luna}-${zi}`;
-            return { id: c.id, data: dataLuna >= azi ? dataLuna : `${lunaVit}-${zi}`, label: `${c.categorie}${c.descriere ? ` — ${c.descriere}` : ''}`, suma: Number(c.suma), recurent: true };
-        }),
+            let dataUrm = dataLuna >= azi ? dataLuna : `${lunaVit}-${zi}`;
+            /* recurenta începe din luna ei (c.data), nu din trecut */
+            const lunaStart = String(c.data || '').slice(0, 7);
+            if (lunaStart && dataUrm.slice(0, 7) < lunaStart)
+                dataUrm = `${lunaStart}-${zi}`;
+            return { id: c.id, data: dataUrm, label: `${c.categorie}${c.descriere ? ` — ${c.descriere}` : ''}`, suma: Number(c.suma), recurent: true };
+        }).filter(x => x.data.slice(0, 7) <= lunaVit),
         ...cheltuieliFirma.filter(c => !c.recurent && Number(c.suma) > 0 && c.data && c.data >= azi && (c.data.startsWith(luna) || c.data.startsWith(lunaVit))).map(c => ({
             id: c.id, data: c.data, label: `${c.categorie}${c.descriere ? ` — ${c.descriere}` : ''}`, suma: Number(c.suma), recurent: false,
         })),
@@ -27332,7 +27470,16 @@ const linkUrmarireOferta = (o, c, company) => {
 };
 /* FACTURAT DIN DEVIZ: suma fără TVA a facturilor care au devizul în devizeIds (facturare pe etape) */
 const facturiDinDeviz = (d, invoices) => (invoices || []).filter((i) => i && d && Array.isArray(i.devizeIds) && i.devizeIds.includes(d.id) && normStatusFactura(i.status) !== 'Anulată');
-const facturatDinDeviz = (d, invoices) => rotunjLei(facturiDinDeviz(d, invoices).reduce((s, i) => s + calcSubtotal(i.items || []), 0));
+/* factura pe mai multe devize se împarte pe ele după valoarea fiecăruia, nu se numără întreagă la fiecare */
+const facturatDinDeviz = (d, invoices, devize) => rotunjLei(facturiDinDeviz(d, invoices).reduce((s, i) => {
+    const sub = calcSubtotal(i.items || []);
+    const ids = Array.from(new Set(i.devizeIds));
+    if (ids.length <= 1)
+        return s + sub;
+    const valDev = (id) => { const x = id === d.id ? d : (devize || []).find((y) => y && y.id === id); return x ? calcSubtotal(x.items || []) : 0; };
+    const totalDev = ids.reduce((t, id) => t + valDev(id), 0);
+    return s + (totalDev > 0 ? sub * valDev(d.id) / totalDev : sub / ids.length);
+}, 0));
 function ScadentarTab({ invoices, clients, company, currentUser, onIncasari }) {
     const azi = dataLocala(new Date());
     const [incasareId, setIncasareId] = useState(null);
@@ -27373,11 +27520,12 @@ function ScadentarTab({ invoices, clients, company, currentUser, onIncasari }) {
         + ', din care a rămas de achitat ' + money(x.rest) + '. '
         + 'Dacă ați făcut deja plata, vă mulțumim și vă rugăm să ignorați mesajul. O zi bună!';
     const linkAmintire = (x) => {
-        const tel = telefonWa(x.c?.telefon);
-        if (tel)
-            return 'https://wa.me/' + tel + '?text=' + encodeURIComponent(textAmintire(x));
-        if (x.c?.email)
-            return 'mailto:' + String(x.c.email).trim() + '?subject=' + encodeURIComponent('Amintire plată — factura nr. ' + (numarDoc(x.i) || '?'))
+        /* telefonul/mailul pot sta și doar în câmpul „contact" → contactClient le scoate de acolo */
+        const k = contactClient(x.c);
+        if (k.wa)
+            return 'https://wa.me/' + k.wa + '?text=' + encodeURIComponent(textAmintire(x));
+        if (k.email)
+            return 'mailto:' + k.email + '?subject=' + encodeURIComponent('Amintire plată — factura nr. ' + (numarDoc(x.i) || '?'))
                 + '&body=' + encodeURIComponent(textAmintire(x) + '\n\nCu stimă,\n' + firma);
         return '';
     };
@@ -27389,7 +27537,7 @@ function ScadentarTab({ invoices, clients, company, currentUser, onIncasari }) {
     const Rand = (x) => {
         const intarziat = x.intarzie != null && x.intarzie > 0;
         const link = linkAmintire(x);
-        const telSimplu = String(x.c?.telefon || '').replace(/[^\d+]/g, '');
+        const telSimplu = contactClient(x.c).tel;
         return React.createElement("div", { key: x.i.id, "data-datorie": x.i.id, className: "px-4 py-3 rounded-xl", style: { background: 'var(--panel)', border: `1px solid ${intarziat ? '#E0525255' : 'var(--border)'}` } },
             React.createElement("div", { className: "flex items-start gap-3" },
                 React.createElement("div", { className: "flex-1 min-w-0" },
@@ -27401,7 +27549,7 @@ function ScadentarTab({ invoices, clients, company, currentUser, onIncasari }) {
                 React.createElement("div", { className: "text-base font-bold shrink-0", style: { color: intarziat ? 'var(--acc4)' : 'var(--acc2)', fontFamily: "'JetBrains Mono',monospace" } }, money(x.rest))),
             React.createElement("div", { className: "flex gap-1.5 mt-2 flex-wrap" },
                 onIncasari && React.createElement("button", { onClick: () => setIncasareId(x.i.id), "data-act": "am-incasat", className: "btnPrim" }, "💶 Am încasat"),
-                telSimplu && React.createElement("a", { href: 'tel:' + telSimplu, "data-act": "suna", className: "btnSec", style: { textDecoration: 'none' }, title: 'Sună: ' + x.c.telefon }, "📞"),
+                telSimplu && React.createElement("a", { href: 'tel:' + telSimplu, "data-act": "suna", className: "btnSec", style: { textDecoration: 'none' }, title: 'Sună: ' + telSimplu }, "📞"),
                 link && React.createElement("a", { href: link, target: "_blank", rel: "noopener noreferrer", "data-act": "amintire", className: "btnSec", style: { textDecoration: 'none' } },
                     link.startsWith('mailto:') ? "✉️ Amintire" : "💬 Amintire"),
                 !link && React.createElement("span", { className: "text-[10px] self-center", style: { color: 'var(--muted2)' } }, telSimplu ? "Numărul e prea scurt pentru WhatsApp — verifică-l la client." : "Clientul n-are telefon sau e-mail trecut.")));
@@ -27479,7 +27627,8 @@ function profitSantier(s, { devize, offers, invoices, rapUnificate, stockMoves, 
     const man = costManoperaRapoarte(rapS, costOra, salarii);
     const ore = man.ore;
     const costMan = man.cost;
-    const mat = costMaterialeMiscari((stockMoves || []).filter((mv) => (eLivrareLaSantier(mv, s.id, s.nume) || (mv.docId && dvIds.has(mv.docId))) && inPer(mv.data)), materials);
+    /* + ce a scos o factură manuală pe șantier (docId = factura, santierId = șantierul) */
+    const mat = costMaterialeMiscari((stockMoves || []).filter((mv) => (eLivrareLaSantier(mv, s.id, s.nume) || (mv.docId && (dvIds.has(mv.docId) || mv.santierId === s.id))) && inPer(mv.data)), materials);
     const cost = rotunjLei(costMan + mat.cost);
     const fc = (invoices || []).filter((i) => i && normStatusFactura(i.status) !== 'Anulată' && inPer(i.data)
         && (i.santierId === s.id || (Array.isArray(i.devizeIds) && i.devizeIds.some((id) => dvIds.has(id)))));
@@ -27584,7 +27733,9 @@ function platiCheltuieliIntre(cheltuieliFirma, de, la) {
         const label = `${c.categorie || 'Cheltuială'}${c.descriere ? ` — ${c.descriere}` : ''}`;
         if (c.recurent) {
             const zi = String(Math.max(1, Math.min(28, Number(c.ziLuna) || 1))).padStart(2, '0');
-            const d = new Date(de.slice(0, 7) + '-01T00:00:00');
+            /* nu se numără în lunile dinainte să existe cheltuiala (c.data = luna de start) */
+            const lunaStart = String(c.data || '').slice(0, 7);
+            const d = new Date((lunaStart && lunaStart > de.slice(0, 7) ? lunaStart : de.slice(0, 7)) + '-01T00:00:00');
             while (dataLocala(d).slice(0, 7) <= la.slice(0, 7)) {
                 const data = dataLocala(d).slice(0, 7) + '-' + zi;
                 if (data >= de && data <= la)
@@ -28408,7 +28559,8 @@ function CalendarEchipaTab({ rapoarte, santiere, planificareSantier, setPlanific
                         const kPlan = z + '|' + nume;
                         const rap = dinRapoarte[kRap];
                         const plan = dinPlan[kPlan];
-                        const eTrecut = z <= azi;
+                        /* azi încă se vede planul (până vine raportul) — doar zilele de dinainte sunt trecute */
+                        const eTrecut = z < azi;
                         const d = new Date(z + 'T00:00:00');
                         const weekend = ((d.getDay() + 6) % 7) >= 5;
                         /* învoire / concediu pe ore (o bucată din zi): chihlimbar deschis, cu orele „12–16" */
@@ -28883,6 +29035,7 @@ function App() {
     } });
     /* 🔳 din codul QR lipit pe șantier sau pe tablou: /?santier=<id>[&tablou=<id>].
        Adresa rămâne până după logare; abia atunci deschidem șantierul (sau tabloul) și o curățăm. */
+    const [incarcatPentru, setIncarcatPentru] = useState('');
     const [pendingQrNav, setPendingQrNav] = useState(() => { try {
         const p = new URLSearchParams(window.location.search || '');
         const s = p.get('santier');
@@ -28950,6 +29103,8 @@ function App() {
         }
         catch (_) { }
     };
+    /* orice cerere care află că contul a fost șters scoate omul din aplicație */
+    LA_CONT_STERS = () => setCurrentUser(null);
     const reinnoitRef = useRef(false);
     useEffect(() => {
         if (!currentUser || reinnoitRef.current)
@@ -28980,12 +29135,7 @@ function App() {
                     bioActualizeazaSesiune(d.user, d.token);
                 }
                 catch (_) { }
-                if (d.rolSchimbat) {
-                    try {
-                        loadAllData(false);
-                    }
-                    catch (_) { }
-                }
+                /* rolSchimbat: reîncărcarea o face efectul pe currentUser.rol (cu funcția proaspătă, nu cea veche de aici) */
             }
             catch (_) { }
         })();
@@ -29320,7 +29470,8 @@ function App() {
         }
     }, [pendingQaId, problemeSantier]);
     useEffect(() => {
-        if (!pendingQrNav || !currentUser || loading)
+        /* după logare datele se reîncarcă: până atunci „santiere" e lista veche → „nu există" greșit */
+        if (!pendingQrNav || !currentUser || loading || incarcatPentru !== (currentUser.id + '|' + currentUser.rol))
             return;
         const { santierId, tablouId } = pendingQrNav;
         setPendingQrNav(null);
@@ -29341,7 +29492,7 @@ function App() {
         }
         setPendingSiteNav({ santierId });
         setTab('santiere');
-    }, [pendingQrNav, currentUser, loading, santiere]);
+    }, [pendingQrNav, currentUser, loading, santiere, incarcatPentru]);
     const [concedii, setConcedii] = useState([]);
     /* „✓ Aprobă / ✕ Respinge" apăsat pe notificarea de concediu: vine ori prin adresă
        (/?concediu=<id>&actiune=aproba), ori ca mesaj de la sw.js când aplicația e deja deschisă. */
@@ -29413,7 +29564,9 @@ function App() {
        iar copia din telefon e pusă la fel, ca ce am scos să nu pară „șters de mână". */
     const [prezenta, setPrezentaStare] = useState([]);
     const prezentaRef = useRef([]);
-    const setPrezenta = (v) => { const c = curataPrezenta(v); prezentaRef.current = c; try {
+    /* angajatul vede doar rândurile lui (locația colegilor nu e treaba lui); serverul pune la loc restul la scriere */
+    const setPrezenta = (v) => { let c = curataPrezenta(v); if (currentUser && currentUser.rol !== 'Manager')
+        c = c.filter((r) => r.userId ? r.userId === currentUser.id : numeCheieCO(r.nume) === numeCheieCO(currentUser.nume)); prezentaRef.current = c; try {
         cacheSet('prezenta', c);
     }
     catch (_) { } setPrezentaStare(c); };
@@ -29637,6 +29790,8 @@ function App() {
             }
             catch { }
             setDateIncarcate(true);
+            /* pentru cine s-au încărcat datele — linkul QR așteaptă datele contului logat acum */
+            setIncarcatPentru(currentUser ? (currentUser.id + '|' + currentUser.rol) : '');
             if (nrEsuate > 0) {
                 setError('⚠ Conexiune slabă — unele date nu s-au încărcat acum. Datele tale sunt în siguranță pe server. Se reîncearcă singur… sau apasă ↻ Reîncearcă.');
                 if (incercare < 2)
@@ -29653,6 +29808,7 @@ function App() {
             catch (_) { }
             setError('⚠ Ceva a împiedicat încărcarea (' + ((e && e.message) || 'eroare necunoscută') + '). DATELE TALE SUNT ÎN SIGURANȚĂ PE SERVER. Apasă ↻ Reîncearcă, iar dacă tot nu apar, intră în Profil → „🩺 De ce lipsesc datele".');
             setDateIncarcate(true);
+            setIncarcatPentru(currentUser ? (currentUser.id + '|' + currentUser.rol) : '');
         }
         finally {
             if (showSpinner)
@@ -29812,7 +29968,8 @@ function App() {
         const upOnline = () => { setOnline(navigator.onLine); if (navigator.onLine) {
             syncQueue();
             pushQueueFlush();
-            loadAllData(false);
+            /* prin ref: efectul rulează o dată, loadAllData de aici ar fi cel de la pornire (fără cont) */
+            refLoadAll.current(false);
         } };
         const upPending = () => setPendingCount(getPending().length);
         window.addEventListener('online', upOnline);
@@ -29986,11 +30143,20 @@ function App() {
             });
         }
         catch (_) { }
+        /* cheile doar de manager nu se mai cer de pe telefonul angajatului la fiecare schimbare (serverul oricum le refuză) */
+        const eMgrP = currentUser && currentUser.rol === 'Manager';
         const setters = {
             clients: (v) => setClients(v ?? []),
-            offers: (v) => setOffers(v ?? []),
-            invoices: (v) => setInvoices(v ?? []),
-            devize: (v) => setDevize(v ?? []),
+            ...(eMgrP ? {
+                offers: (v) => setOffers(v ?? []),
+                invoices: (v) => setInvoices(v ?? []),
+                devize: (v) => setDevize(v ?? []),
+                soldConcediu: (v) => setSoldConcediu(v ?? []),
+                cheltuieliFirma: (v) => setCheltuieliFirma(v ?? []),
+                antemasuratori: (v) => setAntemasuratori(v ?? []),
+            } : {}),
+            /* PV semnat la distanță ajunge imediat și pe celelalte telefoane */
+            proceseVerbale: (v) => setProceseVerbale(v ?? []),
             company: (v) => setCompany(v ?? {}),
             materials: (v) => setMaterials(v ?? []),
             stockMoves: (v) => setStockMoves(v ?? []),
@@ -30008,7 +30174,6 @@ function App() {
             restante: (v) => setRestanteSantier(v ?? []),
             miscariSantier: (v) => setMiscariSantier(v ?? []),
             planseSantier: (v) => setPlanseSantier(v ?? []),
-            antemasuratori: (v) => setAntemasuratori(v ?? []),
             normativPdf: (v) => setNormativPdf(v ?? null),
             normativIndexFile: (v) => setNormativIndexFile(v ?? null),
             noutatiAnuntate: (v) => setNoutatiAnuntate(v ?? []),
@@ -30017,10 +30182,8 @@ function App() {
             pozitiiSantier: (v) => setPozitiiSantier(v ?? []),
             materialeListaSantier: (v) => setMaterialeListaSantier(v ?? []),
             concedii: (v) => setConcedii(v ?? []),
-            soldConcediu: (v) => setSoldConcediu(v ?? []),
             achizitii: (v) => setAchizitii(v ?? []),
             pontajCorectii: (v) => setPontajCorectii(v ?? []),
-            cheltuieliFirma: (v) => setCheltuieliFirma(v ?? []),
             planificareSantier: (v) => setPlanificareSantier(v ?? []),
             prezenta: (v) => setPrezenta(v ?? []),
             ...(currentUser && currentUser.rol === 'Manager' ? { salarii: (v) => setSalarii(v ?? []) } : {}),
@@ -30295,7 +30458,10 @@ function App() {
             return;
         const azi = dataLocala(new Date());
         /* aceeași alegere ca la „📍 Am ajuns pe șantier" — santiereDeAziPentru */
-        const alese = santiereDeAziPentru(santiere, planificareSantier, u, azi);
+        let alese = santiereDeAziPentru(santiere, planificareSantier, u, azi);
+        /* ziua în care a fost pus în echipă iSeCereRaport e încă fals → măcar șantierele active din echipa lui */
+        if (alese.length === 0)
+            alese = (santiere || []).filter((x) => x.status === 'Activ' && lucreazaInEchipa(x.echipa, u.id));
         if (alese.length === 0) {
             setAlegeSantierRaport(null);
             setTab('santiere');
@@ -30479,9 +30645,12 @@ function App() {
             contract: '', obiectiv: '', lucrare: String(lucrare || '').trim() || 'Instalații electrice interioare', descriereLucrari: '',
             dataCreare: azi2, raportDeLa: maine2,
         };
-        const next = [...santiere, s];
-        setSantiere(next);
-        persist('santiere', next);
+        /* funcțional: apelat după un await, „santiere" din closure poate fi vechi și ar pierde șantiere */
+        setSantiere((prev) => {
+            const next = [...(prev || []), s];
+            persist('santiere', next);
+            return next;
+        });
         return s.id;
     };
     const printOne = (kind) => (doc) => openPrintWindow([{ doc, kind, client: clients.find((c) => c.id === doc.clientId), company }]);
@@ -30533,7 +30702,10 @@ function App() {
             });
         }
         else {
-            scrieEsec('Serverul a răspuns fără serie și număr — nu pot confirma că factura s-a emis.');
+            /* fără serie/număr nu e succes: altfel butonul arată „Trimisă" și factura se poate trimite a doua oară */
+            const mesajFara = 'Serverul a răspuns fără serie și număr — nu pot confirma că factura s-a emis. Verifică în SmartBill înainte să retrimiți.';
+            scrieEsec(mesajFara);
+            throw new Error(mesajFara);
         }
         return data;
     };
@@ -30694,6 +30866,8 @@ function App() {
         const copie = { ...d, id: uid(), numar: undefined,
             sbSerie: undefined, sbNumar: undefined, sbNumarComplet: undefined, sbEmisaLa: undefined, data: dataLocala(new Date()),
             status: kind === 'Ofertă' ? 'Ciornă' : 'De încasat', devizeIds: undefined, stocDedus: undefined, stocMesaj: undefined, stocScos: undefined, stocIntrebat: undefined, acoperitLivrat: undefined, scadenta: undefined,
+            /* copia e document nou: fără încasări, fără urme SmartBill, fără legătura cu oferta originalului */
+            incasari: undefined, incasataLa: undefined, statusInainte: undefined, sbEroare: undefined, sbIncercatLa: undefined, offerId: undefined,
             items: (d.items || []).map((it) => ({ ...it, id: uid() })) };
         if (kind === 'Ofertă')
             setOfferForm(copie);
@@ -30805,8 +30979,23 @@ function App() {
             return;
         refFactDeviz.current = true;
         try {
+            /* devizul în ciornă nu a trecut prin stoc, iar factura cu devizeIds nu mai scoate nimic → îl emitem întâi */
+            if (d.status === 'Ciornă') {
+                const rE = await alege({ titlu: 'Devizul ' + (d.numar || '') + ' e încă ciornă', text: 'Ca materialele să iasă din magazie, devizul trebuie emis înainte de facturare.',
+                    variante: [{ valoare: 'emite', eticheta: '📤 Emite acum și facturează', principal: true }, { valoare: 'nu', eticheta: '↩ Renunț' }] });
+                if (rE !== 'emite')
+                    return;
+                const extraE = (!d.stocDedus && !d.stocIntrebat && !d.stocDinSantier) ? (scoateLaDocument(d, `Deviz ${d.numar}`) || {}) : {};
+                d = { ...d, status: 'Emis', ...extraE };
+                const dEmis = d;
+                setDevize((prev) => {
+                    const next = (prev || []).map((x) => x.id === dEmis.id ? { ...x, status: 'Emis', ...extraE } : x);
+                    persist('devize', next);
+                    return next;
+                });
+            }
             const valoare = rotunjLei(calcSubtotal(d.items || []));
-            const facturat = facturatDinDeviz(d, invoices);
+            const facturat = facturatDinDeviz(d, invoices, devize);
             const rest = rotunjLei(valoare - facturat);
             if (rest <= 0.005 && valoare > 0) {
                 await alege({ titlu: 'Devizul e facturat integral', text: `Deviz ${d.numar || ''}: facturat ${money(facturat)} din ${money(valoare)} (fără TVA). Nu mai e nimic de facturat.`,
@@ -30845,7 +31034,15 @@ function App() {
             const t = await cereText({ titlu: 'Ce sumă facturez? (fără TVA)', text: `Rest de facturat: ${money(rest)}`, valoare: String(rest), tipNumar: true, buton: '✓ Fac factura' });
             if (t == null)
                 return;
-            const suma = rotunjLei(String(t).replace(/\s/g, '').replace(',', '.'));
+            /* scriere românească: „1.500" = o mie cinci sute, „1.500,50" = cu zecimale, „1500,5" = virgula e zecimala */
+            let sT = String(t).replace(/\s/g, '').replace(/lei$/i, '');
+            if (sT.includes('.') && sT.includes(','))
+                sT = sT.replace(/\./g, '').replace(',', '.');
+            else if (/^\d{1,3}(\.\d{3})+$/.test(sT))
+                sT = sT.replace(/\./g, '');
+            else
+                sT = sT.replace(',', '.');
+            const suma = rotunjLei(sT);
             if (!(suma > 0)) {
                 window.alert('Scrie o sumă mai mare ca zero.');
                 return;
@@ -30908,6 +31105,12 @@ function App() {
             if (!sid)
                 return;
             const sX = { id: sid, nume, adresa, lucrare: lucrareOf, contract: '', actAditional: '' };
+            /* oferta rămâne legată de șantierul nou (profit, „Fă deviz" îl găsesc direct) */
+            setOffers((prev) => {
+                const next = (prev || []).map((x) => x.id === offer.id ? { ...x, santierId: sid, santierNume: nume } : x);
+                persist('offers', next);
+                return next;
+            });
             /* devizul se salvează direct (ciornă, cu număr), ca să putem merge pe șantier fără să pierdem nimic */
             let listaNr = devize;
             if (typeof navigator !== 'undefined' && navigator.onLine) {

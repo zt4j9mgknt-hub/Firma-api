@@ -3,7 +3,7 @@
    Restul (React, Tailwind, XLSX, logo etc.): cache întâi, actualizează în fundal.
    /api/* : nu se atinge — offline-ul e tratat de aplicație.
    PUSH: afișează notificarea (cu sunet + bulină pe iconiță) și deschide aplicația la tap. */
-const CACHE = 'firma-cache-v286';
+const CACHE = 'firma-cache-v287';
 const CORE = ['/', '/index.html', '/logo.png'];
 
 self.addEventListener('install', (e) => {
@@ -147,17 +147,32 @@ self.addEventListener('push', (e) => {
   );
 });
 
+/* Unde are voie să ducă o notificare: DOAR în aplicația noastră. O adresă din alt site
+   (venită de oriunde) devine „/". Întoarce adresa întreagă, pe originea noastră. */
+function tintaSigura(u) {
+  try {
+    const x = new URL(String(u || '/'), self.location.origin);
+    if (x.origin !== self.location.origin) return self.location.origin + '/';
+    return x.href;
+  } catch (_) { return self.location.origin + '/'; }
+}
+
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const nd = e.notification.data || {};
-  let target = nd.url || '/';
+  let target = tintaSigura(nd.url || '/');
   /* Buton „Aprobă / Respinge" de pe notificarea de concediu: aplicația întreabă încă o dată
      (fereastră de confirmare) și abia apoi scrie — nu se aprobă nimic din greșeală. */
   const actiune = (e.action === 'aproba' || e.action === 'respinge') && nd.tip === 'concediu' && nd.id ? e.action : null;
-  if (actiune) target = '/?concediu=' + encodeURIComponent(nd.id) + '&actiune=' + actiune;
+  if (actiune) target = self.location.origin + '/?concediu=' + encodeURIComponent(nd.id) + '&actiune=' + actiune;
+  /* „/" goală = doar „deschide aplicația". Dacă e deja deschisă, o aducem în față și ATÂT —
+     înainte o reîncărcam la fiecare atingere, iar omul pierdea ce avea pe ecran (formular
+     început, raport pe jumătate). */
+  const doarAplicatia = (() => { try { const x = new URL(target); return x.pathname === '/' && !x.search && !x.hash; } catch (_) { return true; } })();
   e.waitUntil((async () => {
     await reseteazaBadge();
-    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const list = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+      .filter((c) => { try { return new URL(c.url).origin === self.location.origin; } catch (_) { return false; } });
     if (actiune) {
       for (const c of list) {
         if ('focus' in c) {
@@ -167,7 +182,10 @@ self.addEventListener('notificationclick', (e) => {
       }
     }
     for (const c of list) {
-      if ('focus' in c) { try { if (c.navigate) c.navigate(target); } catch (_) {} return c.focus(); }
+      if ('focus' in c) {
+        if (!doarAplicatia) { try { if (c.navigate) c.navigate(target).catch(() => {}); } catch (_) {} }
+        return c.focus();
+      }
     }
     if (self.clients.openWindow) return self.clients.openWindow(target);
   })());
