@@ -2237,6 +2237,17 @@ function bioActualizeazaSesiune(user, token) { try {
         localStorage.setItem('bioSession', JSON.stringify({ user, token }));
 }
 catch { } }
+/* după schimbarea propriei parole serverul dă token nou (versiunea veche e invalidată) */
+function preiaTokenDupaParola(user, data) { try {
+    if (!data || !data.token || !user)
+        return;
+    const eu = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    if (!eu || String(eu.id) !== String(user.id))
+        return; // „vezi ca" alt utilizator: nu-i luăm tokenul
+    setAuthToken(data.token);
+    bioActualizeazaSesiune(eu, data.token);
+}
+catch { } }
 function bioSterge() { try {
     localStorage.removeItem('bioCredId');
     localStorage.removeItem('bioSession');
@@ -2510,8 +2521,12 @@ function mergeById(serverVal, clientVal, key) {
     clientVal.forEach((x) => {
         /* PV semnat de client la distanță: copia veche de pe telefon (fără semnătură) nu-l șterge */
         const s = map.get(x.id);
-        if (key === 'proceseVerbale' && s && s.semnatura && !x.semnatura)
-            return;
+        /* …dar dacă semnătura a fost scoasă dinadins DUPĂ semnare (editare + retrimitere), câștigă clientul */
+        if (key === 'proceseVerbale' && s && s.semnatura && !x.semnatura) {
+            const semnatLa = typeof s.semnatLa === 'number' ? s.semnatLa : (s.semnatLa ? (Date.parse(s.semnatLa) || 0) : 0);
+            if (!(Number(x.semnaturaStearsaLa) > semnatLa))
+                return;
+        }
         map.set(x.id, x);
     });
     const out = Array.from(map.values());
@@ -2918,7 +2933,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.15-reparatii';
+const APP_VERSION = 'v04.16-reparatii-2';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -5881,6 +5896,16 @@ function GhidTab({ isManager }) {
         ? React.createElement("button", { onClick: () => setAles(null), className: "btn3d text-xs font-semibold px-3 py-2 mb-3", style: { color: 'var(--acc1)' } }, "\u2039 Toate capitolele")
         : React.createElement("h2", { className: "titluPagina text-xl mb-1", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "📖 Ghid de utilizare"), !ales && React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută în ghid (ex: concediu, deviz, raport)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-2 mb-1", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), !ales && cauta.trim() && React.createElement("div", { className: "text-[11px] mb-2", style: { color: 'var(--muted2)' } }, "Se arată doar capitolele care conțin „", cauta, "\". Apasă pe unul ca să-l deschizi."), !ales && React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Ghid simplu, pas cu pas, scris pe înțelesul oricui. Ia-l de sus în jos. Nu ai cum să strici nimic — orice greșeală se poate șterge sau modifica. Exact aceleași explicații le găsești și la butonul „ℹ️ Cum se folosește\" din fiecare ecran.", isManager ? ' Ca manager vezi în plus secțiunea de administrare, jos.' : ''), React.createElement(Titlu, { sub: "Pentru toți — citește o dată, de sus în jos" }, "Ghid pas cu pas"), React.createElement(Sec, { icon: "📱", title: "1. Prima dată (fă o singură dată)" }, 'Prima oară când folosești aplicația, urmează acești pași:\n1) Deschizi aplicația apăsând pe iconița ei de pe telefon.\n2) Scrii numele de utilizator și parola pe care ți le-a dat șeful, apoi apeși pe „Intră".\n3) Mergi în meniu la „👤 Profilul meu" și apeși pe „🔔 Activează notificările". Când telefonul te întreabă, apeși pe „Permite" (sau „Allow").\n4) Gata. De acum primești pe telefon tot ce te privește.\n\nDacă ai iPhone, prima dată deschide aplicația în Safari, apeși pe butonul „Distribuie" (pătratul cu săgeata în sus) și alegi „Adaugă pe ecranul principal". După aceea deschide-o mereu de pe ecranul principal.\n\nEste bine de știut că aplicația îți cere parola de fiecare dată când o deschizi, pentru siguranță. Ca să nu mai scrii parola, poți porni Amprenta sau FaceID din Profil.'), React.createElement(Sec, { icon: "🏠", title: "2. De unde începi în fiecare zi (Activitatea mea)" }, 'Aceasta este prima pagină pe care o vezi când deschizi aplicația, iar aici ai adunat tot ce te privește, ca să nu cauți prin meniu.\n• Sus scrie la ce șantier lucrezi astăzi. Începând cu ora 16:30, îți apare și unde vei lucra mâine.\n• Dacă nu ai trimis raportul, îți apare un rând pentru asta; apeși pe el și te duce direct să-l completezi.\n• Tot ce este scris cu ROȘU înseamnă ceva de rezolvat (de exemplu, un material pe care șeful ți l-a respins).\n• Tot aici îți apare și rubrica „🚀 Noutăți", unde îți explic pe scurt fiecare lucru nou adăugat în aplicație.\n• Regula este simplă: apeși pe orice rând de aici și te duce fix unde trebuie, fără să știi pe unde este prin aplicație.'), fromHelp('📋', '3. Rapoarte zilnice (cel mai important)', 'rapoarte'), fromHelp('📦', '4. Materiale (cererile de materiale)', 'materiale'), React.createElement(Sec, { icon: "🏗", title: "5. Cum intri pe un șantier" }, '• În „🏗 Șantiere" vezi lista șantierelor. Poți intra doar în cele unde ești pus tu; restul au un lacăt 🔒.\n• Apeși pe un șantier ca să intri în el.\n• Sus, dacă apeși pe adresă, ți se pornește harta cu navigația. Dacă apeși pe 📞, îl suni pe responsabilul de la client.\n• Dedesubt sunt butoanele: Rapoarte, Materiale, Scule, Planșe, Foto/Video, Checklist și Echipă. Apeși pe unul ca să-l deschizi și apeși din nou ca să-l închizi.\n• Butonul „← Înapoi" te scoate din șantier, înapoi la listă.'), fromHelp('🔧', '6. Scule', 'scule'), fromHelp('📐', '7. Planșe (planurile PDF)', 'planse'), fromHelp('📸', '8. Foto / Video', 'media'), fromHelp('✅', '9. Checklist (la început și la sfârșit)', 'checklist'), fromHelp('👥', '10. Echipă', 'echipa'), fromHelp('❓', '11. Întrebări și probleme (pe șantier)', 'probleme'), fromHelp('🤖', '12. Asistentul cu răspunsuri (din meniu)', 'asistent'), React.createElement(Sec, { icon: "🧮", title: "13. Calculator (calcule electrice)" }, 'Calculatorul te ajută să faci pe loc calculele electrice de pe teren, cum ar fi amperajul, secțiunea de cablu sau alegerea disjunctorului.\n1) Îl deschizi din meniu, de la „🧮 Calculator".\n2) Sus ai „⭐ Cele mai folosite", sau poți căuta ce calcul vrei (de exemplu „cablu" sau „disjunctor").\n3) Apeși pe calculul dorit și îți apare formula.\n4) Completezi datele cerute, iar rezultatul apare singur.\n\nToate valorile sunt orientative, așa că verifică-le mereu cu normativul I7.'), React.createElement(Sec, { icon: "📘", title: "14. Normativ I7" }, 'Aici ai tot normativul I7 pentru instalații electrice, cu modificările din 2023 incluse.\n1) Îl deschizi din meniu, de la „📘 Normativ I7".\n2) Scrii ce cauți (de exemplu „spital" sau „legare la pământ") sau apeși pe o etichetă gata pusă. Poți scrie și un număr de pagină (de exemplu 478) ca să sari direct la ea.\n3) Aplicația îți arată paginile unde apare cuvântul căutat.\n4) Apeși pe un rezultat și se deschide fix la pagina aceea. Te muți între pagini cu săgețile ‹ ›, iar cu două degete mărești.\n\nCa să se poată deschide paginile, managerul trebuie să încarce o singură dată fișierul PDF al normativului (din pagina „📘 Normativ I7").'), fromHelp('🔔', '15. Memento (sa nu uiti nimic)', 'memento'), fromHelp('🕐', '16. Pontaj (orele tale)', 'pontaj'), fromHelp('🏖', '17. Concediu', 'concedii'), React.createElement(Sec, { icon: "🔔", title: "18. Notificări (înștiințările pe telefon)" }, 'Notificările sunt înștiințările care îți vin pe telefon.\n• Le pornești o singură dată: intri la „👤 Profilul meu", apeși pe „🔔 Activează notificările" și apoi pe „Permite".\n• Primești pe telefon, cu sunet, doar ce te privește (ai fost pus pe un șantier, ți s-a aprobat sau respins un material, ai primit răspuns la concediu sau la o întrebare).\n• Pe iconița aplicației apare o bulină cu numărul de lucruri pe care le ai de rezolvat; ea dispare când le rezolvi.\n• Când șeful îți respinge ceva, îți apare cu ROȘU în „Activitatea mea"; apeși pe „Am văzut" ca să dispară.\n• Dacă vrei să verifici că funcționează, apeși pe „📨 Trimite notificare de test" din Profil.'), fromHelp('👤', '19. Profil (parolă, amprentă, aspect)', 'profil'), React.createElement(Titlu, { sub: "Ce s-a schimbat în versiunile v04.06–v04.11" }, "Ce e nou"), renderSec("🧭", "Nou: meniul pe pașii lucrării", "Meniul e așezat acum în ordinea în care lucrezi, nu alfabetic.\n1) Apeși ☰ (sus, în stânga).\n2) Grupele sunt pe pași: Proiectare, Ofertare, Magazie, Încasări, Echipa (la manager se cheamă Angajați), Unelte. Sus rămân Activitatea mea și Șantierele.\n3) Apeși pe o grupă ca să vezi ce e în ea, apoi pe pagina dorită.\n4) Dacă nu știi unde e ceva, scrii în căsuța de căutare din meniu (de exemplu „concediu\").\nVezi doar paginile la care ai acces.", "Ca manager vezi și grupele Ofertare și Încasări. Paginile tale noi: „📅 Cine îmi datorează bani\", „📅 Bani pe 30 de zile\", „📍 Unde e echipa\"."), renderSec("📋", "Nou: raportul de azi dintr-o apăsare", "1) Apeși „📋 Raport\" din bara de jos a ecranului.\n2) Se deschide direct raportul de azi pentru șantierul tău.\n3) Completezi ce ai lucrat, orele și materialele, apoi apeși „Salvează\".\nNu mai cauți șantierul prin meniu.", "Ca manager, în raport ai butonul „👥 Toată echipa 8–17\": pune dintr-o apăsare pe toți oamenii șantierului cu program 8:00–17:00. Apoi schimbi orele doar la cine a lucrat altfel."), renderSec("🎤", "Nou: dictezi în loc să scrii", "Lângă căsuțele de text din raport ai butonul 🎤.\n1) Apeși 🎤. Prima dată telefonul te întreabă dacă dai voie la microfon — apeși „Permite\".\n2) Vorbești normal. Butonul arată „● ascult…\".\n3) Apeși din nou ca să oprești. Textul apare în căsuță.\n4) Citește-l o dată și corectează ce a înțeles greșit.\nMerge cel mai bine în Chrome, cu internet.", ""), renderSec("📷", "Nou: poze direct în raport și la restanțe", "Nu mai cauți pagina „Foto\". Faci poza chiar din raport sau din restanță.\n1) În raport (sau la o restanță) apeși butonul de poze 📷.\n2) Faci poza cu camera sau o alegi din galerie. Poți pune mai multe.\n3) Pozele rămân legate de raportul sau restanța respectivă și apar și în galeria șantierului.", ""), renderSec("↶", "Nou: „Anulează\" după o ștergere", "Ai șters ceva din greșeală? Nu e nicio problemă.\n1) Imediat după ștergere apare jos un mesaj cu butonul „↶ Anulează\".\n2) Apeși pe el în câteva secunde și lucrul șters se pune la loc („↶ Am pus la loc\").\nDacă mesajul a dispărut, ștergerea rămâne.", ""), renderSec("📍", "Nou: „Am ajuns pe șantier\" (prezența cu locație)", "Dimineața arăți că ai ajuns, seara că ai plecat.\n1) Când ajungi, apeși „📍 Am ajuns pe șantier\" (în „Activitatea mea\" sau pe șantier).\n2) Telefonul cere locația — apeși „Permite\". Fără locație nu se poate marca sosirea.\n3) Cât aplicația e deschisă, locația se trimite o dată la 10 minute.\n4) Seara apeși „🏁 Am plecat\". De atunci nu se mai urmărește nimic.\nCu aplicația închisă sau după „Am plecat\", locația NU se trimite. Șeful vede doar sosirea, plecarea și unde ai fost în timpul programului.", "Ca manager vezi totul în meniu → Angajați → „📍 Unde e echipa\": cine a ajuns, la ce oră și unde e, pe hartă.\nIMPORTANT: înainte să folosești locația, anunță oamenii ÎN SCRIS (o notă semnată de fiecare sau o anexă la contract) că la prezență se înregistrează locația și de ce. E obligatoriu după legea protecției datelor (GDPR)."), isManager && (React.createElement(React.Fragment, null, React.createElement(Titlu, { sub: "v04.06–v04.11, vizibil doar pentru Manager" }, "Ce e nou pentru manager"), renderSec("📌", "Nou: blocul „📌 Azi\" și „Verifică toate\"", "Sus pe tablou ai blocul „📌 Azi\": tot ce te așteaptă astăzi, într-un singur loc.\n1) Vezi rapoartele lipsă, rapoartele de ieri neverificate, cererile de materiale, concediile de aprobat, facturile întârziate și șantierele care trec de 80% din deviz.\n2) Apeși pe un rând și ajungi direct unde trebuie.\n3) La „Rapoarte de ieri neverificate\" apeși „✓ Verifică toate (fără observații)\" ca să le bifezi pe toate deodată.\n4) Dacă la un raport ai ceva de spus, îl deschizi și scrii observația — nu-l bifa cu toate.", ""), renderSec("🏖", "Nou: aprobi concediul din notificare", "1) Când un om cere concediu, îți vine o notificare „Cerere de concediu\".\n2) Apeși pe notificare: aplicația se deschide direct pe cererea lui.\n3) Apeși ✓ ca să aprobi sau ✕ ca să respingi.\n4) Omul primește imediat răspunsul pe telefon.\nNotificările trebuie pornite o dată din „👤 Profilul meu\".", ""), renderSec("💶", "Nou: „Am încasat\" și plățile parțiale", "Scrii banii primiți pe o factură, chiar dacă clientul a plătit doar o parte.\n1) La factură apeși „💶 Am încasat\".\n2) Scrii suma primită, data și felul plății (bancă, numerar).\n3) Dacă e mai puțin decât factura, ea trece pe „Încasată parțial\" și arată cât a mai rămas.\n4) Când vine restul, mai apeși o dată „💶 Am încasat\". La plata întreagă trece pe „Încasată\".\nO plată scrisă greșit o ștergi din același dialog.", ""), renderSec("📅", "Nou: „Cine îmi datorează bani\" și amintirea", "Meniu → Încasări → „📅 Cine îmi datorează bani\".\n1) Vezi fiecare client care are de plată: cât, din ce facturi și de câte zile întârzie.\n2) Apeși 📞 ca să-l suni.\n3) Apeși „💬 Amintire\" (sau „✉️ Amintire\") — se deschide WhatsApp sau e-mailul cu un mesaj politicos gata scris. Îl citești și apeși Trimite.\n4) Când plătește, apeși „💶 Am încasat\" chiar de aici.", ""), renderSec("🏗", "Nou: „Pornește lucrarea\" din oferta acceptată", "1) La ofertă schimbi starea pe „Acceptată\".\n2) Aplicația te întreabă: „pornești lucrarea?\".\n3) Alegi „🏗 Pornește lucrarea\" — se face un șantier nou cu clientul, adresa și devizul legat de ofertă.\n4) Sau alegi „🧾 Fă devizul pe un șantier existent\", ori „Mai târziu\".", ""), renderSec("🧾", "Nou: facturare pe etape (avans, tranșe)", "Nu mai trebuie să facturezi tot devizul deodată.\n1) La deviz apeși „Facturează\".\n2) Alegi: „Tot\" (restul nefacturat), un avans în procente sau o sumă.\n3) Se deschide factura completată. O verifici și o salvezi.\n4) Data viitoare aplicația îți arată cât s-a facturat deja și cât mai rămâne.", ""), renderSec("📚", "Nou: istoricul clientului", "1) Meniu → Ofertare → „👥 Clienți\" și deschizi un client.\n2) La „📚 Istoric\" vezi tot ce ai făcut cu el: oferte, devize, facturi, șantiere și cât are de plată.\n3) De acolo îl suni (📞) sau îi scrii pe WhatsApp dintr-o apăsare.", ""), renderSec("💹", "Nou: profitul pe șantier", "1) Pe fiecare șantier vezi cât e contractat, cât a costat până azi (manoperă + materiale) și ce marjă rămâne.\n2) Bara e verde când e bine, galbenă când te apropii de deviz și roșie când l-ai depășit.\n3) Pe tablou, cardul „💹 Profit față de deviz\" îți arată toate șantierele; cele care trec de 80% apar și în „📌 Azi\".", ""), renderSec("📅", "Nou: banii pe 30 de zile", "Meniu → Încasări → „📅 Bani pe 30 de zile\".\n1) Scrii suma din cont de azi.\n2) Aplicația pune zi cu zi ce intră din facturi și ce iese pe cheltuielile fixe.\n3) Zilele cu sold pe minus apar cu roșu — afli din timp și suni clienții sau muți o plată.", ""), renderSec("📥", "Nou: prețuri din oferta furnizorului", "Meniu → Magazie → „📦 Materiale și stocuri\" → „📥 Prețuri din oferta furnizorului\".\n1) Alegi Excelul primit de la furnizor (ex. Promelek).\n2) Aplicația ghicește coloanele și găsește materialele din catalog.\n3) Vezi cât s-a scumpit fiecare. Bifezi ce vrei să actualizezi.\n4) Apeși „💲 Aplică\". De acum devizele și ofertele pornesc de la prețul nou.", ""), renderSec("✍", "Nou: procesul-verbal semnat pe telefon", "1) Pe șantier, la procesul-verbal, apeși „✍ Semnează pe telefon\".\n2) Beneficiarul semnează cu degetul, pe tot ecranul. Apoi semnează executantul.\n3) Semnăturile apar în PDF-ul procesului-verbal.\n4) „📧 Trimite clientului\" deschide PDF-ul și e-mailul gata scris.", ""), renderSec("🔗", "Nou: pagina lucrării pentru client", "1) Pe șantier, la Documente, apeși „🔗 Pagina pentru client\".\n2) Apeși „💬 Trimite pe WhatsApp\" sau „📋 Copiază\".\n3) Clientul vede, fără cont: stadiul, pozele, ce mai e de rezolvat și facturile. Nu vede nume de oameni și nici prețuri de manoperă.\n4) Dacă linkul a ajuns unde nu trebuie, apeși „♻ Link nou\" — cel vechi nu mai merge.", ""), renderSec("⭐", "Nou: ceri o recenzie Google", "1) O singură dată: pui linkul tău de recenzii Google în „Firma mea\" → Date firmă.\n2) După ce predai o lucrare, aplicația te întreabă „⭐ Ceri o recenzie clientului?\".\n3) Alegi WhatsApp sau e-mail — mesajul e gata scris, politicos. Apeși Trimite.\nLa fiecare șantier te întreabă o singură dată.", ""), renderSec("🔳", "Nou: coduri QR pe șantier și tablouri", "1) Pe șantier apeși „🔳 Cod QR — șantier și tablouri\".\n2) Tipărești etichetele și le lipești pe ușa șantierului sau pe tablou.\n3) Cine scanează codul ajunge la pagina lucrării.", ""), renderSec("📄", "Nou: ofertă din PDF-ul sau poza clientului", "Meniu → Ofertare → „📄 Oferte\" → „📄 Ofertă din PDF / poză\".\n1) Alegi lista primită de la client: PDF, poză (sau „📷 Fă o poză\") ori Excel.\n2) Excelul se citește pe loc. PDF-ul și poza le citește AI-ul (10–40 de secunde).\n3) Verifici rândurile: corectezi denumirea, cantitatea, UM; ștergi ce nu trebuie.\n4) Rândurile găsite în catalog primesc prețul și adaosul firmei. Cele roșii „fără preț\" le completezi în ofertă.\n5) Alegi clientul și apeși „📄 Creează oferta\". O verifici și apeși „Salvează\".\nPentru PDF și poze trebuie pusă cheia GEMINI_API_KEY în Vercel; Excelul merge și fără ea.", ""), React.createElement(Titlu, { sub: "Vizibil doar pentru Manager" }, "Ghid Manager (administrare)"), React.createElement(Sec, { icon: "🏗", title: "Administrarea șantierului" }, 'Aici creezi și modifici șantierele.\n• Când faci un șantier nou, treci numele, adresa, beneficiarul (clientul), numărul de contract, eventualul act adițional și responsabilul de la client cu numărul lui de telefon.\n• La „Raport zilnic cerut începând de:" alegi Azi, De mâine sau o anumită dată. Până la data aleasă, echipa nu primește memento de raport. În mod normal este pus „de mâine", ca să nu ceri raport chiar în ziua în care ai făcut șantierul.\n• La „Descrierea lucrărilor de efectuat" scrii ce este de făcut; textul apare cu albastru, sus pe șantier, și îl vede toată echipa.\n• Alegi felul de facturare al șantierului (vezi secțiunea Devize). Pentru lucrări mărunte, fără planuri, folosești tipul „🔧 Lucrare mică (fără planuri)", care se facturează pe ore.\n• Tot de aici pui sau scoți colegi din echipă și le dai starea Activ sau Pauză; când pui un coleg pe șantier, el primește o înștiințare.\n• Șantierul îl marchezi „Finalizat" din Checklist, după ce totul este bifat și confirmat.'), fromHelp('🧾', 'Devize (lista devizelor)', 'devize'), React.createElement(Sec, { icon: "🏢", title: "Structură etaje & Poziții / Materiale" }, 'Acestea sunt două unelte pentru pregătirea devizelor.\n• La „Structură — etaje" definești etajele și apartamentele clădirii; ele se folosesc apoi la „Lucrări pe apartamente" din rapoarte.\n• La „Poziții / Materiale" imporți dintr-un fișier Excel lista de poziții (manoperă) și lista de materiale cu prețuri, care se folosesc la devize. Aplicația recunoaște mai multe formate de fișier și te lasă să alegi din ce foaie să ia datele.'), fromHelp('📄', 'Oferte', 'oferte'), fromHelp('🧾', 'Facturi', 'facturi'), fromHelp('👥', 'Clienți', 'clienti'), fromHelp('📝', 'Notițe (carnetul tău)', 'notite'), fromHelp('📁', 'Proiecte (arhiva pe clienți)', 'proiecte'), fromHelp('🗂', 'Gestiune (materialele firmei)', 'gestiune'), fromHelp('📈', 'Stocuri (istoricul stocului)', 'stocuri'), fromHelp('🛒', 'Achiziții', 'achizitii'), fromHelp('📄', 'Adeverințe (ștampilate)', 'adeverinte'), fromHelp('🔑', 'Utilizatori (angajații)', 'utilizatori'), fromHelp('⚙', 'Firma mea', 'firma'), React.createElement(Sec, { icon: "💰", title: "Prețuri & confidențialitate" }, '• Toate prețurile (tariful pe oră, prețurile materialelor, devizele) sunt vizibile DOAR pentru manager, peste tot în aplicație.\n• Angajații văd cantitățile, orele și lucrările, dar nu văd prețurile.\n\nÎNCASĂRI (numerar / factură). Pe fiecare șantier ai rubrica „💵 Încasări", unde scrii rând cu rând ce a intrat: data, suma, felul (numerar, transfer bancar sau pe factură) și o notă. Totalurile se adună singure. Rubrica o vezi doar tu, ca toate prețurile din aplicație.\n\nCASH VS. FACTURAT (în tabloul de bord). Lângă donutul de Cashflow ai acum al doilea donut, „Bani intrați", pe aceeași lună. El numără DOAR banii care au intrat efectiv, nu ce ai lucrat și nu ce ai emis:\n• CASH (verde) = numerarul și transferurile pe care le-ai scris tu la „💵 Încasări" pe șantiere.\n• PE FACTURĂ (portocaliu) = facturile bifate „Încasată". O factură se socotește în luna în care ai bifat-o încasată, nu în luna în care ai emis-o — o factură din iulie plătită în septembrie e bani de septembrie. Facturile bifate înainte de versiunea asta n-au ziua plății reținută; pentru ele se folosește data emiterii, iar suma respectivă ți se arată separat, ca să știi cât e aproximat.\n• În mijloc scrie cât la sută din banii intrați e cash.\n• Pe card ai săgețile ‹ ›: te uiți lună cu lună înapoi, direct din tabloul de bord, fără să deschizi nimic. Când ești pe altă lună, apare și butonul „Acum", care te aduce înapoi la luna curentă. Numele lunii se face albastru când nu ești pe luna asta, ca să nu citești din greșeală cifra altei luni.\n• „Vezi tot →" deschide rubrica întreagă, unde ai același panou de perioadă ca peste tot: zi, săptămână, lună, an sau interval ales.\n\nCE AI MUNCIT vs. CE AI ÎNCASAT. Tot în rubrica asta, mai jos, vezi cât ai muncit pe lucrări mici (calculat din rapoarte) față de cât ai trecut ca numerar încasat. Dacă rămâne o diferență, ți-o scrie — dar nu trece nimic de la sine: banii îi treci tu, când i-ai luat.\n\nCE S-A FĂCUT (bucata × preț). În rubrica „💵 Încasări" de pe șantier ai sus „🔧 Ce s-a făcut": scrii tipul lucrării, câte bucăți, unitatea (buc, m, ml, mp, h, set) și prețul pe bucată. Totalul pe rând și totalul general se fac singure. Un buton verde îți pune totalul general direct la încasări, ca numerar, ca să nu-l scrii de două ori. Dacă ai scris lucrările așa, ELE dau valoarea lucrării — estimarea din ore rămâne doar de referință, și nu mai contează dacă șantierul n-are tarif orar completat.\n\nGARANȚIA LUCRĂRILOR. La editarea unui șantier pui câte luni de garanție dai (gol înseamnă 24). Când închizi șantierul din Checklist, aplicația însemnează singură ziua. De atunci, în lista de șantiere apare o pastilă verde „🛡 garanție până la..." sau una gri dacă a expirat. Când te sună clientul, vezi din listă, fără să numeri luni pe degete.\n\nREVIZII PERIODICE. Tot la editarea șantierului poți bifa „are revizii periodice" și pui la câte luni (gol înseamnă 12). Verificările la lucrări vechi sunt bani care se repetă, dar numai dacă sună cineva.\n\nDE URMĂRIT (în tabloul de bord). Un card nou, „🔔 De urmărit", cu două liste:\n• FACTURILE TRECUTE DE SCADENȚĂ — cât, de la cine, de câte zile întârzie. Un buton îți copiază textul de relansare gata scris, să-l pui în mail sau pe WhatsApp. Intră aici doar facturile care au scadența completată.\n• REVIZIILE SCADENTE sau care se apropie (cu 30 de zile înainte). Apeși „✓ Am făcut-o azi" și termenul următor se mută singur cu încă un interval.\n\nCE A DAT GREȘ ÎN TĂCERE (în 👤 Profilul meu). Locurile care contează — salvarea, pozele, notificările — își lasă urma aici când ceva nu merge. E gol dacă totul a mers. Dacă vreodată îți zice cineva „nu mi-a plecat poza", uită-te acolo.\n\nFIȘA LUCRĂRII. La lucrările mici, lângă „Ce s-a făcut", ai butonul „🖨 Fișa lucrării": iese o hartă de tipărit cu antetul firmei, lucrările pe rânduri, totalul general, cât s-a încasat și restul de plată. Aia e hârtia pe care i-o dai clientului la mână.\n\nCORECTAREA UNEI ÎNCASĂRI. Un rând greșit nu se mai șterge și rescrie — apeși „Modifică", îl corectezi, iar rândul ține minte cine l-a corectat.\n\nBANCA DE ORE (în 🕐 Pontaj). Primul card de sub alegerea lunii. Apeși pe numele unui om și ți se desface dosarul lui:\n• fiecare zi care a mișcat contorul — câte ore a lucrat, pe ce șantier a fost, cât a intrat (+) sau cât s-a luat (−), și soldul de după ziua aia;\n• zilele ieșite fix la 8 ore nu apar — n-au ce căuta acolo;\n• sus ai același panou de perioadă ca la profit: ZI, SĂPTĂMÂNĂ, LUNĂ, AN sau un interval scris de tine, cu săgețile ‹ ›. Pe AN vezi situația reală, de la 1 ianuarie încoace;\n• jos, TOTALUL perioadei: câte ore extra minus câte ore în minus, adică exact ce-i datorezi sau ce-ți datorează.\nFoaia de pontaj rămâne pe lună — aia e hârtie lunară și nu se atinge; perioada schimbă doar ce vezi în dosar.\nOrele luate din concediu se văd și ele în dosar, dar nu se întorc în bancă — alea scad din zilele lui de concediu.\n\nPROFIT PE ȘANTIER — PE PERIOADA PE CARE O ALEGI TU. Rubrica „💶 Profitabilitate pe șantier" arată ce s-a lucrat într-o perioadă anume, nu tot ce s-a lucrat vreodată.\n• Ai cinci butoane: ZI, SĂPTĂMÂNĂ, LUNĂ, AN și PERIOADĂ. Implicit e luna curentă.\n• Cu săgețile ‹ › te plimbi înainte și înapoi cu un pas: o zi, o săptămână, o lună sau un an, după ce ai ales. Butonul „Acum" te aduce înapoi la ziua de azi.\n• Săptămâna începe LUNI și se termină duminica, ca la noi.\n• La „PERIOADĂ" îți apar două căsuțe de dată — de la / până la — și socotește fix între ele. Dacă le pui invers, le întoarce el.\n• Perioada aleasă scrie lângă titlu, ca să știi mereu ce cifră te uiți.\nÎn listă, lucrările mici sunt însemnate cu 🔧 și scrie „cash" pe rândul lor, iar deasupra ai două casete: cât e cash și cât e pe factură în perioada aleasă. Fiecare lucrare rămâne pe rândul ei.\n\nCa să meargă socoteala, o lucrare pe bani gheață o faci de tipul „🔧 Lucrare mică (fără planuri)" la felul de facturare. Restul șantierelor rămân cum sunt.'))), React.createElement("p", { className: "text-xs mt-3 mb-6", style: { color: 'var(--muted2)' } }, "Ghidul se completează automat pe măsură ce apar funcții noi. Dacă ceva nu e clar, spune-i managerului.")));
 }
+/* planșe / poze: șterge managerul sau cel care le-a încărcat (după id; la cele vechi, după nume) */
+function poateSterge(user, x) {
+    if (!user || !x)
+        return false;
+    if (user.rol === 'Manager')
+        return true;
+    if (x.incarcatDeId)
+        return String(x.incarcatDeId) === String(user.id);
+    return !!x.incarcatDe && x.incarcatDe === user.nume;
+}
 function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier, persist, currentUser }) {
     const redenumeste = (id, nume) => { const next = (planseSantier || []).map((x) => x.id === id ? { ...x, nume } : x); setPlanseSantier(next); persist('planseSantier', next); };
     const refPlanse = useRef(planseSantier);
@@ -5947,7 +5972,7 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
         try {
             for (const file of files) {
                 const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/planse`);
-                const acc = [...refPlanse.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, data: dataLocala(new Date()), incarcatDe: currentUser?.nume || '' }];
+                const acc = [...refPlanse.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, data: dataLocala(new Date()), incarcatDe: currentUser?.nume || '', incarcatDeId: currentUser?.id || '' }];
                 refPlanse.current = acc;
                 setPlanseSantier(acc);
                 persist('planseSantier', acc);
@@ -5962,6 +5987,8 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
             notifica('manageri', { title: ok === 1 ? 'Planșă nouă' : 'Planșe noi', body: `${currentUser?.nume || 'Un coleg'} a adăugat ${ok} ${ok === 1 ? 'planșă' : 'planșe'} la ${santierNume || 'șantier'}.`, tag: 'planse-' + santierId }, currentUser?.id);
     };
     const remove = async (p) => {
+        if (!poateSterge(currentUser, p))
+            return;
         if (!window.confirm(`Ștergi definitiv „${p.nume}"?`))
             return;
         const next = refPlanse.current.filter((x) => x.id !== p.id);
@@ -5981,7 +6008,7 @@ function SitePlanseTab({ santierId, santierNume, planseSantier, setPlanseSantier
     if (viewing) {
         return (React.createElement("div", { ref: planFsRef, style: { position: 'fixed', inset: 0, zIndex: 200, background: '#0c0f13', display: 'flex', flexDirection: 'column' } }, React.createElement(PdfViewer, { src: blobViewUrl(viewing.pathname), fallbackSrc: viewing.url || blobViewUrl(viewing.pathname), downloadUrl: viewing.url || blobViewUrl(viewing.pathname), nume: viewing.nume, onClose: () => setViewing(null), onFull: () => toggleFullscreen(planFsRef.current) })));
     }
-    return (React.createElement("div", null, React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "📐 Planșe de execuție (PDF)"), React.createElement("label", { className: "w-full flex items-center justify-center gap-2 text-sm px-4 py-2.5 rounded-lg cursor-pointer font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " ", uploading ? 'Se încarcă...' : 'Adaugă planșă PDF', React.createElement("input", { type: "file", accept: "application/pdf", multiple: true, disabled: uploading, onChange: (e) => { handleFiles(e.target.files); e.target.value = ''; }, style: { display: 'none' } })), error && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, error), planseAici.length > 1 && (React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută planșă (ex: prize parter, et 4)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-3", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } })), planseAici.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă încărcată încă.")) : planseFiltrate.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă nu se potrivește cu „", cauta, "\".")) : (React.createElement("div", { className: "space-y-2 mt-3" }, planseFiltrate.map((p) => (React.createElement("div", { key: p.id, className: "rounded-lg px-3 py-2", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "flex items-center justify-between text-sm" }, React.createElement("button", { onClick: () => openPlan(p), className: "truncate text-left flex-1", style: { color: 'var(--acc1)' } }, "📄 ", p.nume), React.createElement("div", { className: "flex items-center gap-2 shrink-0 ml-2" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, fmtData(p.data)), React.createElement(EditText, { valoare: p.nume, titlu: 'Redenumește planșa', onSalveaza: (den) => redenumeste(p.id, den) }), React.createElement("button", { onClick: () => remove(p), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "🗑")))), React.createElement("div", { className: "flex gap-1.5 mt-2 flex-wrap" }, React.createElement("button", { onClick: () => openPlan(p), className: "text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "👁 Deschide planul (rămâi în aplicație)"), React.createElement("button", { onClick: () => descarca(p), disabled: dlBusy === p.id, className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-60", style: { color: 'var(--text)', background: 'var(--panel)', border: '1px solid var(--border)' } }, dlBusy === p.id ? '⏳ Se salvează…' : '⬇ Salvează în telefon')), React.createElement("div", { className: "text-[10px] mt-1", style: { color: 'var(--muted2)', lineHeight: 1.45 } }, "\u26A0 „Salveaz\u0103 \u00een telefon\" deschide fi\u0219ierul \u00een afara aplica\u021Biei \u2014 c\u00e2nd \u00eel \u00eenchizi, telefonul te scoate de tot \u0219i trebuie s\u0103 redeschizi aplica\u021Bia. Folose\u0219te-l doar c\u00e2nd chiar ai nevoie de fi\u0219ier (de trimis mai departe). Pentru citit, „Deschide planul\" r\u0103m\u00e2ne aici \u0219i se vede la fel de clar.")))))))));
+    return (React.createElement("div", null, React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "📐 Planșe de execuție (PDF)"), React.createElement("label", { className: "w-full flex items-center justify-center gap-2 text-sm px-4 py-2.5 rounded-lg cursor-pointer font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " ", uploading ? 'Se încarcă...' : 'Adaugă planșă PDF', React.createElement("input", { type: "file", accept: "application/pdf", multiple: true, disabled: uploading, onChange: (e) => { handleFiles(e.target.files); e.target.value = ''; }, style: { display: 'none' } })), error && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, error), planseAici.length > 1 && (React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută planșă (ex: prize parter, et 4)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mt-3", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } })), planseAici.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă încărcată încă.")) : planseFiltrate.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nicio planșă nu se potrivește cu „", cauta, "\".")) : (React.createElement("div", { className: "space-y-2 mt-3" }, planseFiltrate.map((p) => (React.createElement("div", { key: p.id, className: "rounded-lg px-3 py-2", style: { background: 'var(--panel2)' } }, React.createElement("div", { className: "flex items-center justify-between text-sm" }, React.createElement("button", { onClick: () => openPlan(p), className: "truncate text-left flex-1", style: { color: 'var(--acc1)' } }, "📄 ", p.nume), React.createElement("div", { className: "flex items-center gap-2 shrink-0 ml-2" }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, fmtData(p.data)), React.createElement(EditText, { valoare: p.nume, titlu: 'Redenumește planșa', onSalveaza: (den) => redenumeste(p.id, den) }), poateSterge(currentUser, p) && React.createElement("button", { onClick: () => remove(p), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 14 }, "🗑")))), React.createElement("div", { className: "flex gap-1.5 mt-2 flex-wrap" }, React.createElement("button", { onClick: () => openPlan(p), className: "text-xs px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "👁 Deschide planul (rămâi în aplicație)"), React.createElement("button", { onClick: () => descarca(p), disabled: dlBusy === p.id, className: "text-xs px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-60", style: { color: 'var(--text)', background: 'var(--panel)', border: '1px solid var(--border)' } }, dlBusy === p.id ? '⏳ Se salvează…' : '⬇ Salvează în telefon')), React.createElement("div", { className: "text-[10px] mt-1", style: { color: 'var(--muted2)', lineHeight: 1.45 } }, "\u26A0 „Salveaz\u0103 \u00een telefon\" deschide fi\u0219ierul \u00een afara aplica\u021Biei \u2014 c\u00e2nd \u00eel \u00eenchizi, telefonul te scoate de tot \u0219i trebuie s\u0103 redeschizi aplica\u021Bia. Folose\u0219te-l doar c\u00e2nd chiar ai nevoie de fi\u0219ier (de trimis mai departe). Pentru citit, „Deschide planul\" r\u0103m\u00e2ne aici \u0219i se vede la fel de clar.")))))))));
 }
 function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, persist, currentUser, actiune }) {
     const refMedia = useRef(mediaSantier);
@@ -6017,7 +6044,7 @@ function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, p
         try {
             for (const file of files) {
                 const uploaded = await uploadFileToBlob(file, `santiere/${santierId}/media`);
-                const acc = [...refMedia.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, tip: file.type.startsWith('video/') ? 'video' : 'foto', data: dataLocala(new Date()), incarcatDe: currentUser?.nume || '' }];
+                const acc = [...refMedia.current, { id: uid(), santierId, nume: file.name, url: uploaded.url, pathname: uploaded.pathname, tip: file.type.startsWith('video/') ? 'video' : 'foto', data: dataLocala(new Date()), incarcatDe: currentUser?.nume || '', incarcatDeId: currentUser?.id || '' }];
                 refMedia.current = acc;
                 setMediaSantier(acc);
                 persist('mediaSantier', acc);
@@ -6038,6 +6065,8 @@ function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, p
         persist('mediaSantier', next);
     };
     const remove = async (m) => {
+        if (!poateSterge(currentUser, m))
+            return;
         if (!window.confirm(`Ștergi definitiv „${m.nume}"?`))
             return;
         const next = refMedia.current.filter((x) => x.id !== m.id);
@@ -6057,7 +6086,7 @@ function SiteMediaTab({ santierId, santierNume, mediaSantier, setMediaSantier, p
     if (viewing) {
         return (React.createElement("div", { ref: mediaFsRef, style: { position: 'fixed', inset: 0, zIndex: 200, background: '#0c0f13', display: 'flex', flexDirection: 'column' } }, viewing.tip === 'video' ? (React.createElement("div", { style: { position: 'relative', flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' } }, React.createElement("video", { src: blobViewUrl(viewing.pathname), controls: true, autoPlay: true, playsInline: true, style: { maxWidth: '100%', maxHeight: '100%' } }), React.createElement(CloseX, { onClose: () => setViewing(null), onFull: () => toggleFullscreen(mediaFsRef.current) }))) : (React.createElement(ZoomImage, { src: blobViewUrl(viewing.pathname), alt: viewing.nume, onClose: () => setViewing(null), onFull: () => toggleFullscreen(mediaFsRef.current) }))));
     }
-    return (React.createElement("div", null, React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "📷 Foto / Video"), React.createElement("label", { className: "w-full flex items-center justify-center gap-2 text-sm px-4 py-2.5 rounded-lg cursor-pointer font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " ", uploading ? 'Se încarcă...' : 'Adaugă foto / video', React.createElement("input", { ref: refInputMedia, "data-input-media": "1", type: "file", accept: "image/*,video/*", multiple: true, disabled: uploading, onChange: (e) => { handleFiles(e.target.files); e.target.value = ''; }, style: { display: 'none' } })), React.createElement("p", { className: "text-[11px] mt-1.5", style: { color: 'var(--muted2)' } }, "Fișiere de până la 200MB."), error && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, error), mediaAici.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nimic încărcat încă.")) : (React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3" }, mediaAici.map((m) => (React.createElement("div", { key: m.id, className: "rounded-lg overflow-hidden relative", style: { background: 'var(--panel2)' } }, m.tip === 'video' ? (React.createElement("video", { src: blobViewUrl(m.pathname), controls: true, preload: "none", className: "w-full", style: { maxHeight: 140, objectFit: 'cover' } })) : (React.createElement("button", { onClick: () => setViewing(m), className: "block w-full" }, React.createElement("img", { src: blobViewUrl(m.pathname), alt: m.nume, loading: "lazy", decoding: "async", className: "w-full", style: { height: 140, objectFit: 'cover', background: 'var(--panel2)' } }))), React.createElement("div", { className: "flex items-center justify-between px-2 py-1" }, React.createElement("span", { className: "text-[11px] truncate", style: { color: 'var(--muted)' } }, m.nume || m.data), React.createElement(EditText, { valoare: m.nume || '', titlu: 'Scrie ce e in poza', placeholder: 'ex: tablou parter, dupa montaj', onSalveaza: (nume) => redenumesteMedia(m.id, nume) }), React.createElement("button", { onClick: () => remove(m), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 12 }, "🗑")))))))))));
+    return (React.createElement("div", null, React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "text-sm font-medium mb-2", style: { color: 'var(--text)' } }, "📷 Foto / Video"), React.createElement("label", { className: "w-full flex items-center justify-center gap-2 text-sm px-4 py-2.5 rounded-lg cursor-pointer font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " ", uploading ? 'Se încarcă...' : 'Adaugă foto / video', React.createElement("input", { ref: refInputMedia, "data-input-media": "1", type: "file", accept: "image/*,video/*", multiple: true, disabled: uploading, onChange: (e) => { handleFiles(e.target.files); e.target.value = ''; }, style: { display: 'none' } })), React.createElement("p", { className: "text-[11px] mt-1.5", style: { color: 'var(--muted2)' } }, "Fișiere de până la 200MB."), error && React.createElement("p", { className: "text-xs mt-2", style: { color: 'var(--acc4)' } }, error), mediaAici.length === 0 ? (React.createElement("div", { className: "text-xs mt-3", style: { color: 'var(--muted2)' } }, "Nimic încărcat încă.")) : (React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3" }, mediaAici.map((m) => (React.createElement("div", { key: m.id, className: "rounded-lg overflow-hidden relative", style: { background: 'var(--panel2)' } }, m.tip === 'video' ? (React.createElement("video", { src: blobViewUrl(m.pathname), controls: true, preload: "none", className: "w-full", style: { maxHeight: 140, objectFit: 'cover' } })) : (React.createElement("button", { onClick: () => setViewing(m), className: "block w-full" }, React.createElement("img", { src: blobViewUrl(m.pathname), alt: m.nume, loading: "lazy", decoding: "async", className: "w-full", style: { height: 140, objectFit: 'cover', background: 'var(--panel2)' } }))), React.createElement("div", { className: "flex items-center justify-between px-2 py-1" }, React.createElement("span", { className: "text-[11px] truncate", style: { color: 'var(--muted)' } }, m.nume || m.data), React.createElement(EditText, { valoare: m.nume || '', titlu: 'Scrie ce e in poza', placeholder: 'ex: tablou parter, dupa montaj', onSalveaza: (nume) => redenumesteMedia(m.id, nume) }), poateSterge(currentUser, m) && React.createElement("button", { onClick: () => remove(m), style: { color: 'var(--acc4)' } }, React.createElement(Icon, { size: 12 }, "🗑")))))))))));
 }
 function SiteToolsTab({ santierId, santierNume, sculeSantier, setSculeSantier, persist, currentUser }) {
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
@@ -6612,9 +6641,10 @@ function AsistentTab({ problemeSantier, setProblemeSantier, santiere, persist, c
     const salveazaRaspunsAI = () => {
         if (!aiRasp || !q.trim())
             return;
-        const item = { id: uid(), santierId: '', intrebare: q.trim(), creatDe: currentUser?.nume || '', creatId: currentUser?.id,
-            data: dataLocala(new Date()),
-            raspunsuri: [{ id: uid(), text: aiRasp.text, autor: (currentUser?.nume || 'Manager') + ' (via AI)', corect: true, data: dataLocala(new Date()) }] };
+        /* aceleași câmpuri ca un răspuns scris de mână (autorNume/autorId), și întrebarea marcată rezolvată */
+        const item = { id: uid(), santierId: '', intrebare: q.trim(), creatDe: currentUser?.nume || '', creatId: currentUser?.id || '',
+            data: dataLocala(new Date()), status: 'rezolvat',
+            raspunsuri: [{ id: uid(), text: aiRasp.text, autorNume: (currentUser?.nume || 'Manager') + ' (via AI)', autorId: currentUser?.id || '', corect: true, data: dataLocala(new Date()) }] };
         const next = [item, ...(problemeSantier || [])];
         setProblemeSantier(next);
         persist('problemeSantier', next);
@@ -10040,7 +10070,7 @@ function printProcesVerbal({ pv, santier, client, company, lucrari, obiectiuni, 
       </div>
 
       <div style="margin-top:8mm;font-size:9px;color:#8a939c;">
-        Document generat electronic din aplicația de șantier. ${pv.semnatPeTelefon && pv.semnatLa ? 'Semnat de ambele părți pe telefon la ' + esc(new Date(pv.semnatLa).toLocaleString('ro-RO')) + '.' : 'Semnătura beneficiarului a fost aplicată pe dispozitiv la ' + esc(fmtData(pv.data)) + (pv.ora ? ', ora ' + esc(pv.ora) : '') + '.'}${pv.modificatLa ? ' Document modificat la ' + esc(fmtData(pv.modificatLa)) + (pv.modificatDe ? ' de ' + esc(pv.modificatDe) : '') + '.' : ''}
+        Document generat electronic din aplicația de șantier. ${pv.semnatPeTelefon && pv.semnatLa ? 'Semnat de ambele părți pe telefon la ' + esc(new Date(pv.semnatLa).toLocaleString('ro-RO')) + '.' : srcBenef ? 'Semnătura beneficiarului a fost aplicată pe dispozitiv la ' + esc(fmtData(pv.data)) + (pv.ora ? ', ora ' + esc(pv.ora) : '') + '.' : 'Document nesemnat încă de beneficiar.'}${pv.modificatLa ? ' Document modificat la ' + esc(fmtData(pv.modificatLa)) + (pv.modificatDe ? ' de ' + esc(pv.modificatDe) : '') + '.' : ''}
       </div>
     </div>
   <script>${PAGINATOR_TIPAR}<\/script></body></html>`;
@@ -10236,8 +10266,17 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
     const perioadaDinDeviz = !!(devizAles && devizAles.perioada && devizAles.perioada.de && devizAles.perioada.la);
     const urmatorulNumar = () => {
         const anul = new Date().getFullYear();
-        const ale = (proceseVerbale || []).filter((x) => String(x.numar || '').endsWith('/' + anul));
-        return (ale.length + 1) + '/' + anul;
+        /* max+1, nu count+1 — după o ștergere numărul s-ar repeta */
+        let maxim = 0;
+        (proceseVerbale || []).forEach((x) => {
+            const s = String(x.numar || '');
+            if (!s.endsWith('/' + anul))
+                return;
+            const n = parseInt(s, 10);
+            if (Number.isFinite(n) && n > maxim)
+                maxim = n;
+        });
+        return (maxim + 1) + '/' + anul;
     };
     const adaugaObiectiune = () => {
         const t = String(obiText).trim();
@@ -10330,6 +10369,9 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
             creatDe: vechi ? vechi.creatDe : (currentUser?.nume || ''), creatId: vechi ? vechi.creatId : (currentUser?.id || ''),
             trimisSpreSemnare: true, trimisLa: dataLocala(acum),
         };
+        /* semnătura veche o scoatem dinadins → mergeById trebuie să știe că nu e o copie învechită */
+        if (vechi && vechi.semnatura && !pv.semnatura)
+            pv.semnaturaStearsaLa = Date.now();
         const noi = vechi ? (proceseVerbale || []).map((x) => (x.id === pv.id ? pv : x)) : [...(proceseVerbale || []), pv];
         setProceseVerbale(noi);
         try {
@@ -10425,6 +10467,9 @@ function SitePvTab({ santierId, santier, client, company, rapoarte, pozitiiSanti
             ...(vechi && vechi.semnatLaDistanta && !peTelefon && vechi.semnatura === semnatura
                 ? { semnatLaDistanta: true, semnatLa: vechi.semnatLa, semnatIp: vechi.semnatIp, semnatDispozitiv: vechi.semnatDispozitiv } : {}),
         };
+        /* semnătura veche o scoatem dinadins (resemnare pe telefon) → mergeById să nu ne arunce editarea */
+        if (vechi && vechi.semnatura && !pv.semnatura)
+            pv.semnaturaStearsaLa = Date.now();
         const noi = vechi ? (proceseVerbale || []).map((x) => (x.id === pv.id ? pv : x)) : [...(proceseVerbale || []), pv];
         setProceseVerbale(noi);
         persist('proceseVerbale', noi);
@@ -11320,6 +11365,11 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
         /* modificat → se verifică din nou, ca până acum */
         if (!esteNou) {
             withSite.verificat = null;
+            /* raportul a fost corectat după observație → observația trece la „rezolvate", altfel rămâne roșu pe veci */
+            if (withSite.observatieManager) {
+                withSite.observatieRezolvata = { ...(typeof withSite.observatieManager === 'object' ? withSite.observatieManager : { text: String(withSite.observatieManager) }), rezolvatLa: new Date().toISOString(), rezolvatDe: currentUser?.nume || '' };
+                withSite.observatieManager = null;
+            }
             (Array.isArray(r._idUnite) ? r._idUnite : [r.id]).forEach((id) => VERIF_IN_ZBOR.delete(String(id)));
         }
         if (esteNou && !withSite.trimisTs) {
@@ -13010,19 +13060,23 @@ function ProfileTab({ currentUser, onLogout, tema, setTema, carduri, setCarduri,
     };
     const submit = async () => {
         setStatus({ loading: true, error: '', success: '' });
-        if (!oldPassword || !newPassword) {
+        /* tăiem spațiile ca la logare (LoginScreen face trim) — altfel parola nouă nu mai merge */
+        const veche = String(oldPassword || '').trim(), noua = String(newPassword || '').trim();
+        if (!veche || !noua) {
             setStatus({ loading: false, error: 'Completează toate câmpurile.', success: '' });
             return;
         }
-        if (newPassword !== confirmPassword) {
+        if (noua !== String(confirmPassword || '').trim()) {
             setStatus({ loading: false, error: 'Parola nouă nu se potrivește cu confirmarea.', success: '' });
             return;
         }
         try {
-            const res = await authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'changePassword', id: currentUser.id, oldPassword, newPassword }) });
+            const res = await authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'changePassword', id: currentUser.id, oldPassword: veche, newPassword: noua }) });
             const data = await res.json();
             if (!res.ok || !data.ok)
                 throw new Error(data.error || 'A eșuat.');
+            /* serverul invalidează tokenurile vechi la schimbarea parolei → îl luăm pe cel nou */
+            preiaTokenDupaParola(currentUser, data);
             setStatus({ loading: false, error: '', success: 'Parola a fost schimbată.' });
             setOldPassword('');
             setNewPassword('');
@@ -13500,8 +13554,9 @@ function CautareGlobala({ inchide, date, currentUser, setTab, setPendingSiteNav 
         adauga('Scule pe șantier', '🔧', (date.sculeSantier || []).filter((x) => potriveste(x.denumire, x.adusaDe, numeSantier(x.santierId))), 'scu', (x) => ({ titlu: x.denumire, sub: numeSantier(x.santierId) + (x.adusaDe ? ' · ' + x.adusaDe : ''), du: () => duLaSantier(x.santierId, 'scule') }));
         adauga('Întrebări și probleme', '❓', (date.problemeSantier || []).filter((x) => potriveste(x.intrebare, numeSantier(x.santierId), x.creatDe)), 'qa', (x) => ({ titlu: String(x.intrebare || '').slice(0, 70), sub: numeSantier(x.santierId), du: () => duLaSantier(x.santierId, 'probleme') }));
         adauga('Restanțe', '🔴', (date.restanteSantier || []).filter((x) => potriveste(x.text, x.denumire, x.locNume, numeSantier(x.santierId))), 'res', (x) => ({ titlu: String(x.text || x.denumire || '').slice(0, 70), sub: [numeSantier(x.santierId), x.locNume].filter(Boolean).join(' · '), du: () => duLaSantier(x.santierId, 'restante') }));
-        adauga('Notițe', '📝', (date.notite || []).filter((x) => potriveste(x.titlu, x.text)), 'not', (x) => ({ titlu: x.titlu || String(x.text || '').slice(0, 50), sub: String(x.text || '').slice(0, 70), du: () => duLaTab('notite') }));
         if (eManager) {
+            /* notițele sunt doar ale managerului (meniul le ascunde celorlalți) */
+            adauga('Notițe', '📝', (date.notite || []).filter((x) => potriveste(x.titlu, x.text)), 'not', (x) => ({ titlu: x.titlu || String(x.text || '').slice(0, 50), sub: String(x.text || '').slice(0, 70), du: () => duLaTab('notite') }));
             adauga('Facturi', '🧾', (date.invoices || []).filter((x) => potriveste(x.numar, numeClient(x.clientId), x.status)), 'fac', (x) => ({ titlu: 'Factura ' + (x.numar || '') + ' · ' + numeClient(x.clientId), sub: [fmtData(x.data), x.status].filter(Boolean).join(' · '), du: () => duLaTab('facturi') }));
             adauga('Devize', '🧮', (date.devize || []).filter((x) => potriveste(x.numar, numeClient(x.clientId), (x.items || []).map((i) => i.denumire).join(' '))), 'dev', (x) => ({ titlu: 'Deviz ' + (x.numar || '') + ' · ' + numeClient(x.clientId), sub: [fmtData(x.data), x.status].filter(Boolean).join(' · '), du: () => duLaTab('devize') }));
             adauga('Oferte', '📨', (date.offers || []).filter((x) => potriveste(x.numar, numeClient(x.clientId), (x.items || []).map((i) => i.denumire).join(' '))), 'ofe', (x) => ({ titlu: 'Oferta ' + (x.numar || '') + ' · ' + numeClient(x.clientId), sub: fmtData(x.data), du: () => duLaTab('oferte') }));
@@ -15245,7 +15300,8 @@ function ConcediiTab({ concedii, setConcedii, soldConcediu, setSoldConcediu, per
                 if (veche.userId)
                     notifica(veche.userId, { title: 'Concediu modificat de birou', body: `${cumScriuPerioada({ ...form, oraInceput, oraSfarsit })} — ${statusNou} · modificat de ${currentUser?.nume || 'birou'}.`, tag: 'concediu-raspuns' }, currentUser?.id);
             }
-            else notifica('manageri', { title: veche && veche.status === 'Aprobat' ? 'Concediu modificat — de reaprobat' : 'Cerere de concediu modificată', body: `${currentUser?.nume || 'Un coleg'}: ${cumScriuPerioada({ ...form, oraInceput, oraSfarsit })}.`, tag: 'concediu', url: '/?concediu=' + encodeURIComponent(form.id), data: { tip: 'concediu', id: form.id } }, currentUser?.id);
+            /* „de reaprobat" doar dacă chiar a ieșit din aprobare (managerul își păstrează statusul) */
+            else notifica('manageri', { title: veche && veche.status === 'Aprobat' && statusNou === 'Cerut' ? 'Concediu modificat — de reaprobat' : 'Cerere de concediu modificată', body: `${currentUser?.nume || 'Un coleg'}: ${cumScriuPerioada({ ...form, oraInceput, oraSfarsit })}.`, tag: 'concediu', url: '/?concediu=' + encodeURIComponent(form.id), data: { tip: 'concediu', id: form.id } }, currentUser?.id);
         }
         else {
             const c = { id: uid(), userId: currentUser.id, nume: currentUser.nume, dataInceput: form.dataInceput, dataSfarsit: form.dataSfarsit, tip: form.tip, motiv: form.motiv || '', oraInceput, oraSfarsit, status: 'Cerut', creatLa: new Date().toISOString() };
@@ -15488,11 +15544,22 @@ function UsersTab({ currentUser }) {
         }
         if (!window.confirm('Ștergi definitiv acest cont? Persoana nu va mai putea intra în aplicație.'))
             return;
-        await authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', id }) });
+        /* răspunsul contează: dacă serverul refuză, contul e tot acolo */
+        try {
+            const r = await authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete', id }) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || d.ok === false)
+                throw new Error(d.error || ('server ' + r.status));
+        }
+        catch (e) {
+            window.alert('⚠ Contul NU a fost șters: ' + ((e && e.message) || 'eroare') + '.');
+        }
         loadUsers();
     };
     const saveUser = async () => {
-        if (!form.nume.trim() || !form.username.trim() || (!form.id && !form.password)) {
+        /* parola se taie ca la logare (LoginScreen face trim) */
+        const parola = String(form.password || '').trim();
+        if (!form.nume.trim() || !form.username.trim() || (!form.id && !parola)) {
             setFormStatus({ loading: false, error: 'Completează toate câmpurile.' });
             return;
         }
@@ -15503,12 +15570,15 @@ function UsersTab({ currentUser }) {
         setFormStatus({ loading: true, error: '' });
         try {
             const payload = form.id
-                ? { action: 'update', id: form.id, nume: form.nume.trim(), username: form.username.trim(), rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim(), newPassword: form.password || undefined }
-                : { action: 'register', nume: form.nume.trim(), username: form.username.trim(), password: form.password, rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim() };
+                ? { action: 'update', id: form.id, nume: form.nume.trim(), username: form.username.trim(), rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim(), newPassword: parola || undefined }
+                : { action: 'register', nume: form.nume.trim(), username: form.username.trim(), password: parola, rol: form.rol, telefon: form.telefon.trim(), cnp: form.cnp.trim() };
             const res = await authFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const data = await res.json();
             if (!res.ok || !data.ok)
                 throw new Error(data.error || 'A eșuat.');
+            /* managerul și-a schimbat propria parolă → rămâne logat cu tokenul nou */
+            if (form.id && parola && String(form.id) === String(currentUser.id))
+                preiaTokenDupaParola(currentUser, data);
             setForm(null);
             setFormStatus({ loading: false, error: '' });
             loadUsers();
@@ -15580,7 +15650,8 @@ function memUrmatoarea(m) {
         else if (m.repeta === 'saptamanal')
             d.setDate(d.getDate() + 7);
         else if (m.repeta === 'lunar') {
-            const zi = d.getDate();
+            /* ziua aleasă inițial (ziLunar): 31 → 28 feb → 31 mar, nu 28 pentru totdeauna */
+            const zi = Number(m.ziLunar) || d.getDate();
             d.setDate(1);
             d.setMonth(d.getMonth() + 1);
             const zileInLuna = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
@@ -15605,7 +15676,7 @@ function memUrmatoareaDinViitor(m) {
         d0.setDate(d0.getDate() + (Math.floor(dif / pas) + 1) * pas);
         return dataLocala(d0);
     }
-    let cur = m, urm = memUrmatoarea(cur), pasi = 0;
+    let cur = { ...m, ziLunar: Number(m.ziLunar) || Number(String(m.data || '').slice(8, 10)) || undefined }, urm = memUrmatoarea(cur), pasi = 0;
     while (urm && urm <= azi && pasi < 1200) {
         cur = { ...cur, data: urm };
         urm = memUrmatoarea(cur);
@@ -15633,11 +15704,12 @@ function linkGoogleCalendar(m) {
     return 'https://calendar.google.com/calendar/render?' + q.toString();
 }
 function descarcaIcsMemento(m) {
-    const esc = (t) => String(t ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const esc = (t) => String(t ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
     const linii = [
         'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Smart Electroconect//Memento//RO',
         'BEGIN:VEVENT', 'UID:memento-' + m.id + '@smartelectroconect',
-        'DTSTAMP:' + momentGoogle(m.data, m.ora),
+        /* DTSTAMP = momentul creării fișierului (UTC), nu ora evenimentului */
+        'DTSTAMP:' + new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''),
         'DTSTART:' + momentGoogle(m.data, m.ora),
         'DTEND:' + momentGoogle(m.data, m.ora, 30),
         'SUMMARY:' + esc(m.titlu || 'Memento'),
@@ -15738,7 +15810,13 @@ function MementoTab({ mementouri, setMementouri, persist, clients, santiere, cur
     const salveaza = () => {
         if (!String(form.titlu).trim())
             return;
-        const next = lista.some((m) => m.id === form.id) ? lista.map((m) => m.id === form.id ? { ...form, anuntat: false } : m) : [{ ...form }, ...lista];
+        /* lunar: ziua de ancorare e cea scrisă de om; dacă n-a schimbat data, o păstrăm pe cea veche */
+        const vechiM = lista.find((m) => m.id === form.id);
+        const ziLunar = form.repeta === 'lunar'
+            ? ((vechiM && vechiM.data === form.data && Number(vechiM.ziLunar)) || Number(String(form.data || '').slice(8, 10)) || undefined)
+            : undefined;
+        const deSalvat = { ...form, ziLunar };
+        const next = lista.some((m) => m.id === form.id) ? lista.map((m) => m.id === form.id ? { ...deSalvat, anuntat: false } : m) : [deSalvat, ...lista];
         setMementouri(next);
         persist('mementouri', next);
         if (form.pentruUserId && form.pentruUserId !== currentUser?.id) {
@@ -15758,7 +15836,7 @@ function MementoTab({ mementouri, setMementouri, persist, clients, santiere, cur
         let next;
         const urm = m.repeta && m.repeta !== 'nu' ? memUrmatoareaDinViitor(m) : null;
         if (urm)
-            next = lista.map((x) => x.id === m.id ? { ...x, data: urm, gata: false, anuntat: false } : x);
+            next = lista.map((x) => x.id === m.id ? { ...x, data: urm, gata: false, anuntat: false, ...(x.repeta === 'lunar' ? { ziLunar: Number(x.ziLunar) || Number(String(x.data || '').slice(8, 10)) || undefined } : {}) } : x);
         else
             next = lista.map((x) => x.id === m.id ? { ...x, gata: !x.gata } : x);
         setMementouri(next);
@@ -18758,8 +18836,10 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
             const ultimaF = factC.map((i) => i.data).sort().slice(-1)[0] || null;
             /* un deviz cu doar avansul facturat rămâne „de facturat" cât timp are rest */
             const restDev = (d) => rotunjLei(calcSubtotal(d.items || []) - facturatDinDeviz(d, invoices, devize));
+            /* resturi de rotunjire (sub 1 leu sau sub 1% din deviz) nu fac un client „de facturat" */
+            const restSemnificativ = (d) => { const rest = restDev(d), tot = calcSubtotal(d.items || []); return rest >= 1 && rest >= tot * 0.01; };
             const devNefact = devize.filter((d) => d.clientId === c.id && d.status !== 'Ciornă'
-                && restDev(d) > 0.005 && String(d.data || '') <= zileInUrma(7));
+                && restSemnificativ(d) && String(d.data || '') <= zileInUrma(7));
             const areFacturaLuna = factC.some((i) => String(i.data || '').startsWith(lunaCur));
             const santC = santiere.filter((s) => s.benefClientId === c.id);
             const lucruLuna = santC.some((s) => rapoarte.some((r) => r.santierId === s.id && String(r.data || '').startsWith(lunaCur)));
@@ -22013,24 +22093,21 @@ async function resetareZone(chei, laFiecare) {
         if (laFiecare)
             laFiecare(k);
         let val = [];
-        try {
-            const r = await authFetch(`/api/data?key=${encodeURIComponent(k)}`);
-            if (r.ok) {
-                const d = await r.json();
-                if (Array.isArray(d.value))
-                    val = d.value;
-            }
-        }
-        catch (_) { }
+        /* fără citire reușită nu știm ce id-uri marcăm șterse → ne oprim */
+        const r = await authFetch(`/api/data?key=${encodeURIComponent(k)}`);
+        if (!r.ok)
+            throw new Error('Nu pot citi „' + k + '" de pe server (' + r.status + '). Nu s-a golit restul.');
+        const d = await r.json();
+        if (Array.isArray(d.value))
+            val = d.value;
         const iduri = val.map((x) => x && x.id).filter((x) => x != null);
         if (iduri.length) {
             registru[k] = registru[k] || {};
             iduri.forEach((id) => { registru[k][String(id)] = acum; });
         }
-        try {
-            await authFetch('/api/data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: k, value: [] }) });
-        }
-        catch (_) { }
+        const rp = await authFetch('/api/data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: k, value: [] }) });
+        if (!rp.ok)
+            throw new Error('Nu pot goli „' + k + '" pe server (' + rp.status + ').');
         try {
             cacheSet(k, []);
         }
@@ -22073,10 +22150,17 @@ function PornireDeLaZero() {
         }
         setLucreaza(true);
         setStare('Fac întâi o copie de siguranță…');
+        /* fără copie de siguranță confirmată NU golim nimic */
         try {
-            await authFetch('/api/backup');
+            const rb = await authFetch('/api/backup');
+            if (!rb.ok)
+                throw new Error('server ' + rb.status);
         }
-        catch (_) { }
+        catch (e) {
+            setStare('⚠ Copia de siguranță nu a mers (' + ((e && e.message) || 'eroare') + '). Nu am șters nimic.');
+            setLucreaza(false);
+            return;
+        }
         try {
             await resetareZone(zoneAlese.flatMap((z) => z.chei), (k) => setStare('Golesc „' + k + '"…'));
             setStare('✅ Gata. Reîncarc aplicația…');
@@ -22662,7 +22746,21 @@ function CompanyTab({ company, setCompany, persist, santiere, setSantiere, rapoa
     const [citit, setCitit] = useState(null);
     const refLogo = useRef(null);
     const refStampila = useRef(null);
-    useEffect(() => setForm(company), [company]);
+    /* o actualizare a firmei (sync, alt telefon) nu-ți șterge ce ai scris și n-ai salvat:
+       câmpurile pe care le-ai schimbat față de ultima versiune primită rămân ale tale */
+    const refBazaFirma = useRef(company);
+    useEffect(() => {
+        setForm((f) => {
+            const baza = refBazaFirma.current || {};
+            refBazaFirma.current = company;
+            if (!f || f === baza)
+                return company;
+            const nou = { ...(company || {}) };
+            Object.keys(f).forEach((k) => { if (f[k] !== baza[k])
+                nou[k] = f[k]; });
+            return nou;
+        });
+    }, [company]);
     const save = () => { setCompany(form); persist('company', form); setSalvat('✅ Salvat.'); setTimeout(() => setSalvat(''), 2500); };
     const urcaImagine = async (camp, file) => {
         if (!file)
@@ -25526,6 +25624,11 @@ function coteazaPlansa(im, pini, optiuni) {
     return out;
 }
 const textCota = (c) => c ? c.cm + ' cm de la ' + (c.fel === 'ușă' ? 'ușă' : c.fel === 'gol' ? 'gol' : 'colț') : '';
+/* scara e pe pagină (planșele unui PDF pot fi la scări diferite); documentele vechi au doar metriPeLatime */
+function scaraPagina(ante, pg) {
+    const s = Number(((ante && ante.scari) || {})[Number(pg) || 1]);
+    return s > 0 ? s : (Number(ante && ante.metriPeLatime) || 0);
+}
 function lungimeTraseu(puncte, metriPeLatime) {
     const p = puncte || [];
     let d = 0;
@@ -25544,6 +25647,13 @@ function zonaPentruPunct(zone, p) {
             gasit = z;
     });
     return gasit ? gasit.id : '';
+}
+/* schimbarea de scară pentru o singură pagină; detaliile (1:n, sursa, foaia) tot pe pagină */
+function scaraPePagina(ante, pg, metri, detalii) {
+    const nr = Number(pg) || 1;
+    return { scari: { ...((ante && ante.scari) || {}), [nr]: metri },
+        scariDetalii: { ...((ante && ante.scariDetalii) || {}), [nr]: detalii || {} },
+        ...(detalii && detalii.scaraNumitor ? { scaraNumitor: detalii.scaraNumitor } : {}) };
 }
 const rotunjeste2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
 function cantitatiAntemasuratoare(a) {
@@ -25564,7 +25674,7 @@ function cantitatiAntemasuratoare(a) {
         if (!ar)
             return;
         const rezerva = 1 + (Number(t.rezerva) || 0) / 100;
-        pune(ar, lungimeTraseu(t.puncte, ante.metriPeLatime) * rezerva, zonaPentruPunct(ante.zone, (t.puncte || [])[0]));
+        pune(ar, lungimeTraseu(t.puncte, scaraPagina(ante, t.pagina)) * rezerva, zonaPentruPunct(ante.zone, (t.puncte || [])[0]));
     });
     return Array.from(rez.values()).map((r) => {
         const peZona = {};
@@ -25689,6 +25799,10 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     refAnte.current = ante;
     const refOnSchimb = useRef(onSchimb);
     refOnSchimb.current = onSchimb;
+    /* ce scrie în bandă despre scară: a paginii, dacă are; altfel cea veche, pe tot documentul */
+    const detaliiScara = Number((ante.scari || {})[pagina]) > 0
+        ? ((ante.scariDetalii || {})[pagina] || {})
+        : { scaraNumitor: ante.scaraNumitor, scaraSursa: ante.scaraSursa, foaieMm: ante.foaieMm };
     const refInteg = useRef(null);
     const refUndo = useRef([]);
     const [potAnula, setPotAnula] = useState(false);
@@ -25987,7 +26101,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
     const coteazaTot = () => {
         if (!refGri.current || !refPagina.current)
             return;
-        if (!(Number(ante.metriPeLatime) > 0)) {
+        if (!(scaraPagina(ante, pagina) > 0)) {
             setMod('calibrare');
             setMesaj('Întâi pune scara — fără ea nu pot scrie centimetri.');
             return;
@@ -26001,7 +26115,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         setTimeout(() => {
             try {
                 const lat = refPagina.current.width;
-                const brute = coteazaPlansa(refGri.current, pini, { latPagina: lat, metriPeLatime: ante.metriPeLatime });
+                const brute = coteazaPlansa(refGri.current, pini, { latPagina: lat, metriPeLatime: scaraPagina(ante, pagina) });
                 const noi = brute.map((c) => ({
                     id: uid(), pagina, pinId: c.pinId, orizontala: c.orizontala,
                     ax: c.ancoraX / lat, ay: c.ancoraY / lat, lungime: c.px / lat, sens: c.sens, cm: c.cm, fel: c.fel,
@@ -26272,11 +26386,11 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                     if (d && !Number(ante.scaraNumitor))
                         setNumitor(d);
                     setAreText(refTexte.current.length > 0);
-                    if (d > 0 && f && f.standard && !(Number(refAnte.current.metriPeLatime) > 0)) {
+                    if (d > 0 && f && f.standard && !(scaraPagina(refAnte.current, pagina) > 0)) {
                         const mAuto = metriPeLatimeDinScara(f.latMm, d);
                         if (mAuto > 0) {
-                            refOnSchimb.current({ metriPeLatime: mAuto, scaraNumitor: d, scaraSursa: 'cartus',
-                                foaieMm: { lat: f.latMm, inalt: f.inaltMm, format: f.nume } });
+                            refOnSchimb.current(scaraPePagina(refAnte.current, pagina, mAuto, { scaraNumitor: d, scaraSursa: 'cartus',
+                                foaieMm: { lat: f.latMm, inalt: f.inaltMm, format: f.nume } }));
                             setMesaj('📏 Scara e pusă singură: pe planșă scrie 1:' + d + ', foaia e ' + f.nume
                                 + ' ⇒ ' + rotunjeste2(mAuto).toFixed(2) + ' m pe lățimea foii. Dacă vreo cotă nu se bate, verific-o cu unealta 📏.');
                         }
@@ -26370,7 +26484,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             else
                 ctx.lineTo(e.x, e.y); });
             ctx.stroke();
-            const m = lungimeTraseu(p, ante.metriPeLatime) * (1 + (Number(t.rezerva) || 0) / 100);
+            const m = lungimeTraseu(p, scaraPagina(ante, t.pagina)) * (1 + (Number(t.rezerva) || 0) / 100);
             const e = laEcran(p[p.length - 1].x, p[p.length - 1].y);
             ctx.fillStyle = '#0c0f13cc';
             ctx.fillRect(e.x + 4, e.y - 14, 62, 16);
@@ -26849,7 +26963,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
         }
         const dinScara = metriPeLatimeDinScara(foaie && foaie.latMm, numitor);
         const abatere = abatereScara(mpl, dinScara);
-        onSchimb({ metriPeLatime: mpl, scaraSursa: 'masurata' });
+        onSchimb(scaraPePagina(refAnte.current, pagina, mpl, { scaraSursa: 'masurata' }));
         setMod('naviga');
         setMesaj('Măsurat: planșa are ' + rotunjeste2(mpl).toFixed(2) + ' m pe lățimea foii.'
             + (dinScara > 0 ? (abatere <= 2
@@ -26986,7 +27100,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             }),
             articole.length > 0 && (React.createElement("button", { onClick: stergeUltimulPin, title: "Scoate ultima bucat\u0103 pus\u0103", className: "shrink-0 text-xs px-2.5 py-2 rounded-lg font-semibold", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "\u21B6 Ultimul")))),
         (() => {
-            const p1 = Number(ante.metriPeLatime) > 0;
+            const p1 = scaraPagina(ante, pagina) > 0;
             const p2 = articole.some((a) => a.sablon && a.sablon.w > 0);
             const p3 = (ante.pini || []).length > 0 || (ante.trasee || []).length > 0;
             if (ghidAscuns)
@@ -27019,14 +27133,14 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                     React.createElement("button", { onClick: () => setGhidAscuns(true), title: "Ascunde pa\u0219ii", className: "shrink-0 px-1.5 py-2 text-xs", style: { color: 'var(--muted2)' } }, "\u2715")),
                 React.createElement("div", { className: "text-[11px] mt-1.5", style: { color: 'var(--muted)' } }, explicatii[curent === -1 ? 3 : curent])));
         })(),
-        Number(ante.metriPeLatime) > 0 && (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: 'var(--panel2)', color: 'var(--muted2)', borderBottom: '1px solid var(--border)' } },
+        scaraPagina(ante, pagina) > 0 && (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: 'var(--panel2)', color: 'var(--muted2)', borderBottom: '1px solid var(--border)' } },
             "\uD83D\uDCCF ",
-            ante.scaraNumitor ? '1:' + ante.scaraNumitor + (ante.foaieMm && ante.foaieMm.format ? ' pe ' + ante.foaieMm.format : '') : 'măsurată pe o cotă',
+            detaliiScara.scaraNumitor ? '1:' + detaliiScara.scaraNumitor + (detaliiScara.foaieMm && detaliiScara.foaieMm.format ? ' pe ' + detaliiScara.foaieMm.format : '') : 'măsurată pe o cotă',
             " \u00B7 ",
-            rotunjeste2(ante.metriPeLatime).toFixed(2),
+            rotunjeste2(scaraPagina(ante, pagina)).toFixed(2),
             " m pe l\u0103\u021Bimea foii",
-            ante.scaraSursa === 'cartus' ? ' · luată din cartuș' : ante.scaraSursa === 'masurata' ? ' · măsurată de tine' : '')),
-        !ante.metriPeLatime && ghidAscuns && (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: '#E9A23B15', color: 'var(--acc3)', borderBottom: '1px solid #E9A23B44' } }, "\uD83D\uDCCF Scara nu e pus\u0103 \u2014 traseele nu dau metri. Atinge aici: \u00EE\u021Bi spun singur pe ce foaie e plan\u0219a \u0219i ce scar\u0103 scrie pe ea.")),
+            detaliiScara.scaraSursa === 'cartus' ? ' · luată din cartuș' : detaliiScara.scaraSursa === 'masurata' ? ' · măsurată de tine' : '')),
+        !(scaraPagina(ante, pagina) > 0) && ghidAscuns && (React.createElement("div", { onClick: () => setMod('calibrare'), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: '#E9A23B15', color: 'var(--acc3)', borderBottom: '1px solid #E9A23B44' } }, "\uD83D\uDCCF Scara nu e pus\u0103 \u2014 traseele nu dau metri. Atinge aici: \u00EE\u021Bi spun singur pe ce foaie e plan\u0219a \u0219i ce scar\u0103 scrie pe ea.")),
         mesaj && (React.createElement("div", { onClick: () => setMesaj(''), className: "px-2.5 py-1.5 text-[11px] shrink-0 cursor-pointer", style: { background: 'var(--panel2)', color: 'var(--muted)', borderBottom: '1px solid var(--border)' } },
             mesaj,
             " ",
@@ -27061,7 +27175,7 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                     " pe l\u0103\u021Bimea foii")),
                 React.createElement("button", { disabled: !foaie || !(numitor > 0), onClick: () => {
                         const m = metriPeLatimeDinScara(foaie.latMm, numitor);
-                        onSchimb({ metriPeLatime: m, scaraNumitor: numitor, scaraSursa: scaraGasita === numitor ? 'cartus' : 'aleasa', foaieMm: { lat: foaie.latMm, inalt: foaie.inaltMm, format: foaie.nume } });
+                        onSchimb(scaraPePagina(refAnte.current, pagina, m, { scaraNumitor: numitor, scaraSursa: scaraGasita === numitor ? 'cartus' : 'aleasa', foaieMm: { lat: foaie.latMm, inalt: foaie.inaltMm, format: foaie.nume } }));
                         setMod('naviga');
                         setMesaj('Scara pusă din foaie: 1:' + numitor + ' pe ' + (foaie.nume || Math.round(foaie.latMm) + ' mm') + ' ⇒ ' + rotunjeste2(m).toFixed(2) + ' m pe lățime.');
                     }, className: "text-[11px] px-2.5 py-1.5 rounded-lg font-semibold disabled:opacity-40", style: { color: '#14181C', background: 'var(--acc2)' } }, "Folose\u0219te scara asta")),
@@ -27239,7 +27353,12 @@ function AntemasuratoareTab({ antemasuratori, setAntemasuratori, clients, santie
     const [err, setErr] = useState('');
     const refFis = useRef(null);
     const salveaza = async (lista) => { setAntemasuratori(lista); await persist('antemasuratori', lista); };
-    const schimba = (id, s) => salveaza((antemasuratori || []).map((a) => a.id === id ? { ...a, ...s } : a));
+    /* din ref, nu din closure: două schimbări la rând (ex. scara pusă singură + un pin) nu se mai calcă */
+    const schimba = (id, s) => {
+        const next = (refAnteLista.current || []).map((a) => a.id === id ? { ...a, ...s } : a);
+        refAnteLista.current = next;
+        return salveaza(next);
+    };
     const adauga = async (file) => {
         if (!file)
             return;
@@ -27345,6 +27464,12 @@ function CheltuieliTab({ cheltuieliFirma, setCheltuieliFirma, persist }) {
             const lunaStart = String(c.data || '').slice(0, 7);
             if (lunaStart && dataUrm.slice(0, 7) < lunaStart)
                 dataUrm = `${lunaStart}-${zi}`;
+            /* prima plată nu poate fi înainte de ziua în care a fost trecută cheltuiala (ex. pusă pe 20, plată pe 5 → luna următoare) */
+            if (c.data && dataUrm < c.data) {
+                const d = new Date(dataUrm.slice(0, 7) + '-01T00:00:00');
+                d.setMonth(d.getMonth() + 1);
+                dataUrm = dataLocala(d).slice(0, 7) + '-' + zi;
+            }
             return { id: c.id, data: dataUrm, label: `${c.categorie}${c.descriere ? ` — ${c.descriere}` : ''}`, suma: Number(c.suma), recurent: true };
         }).filter(x => x.data.slice(0, 7) <= lunaVit),
         ...cheltuieliFirma.filter(c => !c.recurent && Number(c.suma) > 0 && c.data && c.data >= azi && (c.data.startsWith(luna) || c.data.startsWith(lunaVit))).map(c => ({
@@ -27738,7 +27863,8 @@ function platiCheltuieliIntre(cheltuieliFirma, de, la) {
             const d = new Date((lunaStart && lunaStart > de.slice(0, 7) ? lunaStart : de.slice(0, 7)) + '-01T00:00:00');
             while (dataLocala(d).slice(0, 7) <= la.slice(0, 7)) {
                 const data = dataLocala(d).slice(0, 7) + '-' + zi;
-                if (data >= de && data <= la)
+                /* nici înainte de ziua în care a fost trecută (c.data), nu doar de luna ei */
+                if (data >= de && data <= la && !(c.data && data < c.data))
                     out.push({ id: c.id + '|' + data, data, label, suma: Number(c.suma), recurent: true });
                 d.setMonth(d.getMonth() + 1);
             }
@@ -29566,7 +29692,7 @@ function App() {
     const prezentaRef = useRef([]);
     /* angajatul vede doar rândurile lui (locația colegilor nu e treaba lui); serverul pune la loc restul la scriere */
     const setPrezenta = (v) => { let c = curataPrezenta(v); if (currentUser && currentUser.rol !== 'Manager')
-        c = c.filter((r) => r.userId ? r.userId === currentUser.id : numeCheieCO(r.nume) === numeCheieCO(currentUser.nume)); prezentaRef.current = c; try {
+        c = c.filter((r) => r.userId ? String(r.userId) === String(currentUser.id) /* id-ul poate veni număr sau text */ : numeCheieCO(r.nume) === numeCheieCO(currentUser.nume)); prezentaRef.current = c; try {
         cacheSet('prezenta', c);
     }
     catch (_) { } setPrezentaStare(c); };
@@ -29654,7 +29780,11 @@ function App() {
             mq.removeEventListener ? mq.removeEventListener('change', onCh) : mq.removeListener(onCh);
         } };
     }, [tema]);
+    /* contul logat ACUM (ref) — o încărcare pornită pentru alt cont nu-și mai pune eticheta la final */
+    const refCheieCont = useRef('');
+    refCheieCont.current = currentUser ? (currentUser.id + '|' + currentUser.rol) : '';
     const loadAllData = async (showSpinner, incercare = 0) => {
+        const cheieCont = currentUser ? (currentUser.id + '|' + currentUser.rol) : '';
         if (showSpinner)
             setLoading(true);
         try {
@@ -29791,11 +29921,12 @@ function App() {
             catch { }
             setDateIncarcate(true);
             /* pentru cine s-au încărcat datele — linkul QR așteaptă datele contului logat acum */
-            setIncarcatPentru(currentUser ? (currentUser.id + '|' + currentUser.rol) : '');
+            if (cheieCont === refCheieCont.current)
+                setIncarcatPentru(cheieCont);
             if (nrEsuate > 0) {
                 setError('⚠ Conexiune slabă — unele date nu s-au încărcat acum. Datele tale sunt în siguranță pe server. Se reîncearcă singur… sau apasă ↻ Reîncearcă.');
                 if (incercare < 2)
-                    setTimeout(() => { loadAllData(false, incercare + 1); }, 2500);
+                    setTimeout(() => { refLoadAll.current(false, incercare + 1); }, 2500);
             }
             else {
                 setError(null);
@@ -29808,7 +29939,8 @@ function App() {
             catch (_) { }
             setError('⚠ Ceva a împiedicat încărcarea (' + ((e && e.message) || 'eroare necunoscută') + '). DATELE TALE SUNT ÎN SIGURANȚĂ PE SERVER. Apasă ↻ Reîncearcă, iar dacă tot nu apar, intră în Profil → „🩺 De ce lipsesc datele".');
             setDateIncarcate(true);
-            setIncarcatPentru(currentUser ? (currentUser.id + '|' + currentUser.rol) : '');
+            if (cheieCont === refCheieCont.current)
+                setIncarcatPentru(cheieCont);
         }
         finally {
             if (showSpinner)
@@ -30601,6 +30733,9 @@ function App() {
                 materialeListaSantier, checklistSantier, checklistConfirmari, checklistSablon,
                 concedii, pontajCorectii, stockMoves, miscariSantier, notite, achizitii, prezenta,
                 proiecteFisiere, antemasuratori, noutatiAnuntate, normativPdf, normativIndexFile,
+                /* și seturile adăugate după v04.10 — altfel lipseau din copie */
+                proceseVerbale, cheltuieliFirma, salarii, soldConcediu, masini, planificareSantier,
+                categoriiTimp, sabloaneOferta, sterse: getStersServer() || {},
             };
             let nrInreg = 0;
             Object.values(date).forEach((v) => { if (Array.isArray(v))
@@ -30917,7 +31052,7 @@ function App() {
                 variante: [{ valoare: 'ok', eticheta: '↩ Mă întorc la planșă', principal: true }] });
             return;
         }
-        if ((a.trasee || []).length && !(Number(a.metriPeLatime) > 0)) {
+        if ((a.trasee || []).some((t) => !(scaraPagina(a, t.pagina) > 0))) {
             const r = await alege({ titlu: 'Scara nu e pusă — metrii ies 0',
                 text: 'Ai trasee de cablu pe planșă, dar fără scară nu pot socoti câți metri au. Pune scara (unealta 📏) și metrii se calculează singuri.',
                 variante: [{ valoare: 'inapoi', eticheta: '↩ Mă întorc să pun scara', principal: true },
