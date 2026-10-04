@@ -10,7 +10,9 @@ import { handleUpload } from '@vercel/blob/client';
 /* --- Verificarea biletului de acces (acelasi cod ca in auth.js si data.js, dinadins
    duplicat: rutele din /api sunt fisiere separate si nu vrem dependente intre ele). --- */
 import crypto from 'crypto';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
+// Fără SESSION_SECRET ruta nu pornește (lipsaSecret) — nu mai există text de rezervă în cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -31,11 +33,25 @@ function autentifica(req) {
   return verifyToken(dinAntet || dinAdresa);
 }
 
+/* UNDE NU ARE VOIE NIMENI SĂ URCE. „copii-firma/" e dosarul copiilor de siguranță
+   (api/backup.js): un fișier strecurat acolo putea împinge afară, la curățenie, copiile
+   adevărate. Iar „.." sau „\" nu au ce căuta într-un nume de fișier. Aplicația urcă doar
+   în santiere/, restante/, semnaturi/, normativ/, proiecte/, antemasuratori/. */
+export function caleUrcarePermisa(pathname) {
+  let s = String(pathname || '');
+  try { s = decodeURIComponent(s); } catch (_) {}
+  s = s.replace(/^\/+/, '').toLowerCase();
+  // „.." ca bucată de cale („a/../b"), nu în mijlocul unui nume („plan..v2.pdf" e un nume bun).
+  if (!s || /(^|\/)\.\.(\/|$)/.test(s) || s.includes('\\')) return false;
+  if (s.replace(/\/{2,}/g, '/').includes('copii-firma/')) return false;
+  return true;
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Metoda nepermisă (doar POST).' });
   }
+  if (lipsaSecret(res)) return;
 
   // Cere prezența token-ului aplicației (trimis de client ca ?token=...).
   // Aplicația îl adaugă automat după autentificare.
@@ -46,6 +62,11 @@ export default async function handler(req, res) {
   if (!sesiune) {
     return res.status(401).json({ error: 'Sesiune invalidă sau expirată — te rog reloghează-te.' });
   }
+  /* Omul șters din firmă nu mai urcă nimic pe factura firmei. */
+  let real;
+  try { real = await utilizatorulAdevarat(sesiune); }
+  catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
+  if (!real) return raspunsContSters(res);
 
   // Verificare utilă: dacă store-ul Blob nu e conectat, spunem clar.
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
@@ -63,6 +84,9 @@ export default async function handler(req, res) {
       body,
       request: req,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
+        if (!caleUrcarePermisa(pathname)) {
+          throw new Error('Numele fișierului nu e permis (dosar rezervat sau „..").');
+        }
         return {
           allowedContentTypes: [
             'application/pdf',

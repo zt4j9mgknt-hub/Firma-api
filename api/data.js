@@ -8,10 +8,12 @@
 
 import Pusher from 'pusher';
 import crypto from 'crypto';
+import { lipsaSecret, utilizatorulAdevarat as cineEsteAcum } from '../lib/sesiune.js';
 
 // --- Verificare token de sesiune (cod duplicat in fiecare fisier, intentionat -
 // evitam sa depindem de un import intre fisiere separate din /api). ---
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -291,15 +293,13 @@ function pazaPrezenta(vechi, nou, userId, acum = Date.now()) {
    Omul care nu mai e în listă → null → cel care cheamă răspunde 401 (ca la bilet expirat).
    Singura excepție: dacă lista nu există deloc în bază (firmă nouă, încă fără utilizatori
    salvați), rămânem la rolul din bilet — altfel n-ar mai putea intra nimeni.
-   O eroare de citire NU se înghite: mai bine „încearcă din nou" decât acces dat orbește. */
+   O eroare de citire NU se înghite: mai bine „încearcă din nou" decât acces dat orbește.
+   Verificarea propriu-zisă stă acum în lib/sesiune.js (aceeași în toate rutele), cu tot cu
+   „tv": un bilet dat înainte de o schimbare de parolă nu mai trece. */
 async function utilizatorulAdevarat(base, token, auth) {
-  if (!auth) return null;
-  const u = await redisGet(base, token, 'firma:users');
-  if (u == null) return { rol: String(auth.rol || ''), nume: String(auth.nume || '') };
-  const lista = Array.isArray(u) ? u : [];
-  const eu = lista.find((x) => x && String(x.id) === String(auth.userId));
-  if (!eu) return null;
-  return { rol: String(eu.rol || ''), nume: String(eu.nume || '') };
+  const real = await cineEsteAcum(auth, () => redisGet(base, token, 'firma:users'));
+  if (!real) return null;
+  return { rol: real.rol, nume: String((real.eu ? real.eu.nume : auth.nume) || '') };
 }
 async function rolulAdevarat(base, token, auth) {
   const eu = await utilizatorulAdevarat(base, token, auth);
@@ -317,7 +317,6 @@ async function rolulAdevarat(base, token, auth) {
 function pazaPushSubs(vechi, nou, userId, rolReal, numeReal) {
   if (!Array.isArray(nou)) return { motiv: 'Abonamentele trebuie trimise ca listă.' };
   const alMeu = (r) => r && typeof r === 'object' && String(r.userId) === String(userId);
-  const aleAltora = (Array.isArray(vechi) ? vechi : []).filter((r) => !alMeu(r));
   const aleMele = nou.filter((r) => alMeu(r) && r.sub && typeof r.sub === 'object' && r.sub.endpoint)
     .slice(0, 20)   // un om, câteva dispozitive — nu o mie de rânduri
     .map((r) => ({
@@ -327,6 +326,12 @@ function pazaPushSubs(vechi, nou, userId, rolReal, numeReal) {
       nume: numeReal || String(r.nume || '').slice(0, 120),
       rol: rolReal || '',
     }));
+  /* Același telefon, alt om: cine are cheia telefonului („endpoint") e cel care îl ține
+     acum în mână. Rândul vechi al altcuiva pe același telefon pleacă, altfel telefonul
+     primea în continuare notificările celui de dinainte (ale managerului, de pildă). */
+  const telefoaneleMele = new Set(aleMele.map((r) => r.id));
+  const aleAltora = (Array.isArray(vechi) ? vechi : []).filter((r) => !alMeu(r)
+    && !(r && (telefoaneleMele.has(String(r.id)) || (r.sub && telefoaneleMele.has(String(r.sub.endpoint))))));
   return { lista: [...aleAltora, ...aleMele] };
 }
 
@@ -354,6 +359,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (lipsaSecret(res)) return;
 
   const auth = authenticate(req);
   if (!auth) return res.status(401).json({ error: 'Sesiune invalida sau expirata - te rog reloghează-te.' });

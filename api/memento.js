@@ -18,6 +18,7 @@
 // loc de reparat dacă se strică ceva la criptare, nu două.
 
 import crypto from 'crypto';
+import { lipsaSecret, eCeasPrograma } from '../lib/sesiune.js';
 
 const TZ = 'Europe/Bucharest';
 const IMPLICIT_INAINTE = 60;   // cu câte minute înainte vine prima alertă
@@ -25,7 +26,8 @@ const PAS_MIN = 10;            // la câte minute se repetă până bifezi
 const MAX_ALERTE = 7;          // plafon: iOS taie dreptul de a trimite dacă exagerăm
 const RABAT_DUPA_ORA = 15;     // mai insistă atât după ora programată, apoi se oprește
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fără SESSION_SECRET ruta nu pornește (lipsaSecret) — nu mai există text de rezervă în cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 
 function verifyToken(token) {
   if (!token) return null;
@@ -46,10 +48,11 @@ function autentifica(req) {
   const dinAdresa = (req.query && req.query.token) ? String(req.query.token) : null;
   return verifyToken(dinAntet || dinAdresa);
 }
+/* Ceasul din afară: cu CRON_SECRET pus pe Vercel se cere „Authorization: Bearer <CRON_SECRET>".
+   Înainte trecea și antetul „x-vercel-cron", pe care îl poate pune oricine. Acum acela merge
+   DOAR dacă CRON_SECRET lipsește (ca să nu tacă mementourile) — PUNE CRON_SECRET pe Vercel. */
 function eCeasDinAfara(req) {
-  const h = String((req.headers && (req.headers.authorization || req.headers.Authorization)) || '');
-  if (process.env.CRON_SECRET && h === 'Bearer ' + process.env.CRON_SECRET) return true;
-  return !!(req.headers && req.headers['x-vercel-cron']);
+  return eCeasPrograma(req);
 }
 
 /* Bilet de acces de scurtă durată, pentru noi înșine: /api/push-send cere sesiune, iar
@@ -126,6 +129,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (lipsaSecret(res)) return;
 
   const dinAfara = eCeasDinAfara(req);
   if (!dinAfara && !autentifica(req)) {

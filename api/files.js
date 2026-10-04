@@ -10,9 +10,11 @@
 import { del, get } from '@vercel/blob';
 import { buffer as streamToBuffer } from 'node:stream/consumers';
 import crypto from 'crypto';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -34,18 +36,57 @@ function authenticate(req) {
   return verifyToken(token);
 }
 
+/* ===== DOSARUL COPIILOR DE SIGURANTA E INTERZIS AICI =====
+   „copii-firma/" tine copiile intregii baze de date (criptate). Ruta asta dadea orice fisier
+   din depozit oricui era logat, dupa nume — si stergea orice, dupa adresa. Adica un angajat
+   putea lua copiile sau, mai rau, le putea sterge pe toate. De copii se ocupa doar
+   api/backup.js (Manager). Verificam pe textul decodat si cu litere mici, ca „%2F" sau
+   „Copii-Firma" sa nu ocoleasca. */
+function caleCurata(x) {
+  let s = String(x || '');
+  for (let i = 0; i < 3; i++) { try { const d = decodeURIComponent(s); if (d === s) break; s = d; } catch (_) { break; } }
+  return s.replace(/\\/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
+}
+// „copii-firma/" cu tot cu bară: o poză numită „copii-firma.jpg" de pe santier trece mai departe.
+const eDosarCopii = (x) => { const s = caleCurata(x); return s.includes('copii-firma/') || /(^|\/)\.\.(\/|$)/.test(s); };
+
+/* Ce poate sterge un NEmanager: doar fisierele lucrarilor, din dosarele in care le pune
+   aplicatia — planse si poze/video de pe santier („santiere/…") si pozele de la restante
+   („restante/…"). Asta sunt singurele stergeri pe care aplicatia le face din ecranele
+   angajatilor. Restul (semnaturi, normative, proiecte, antemasuratori) le sterge doar Managerul. */
+const DOSARE_STERGERE_ANGAJAT = ['santiere/', 'restante/'];
+function caleaDinAdresa(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== 'https:' || !u.hostname.toLowerCase().endsWith('.blob.vercel-storage.com')) return null;
+    return decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+  } catch (_) {
+    return null;
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (lipsaSecret(res)) return;
 
-  if (!authenticate(req)) return res.status(401).send('Sesiune invalida sau expirata.');
+  const auth = authenticate(req);
+  if (!auth) return res.status(401).send('Sesiune invalida sau expirata.');
+
+  /* Omul inca exista in firma? (si cu rolul de acum, nu cel din bilet) */
+  let real;
+  try { real = await utilizatorulAdevarat(auth); }
+  catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
+  if (!real) return raspunsContSters(res);
+  const eManager = real.rol === 'Manager';
 
   if (req.method === 'GET') {
     try {
       const pathname = req.query.pathname;
       if (!pathname) return res.status(400).send('Lipseste pathname.');
+      if (eDosarCopii(pathname)) return res.status(403).send('Fisierul asta nu se poate deschide de aici.');
       const result = await get(pathname, { access: 'private' });
       if (!result || !result.stream) return res.status(404).send('Fisierul nu a fost gasit.');
       const buf = await streamToBuffer(result.stream);
@@ -66,6 +107,15 @@ export default async function handler(req, res) {
     if (action === 'delete') {
       const { url } = body;
       if (!url) return res.status(400).json({ error: 'Lipseste url-ul fisierului.' });
+      if (eDosarCopii(url)) return res.status(403).json({ error: 'Copiile de siguranta nu se sterg de aici.' });
+      if (!eManager) {
+        const cale = caleaDinAdresa(url);
+        const voie = cale && !/(^|\/)\.\.(\/|$)/.test(cale) && DOSARE_STERGERE_ANGAJAT.some((d) => cale.startsWith(d));
+        if (!voie) {
+          console.warn('files.js: stergere refuzata pentru', auth.userId, String(url).slice(0, 200));
+          return res.status(403).json({ error: 'Doar Managerul poate sterge fisierul asta.' });
+        }
+      }
       await del(url);
       return res.status(200).json({ ok: true });
     }

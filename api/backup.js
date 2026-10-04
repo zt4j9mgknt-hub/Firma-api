@@ -9,7 +9,8 @@
 // CUM PORNEȘTE SINGURĂ, FĂRĂ NICIO CONFIGURARE: aplicația cheamă „?action=zilnic" la
 // prima deschidere din zi, de pe orice telefon logat. Serverul verifică dacă există deja
 // o copie pe ziua de azi; dacă da, nu face nimic. Așa nu e nevoie de niciun task programat
-// și de nicio modificare în vercel.json. (Dacă vrei totuși cron, ruta merge și așa.)
+// și de nicio modificare în vercel.json. (Dacă vrei totuși cron, ruta merge și așa:
+// GET /api/backup cu antetul „Authorization: Bearer <CRON_SECRET>" — face doar copia zilei.)
 //
 // Rute:
 //   GET  /api/backup?action=zilnic        -> copia zilei, dacă nu există deja (orice om logat)
@@ -18,13 +19,17 @@
 //   POST /api/backup {action:'restaureaza', url, chei?} -> pune datele înapoi (Manager)
 //
 // Cere pe Vercel: KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET.
-// Toate există deja în proiect — nu e nimic de adăugat.
+// De pus NEAPĂRAT: CRON_SECRET (altfel ceasul din afară e recunoscut după un antet pe care
+// îl poate pune oricine).
 
 import crypto from 'crypto';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, eCeasPrograma } from '../lib/sesiune.js';
 
 /* --- Biletul de acces (același cod ca în auth.js / data.js, dinadins duplicat:
-   rutele din /api sunt fișiere separate și nu vrem dependențe între ele). --- */
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+   rutele din /api sunt fișiere separate și nu vrem dependențe între ele). ---
+   Fără SESSION_SECRET ruta nu pornește (lipsaSecret). Înainte, cheia de criptare a copiilor
+   se făcea dintr-un text scris în cod — adică oricine putea desface copiile. */
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -46,13 +51,37 @@ function autentifica(req) {
   const dinAdresa = (req.query && req.query.token) ? String(req.query.token) : null;
   return verifyToken(dinAntet || dinAdresa);
 }
-/* Cronul de noapte al Vercel-ului trimite antetul „Authorization: Bearer <CRON_SECRET>".
-   Dacă CRON_SECRET nu e pus, acceptăm și antetul „x-vercel-cron", ca să meargă din prima. */
+/* Cronul (Vercel Cron sau cron-job.org) trimite antetul „Authorization: Bearer <CRON_SECRET>".
+   ÎNAINTE, antetul „x-vercel-cron" era primit ORICÂND — și îl poate pune oricine. Acum, cu
+   CRON_SECRET pus pe Vercel, se cere DOAR secretul. Numai dacă CRON_SECRET lipsește rămâne
+   vechiul „x-vercel-cron", ca să nu se oprească copiile — dar atunci PUNE CRON_SECRET!
+   (verificarea e în lib/sesiune.js, aceeași ca în memento.js) */
 function eCron(req) {
-  const h = String((req.headers && (req.headers.authorization || req.headers.Authorization)) || '');
-  if (process.env.CRON_SECRET && h === 'Bearer ' + process.env.CRON_SECRET) return true;
-  return !!(req.headers && req.headers['x-vercel-cron']);
+  return eCeasPrograma(req);
 }
+
+/* ===== DOAR ADRESELE NOASTRE DIN BLOB =====
+   citesteDinBlob trimite, la a doua încercare, biletul DEPOZITULUI (BLOB_READ_WRITE_TOKEN) —
+   cheia cu care se scrie și se șterge TOT din Blob. Adresa venea din cerere („blobUrl"),
+   deci cine punea adresa lui de server primea cheia pe tavă. Acum plecăm doar spre
+   *.blob.vercel-storage.com, pe https, și doar în dosarul copiilor. */
+export function adresaBlobPermisa(adr) {
+  let u;
+  try { u = new URL(String(adr || '')); } catch (_) { return false; }
+  if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return false;
+  if (!u.hostname.toLowerCase().endsWith('.blob.vercel-storage.com')) return false;
+  let cale = '';
+  try { cale = decodeURIComponent(u.pathname); } catch (_) { return false; }
+  if (cale.includes('..') || cale.includes('\\')) return false;
+  return cale.startsWith('/' + BLOB_DOSAR);
+}
+/* Fișierele copiilor: „copii-firma/<zi>[-eticheta]-<sufix>.bin". Orice altceva din dosar
+   (o probă, un fișier strecurat de altcineva) nu e copie: nu se listează, nu se numără și
+   nu poate împinge afară copiile adevărate la curățenie. */
+const eFisierCopie = (b) => {
+  const p = String((b && b.pathname) || '');
+  return p.startsWith(BLOB_DOSAR) && p.endsWith('.bin') && !p.slice(BLOB_DOSAR.length).includes('/');
+};
 
 /* ---------- CRIPTARE (AES-256-GCM) ----------
    Cheia se face din SESSION_SECRET. Fișierul iese ca: iv | etichetă | date. */
@@ -131,7 +160,7 @@ const BLOB_DOSAR = 'copii-firma/';
 /* Crește la fiecare schimbare de comportament a rutei. Aplicația o citește și îți spune
    dacă pe server e varianta veche — altfel te uiți la un avertisment fără să știi că, de
    fapt, n-ai urcat fișierul. */
-const VERSIUNE_RUTA = 2;
+const VERSIUNE_RUTA = 3;
 
 /* Blob-ul se încarcă LENEȘ (doar când chiar îl folosim). Dacă biblioteca lipsește de pe
    server, nu vrem ca simpla pornire a fișierului să dea „FUNCTION_INVOCATION_FAILED". */
@@ -180,11 +209,27 @@ async function citesteDinBlob(intrare) {
   const adrese = [intrare && intrare.downloadUrl, intrare && intrare.url, typeof intrare === 'string' ? intrare : null].filter(Boolean);
   const jeton = process.env.BLOB_READ_WRITE_TOKEN;
   const greseli = [];
+  /* Redirecționările le urmăm DE MÂNĂ, cu aceeași verificare la fiecare pas: altfel o
+     adresă bună putea trimite mai departe (cu tot cu bilet) spre altă gazdă. */
+  async function adu(adr, cuJeton) {
+    let acum = String(adr);
+    for (let pas = 0; pas < 4; pas++) {
+      if (!adresaBlobPermisa(acum)) throw new Error('adresă nepermisă');
+      const r = await fetch(acum, { redirect: 'manual', ...(cuJeton ? { headers: { Authorization: 'Bearer ' + jeton } } : {}) });
+      if (r.status >= 300 && r.status < 400 && r.headers && r.headers.get && r.headers.get('location')) {
+        acum = new URL(r.headers.get('location'), acum).toString();
+        continue;
+      }
+      return r;
+    }
+    throw new Error('prea multe redirecționări');
+  }
   for (const adr of adrese) {
+    if (!adresaBlobPermisa(adr)) { greseli.push('adresă nepermisă (doar Vercel Blob, dosarul ' + BLOB_DOSAR + ')'); continue; }
     for (const cuJeton of [false, true]) {
       if (cuJeton && !jeton) continue;
       try {
-        const r = await fetch(String(adr), cuJeton ? { headers: { Authorization: 'Bearer ' + jeton } } : undefined);
+        const r = await adu(adr, cuJeton);
         if (!r.ok) { greseli.push((cuJeton ? 'cu bilet' : 'simplu') + ': cod ' + r.status); continue; }
         return { text: (await r.text()).trim(), metoda: (cuJeton ? 'cu biletul depozitului' : 'adresă directă') };
       } catch (e) { greseli.push((cuJeton ? 'cu bilet' : 'simplu') + ': ' + ((e && e.message) || 'necunoscut')); }
@@ -202,7 +247,8 @@ async function pusInBlob(id, criptatB64) {
     // curățenie: păstrăm și dincolo tot ultimele 30
     try {
       const l = await list({ prefix: BLOB_DOSAR, limit: 1000 });
-      const toate = (l.blobs || []).sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)));
+      // doar copiile adevărate (.bin) — un fișier străin nu are voie să împingă afară o copie
+      const toate = (l.blobs || []).filter(eFisierCopie).sort((a, b) => String(b.uploadedAt).localeCompare(String(a.uploadedAt)));
       for (const vechi of toate.slice(PASTREZ)) { try { await del(vechi.url); } catch (_) {} }
     } catch (_) {}
     return { ok: true, url: r.url, downloadUrl: r.downloadUrl || null, metoda };
@@ -215,6 +261,7 @@ async function listaDinBlob() {
   const { list } = await blobModul();
   const l = await list({ prefix: BLOB_DOSAR, limit: 1000 });
   return (l.blobs || [])
+    .filter(eFisierCopie)
     .map((b) => ({
       id: String(b.pathname).slice(BLOB_DOSAR.length).replace(/-[A-Za-z0-9]{20,}\.bin$/, '').replace(/\.bin$/, ''),
       url: b.url, downloadUrl: b.downloadUrl || null, octeti: b.size, facutLa: b.uploadedAt,
@@ -277,17 +324,39 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (lipsaSecret(res)) return;
 
   const cron = eCron(req);
   const sesiune = cron ? null : autentifica(req);
-  const eManager = !!(sesiune && sesiune.rol === 'Manager');
-  const actiune = String((req.query && req.query.action) || '');
+  let actiune = String((req.query && req.query.action) || '');
+
+  /* Rolul ADEVĂRAT, din lista de utilizatori (ca în data.js), nu cel din bilet: un Manager
+     retrogradat sau șters își păstra biletul 30 de zile și, cu el, restaurarea. */
+  let eManager = false;
+  if (sesiune) {
+    let real;
+    try { real = await utilizatorulAdevarat(sesiune, async () => redis(['GET', 'firma:users'])); }
+    catch (e) { return res.status(500).json({ error: (e && e.message) || 'Nu am putut citi utilizatorii.' }); }
+    if (!real) return raspunsContSters(res);
+    eManager = real.rol === 'Manager';
+  }
+
+  /* CEASUL DIN AFARĂ face DOAR copia zilei (GET), nimic altceva: nu listează, nu restaurează,
+     nu face probe. Și chiar dacă cheamă „/api/backup" simplu, se poartă ca „zilnic" — o
+     singură copie pe zi, ca să nu poată umple depozitul și împinge afară copiile vechi. */
+  if (cron && !sesiune) {
+    if (req.method !== 'GET') return res.status(405).json({ error: 'Ceasul face doar copia zilei (GET).' });
+    actiune = 'zilnic';
+  }
 
   /* Copia ZILNICĂ o poate declanșa oricine e logat — dar numai dacă pe ziua de azi nu
      există deja una. Așa se face singură, în fiecare zi în care lucrează cineva, fără
-     task programat. Restul (listă, restaurare, copie la cerere) rămân doar la Manager. */
-  const zilnicaPermisa = actiune === 'zilnic' && !!sesiune;
-  if (!cron && !eManager && !zilnicaPermisa) {
+     task programat. Restul (listă, restaurare, copie la cerere) rămân doar la Manager.
+     ÎNAINTE, „?action=zilnic" deschidea ușa la TOT — inclusiv la POST „cuprins", care
+     aducea un fișier de la o adresă dată de oricine, cu biletul depozitului pe el.
+     Acum „zilnic" deschide doar GET-ul zilnic; orice POST cere Manager. */
+  const zilnicaPermisa = req.method === 'GET' && actiune === 'zilnic' && (!!sesiune || cron);
+  if (!eManager && !zilnicaPermisa) {
     return res.status(401).json({ error: 'Doar Managerul poate lucra cu copiile de siguranță.' });
   }
 
@@ -391,7 +460,9 @@ export default async function handler(req, res) {
       /* Ce e într-o copie: îl arătăm ÎNAINTE de restaurare, ca omul să vadă negru pe alb
          câte înregistrări intră și peste ce. Fără asta, „restaurează" e un buton pe orbite. */
       if (body.action === 'cuprins') {
+        if (!eManager) return res.status(403).json({ error: 'Doar Managerul poate vedea copiile.' });
         if (!body.id && !body.blobUrl) return res.status(400).json({ error: 'Lipsește copia cerută.' });
+        if (body.blobUrl && !adresaBlobPermisa(body.blobUrl)) return res.status(400).json({ error: 'Adresa copiei nu e din depozitul firmei.' });
         const pachet = body.blobUrl ? await incarcaDinBlob(body.blobUrl) : await incarcaCopie(body.id);
         const acum = {};
         for (const k of Object.keys(pachet.date || {})) {
@@ -406,6 +477,7 @@ export default async function handler(req, res) {
       if (body.action === 'restaureaza') {
         if (!eManager) return res.status(403).json({ error: 'Doar Managerul poate restaura.' });
         if (!body.id && !body.blobUrl) return res.status(400).json({ error: 'Lipsește copia cerută.' });
+        if (body.blobUrl && !adresaBlobPermisa(body.blobUrl)) return res.status(400).json({ error: 'Adresa copiei nu e din depozitul firmei.' });
         // Se poate restaura și din copia de dincolo (Blob), dacă Redis-ul e cel care a pățit ceva.
         const pachet = body.blobUrl ? await incarcaDinBlob(body.blobUrl) : await incarcaCopie(body.id);
 

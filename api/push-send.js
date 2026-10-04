@@ -17,8 +17,10 @@
    „?diag=1" îți spune pas cu pas unde se oprește.
    ──────────────────────────────────────────────────────────────────────────────────────── */
 import crypto from 'crypto';
+/* Singurul import în plus e din lib/ (codul nostru, nu un pachet) — nu are ce să lipsească. */
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, eBiletIntern } from '../lib/sesiune.js';
 
-const VERSIUNE_RUTA = 4;
+const VERSIUNE_RUTA = 5;
 
 /* Cheia publică folosită de aplicație (aceeași e scrisă și în index.html). Dacă pe Vercel
    nu e pusă niciuna, o folosim pe asta — ca să nu se poată întâmpla să nu se potrivească. */
@@ -34,7 +36,8 @@ const env = (...nume) => {
 const VAPID_PUBLIC = env('VAPID_PUBLIC', 'VAPID_PUBLIC_KEY', 'PUBLIC_VAPID_KEY', 'NEXT_PUBLIC_VAPID_PUBLIC_KEY') || VAPID_PUBLIC_IMPLICIT;
 const VAPID_PRIVATE = env('VAPID_PRIVATE', 'VAPID_PRIVATE_KEY', 'PRIVATE_VAPID_KEY', 'VAPID_SECRET');
 const VAPID_SUBJECT = env('VAPID_SUBJECT', 'VAPID_EMAIL', 'VAPID_MAILTO') || 'mailto:contact@smartelectroconect.ro';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fără SESSION_SECRET ruta nu pornește (lipsaSecret) — nu mai există text de rezervă în cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 
 /* ---------- biletul de acces al aplicației ---------- */
 function verifyToken(token) {
@@ -262,9 +265,18 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  if (lipsaSecret(res)) return;
+
   try {
     const sesiune = autentifica(req);
     if (!sesiune) return res.status(401).json({ error: 'Sesiune invalidă sau expirată — reloghează-te.' });
+    /* Omul șters din firmă (sau cu parola schimbată de atunci) nu mai trimite notificări cu
+       numele firmei. Excepție: biletul de două minute al ceasului de memento (memento.js),
+       care nu e om și nu e în listă. */
+    if (!eBiletIntern(sesiune)) {
+      const real = await utilizatorulAdevarat(sesiune);
+      if (!real) return raspunsContSters(res);
+    }
 
     /* ---------- DIAGNOSTIC: unde se oprește ---------- */
     if (req.query && String(req.query.diag) === '1') {

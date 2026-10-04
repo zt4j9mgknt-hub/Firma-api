@@ -11,9 +11,11 @@
 //   SMARTBILL_SERIES  - numele seriei de facturi (din Emitere > Factura > Serii)
 
 import crypto from 'crypto';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -50,7 +52,17 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Metoda nepermisa." });
-  if (!authenticate(req)) return res.status(401).json({ error: 'Sesiune invalida sau expirata.' });
+  if (lipsaSecret(res)) return;
+  const auth = authenticate(req);
+  if (!auth) return res.status(401).json({ error: 'Sesiune invalida sau expirata.' });
+  /* FACTURILE LE EMITE DOAR MANAGERUL. Inainte, orice om logat putea emite facturi
+     adevarate in SmartBill (si mai departe in e-Factura), pe numele firmei. Rolul il luam
+     din lista de utilizatori, nu din bilet (biletul poate fi vechi). */
+  let real;
+  try { real = await utilizatorulAdevarat(auth); }
+  catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
+  if (!real) return raspunsContSters(res);
+  if (real.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate trimite facturi in SmartBill.' });
 
   const email = process.env.SMARTBILL_EMAIL;
   const token = process.env.SMARTBILL_TOKEN;

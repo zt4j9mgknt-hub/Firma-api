@@ -3,9 +3,11 @@
 // Aplicația va apela: https://<numele-proiectului-tau>.vercel.app/api/cui?cui=14399840
 
 import crypto from 'crypto';
+import { lipsaSecret } from '../lib/sesiune.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -33,6 +35,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (lipsaSecret(res)) return;
   if (!authenticate(req)) return res.status(401).json({ error: 'Sesiune invalida sau expirata.' });
 
   const cui = String(req.query.cui || '').replace(/\D/g, '');

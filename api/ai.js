@@ -12,7 +12,9 @@
 /* --- Verificarea biletului de acces (acelasi cod ca in auth.js si data.js, dinadins
    duplicat: rutele din /api sunt fisiere separate si nu vrem dependente intre ele). --- */
 import crypto from 'crypto';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+import { lipsaSecret, utilizatorulAdevarat } from '../lib/sesiune.js';
+// Fără SESSION_SECRET ruta nu pornește (lipsaSecret) — nu mai există text de rezervă în cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -43,19 +45,11 @@ const REZERVE = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-li
 /* Rolul adevărat (același raționament ca în data.js): biletul ține 30 de zile și poate avea
    rolul vechi — sau omul poate fi fost șters între timp. Întrebăm MEREU lista de utilizatori
    din bază (când baza e configurată). Rolul e cel de acolo; omul care nu mai e în listă →
-   null (cel care cheamă dă 401). Lista lipsă cu totul → rolul din bilet. */
+   null (cel care cheamă dă 401). Lista lipsă cu totul → rolul din bilet.
+   Verificarea stă acum în lib/sesiune.js (aceeași peste tot), cu tot cu „tv" (parola schimbată). */
 async function rolulAdevarat(auth) {
-  if (!auth) return null;
-  const base = process.env.KV_REST_API_URL, token = process.env.KV_REST_API_TOKEN;
-  if (!base || !token) return String(auth.rol || '');
-  const r = await fetch(`${base}/get/${encodeURIComponent('firma:users')}`, { headers: { Authorization: `Bearer ${token}` } });
-  const d = await r.json();
-  if (!d || d.result == null) return String(auth.rol || '');
-  let lista = [];
-  try { lista = JSON.parse(d.result); } catch (_) { lista = []; }
-  const eu = (Array.isArray(lista) ? lista : []).find((x) => x && String(x.id) === String(auth.userId));
-  if (!eu) return null;
-  return String(eu.rol || '');
+  const real = await utilizatorulAdevarat(auth);
+  return real ? real.rol : null;
 }
 
 /* Extragerea listei din PDF-ul / poza clientului. Vercel taie cererile peste 4,5 MB,
@@ -168,6 +162,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Doar POST.' });
   }
+  if (lipsaSecret(res)) return;
   /* ÎNAINTE se verifica doar că textul începe cu „Bearer " și are peste 12 caractere —
      adică „Bearer 123456" trecea. Oricine de pe internet putea folosi cheia ta de Google
      ca proxy gratuit, nelimitat, până se termina cota (sau până plăteai tu). Acum se

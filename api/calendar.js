@@ -19,8 +19,11 @@
 // Cere pe Vercel: KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET. Toate există deja.
 
 import crypto from 'crypto';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fără SESSION_SECRET ruta nu pornește (lipsaSecret): cu textul de rezervă de dinainte,
+// oricine își putea face semnătura de calendar a oricui.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -92,14 +95,23 @@ function rupeRand(linie) {
 }
 
 export default async function handler(req, res) {
+  if (lipsaSecret(res)) return;
   const actiune = String((req.query && req.query.action) || '');
 
   if (actiune === 'link') {
     const s = autentifica(req);
     if (!s) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    let real;
+    try { real = await utilizatorulAdevarat(s, async () => redis(['GET', 'firma:users'])); }
+    catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
+    if (!real) return raspunsContSters(res);
+    /* AICI ERA O GREȘEALĂ: biletul poartă „userId", nu „id". Cu „s.id" adresa ieșea pentru
+       „undefined" — calendarul nimănui, gol pentru toți. */
+    const uid = String(s.userId || '');
+    if (!uid) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
     const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
     const baza = 'https://' + gazda;
-    const cale = `/api/calendar?u=${encodeURIComponent(s.id)}&k=${semnatura(s.id)}`;
+    const cale = `/api/calendar?u=${encodeURIComponent(uid)}&k=${semnatura(uid)}`;
     return res.status(200).json({
       https: baza + cale,
       webcal: 'webcal://' + gazda + cale,
@@ -118,6 +130,11 @@ export default async function handler(req, res) {
       citeste('santiere', []), citeste('users', []),
     ]);
     const omul = (Array.isArray(users) ? users : []).find((x) => x && x.id === u) || null;
+    /* Omul șters din firmă: adresa lui veche de calendar nu mai dă nimic (ar fi văzut mai
+       departe, ani de zile, mementourile cuiva cu același id). Lista goală = firmă nouă. */
+    if (!omul && Array.isArray(users) && users.length) {
+      return res.status(403).send('Adresă de calendar invalidă.');
+    }
     const numeOm = String(omul?.nume || '').trim();
     const acum = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
 

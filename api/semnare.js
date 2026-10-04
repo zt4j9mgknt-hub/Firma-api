@@ -19,6 +19,7 @@
 import crypto from 'crypto';
 import Pusher from 'pusher';
 import portalClient from '../lib/client.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
 
 /* Semnalul instant către telefoanele firmei (același ca în data.js). Fără el, semnătura
    venită de la client stătea în bază, dar aplicația deschisă n-o vedea — și la următoarea
@@ -37,7 +38,9 @@ function getPusher() {
 const SEMNATURA_OK = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
 const SEMNATURA_MAX = 400000;
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fără SESSION_SECRET ruta nu pornește (lipsaSecret): cu textul de rezervă de dinainte,
+// oricine își putea face singur linkul de semnare al oricărui document.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
   if (!token) return null;
   const parts = String(token).split('.');
@@ -81,6 +84,9 @@ async function citeste(cheie, implicit) {
 async function scrie(cheie, val) { await redis(['SET', 'firma:' + cheie, JSON.stringify(val)]); }
 
 const esc = (x) => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+/* JSON pus ÎN <script>: „<" devine <, ca un „</script>" din date (numele firmei, de
+   exemplu) să nu poată închide scriptul și deschide altul. La fel rândurile noi U+2028/2029. */
+const jsonInScript = (v) => JSON.stringify(v).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 const fmtData = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).split('-'); return `${d}/${m}/${y}`; };
 
 function pagina({ titlu, corp }) {
@@ -137,9 +143,21 @@ export default async function handler(req, res) {
 
   const q = req.query || {};
 
+  if (String(q.action || '') === 'link') {
+    if (lipsaSecret(res)) return;
+  } else if (lipsaSecret(res, pagina({ titlu: 'Eroare', corp: '<div class="card"><div class="rau"><b>Pagina nu poate fi deschisă acum.</b><br>Serverul nu e configurat (SESSION_SECRET lipsă). Anunțați executantul.</div></div>' }))) {
+    return;
+  }
+
   /* --- linkul de trimis clientului (îl cere aplicația, deci cere sesiune) --- */
   if (String(q.action || '') === 'link') {
-    if (!autentifica(req)) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    const auth = autentifica(req);
+    if (!auth) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    /* Omul șters din firmă nu mai face linkuri de semnat în numele ei. */
+    let real;
+    try { real = await utilizatorulAdevarat(auth, async () => redis(['GET', 'firma:users'])); }
+    catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
+    if (!real) return raspunsContSters(res);
     const pv = String(q.pv || '');
     if (!pv) return res.status(400).json({ error: 'Lipsește documentul.' });
     const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
@@ -344,11 +362,11 @@ export default async function handler(req, res) {
           if(!nume){m.style.color='#B03030';m.textContent='Scrie numele.';return;}
           b.disabled=true;b.textContent='Se trimite…';m.style.color='#5F6E80';m.textContent='';
           fetch(location.pathname+location.search,{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({pv:${JSON.stringify(idCerut)},k:${JSON.stringify(k)},semnatura:c.toDataURL('image/png'),nume:nume,calitate:document.getElementById('calitate').value,obiectiuni:document.getElementById('obiectiuni').value})})
+            body:JSON.stringify({pv:${jsonInScript(idCerut)},k:${jsonInScript(k)},semnatura:c.toDataURL('image/png'),nume:nume,calitate:document.getElementById('calitate').value,obiectiuni:document.getElementById('obiectiuni').value})})
             .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
             .then(function(x){ if(!x.ok) throw new Error(x.d.error||'Nu s-a putut trimite.');
               var n=(x.d&&x.d.obiectiuni)||0;
-              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost transmisă'+(n?', împreună cu '+n+(n===1?' obiecțiune consemnată':' obiecțiuni consemnate'):'')+'. Am înregistrat-o, iar documentul complet vă va fi transmis de reprezentantul nostru.</div>'+${JSON.stringify('<div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>' + (company && company.nume ? company.nume : '') + '</b>')}+'</div>'; })
+              document.querySelector('.wrap').innerHTML='<div class="card"><h1>✅ Gata, mulțumim!</h1><div class="bun" style="margin-top:10px">Semnătura a fost transmisă'+(n?', împreună cu '+n+(n===1?' obiecțiune consemnată':' obiecțiuni consemnate'):'')+'. Am înregistrat-o, iar documentul complet vă va fi transmis de reprezentantul nostru.</div>'+${jsonInScript('<div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>' + esc(company && company.nume ? company.nume : '') + '</b>')}+'</div>'; })
             .catch(function(e){ b.disabled=false;b.textContent='✓ Semnez documentul'; m.style.color='#B03030'; m.textContent=e.message; });
         }
       <\/script>`;

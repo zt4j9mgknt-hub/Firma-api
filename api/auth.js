@@ -10,9 +10,11 @@
 // changePassword (doar propriul cont)
 
 import crypto from 'crypto';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
-const SESSION_SECRET = process.env.SESSION_SECRET || 'INSECURE-FALLBACK-SETEAZA-SESSION_SECRET-PE-VERCEL';
+// Fara SESSION_SECRET ruta nu porneste (vezi lipsaSecret) — nu mai exista text de rezerva in cod.
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const DURATA_SESIUNE_MS = 30 * 24 * 60 * 60 * 1000;
 function signToken(payload) {
   const data = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + DURATA_SESIUNE_MS })).toString('base64url');
@@ -52,6 +54,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Metoda nepermisa.' });
+  if (lipsaSecret(res)) return;
 
   const base = process.env.KV_REST_API_URL;
   const token = process.env.KV_REST_API_TOKEN;
@@ -63,6 +66,16 @@ export default async function handler(req, res) {
     const r = await fetch(`${base}/get/firma:users`, { headers: { Authorization: `Bearer ${token}` } });
     const data = await r.json();
     return data.result ? JSON.parse(data.result) : [];
+  };
+  // Lista bruta (null daca cheia lipseste) — pentru verificarea omului de dupa bilet.
+  const getUsersBrut = async () => {
+    const r = await fetch(`${base}/get/firma:users`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await r.json();
+    return data ? data.result : null;
+  };
+  const kv = async (...parti) => {
+    const r = await fetch(`${base}/${parti.map((p) => encodeURIComponent(String(p))).join('/')}`, { headers: { Authorization: `Bearer ${token}` } });
+    return r.json();
   };
   const saveUsers = async (users) => {
     await fetch(`${base}/set/firma:users`, {
@@ -85,26 +98,54 @@ export default async function handler(req, res) {
          posibila — mai bine o firma care lucreaza decat una blocata de o pana de retea. */
       const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'nec';
       const cheieFrana = 'firma:frana:' + ip.replace(/[^0-9a-zA-Z.:]/g, '');
+      /* A DOUA FRANA, PE NUME. Cea pe adresa nu ajunge: cine schimba adresa (telefon cu date
+         mobile, VPN) incearca la nesfarsit parola Managerului. Asta numara GRESELILE pe
+         acelasi username, de pe orice adresa: 10 la 15 minute, apoi pauza. Numele intra in
+         cheie doar ca amprenta (sha256), ca sa nu poata strica adresa catre baza. */
+      const cheieNume = 'firma:frana-u:' + crypto.createHash('sha256').update(username.toLowerCase()).digest('hex').slice(0, 32);
+      const prea = { error: 'Prea multe incercari de logare. Asteapta 15 minute si incearca din nou.' };
       try {
-        const rF = await fetch(`${base}/incr/${encodeURIComponent(cheieFrana)}`, { headers: { Authorization: `Bearer ${token}` } });
-        const dF = await rF.json();
+        const dF = await kv('incr', cheieFrana);
         const nr = Number(dF.result) || 0;
-        if (nr === 1) await fetch(`${base}/expire/${encodeURIComponent(cheieFrana)}/900`, { headers: { Authorization: `Bearer ${token}` } });
-        if (nr > 10) return res.status(429).json({ error: 'Prea multe incercari de logare. Asteapta 15 minute si incearca din nou.' });
+        if (nr === 1) await kv('expire', cheieFrana, 900);
+        if (nr > 10) return res.status(429).json(prea);
       } catch (_) {}
+      try {
+        const dN = await kv('get', cheieNume);
+        if ((Number(dN.result) || 0) >= 10) return res.status(429).json(prea);
+      } catch (_) {}
+      const greseala = async () => {
+        try {
+          const dN = await kv('incr', cheieNume);
+          if (Number(dN.result) === 1) await kv('expire', cheieNume, 900);
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 400));
+        return res.status(401).json({ error: 'Username sau parola gresite.' });
+      };
       const users = await getUsers();
       const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
       // Aceeasi intarziere si acelasi mesaj in ambele cazuri: nu se poate afla din afara
       // daca un username exista sau nu, iar un atac automat merge de cateva ori mai incet.
-      if (!user) { await new Promise((r) => setTimeout(r, 400)); return res.status(401).json({ error: 'Username sau parola gresite.' }); }
+      if (!user) return greseala();
       const hash = hashPassword(password, user.salt);
-      if (hash !== user.passwordHash) { await new Promise((r) => setTimeout(r, 400)); return res.status(401).json({ error: 'Username sau parola gresite.' }); }
-      const sessionToken = signToken({ userId: user.id, rol: user.rol });
+      if (hash !== user.passwordHash) return greseala();
+      /* Logare reusita: ambele frane se golesc. Altfel, intr-un birou cu o singura adresa
+         de internet, a 11-a logare corecta din sfert de ora (oameni diferiti) era refuzata. */
+      try { await kv('del', cheieFrana); } catch (_) {}
+      try { await kv('del', cheieNume); } catch (_) {}
+      // „tv" = versiunea biletelor omului (vezi lib/sesiune.js): la schimbarea parolei creste,
+      // iar biletele vechi nu mai trec.
+      const sessionToken = signToken({ userId: user.id, rol: user.rol, tv: Number(user.tv) || 0 });
       return res.status(200).json({ ok: true, token: sessionToken, user: { id: user.id, nume: user.nume, username: user.username, rol: user.rol, telefon: user.telefon || '', cnp: user.cnp || '' } });
     }
 
     const auth = authenticate(req);
     if (!auth) return res.status(401).json({ error: 'Sesiune invalida sau expirata - te rog reloghează-te.' });
+    /* Rolul ADEVARAT, din lista de utilizatori — nu cel din bilet. Un Manager retrogradat sau
+       sters din firma isi pastra biletul 30 de zile si putea crea / sterge conturi. */
+    const real = await utilizatorulAdevarat(auth, getUsersBrut);
+    if (!real) return raspunsContSters(res);
+    const rolReal = real.rol;
 
     if (action === 'list') {
       const users = await getUsers();
@@ -115,7 +156,7 @@ export default async function handler(req, res) {
          nastere ale colegilor (toata lumea). Ziua de nastere sta in PRIMELE 7 cifre, deci
          pentru ceilalti trimitem primele 7 si restul zero: aniversarile merg mai departe
          neschimbate, iar numarul adevarat nu mai iese din server. */
-      const eManager = auth.rol === 'Manager';
+      const eManager = rolReal === 'Manager';
       const cnpPentru = (u) => {
         const c = String(u.cnp || '');
         if (eManager || u.id === auth.userId) return c;
@@ -140,12 +181,16 @@ export default async function handler(req, res) {
       if (oldHash !== user.passwordHash) return res.status(401).json({ error: 'Parola actuala este gresita.' });
       const newSalt = crypto.randomBytes(16).toString('hex');
       const newHash = hashPassword(newPassword, newSalt);
-      users[idx] = { ...user, salt: newSalt, passwordHash: newHash };
+      /* Parola noua = bilete noi. „tv" creste, deci toate biletele vechi ale omului (de pe
+         telefonul pierdut, de pe calculatorul altcuiva) nu mai trec. Ii dam pe loc un bilet
+         nou, ca telefonul de pe care a schimbat parola sa ramana logat. */
+      const tvNou = (Number(user.tv) || 0) + 1;
+      users[idx] = { ...user, salt: newSalt, passwordHash: newHash, tv: tvNou };
       await saveUsers(users);
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, token: signToken({ userId: user.id, rol: user.rol, tv: tvNou }) });
     }
 
-    if (auth.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate face asta.' });
+    if (rolReal !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate face asta.' });
 
     if (action === 'register') {
       const nume = String(body.nume || '').trim();
@@ -213,10 +258,15 @@ export default async function handler(req, res) {
         const newSalt = crypto.randomBytes(16).toString('hex');
         updated.salt = newSalt;
         updated.passwordHash = hashPassword(newPassword, newSalt);
+        // Parola resetata de Manager: biletele vechi ale omului cad (vezi changePassword).
+        updated.tv = (Number(user.tv) || 0) + 1;
       }
       users[idx] = updated;
       await saveUsers(users);
-      return res.status(200).json({ ok: true, user: { id: updated.id, nume: updated.nume, username: updated.username, rol: updated.rol, telefon: updated.telefon, cnp: updated.cnp } });
+      const raspuns = { ok: true, user: { id: updated.id, nume: updated.nume, username: updated.username, rol: updated.rol, telefon: updated.telefon, cnp: updated.cnp } };
+      // Managerul si-a resetat singur parola de aici: bilet nou, ca sa nu iasa din cont.
+      if (newPassword && id === auth.userId) raspuns.token = signToken({ userId: updated.id, rol: updated.rol, tv: updated.tv });
+      return res.status(200).json(raspuns);
     }
 
     return res.status(400).json({ error: 'Actiune necunoscuta.' });
