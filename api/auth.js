@@ -10,7 +10,11 @@
 // changePassword (doar propriul cont)
 
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
+
+/* Pauza dinaintea verificarii parolei (frana pe nume). Stă într-un obiect ca testele s-o
+   poata inlocui si masura; in productie e un simplu setTimeout. */
+export const _frana = { dormi: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
 // Fara SESSION_SECRET ruta nu porneste (vezi lipsaSecret) — nu mai exista text de rezerva in cod.
@@ -27,7 +31,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -67,16 +71,39 @@ export default async function handler(req, res) {
     const data = await r.json();
     return data.result ? JSON.parse(data.result) : [];
   };
-  // Lista bruta (null daca cheia lipseste) — pentru verificarea omului de dupa bilet.
+  // Lista bruta (null DOAR daca cheia lipseste) — pentru verificarea omului de dupa bilet.
+  // O eroare de la Upstash ARUNCA (→ 500): inainte intorcea null, adica „firma noua", si
+  // rolul scris in bilet era crezut pe cuvant.
   const getUsersBrut = async () => {
     const r = await fetch(`${base}/get/firma:users`, { headers: { Authorization: `Bearer ${token}` } });
     const data = await r.json();
-    return data ? data.result : null;
+    if (data && data.error) throw new Error('Redis: ' + data.error);
+    if (!data || typeof data !== 'object' || !('result' in data)) throw new Error('Redis: raspuns fara „result".');
+    return data.result;
   };
-  const kv = async (...parti) => {
-    const r = await fetch(`${base}/${parti.map((p) => encodeURIComponent(String(p))).join('/')}`, { headers: { Authorization: `Bearer ${token}` } });
-    return r.json();
+  // Comanda Redis intreaga, in corpul cererii (pentru SET ... NX EX, unde adresa nu ajunge).
+  const cmd = async (...parti) => {
+    const r = await fetch(base, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(parti.map(String)),
+    });
+    const d = await r.json();
+    if (d && d.error) throw new Error('Redis: ' + d.error);
+    return d ? d.result : null;
   };
+  /* Contor cu termen, fara fereastra in care sa ramana fara termen:
+     1) SET cheie 0 EX <sec> NX — cheia se naste DEJA cu termen (daca nu exista);
+     2) INCR — atomic, pastreaza termenul;
+     3) daca INCR a dat 1 (cheia expirase intre 1 si 2), mai punem o data termenul.
+     Intoarce numarul DUPA crestere. */
+  const numara = async (cheie, sec) => {
+    await cmd('SET', cheie, '0', 'EX', sec, 'NX');
+    const n = Number(await cmd('INCR', cheie)) || 0;
+    if (n === 1) { try { await cmd('EXPIRE', cheie, sec); } catch (_) {} }
+    return n;
+  };
+  const citesteNr = async (cheie) => Number(await cmd('GET', cheie)) || 0;
   const saveUsers = async (users) => {
     await fetch(`${base}/set/firma:users`, {
       method: 'POST',
@@ -92,47 +119,56 @@ export default async function handler(req, res) {
     if (action === 'login') {
       const username = String(body.username || '').trim();
       const password = String(body.password || '').trim();
-      /* FRANA LA GHICIT PAROLE: maximum 10 incercari la 15 minute de pe aceeasi adresa de
-         internet. Nimeni din firma nu greseste parola de 10 ori la rand, dar cineva care
-         incearca la nesfarsit se opreste aici. Daca frana insasi da eroare, logarea ramane
-         posibila — mai bine o firma care lucreaza decat una blocata de o pana de retea. */
+      /* FRANELE LA GHICIT PAROLE — cu o regula de aur: NIMENI nu poate bloca Managerul pe
+         dinafara. Inainte, 10 greseli pe numele „patron", de pe orice adresa, blocau logarea
+         Managerului 15 minute — iar cine repeta asta la fiecare sfert de ora il tinea afara
+         pentru totdeauna. Acum:
+           • BLOCAJ (429) doar pe perechea nume + adresa: 10 incercari la 15 minute de pe
+             aceeasi adresa pentru acelasi nume. Atacatorul isi blocheaza doar lui perechea;
+             Managerul, de pe telefonul lui (alta adresa), intra mai departe.
+             Numaram INAINTE de verificare (INCR, apoi uitam la numar): zece cereri trimise
+             deodata nu mai trec toate printre „citit" si „crescut", ca inainte.
+           • PE NUME, de pe orice adresa (si pe adresa, pe orice nume): doar o PAUZA care
+             creste cu fiecare greseala — 0,25 s pe greseala, cel mult 5 s. Atacul automat
+             merge de zeci de ori mai incet, omul adevarat asteapta cel mult cateva secunde.
+         Numele intra in chei doar ca amprenta (sha256), ca sa nu poata strica adresa catre
+         baza. Daca frana insasi da eroare, logarea ramane posibila — mai bine o firma care
+         lucreaza decat una blocata de o pana de retea. */
       const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'nec';
-      const cheieFrana = 'firma:frana:' + ip.replace(/[^0-9a-zA-Z.:]/g, '');
-      /* A DOUA FRANA, PE NUME. Cea pe adresa nu ajunge: cine schimba adresa (telefon cu date
-         mobile, VPN) incearca la nesfarsit parola Managerului. Asta numara GRESELILE pe
-         acelasi username, de pe orice adresa: 10 la 15 minute, apoi pauza. Numele intra in
-         cheie doar ca amprenta (sha256), ca sa nu poata strica adresa catre baza. */
-      const cheieNume = 'firma:frana-u:' + crypto.createHash('sha256').update(username.toLowerCase()).digest('hex').slice(0, 32);
+      const ipCurat = ip.replace(/[^0-9a-zA-Z.:]/g, '');
+      const amprenta = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 32);
+      const numeMic = username.toLowerCase();
+      const cheieFrana = 'firma:frana:' + ipCurat;                              // greseli de pe adresa → pauza
+      const cheieNume = 'firma:frana-u:' + amprenta(numeMic);                  // greseli pe nume → pauza
+      const cheiePereche = 'firma:frana-p:' + amprenta(numeMic + '|' + ipCurat); // incercari nume+adresa → blocaj
       const prea = { error: 'Prea multe incercari de logare. Asteapta 15 minute si incearca din nou.' };
       try {
-        const dF = await kv('incr', cheieFrana);
-        const nr = Number(dF.result) || 0;
-        if (nr === 1) await kv('expire', cheieFrana, 900);
-        if (nr > 10) return res.status(429).json(prea);
+        if ((await numara(cheiePereche, 900)) > 10) return res.status(429).json(prea);
       } catch (_) {}
-      try {
-        const dN = await kv('get', cheieNume);
-        if ((Number(dN.result) || 0) >= 10) return res.status(429).json(prea);
-      } catch (_) {}
+      let greseliNume = 0, greseliIp = 0;
+      try { greseliNume = await citesteNr(cheieNume); } catch (_) {}
+      try { greseliIp = await citesteNr(cheieFrana); } catch (_) {}
+      const pauza = Math.min(5000, 250 * Math.max(greseliNume, greseliIp));
+      if (pauza > 0) await _frana.dormi(pauza);
       const greseala = async () => {
-        try {
-          const dN = await kv('incr', cheieNume);
-          if (Number(dN.result) === 1) await kv('expire', cheieNume, 900);
-        } catch (_) {}
+        try { await numara(cheieNume, 900); } catch (_) {}
+        try { await numara(cheieFrana, 900); } catch (_) {}
         await new Promise((r) => setTimeout(r, 400));
         return res.status(401).json({ error: 'Username sau parola gresite.' });
       };
       const users = await getUsers();
-      const user = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+      const user = users.find((u) => u.username.toLowerCase() === numeMic);
       // Aceeasi intarziere si acelasi mesaj in ambele cazuri: nu se poate afla din afara
       // daca un username exista sau nu, iar un atac automat merge de cateva ori mai incet.
       if (!user) return greseala();
       const hash = hashPassword(password, user.salt);
-      if (hash !== user.passwordHash) return greseala();
-      /* Logare reusita: ambele frane se golesc. Altfel, intr-un birou cu o singura adresa
-         de internet, a 11-a logare corecta din sfert de ora (oameni diferiti) era refuzata. */
-      try { await kv('del', cheieFrana); } catch (_) {}
-      try { await kv('del', cheieNume); } catch (_) {}
+      if (!egal(hash, String(user.passwordHash || ''))) return greseala();
+      /* Logare reusita: se golesc DOAR contorul perechii si cel al adresei (altfel, intr-un
+         birou cu o singura adresa, a 11-a logare corecta din sfert de ora era refuzata).
+         Contorul pe NUME ramane: nu-l poate goli atacatorul cu o logare a lui pe alt cont,
+         iar Managerul il simte doar ca pauza scurta, care expira singura in 15 minute. */
+      try { await cmd('DEL', cheiePereche); } catch (_) {}
+      try { await cmd('DEL', cheieFrana); } catch (_) {}
       // „tv" = versiunea biletelor omului (vezi lib/sesiune.js): la schimbarea parolei creste,
       // iar biletele vechi nu mai trec.
       const sessionToken = signToken({ userId: user.id, rol: user.rol, tv: Number(user.tv) || 0 });
@@ -144,7 +180,7 @@ export default async function handler(req, res) {
     /* Rolul ADEVARAT, din lista de utilizatori — nu cel din bilet. Un Manager retrogradat sau
        sters din firma isi pastra biletul 30 de zile si putea crea / sterge conturi. */
     const real = await utilizatorulAdevarat(auth, getUsersBrut);
-    if (!real) return raspunsContSters(res);
+    if (!real) return raspunsContSters(res, auth);
     const rolReal = real.rol;
 
     if (action === 'list') {
@@ -178,7 +214,7 @@ export default async function handler(req, res) {
       if (idx === -1) return res.status(404).json({ error: 'Utilizator negasit.' });
       const user = users[idx];
       const oldHash = hashPassword(oldPassword, user.salt);
-      if (oldHash !== user.passwordHash) return res.status(401).json({ error: 'Parola actuala este gresita.' });
+      if (!egal(oldHash, String(user.passwordHash || ''))) return res.status(401).json({ error: 'Parola actuala este gresita.' });
       const newSalt = crypto.randomBytes(16).toString('hex');
       const newHash = hashPassword(newPassword, newSalt);
       /* Parola noua = bilete noi. „tv" creste, deci toate biletele vechi ale omului (de pe

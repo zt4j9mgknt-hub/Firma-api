@@ -10,7 +10,7 @@ import { handleUpload } from '@vercel/blob/client';
 /* --- Verificarea biletului de acces (acelasi cod ca in auth.js si data.js, dinadins
    duplicat: rutele din /api sunt fisiere separate si nu vrem dependente intre ele). --- */
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
 // Fără SESSION_SECRET ruta nu pornește (lipsaSecret) — nu mai există text de rezervă în cod.
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
@@ -19,7 +19,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
   let real;
   try { real = await utilizatorulAdevarat(sesiune); }
   catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
-  if (!real) return raspunsContSters(res);
+  if (!real) return raspunsContSters(res, sesiune);
 
   // Verificare utilă: dacă store-ul Blob nu e conectat, spunem clar.
   if (!process.env.BLOB_READ_WRITE_TOKEN) {

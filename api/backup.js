@@ -23,7 +23,7 @@
 // îl poate pune oricine).
 
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, eCeasPrograma } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, eCeasPrograma, egal } from '../lib/sesiune.js';
 
 /* --- Biletul de acces (același cod ca în auth.js / data.js, dinadins duplicat:
    rutele din /api sunt fișiere separate și nu vrem dependențe între ele). ---
@@ -36,7 +36,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -64,12 +64,25 @@ function eCron(req) {
    citesteDinBlob trimite, la a doua încercare, biletul DEPOZITULUI (BLOB_READ_WRITE_TOKEN) —
    cheia cu care se scrie și se șterge TOT din Blob. Adresa venea din cerere („blobUrl"),
    deci cine punea adresa lui de server primea cheia pe tavă. Acum plecăm doar spre
-   *.blob.vercel-storage.com, pe https, și doar în dosarul copiilor. */
+   *.blob.vercel-storage.com, pe https, și doar în dosarul copiilor.
+   ȘI DOAR SPRE DEPOZITUL NOSTRU: „*.blob.vercel-storage.com" e al tuturor clienților Vercel —
+   oricine își face un depozit gratuit acolo și primește o adresă care trecea verificarea.
+   Numele depozitului nostru stă în chiar BLOB_READ_WRITE_TOKEN („vercel_blob_rw_<id>_…"),
+   iar adresa lui e „<id>.public.…" sau „<id>.private.…". Fără id citibil → nu plecăm nicăieri. */
+export function idDepozitBlob(jeton = process.env.BLOB_READ_WRITE_TOKEN) {
+  const m = /^vercel_blob_rw_([A-Za-z0-9]+)_/.exec(String(jeton || ''));
+  return m ? m[1].toLowerCase() : '';
+}
 export function adresaBlobPermisa(adr) {
   let u;
   try { u = new URL(String(adr || '')); } catch (_) { return false; }
   if (u.protocol !== 'https:' || u.username || u.password || (u.port && u.port !== '443')) return false;
-  if (!u.hostname.toLowerCase().endsWith('.blob.vercel-storage.com')) return false;
+  const gazda = u.hostname.toLowerCase();
+  if (!gazda.endsWith('.blob.vercel-storage.com')) return false;
+  const idDepozit = idDepozitBlob();
+  if (!idDepozit || !gazda.startsWith(idDepozit + '.')) return false;
+  const mijloc = gazda.slice(idDepozit.length + 1, -'.blob.vercel-storage.com'.length);
+  if (mijloc !== 'public' && mijloc !== 'private' && mijloc !== '') return false;
   let cale = '';
   try { cale = decodeURIComponent(u.pathname); } catch (_) { return false; }
   if (cale.includes('..') || cale.includes('\\')) return false;
@@ -337,7 +350,7 @@ export default async function handler(req, res) {
     let real;
     try { real = await utilizatorulAdevarat(sesiune, async () => redis(['GET', 'firma:users'])); }
     catch (e) { return res.status(500).json({ error: (e && e.message) || 'Nu am putut citi utilizatorii.' }); }
-    if (!real) return raspunsContSters(res);
+    if (!real) return raspunsContSters(res, sesiune);
     eManager = real.rol === 'Manager';
   }
 
@@ -486,15 +499,44 @@ export default async function handler(req, res) {
         let inainte = null;
         try { inainte = await faCopie('inainte-de-restaurare'); } catch (_) {}
 
-        const cerute = Array.isArray(body.chei) && body.chei.length ? body.chei.map(String) : Object.keys(pachet.date || {});
+        /* CE SE PUNE ÎNAPOI. Înainte, „restaurează tot" aducea înapoi și lista de utilizatori
+           de atunci — cu parolele VECHI (inclusiv a unui telefon furat, schimbată între timp),
+           conturi șterse între timp și „tv" vechi, deci biletele revocate redeveneau bune. Și
+           „chei" putea cere orice cheie din Redis, nu doar „firma:".
+             • doar chei „firma:" care chiar sunt în copie (hasOwnProperty, nu „__proto__");
+             • niciodată frânele de logare („firma:frana*");
+             • „firma:users" DOAR dacă e cerută anume în „chei" — și atunci fiecărui om i se
+               pune „tv" = max(cel de acum, cel din copie) + 1: toate biletele dinainte cad,
+               fiecare (și Managerul) se loghează din nou. */
+        const date = (pachet && pachet.date && typeof pachet.date === 'object') ? pachet.date : {};
+        const cerutExplicit = Array.isArray(body.chei) && body.chei.length;
+        const cerute = cerutExplicit ? body.chei.map(String) : Object.keys(date);
         const puse = [];
+        const sarite = [];
+        let utilizatoriRestaurati = false;
         for (const k of cerute) {
-          const val = (pachet.date || {})[k];
+          if (!k.startsWith('firma:') || !Object.prototype.hasOwnProperty.call(date, k)) { sarite.push(k); continue; }
+          if (k.startsWith('firma:frana')) { sarite.push(k); continue; }
+          if (k === 'firma:users' && !cerutExplicit) { sarite.push(k); continue; }
+          let val = date[k];
           if (val == null) continue;
-          await redis(['SET', k, val]);
+          if (k === 'firma:users') {
+            let dinCopie, acum;
+            try { dinCopie = JSON.parse(String(val)); } catch (_) { sarite.push(k); continue; }
+            if (!Array.isArray(dinCopie) || !dinCopie.length) { sarite.push(k); continue; }
+            try { const b = await redis(['GET', 'firma:users']); acum = b ? JSON.parse(String(b)) : []; } catch (_) { acum = []; }
+            const tvAcum = new Map((Array.isArray(acum) ? acum : []).filter((u) => u && u.id != null).map((u) => [String(u.id), Number(u.tv) || 0]));
+            val = JSON.stringify(dinCopie.map((u) => (u && typeof u === 'object'
+              ? { ...u, tv: Math.max(tvAcum.get(String(u.id)) || 0, Number(u.tv) || 0) + 1 } : u)));
+            utilizatoriRestaurati = true;
+          }
+          await redis(['SET', k, String(val)]);
           puse.push(k);
         }
-        return res.status(200).json({ ok: true, puse, copiaDinainte: inainte ? inainte.id : null });
+        return res.status(200).json({
+          ok: true, puse, sarite, copiaDinainte: inainte ? inainte.id : null,
+          ...(utilizatoriRestaurati ? { reloghează: true, mesaj: 'Lista de utilizatori a fost pusă înapoi: toți (și tu) trebuie să se logheze din nou.' } : {}),
+        });
       }
 
       return res.status(400).json({ error: 'Acțiune necunoscută.' });

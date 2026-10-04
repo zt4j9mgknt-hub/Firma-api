@@ -8,7 +8,7 @@
 
 import Pusher from 'pusher';
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat as cineEsteAcum } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat as cineEsteAcum, raspunsContSters, egal } from '../lib/sesiune.js';
 
 // --- Verificare token de sesiune (cod duplicat in fiecare fisier, intentionat -
 // evitam sa depindem de un import intre fisiere separate din /api). ---
@@ -20,7 +20,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -61,6 +61,7 @@ const CHEI_DOAR_MANAGER = new Set([
   'antemasuratori',  // antemăsurătorile (prețuri de intrare)
   'soldConcediu',    // soldul de concediu al fiecărui om
   'salarii',         // salariile — colegii nu au ce căuta în leafa celuilalt
+  'notite',          // notițele Managerului (în aplicație le vede doar el)
 ]);
 const CHEI_DOAR_MANAGER_SCRIE = new Set([
   'company',          // datele firmei (antet, IBAN, ștampilă)
@@ -102,6 +103,26 @@ async function redisGet(base, token, cheieIntreaga) {
   });
   const d = await r.json();
   try { return d.result ? JSON.parse(d.result) : null; } catch { return null; }
+}
+/* Citirea STRICTĂ, pentru lista de utilizatori: null DOAR dacă cheia chiar nu există.
+   O eroare de la Upstash (sau un răspuns ciudat) ARUNCĂ → 500. redisGet de mai sus întoarce
+   null și la eroare — iar „null" la utilizatori înseamnă „firmă nouă, credem biletul". */
+async function redisGetStrict(base, token, cheieIntreaga) {
+  const r = await fetch(`${base}/get/${encodeURIComponent(cheieIntreaga)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const d = await r.json();
+  if (d && d.error) throw new Error('Redis: ' + d.error);
+  if (!d || typeof d !== 'object' || !('result' in d)) throw new Error('Redis: răspuns fără „result".');
+  return d.result;   // textul JSON (sesiune.js îl desface) sau null
+}
+/* Ce era înainte pe server, pentru pazele de la scriere: la eroare de citire ARUNCĂ (500).
+   Cu redisGet (null la eroare) o pană de o clipă făcea paza să creadă că lista era goală —
+   iar salvarea angajatului trecea peste rândurile colegilor. */
+async function citesteStrict(base, token, cheieIntreaga) {
+  const brut = await redisGetStrict(base, token, cheieIntreaga);
+  if (brut == null) return null;
+  try { return JSON.parse(brut); } catch { return null; }
 }
 async function redisSet(base, token, cheieIntreaga, valoare) {
   const r = await fetch(`${base}/set/${encodeURIComponent(cheieIntreaga)}`, {
@@ -177,6 +198,16 @@ async function scrieJurnal(base, token, intrare) {
    Întoarce null dacă e în regulă, sau textul motivului dacă nu. */
 function pazaConcedii(vechi, nou, userId) {
   if (!Array.isArray(nou)) return 'Concediile trebuie trimise ca listă.';
+  /* Rânduri fără id sau cu același id de două ori ocoleau paza de mai jos: hărțile după id
+     le ignorau (sau îl păstrau doar pe ultimul), iar rândul strecurat ajungea în bază așa
+     cum venise — de pildă o cerere „Aprobat" pe numele unui coleg. Le refuzăm din start. */
+  const vazute = new Set();
+  for (const c of nou) {
+    if (!c || typeof c !== 'object' || Array.isArray(c) || c.id == null || String(c.id) === '') return 'Fiecare cerere de concediu trebuie să aibă un id.';
+    const id = String(c.id);
+    if (vazute.has(id)) return 'Aceeași cerere de concediu apare de două ori.';
+    vazute.add(id);
+  }
   const v = Array.isArray(vechi) ? vechi : [];
   const alMeu = (c) => c && String(c.userId) === String(userId);
   const dupaId = (l) => { const m = new Map(); l.forEach((c) => { if (c && c.id != null) m.set(String(c.id), c); }); return m; };
@@ -297,7 +328,7 @@ function pazaPrezenta(vechi, nou, userId, acum = Date.now()) {
    Verificarea propriu-zisă stă acum în lib/sesiune.js (aceeași în toate rutele), cu tot cu
    „tv": un bilet dat înainte de o schimbare de parolă nu mai trece. */
 async function utilizatorulAdevarat(base, token, auth) {
-  const real = await cineEsteAcum(auth, () => redisGet(base, token, 'firma:users'));
+  const real = await cineEsteAcum(auth, () => redisGetStrict(base, token, 'firma:users'));
   if (!real) return null;
   return { rol: real.rol, nume: String((real.eu ? real.eu.nume : auth.nume) || '') };
 }
@@ -333,6 +364,114 @@ function pazaPushSubs(vechi, nou, userId, rolReal, numeReal) {
   const aleAltora = (Array.isArray(vechi) ? vechi : []).filter((r) => !alMeu(r)
     && !(r && (telefoaneleMele.has(String(r.id)) || (r.sub && telefoaneleMele.has(String(r.sub.endpoint))))));
   return { lista: [...aleAltora, ...aleMele] };
+}
+
+/* ===== PAZA PE PROCESELE-VERBALE (pentru NEmanager) =====
+   PV-ul semnat de client de la distanță (api/semnare.js) e o dovadă: semnătura, numele celui
+   care a semnat, ora, adresa de internet și ce a scris clientul le pune SERVERUL. Până acum
+   orice angajat putea rescrie cheia întreagă: să schimbe semnătura, să „semneze la distanță"
+   un PV nesemnat sau să șteargă PV-uri. Acum, pentru NEmanager:
+     • pe un rând deja semnat la distanță, câmpurile semnăturii rămân cele de pe server,
+       orice ar trimite telefonul (restul rândului — observații, lucrări — se poate edita);
+     • câmpurile pe care le scrie DOAR serverul (semnatLaDistanta, semnatIp, semnatDispozitiv,
+       obiectiuniClient) nu pot fi inventate pe rânduri noi sau nesemnate;
+     • niciun PV nu dispare: ce lipsește din lista trimisă se pune la loc, în tăcere (lista
+       poate fi doar mai veche cu câteva secunde). Ștergerea unui PV o face doar Managerul.
+   Întoarce { motiv } sau { lista } — lista care se scrie. */
+const PV_CAMPURI_DISTANTA = ['semnatura', 'numeBeneficiar', 'calitate', 'semnatLaDistanta', 'semnatLa', 'semnatIp', 'semnatDispozitiv', 'obiectiuniClient'];
+const PV_DOAR_SERVER = ['semnatIp', 'semnatDispozitiv', 'obiectiuniClient'];
+function pazaProceseVerbale(vechi, nou) {
+  if (!Array.isArray(nou)) return { motiv: 'Procesele-verbale trebuie trimise ca listă.' };
+  const v = Array.isArray(vechi) ? vechi : [];
+  const peServer = new Map();
+  v.forEach((r) => { if (r && typeof r === 'object' && r.id != null) peServer.set(String(r.id), r); });
+  const vazute = new Set();
+  const lista = [];
+  for (const r of nou) {
+    if (!r || typeof r !== 'object' || Array.isArray(r) || r.id == null) return { motiv: 'Fiecare proces-verbal trebuie să aibă un id.' };
+    const id = String(r.id);
+    if (vazute.has(id)) continue;   // același PV de două ori: îl păstrăm pe primul
+    vazute.add(id);
+    const s = peServer.get(id);
+    const rand = { ...r };
+    if (s && s.semnatLaDistanta && s.semnatura) {
+      // Semnat de client de la distanță: semnătura rămâne exact cea de pe server.
+      PV_CAMPURI_DISTANTA.forEach((c) => { if (c in s) rand[c] = s[c]; else delete rand[c]; });
+      delete rand.semnaturaStearsaLa;
+    } else {
+      // Câmpurile scrise doar de server: ce e pe server, altfel nimic.
+      PV_DOAR_SERVER.forEach((c) => { if (s && c in s) rand[c] = s[c]; else delete rand[c]; });
+      if (rand.semnatLaDistanta && !(s && s.semnatLaDistanta)) rand.semnatLaDistanta = false;
+    }
+    lista.push(rand);
+  }
+  for (const [id, s] of peServer) if (!vazute.has(id)) lista.push(s);   // niciun PV nu dispare
+  // rândurile vechi fără id (dacă există) rămân și ele
+  v.forEach((r) => { if (r && typeof r === 'object' && r.id == null) lista.push(r); });
+  return { lista };
+}
+
+/* ===== PAZA PE ȘTERGERILE MASIVE (pentru NEmanager, pe toate cheile-listă fără pază proprie) =====
+   Orice angajat putea trimite „rapoarte: []" și golea rapoartele întregii firme (sau oricare
+   altă listă deschisă). Aplicația nu face niciodată așa ceva de pe telefonul unui angajat:
+   înainte de fiecare salvare unește lista lui cu cea de pe server (mergeById), iar ce șterge
+   omul pleacă prin registrul „sterse" — câte una, cel mult 10 deodată. Deci o salvare care
+   scoate MULTE rânduri dintr-odată e ori un atac, ori o copie veche de pe un telefon rămas
+   fără net. În ambele cazuri o oprim (409); aplicația o pune la coadă și o reîncearcă după
+   ce o unește iar cu serverul — atunci trece.
+   Refuz dacă salvarea: scoate peste 20% din rânduri ȘI mai mult de 3 rânduri; sau golește o
+   listă care avea mai mult de un rând (ștergerea singurului rând rămas e voie); sau pune
+   altceva decât o listă în locul unei liste cu rânduri. Întoarce null sau textul motivului. */
+const MASIV_PROCENT = 0.2;
+const MASIV_RANDURI = 3;
+function pazaStergeriMasive(key, vechi, nou) {
+  if (!Array.isArray(vechi) || !vechi.length) return null;
+  if (!Array.isArray(nou)) return `„${key}" e o listă — nu poate fi înlocuită cu altceva.`;
+  const cuId = (l) => l.every((x) => x && typeof x === 'object' && x.id != null);
+  let scoase;
+  if (cuId(vechi) && cuId(nou)) {
+    const idNoi = new Set(nou.map((x) => String(x.id)));
+    scoase = new Set(vechi.map((x) => String(x.id)).filter((id) => !idNoi.has(id))).size;
+  } else {
+    scoase = Math.max(0, vechi.length - nou.length);
+  }
+  const golire = nou.length === 0 && vechi.length > 1;
+  const preaMulte = scoase > MASIV_RANDURI && scoase > vechi.length * MASIV_PROCENT;
+  if (!golire && !preaMulte) return null;
+  return `Salvarea ar șterge ${scoase} din ${vechi.length} înregistrări la „${key}" deodată — am oprit-o, ca să nu se piardă date. `
+    + 'Dacă vrei chiar să ștergi atâtea, șterge-le câte puțin sau roagă Managerul.';
+}
+
+/* ===== PAZA PE REGISTRUL DE ȘTERGERI („sterse"), pentru NEmanager =====
+   Registrul spune fiecărui telefon ce înregistrări să ascundă și să nu mai trimită înapoi.
+   Un angajat care scria în el TOATE id-urile unei liste făcea ca, la următoarea salvare a
+   Managerului, rândurile să dispară de pe server — ocolind paza de mai sus. Acum:
+     • nu poate marca drept șterse PV-uri, rânduri de prezență sau date ale Managerului
+       (intrările noi de felul ăsta se lasă deoparte, în tăcere);
+     • nu poate adăuga mai mult de 25 de intrări noi la o salvare (aplicația adaugă cel mult
+       10). Scoaterea intrărilor (anularea unei ștergeri) rămâne liberă. */
+const STERSE_MAX_NOI = 25;
+function pazaSterse(vechi, nou, cheiOprite) {
+  if (!nou || typeof nou !== 'object' || Array.isArray(nou)) return { motiv: 'Registrul de ștergeri trebuie trimis ca obiect.' };
+  const v = (vechi && typeof vechi === 'object' && !Array.isArray(vechi)) ? vechi : {};
+  const curat = {};
+  let noi = 0;
+  for (const [k, ids] of Object.entries(nou)) {
+    if (!ids || typeof ids !== 'object' || Array.isArray(ids)) continue;
+    const dinainte = (v[k] && typeof v[k] === 'object' && !Array.isArray(v[k])) ? v[k] : {};
+    const pastrate = {};
+    for (const [id, cand] of Object.entries(ids)) {
+      const exista = Object.prototype.hasOwnProperty.call(dinainte, id);
+      if (!exista) {
+        if (cheiOprite(k)) continue;   // PV / prezență / date de Manager: nu se ascund de aici
+        noi++;
+      }
+      pastrate[id] = cand;
+    }
+    if (Object.keys(pastrate).length) curat[k] = pastrate;
+  }
+  if (noi > STERSE_MAX_NOI) return { motiv: `Prea multe ștergeri deodată (${noi}). Șterge câte puțin.`, cod: 409 };
+  return { lista: curat };
 }
 
 let pusher = null;
@@ -374,7 +513,7 @@ export default async function handler(req, res) {
     /* Cine e omul ACUM, după lista de utilizatori — o singură citire, folosită mai jos peste tot.
        Șters din firmă → 401, ca la bilet expirat (aplicația îl trimite la logare). */
     const eu = await utilizatorulAdevarat(base, token, auth);
-    if (!eu) return res.status(401).json({ error: 'Contul nu mai există - te rog reloghează-te.', contSters: true });
+    if (!eu) return raspunsContSters(res, auth);   // contSters sau biletVechi, după motiv
     const rolReal = eu.rol;
     const eManager = rolReal === 'Manager';
 
@@ -436,7 +575,7 @@ export default async function handler(req, res) {
       // Prezența: omul doar ADAUGĂ rânduri pe numele lui; nimic deja scris nu se schimbă.
       let deScris = value;
       if (CHEI_RANDURI_PROPRII.has(key) && !eManager) {
-        const inainte = await redisGet(base, token, `firma:${key}`);
+        const inainte = await citesteStrict(base, token, `firma:${key}`);
         if (key === 'prezenta') {
           const rez = pazaPrezenta(inainte, value, auth.userId);
           if (rez.motiv) return res.status(403).json({ error: rez.motiv, interzis: true });
@@ -452,10 +591,29 @@ export default async function handler(req, res) {
       }
       // Abonamentele la notificări: angajatul își atinge doar rândurile lui, cu rolul adevărat.
       if (key === 'pushSubs' && !eManager) {
-        const inainte = await redisGet(base, token, 'firma:pushSubs');
+        const inainte = await citesteStrict(base, token, 'firma:pushSubs');
         const rez = pazaPushSubs(inainte, value, auth.userId, rolReal, eu.nume);
         if (rez.motiv) return res.status(400).json({ error: rez.motiv });
         deScris = rez.lista;
+      }
+      /* Restul cheilor deschise, pentru NEmanager: PV-urile au paza lor, registrul de ștergeri
+         pe a lui, iar toate celelalte liste — paza pe ștergerile masive. */
+      if (!eManager && !CHEI_RANDURI_PROPRII.has(key) && key !== 'pushSubs') {
+        const inainte = await citesteStrict(base, token, `firma:${key}`);
+        if (key === 'proceseVerbale') {
+          const rez = pazaProceseVerbale(inainte, value);
+          if (rez.motiv) return res.status(400).json({ error: rez.motiv });
+          deScris = rez.lista;
+        } else if (key === 'sterse') {
+          const oprite = (k) => k === 'proceseVerbale' || k === 'prezenta' || k === 'users' || k === 'sterse'
+            || CHEI_DOAR_MANAGER.has(k) || CHEI_DOAR_MANAGER_SCRIE.has(k);
+          const rez = pazaSterse(inainte, value, oprite);
+          if (rez.motiv) return res.status(rez.cod || 400).json({ error: rez.motiv, stergereMasiva: rez.cod === 409 });
+          deScris = rez.lista;
+        } else {
+          const motiv = pazaStergeriMasive(key, inainte, value);
+          if (motiv) return res.status(409).json({ error: motiv, stergereMasiva: true });
+        }
       }
 
       const ok = await redisSet(base, token, `firma:${key}`, deScris);

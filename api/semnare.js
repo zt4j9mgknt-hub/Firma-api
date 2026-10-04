@@ -19,7 +19,7 @@
 import crypto from 'crypto';
 import Pusher from 'pusher';
 import portalClient from '../lib/client.js';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
 
 /* Semnalul instant către telefoanele firmei (același ca în data.js). Fără el, semnătura
    venită de la client stătea în bază, dar aplicația deschisă n-o vedea — și la următoarea
@@ -47,7 +47,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -157,7 +157,7 @@ export default async function handler(req, res) {
     let real;
     try { real = await utilizatorulAdevarat(auth, async () => redis(['GET', 'firma:users'])); }
     catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
-    if (!real) return raspunsContSters(res);
+    if (!real) return raspunsContSters(res, auth);
     const pv = String(q.pv || '');
     if (!pv) return res.status(400).json({ error: 'Lipsește documentul.' });
     const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
@@ -167,7 +167,7 @@ export default async function handler(req, res) {
   const pvId = String(q.pv || '');
   const k = String(q.k || (req.body && req.body.k) || '');
   const idCerut = pvId || String((req.body && req.body.pv) || '');
-  if (!idCerut || k !== semnaturaLink(idCerut)) {
+  if (!idCerut || !egal(k, semnaturaLink(idCerut))) {
     return res.status(403).send(pagina({ titlu: 'Link invalid', corp: '<div class="card"><div class="rau"><b>Link invalid sau expirat.</b><br>Cere-i executantului un link nou.</div></div>' }));
   }
 

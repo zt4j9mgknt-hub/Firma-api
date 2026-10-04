@@ -18,7 +18,7 @@
 // loc de reparat dacă se strică ceva la criptare, nu două.
 
 import crypto from 'crypto';
-import { lipsaSecret, eCeasPrograma } from '../lib/sesiune.js';
+import { lipsaSecret, eCeasPrograma, egal, utilizatorulAdevarat, raspunsContSters, ID_CEAS_MEMENTO, SCOP_BILET_INTERN } from '../lib/sesiune.js';
 
 const TZ = 'Europe/Bucharest';
 const IMPLICIT_INAINTE = 60;   // cu câte minute înainte vine prima alertă
@@ -35,7 +35,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -56,19 +56,25 @@ function eCeasDinAfara(req) {
 }
 
 /* Bilet de acces de scurtă durată, pentru noi înșine: /api/push-send cere sesiune, iar
-   ceasul din afară n-are una. Îl semnăm cu același secret, valabil două minute. */
+   ceasul din afară n-are una. Îl semnăm cu același secret, valabil două minute.
+   Rol GOL (nu „Manager", ca înainte) și „scope: push": biletul ăsta deschide doar
+   /api/push-send — nicio altă rută nu-l primește (lib/sesiune.js îl respinge peste tot). */
 function biletIntern() {
   const data = Buffer.from(JSON.stringify({
-    userId: 'ceas-memento', rol: 'Manager', exp: Date.now() + 120000,
+    userId: ID_CEAS_MEMENTO, rol: '', scope: SCOP_BILET_INTERN, exp: Date.now() + 120000,
   })).toString('base64url');
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
   return data + '.' + sig;
 }
-function adresaProprie(req) {
-  if (process.env.APP_ORIGIN) return String(process.env.APP_ORIGIN).replace(/\/+$/, '');
-  const gazda = (req.headers && (req.headers['x-forwarded-host'] || req.headers.host)) || process.env.VERCEL_URL;
-  const protocol = (req.headers && req.headers['x-forwarded-proto']) || 'https';
-  return gazda ? `${protocol}://${gazda}` : '';
+/* Adresa spre care pleacă biletul intern: DOAR din setările Vercel, niciodată din antetul
+   „Host" al cererii. Înainte, cine chema /api/memento cu „Host: gazda-lui" primea biletul
+   intern pe serverul lui (și cu el putea trimite notificări oricui, două minute). */
+export function adresaProprie() {
+  const curata = (x) => String(x || '').trim().replace(/\/+$/, '');
+  if (process.env.APP_ORIGIN) return curata(process.env.APP_ORIGIN);
+  const gazda = curata(process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL);
+  if (!gazda) return '';
+  return /^https?:\/\//i.test(gazda) ? gazda : 'https://' + gazda;
 }
 
 /* ===== ORA ROMÂNIEI =====
@@ -132,11 +138,18 @@ export default async function handler(req, res) {
   if (lipsaSecret(res)) return;
 
   const dinAfara = eCeasDinAfara(req);
-  if (!dinAfara && !autentifica(req)) {
-    return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+  if (!dinAfara) {
+    const sesiune = autentifica(req);
+    if (!sesiune) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    /* Omul mai e în firmă (și biletul e de după ultima schimbare de parolă)? Ceasul din
+       afară (CRON_SECRET) nu e om și nu trece pe aici. */
+    let real;
+    try { real = await utilizatorulAdevarat(sesiune); }
+    catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
+    if (!real) return raspunsContSters(res, sesiune);
   }
 
-  const origine = adresaProprie(req);
+  const origine = adresaProprie();
   const bilet = biletIntern();
 
   /* Trimiterea propriu-zisă: o dăm mai departe către push-send, care se ocupă de criptare,

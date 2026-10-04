@@ -10,7 +10,7 @@
 import { del, get } from '@vercel/blob';
 import { buffer as streamToBuffer } from 'node:stream/consumers';
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
 // Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
@@ -21,7 +21,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -55,6 +55,29 @@ const eDosarCopii = (x) => { const s = caleCurata(x); return s.includes('copii-f
    („restante/…"). Asta sunt singurele stergeri pe care aplicatia le face din ecranele
    angajatilor. Restul (semnaturi, normative, proiecte, antemasuratori) le sterge doar Managerul. */
 const DOSARE_STERGERE_ANGAJAT = ['santiere/', 'restante/'];
+
+/* ===== CE POATE DESCHIDE UN NEMANAGER =====
+   Dosarele în care aplicația urcă ce au de VĂZUT angajații: planșe și poze/video de șantier
+   („santiere/<id>/planse", „santiere/<id>/media"), pozele restanțelor („restante/<id>"),
+   semnăturile de pe PV („semnaturi"), normativul („normativ") și fișierele de proiect
+   („proiecte"). NU: „antemasuratori/" (prețurile de intrare — doar Managerul) și, firește,
+   „copii-firma/". Înainte, orice angajat deschidea orice fișier, după nume. */
+const DOSARE_CITIRE_ANGAJAT = ['santiere/', 'restante/', 'semnaturi/', 'normativ/', 'proiecte/'];
+
+/* get() din @vercel/blob primește fie o cale, fie o adresă COMPLETĂ — iar la o adresă
+   completă poate pleca spre gazda aceea cu biletul depozitului (BLOB_READ_WRITE_TOKEN) pe ea.
+   Aici primim DOAR o cale simplă: fără „schemă:", fără „//" la început, fără „://" nicăieri,
+   fără „\" și fără „..". Întoarce calea curată sau null. */
+export function caleSimpla(x) {
+  if (typeof x !== 'string' || !x || x.length > 1024) return null;
+  let s = x;
+  for (let i = 0; i < 3; i++) { try { const d = decodeURIComponent(s); if (d === s) break; s = d; } catch (_) { return null; } }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(s) || s.startsWith('//') || s.includes('://') || s.includes('\\')) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(x) || x.startsWith('//') || x.includes('://')) return null;
+  if (/(^|\/)\.\.(\/|$)/.test(s) || /[\u0000-\u001f]/.test(s)) return null;
+  if (s.startsWith('/')) return null;
+  return x;   // trimitem mai departe exact ce a venit (calea, nu o adresă)
+}
 function caleaDinAdresa(url) {
   try {
     const u = new URL(String(url));
@@ -79,7 +102,7 @@ export default async function handler(req, res) {
   let real;
   try { real = await utilizatorulAdevarat(auth); }
   catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
-  if (!real) return raspunsContSters(res);
+  if (!real) return raspunsContSters(res, auth);
   const eManager = real.rol === 'Manager';
 
   if (req.method === 'GET') {
@@ -87,7 +110,12 @@ export default async function handler(req, res) {
       const pathname = req.query.pathname;
       if (!pathname) return res.status(400).send('Lipseste pathname.');
       if (eDosarCopii(pathname)) return res.status(403).send('Fisierul asta nu se poate deschide de aici.');
-      const result = await get(pathname, { access: 'private' });
+      const cale = caleSimpla(pathname);
+      if (!cale) return res.status(400).send('Cale de fisier invalida.');
+      if (!eManager && !DOSARE_CITIRE_ANGAJAT.some((d) => caleCurata(cale).startsWith(d))) {
+        return res.status(403).send('Doar Managerul poate deschide fisierul asta.');
+      }
+      const result = await get(cale, { access: 'private' });
       if (!result || !result.stream) return res.status(404).send('Fisierul nu a fost gasit.');
       const buf = await streamToBuffer(result.stream);
       res.setHeader('Content-Type', result.blob?.contentType || 'application/octet-stream');

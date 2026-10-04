@@ -19,7 +19,7 @@
 // Cere pe Vercel: KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET. Toate există deja.
 
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
 
 // Fără SESSION_SECRET ruta nu pornește (lipsaSecret): cu textul de rezervă de dinainte,
 // oricine își putea face semnătura de calendar a oricui.
@@ -30,7 +30,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -45,8 +45,20 @@ function autentifica(req) {
 }
 /* Semnătura adresei de calendar. Nu expiră (un abonament de calendar trăiește ani),
    dar e legată de SESSION_SECRET: dacă acela se schimbă, toate adresele vechi mor. */
-function semnatura(userId) {
-  return crypto.createHmac('sha256', SESSION_SECRET).update('calendar:' + String(userId)).digest('base64url').slice(0, 32);
+/* Semnătura e legată și de „tv" (versiunea biletelor omului, care crește la fiecare
+   schimbare de parolă): după o parolă nouă, adresa veche de calendar nu mai dă nimic — cine
+   a furat telefonul nu mai citește mementourile. Pentru tv = 0 semnătura rămâne exact cea
+   de dinainte (fără „&v="), ca abonamentele de azi să meargă mai departe. */
+function semnatura(userId, tv = 0) {
+  const v = Number(tv) || 0;
+  const text = 'calendar:' + String(userId) + (v ? ':' + v : '');
+  return crypto.createHmac('sha256', SESSION_SECRET).update(text).digest('base64url').slice(0, 32);
+}
+/* Lista de utilizatori, STRICT: null doar dacă cheia nu există; eroarea urcă (500).
+   Înainte, o eroare de citire dădea „listă goală = firmă nouă" și feed-ul ieșea oricui. */
+async function citesteUsers() {
+  const b = await redis(['GET', 'firma:users']);
+  return b == null ? null : JSON.parse(b);
 }
 
 async function redis(cmd) {
@@ -104,14 +116,15 @@ export default async function handler(req, res) {
     let real;
     try { real = await utilizatorulAdevarat(s, async () => redis(['GET', 'firma:users'])); }
     catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
-    if (!real) return raspunsContSters(res);
+    if (!real) return raspunsContSters(res, s);
     /* AICI ERA O GREȘEALĂ: biletul poartă „userId", nu „id". Cu „s.id" adresa ieșea pentru
        „undefined" — calendarul nimănui, gol pentru toți. */
     const uid = String(s.userId || '');
     if (!uid) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    const tv = Number(real.eu && real.eu.tv) || 0;
     const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
     const baza = 'https://' + gazda;
-    const cale = `/api/calendar?u=${encodeURIComponent(uid)}&k=${semnatura(uid)}`;
+    const cale = `/api/calendar?u=${encodeURIComponent(uid)}${tv ? '&v=' + tv : ''}&k=${semnatura(uid, tv)}`;
     return res.status(200).json({
       https: baza + cale,
       webcal: 'webcal://' + gazda + cale,
@@ -120,20 +133,26 @@ export default async function handler(req, res) {
 
   const u = String((req.query && req.query.u) || '');
   const k = String((req.query && req.query.k) || '');
-  if (!u || k !== semnatura(u)) {
+  const vLink = Number((req.query && req.query.v) || 0) || 0;
+  if (!u || !egal(k, semnatura(u, vLink))) {
     return res.status(403).send('Adresă de calendar invalidă.');
   }
 
   try {
     const [mementouri, planificari, santiere, users] = await Promise.all([
       citeste('mementouri', []), citeste('planificareSantier', []),
-      citeste('santiere', []), citeste('users', []),
+      citeste('santiere', []), citesteUsers(),
     ]);
     const omul = (Array.isArray(users) ? users : []).find((x) => x && x.id === u) || null;
     /* Omul șters din firmă: adresa lui veche de calendar nu mai dă nimic (ar fi văzut mai
-       departe, ani de zile, mementourile cuiva cu același id). Lista goală = firmă nouă. */
-    if (!omul && Array.isArray(users) && users.length) {
+       departe, ani de zile, mementourile cuiva cu același id). Doar cheia LIPSĂ cu totul
+       (null) înseamnă firmă nouă; o listă goală sau ciudată nu mai deschide nimic. */
+    if (users !== null && !omul) {
       return res.status(403).send('Adresă de calendar invalidă.');
+    }
+    /* Parola s-a schimbat după ce s-a dat adresa: „tv" din adresă ≠ cel de pe om → nimic. */
+    if (omul && (Number(omul.tv) || 0) !== vLink) {
+      return res.status(403).send('Adresa de calendar e veche (parola s-a schimbat). Ia adresa nouă din aplicație.');
     }
     const numeOm = String(omul?.nume || '').trim();
     const acum = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';

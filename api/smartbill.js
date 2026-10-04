@@ -11,7 +11,7 @@
 //   SMARTBILL_SERIES  - numele seriei de facturi (din Emitere > Factura > Serii)
 
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
 // Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
@@ -22,7 +22,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
   let real;
   try { real = await utilizatorulAdevarat(auth); }
   catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
-  if (!real) return raspunsContSters(res);
+  if (!real) return raspunsContSters(res, auth);
   if (real.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate trimite facturi in SmartBill.' });
 
   const email = process.env.SMARTBILL_EMAIL;

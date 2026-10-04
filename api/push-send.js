@@ -252,6 +252,20 @@ function alege(lista, destinatar, exceptUserId) {
   return l.filter((x) => x.userId === destinatar);
 }
 
+/* Câți colegi poate anunța un angajat deodată, fără altă verificare. */
+const MAX_DESTINATARI_ANGAJAT = 5;
+/* Toți cei din listă sunt în echipa unui șantier (același) pe care e și cel care trimite?
+   Echipa: „echipa" de pe șantier — id-uri simple sau { userId, status }. */
+async function toatiColegiDeSantier(euId, ids) {
+  if (!euId) return false;
+  let santiere = [];
+  try { const b = await redis(['GET', 'firma:santiere']); santiere = b ? JSON.parse(String(b)) : []; } catch (_) { return false; }
+  if (!Array.isArray(santiere)) return false;
+  const echipa = (s) => new Set((Array.isArray(s && s.echipa) ? s.echipa : [])
+    .map((e) => (typeof e === 'string' ? e : (e && e.userId) ? String(e.userId) : '')).filter(Boolean));
+  return santiere.some((s) => { const e = echipa(s); return e.has(euId) && ids.every((id) => e.has(id)); });
+}
+
 function citesteCorpul(req) {
   if (!req.body) return {};
   if (typeof req.body === 'string') { try { return JSON.parse(req.body || '{}'); } catch (_) { return {}; } }
@@ -273,9 +287,13 @@ export default async function handler(req, res) {
     /* Omul șters din firmă (sau cu parola schimbată de atunci) nu mai trimite notificări cu
        numele firmei. Excepție: biletul de două minute al ceasului de memento (memento.js),
        care nu e om și nu e în listă. */
-    if (!eBiletIntern(sesiune)) {
-      const real = await utilizatorulAdevarat(sesiune);
-      if (!real) return raspunsContSters(res);
+    const intern = eBiletIntern(sesiune);
+    let eManager = false;
+    let real = null;
+    if (!intern) {
+      real = await utilizatorulAdevarat(sesiune);
+      if (!real) return raspunsContSters(res, sesiune);
+      eManager = real.rol === 'Manager';
     }
 
     /* ---------- DIAGNOSTIC: unde se oprește ---------- */
@@ -355,6 +373,31 @@ export default async function handler(req, res) {
     }
 
     const corp = citesteCorpul(req);
+
+    /* CINE POATE TRIMITE CUI. Înainte, orice angajat putea trimite oricui — inclusiv „toti"
+       (toată firma) sau unei liste de abonamente aduse de el — cu numele firmei în titlu.
+       Acum, pentru NEmanager (Managerul și ceasul intern de memento rămân fără restricții):
+         • „manageri" (rapoarte, cereri, întrebări — de aici vin aproape toate);
+         • un singur coleg (userId, text);
+         • o listă de cel mult 5 colegi; sau mai mulți, dar numai dacă toți sunt în echipa
+           unui șantier pe care e și el (anunțurile către echipa șantierului).
+       Nu „toti", nu destinatar lipsă (care însemna tot „toti"), și lista de abonamente
+       trimisă de telefon („subscriptions") se ignoră. */
+    if (!intern && !eManager) {
+      const d = corp.destinatar;
+      let voie = false;
+      if (d === 'manageri') voie = true;
+      else if (typeof d === 'string' && d && d !== 'toti' && d.length <= 100) voie = true;
+      else if (Array.isArray(d) && d.length > 0 && d.length <= 50 && d.every((x) => typeof x === 'string' && x && x.length <= 100)) {
+        if (d.length <= MAX_DESTINATARI_ANGAJAT) voie = true;
+        else voie = await toatiColegiDeSantier(real && real.eu ? String(real.eu.id) : String(sesiune.userId || ''), d);
+      }
+      if (!voie) {
+        return res.status(403).json({ ok: false, sent: 0, trimise: 0, error: 'Poți trimite notificări doar Managerilor sau colegilor tăi.' });
+      }
+      corp.subscriptions = undefined;
+    }
+
     const titlu = String(corp.title || 'SC SMART ELECTROCONECT').slice(0, 120);
     const text = String(corp.body || '').slice(0, 400);
     const url = urlSigur(corp.url || '/');

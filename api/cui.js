@@ -3,7 +3,7 @@
 // Aplicația va apela: https://<numele-proiectului-tau>.vercel.app/api/cui?cui=14399840
 
 import crypto from 'crypto';
-import { lipsaSecret } from '../lib/sesiune.js';
+import { lipsaSecret, egal, utilizatorulAdevarat, raspunsContSters } from '../lib/sesiune.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
 // Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
@@ -14,7 +14,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -36,7 +36,14 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (lipsaSecret(res)) return;
-  if (!authenticate(req)) return res.status(401).json({ error: 'Sesiune invalida sau expirata.' });
+  const auth = authenticate(req);
+  if (!auth) return res.status(401).json({ error: 'Sesiune invalida sau expirata.' });
+  /* Omul mai e in firma? Inainte ajungea un bilet valabil, chiar al unui om sters ieri
+     (sau dinaintea unei schimbari de parola) — iar ruta face cereri la ANAF in numele firmei. */
+  let real;
+  try { real = await utilizatorulAdevarat(auth); }
+  catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
+  if (!real) return raspunsContSters(res, auth);
 
   const cui = String(req.query.cui || '').replace(/\D/g, '');
   if (!cui) return res.status(400).json({ error: 'CUI lipsă sau invalid.' });

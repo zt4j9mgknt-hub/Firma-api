@@ -12,7 +12,7 @@
 /* --- Verificarea biletului de acces (acelasi cod ca in auth.js si data.js, dinadins
    duplicat: rutele din /api sunt fisiere separate si nu vrem dependente intre ele). --- */
 import crypto from 'crypto';
-import { lipsaSecret, utilizatorulAdevarat } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
 // Fără SESSION_SECRET ruta nu pornește (lipsaSecret) — nu mai există text de rezervă în cod.
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 function verifyToken(token) {
@@ -21,7 +21,7 @@ function verifyToken(token) {
   if (parts.length !== 2) return null;
   const [data, sig] = parts;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
-  if (sig !== expected) return null;
+  if (!egal(sig, expected)) return null;
   try {
     const payload = JSON.parse(Buffer.from(data, 'base64url').toString());
     if (!payload.exp || Date.now() > payload.exp) return null;
@@ -180,7 +180,7 @@ export default async function handler(req, res) {
   try {
     /* Omul șters din firmă nu mai folosește asistentul (cota e a firmei). */
     const rolReal = await rolulAdevarat(sesiune);
-    if (rolReal == null) return res.status(401).json({ error: 'Contul nu mai există — te rog reloghează-te.', contSters: true });
+    if (rolReal == null) return raspunsContSters(res, sesiune);   // contSters sau biletVechi
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     /* Acțiunea nouă: lista de materiale din PDF-ul / poza clientului. Doar Managerul —
        ofertele sunt treaba lui, iar un fișier mare consumă cota mult mai repede. */
