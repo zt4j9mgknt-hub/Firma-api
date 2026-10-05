@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.21-cifre-negre';
+const APP_VERSION = 'v04.22-pdf-trimite-folder';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -23152,7 +23152,8 @@ function CopiiSiguranta() {
                         ? ' Nimeni nu-l poate citi fără aplicație — nici tu. Se pune înapoi doar din aplicație.'
                         : ' Acum e CITIBIL: îl deschizi cu ochii tăi, dar cine intră în OneDrive-ul tău vede toate datele firmei.')),
             /* DEVIZE, OFERTE, FACTURI, RAPOARTE — ce-l interesează pe patron cel mai mult.
-               PDF-urile pleacă din fereastra de tipărire, cu butonul „☁ În OneDrive".
+               PDF-urile: din v04.22 fereastra de tipărire le scrie direct în dosarul clientului
+               de pe laptop („📁 În folder"), iar OneDrive le sincronizează singur.
                Tabelele pleacă singure, odată cu copia zilnică. */
             React.createElement("div", { className: "mt-2 rounded-lg px-2.5 py-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
                 React.createElement("div", { style: { color: 'var(--text)', fontWeight: 600 } }, "\uD83D\uDCC1 Documentele firmei"),
@@ -23828,7 +23829,131 @@ const MOTOR_PDF_JS = `
   };
 })();
 `;
-const PRINT_TOOLBAR = '<style>@media print{.doc-toolbar{display:none!important}}</style><div class="doc-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;gap:8px;justify-content:space-between;align-items:center;background:#14181C;padding:10px 14px;border-bottom:1px solid #2A323B;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"><button onclick="window.close()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">← Închide</button><div style="display:flex;gap:8px;"><button onclick="window.print()" title="Trimite la imprimantă" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">🖨 Printează</button><button onclick="window.__descarcaPdf(document.title.replace(/[\\\\/:*?&quot;&lt;&gt;|]/g,&quot; &quot;).trim()+&quot;.pdf&quot;, this)" title="Face fișierul PDF și îl salvează pe telefon sau pe calculator" style="background:#2E8BD1;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">💾 Salvează PDF</button><button onclick="window.__pdfInOneDrive(document.title.replace(/[\\\\/:*?&quot;&lt;&gt;|]/g,&quot; &quot;).trim()+&quot;.pdf&quot;, this)" title="Pune același PDF în OneDrive-ul firmei, în dosarul lui" style="background:#0F6CBD;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">☁ În OneDrive</button></div></div><div class="doc-toolbar" style="position:sticky;top:56px;z-index:9998;display:block;background:#1b222a;color:#9fb0bf;padding:7px 14px;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;border-bottom:1px solid #2A323B;">ℹ️ Se deschide direct fereastra de printare. Dacă la „Destinație" scrie <b>Salvează ca PDF</b>, schimb-o în <b>imprimanta ta</b> — browserul o reține data viitoare. <b>💾 Salvează PDF</b> face în schimb fișierul pe loc, fără fereastra de printare. Dacă la print apare jos adresa site-ului sau data, oprește <b>Antete și subsoluri</b> în fereastra de printare — e o setare a telefonului.</div>' + '<script>' + MOTOR_PDF_JS + '<\/script>' + '<script>(function(){var done=false;function go(){if(done)return;done=true;try{window.focus();}catch(e){}try{window.print();}catch(e){}}if(document.readyState==="complete"){setTimeout(go,350);}else{window.addEventListener("load",function(){setTimeout(go,350);});}})();<\/script>';
+/* 📤 TRIMITE și 📁 ÎN FOLDERUL CLIENTULUI, în fereastra de tipar (v04.22, cerut de patron).
+   E o funcție adevărată, trimisă ca text cu .toString() — nu un șablon de text ca MOTOR_PDF_JS,
+   ca să nu ne mai prindă backslash-urile din expresiile regulate.
+   „În folder" folosește accesul la fișiere din Chrome/Edge pe calculator: patronul alege O DATĂ
+   dosarul „Proiecte" (cel din OneDrive), browserul îl ține minte, iar PDF-ul se scrie direct în
+   subdosarul clientului (ELRON, Skyline…) — și OneDrive îl sincronizează singur. Fără server:
+   ruta OneDrive n-are loc pe Vercel (limita de 12 funcții). Dosarul clientului se ghicește din
+   numele clientului / șantierului (window.__DOCMETA); dacă nu-l găsesc sigur, întreb unde. */
+function dosarPdfFereastra() {
+    function nume0(b) { return b ? (b.disabled = true, b.textContent) : ''; }
+    function gata(b, vechi, t) { if (!b) return; b.textContent = t || vechi; setTimeout(function () { b.textContent = vechi; b.disabled = false; }, t ? 4000 : 0); }
+    window.__trimitePdf = async function (nume, b) {
+        var vechi = nume0(b);
+        try {
+            if (b) b.textContent = 'Fac PDF-ul...';
+            var blob = await window.__faPdf();
+            var f = new File([blob], nume || 'document.pdf', { type: 'application/pdf' });
+            if (navigator.canShare && navigator.canShare({ files: [f] })) {
+                try { await navigator.share({ files: [f], title: nume }); }
+                catch (e) { if (!e || e.name !== 'AbortError') throw e; }
+                gata(b, vechi);
+                return;
+            }
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob); a.download = f.name;
+            document.body.appendChild(a); a.click(); a.remove();
+            window.alert('Browserul ăsta nu poate trimite fișiere direct, așa că am salvat PDF-ul (' + f.name + ') în Descărcări. Atașează-l de acolo în e-mail sau WhatsApp.');
+            gata(b, vechi);
+        } catch (e) { window.alert((e && e.message) || 'Nu am putut trimite PDF-ul.'); gata(b, vechi); }
+    };
+    /* dosarul ales se ține în IndexedDB (un „mâner" de dosar nu încape în localStorage) */
+    function bd(fn) {
+        return new Promise(function (rez, rej) {
+            var r = indexedDB.open('fa-dosare', 1);
+            r.onupgradeneeded = function () { r.result.createObjectStore('h'); };
+            r.onerror = function () { rej(r.error); };
+            r.onsuccess = function () {
+                var tx = r.result.transaction('h', 'readwrite'); var cer = fn(tx.objectStore('h'));
+                tx.oncomplete = function () { rez(cer && cer.result); }; tx.onerror = function () { rej(tx.error); };
+            };
+        });
+    }
+    var norm = function (s) {
+        return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+            .replace(/\b(s\.?c|s\.?r\.?l|srl|s\.?a|pfa|ii|co|sc)\b\.?/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+    };
+    /* cuvintele de umplutură („Casa", „Ap.", „Corp"…) nu deosebesc un client de altul */
+    var GOALE = ['casa', 'apartament', 'bloc', 'str', 'strada', 'scara', 'birouri', 'spatiu', 'hala', 'corp', 'asociatia', 'proprietari', 'parcare', 'firma', 'the'];
+    var cuvinte = function (s) { return norm(s).split(' ').filter(function (w) { return w.length >= 3 && GOALE.indexOf(w) < 0; }); };
+    function seamana(a, b) { return a === b || (a.length >= 4 && b.length >= 4 && (a.indexOf(b) === 0 || b.indexOf(a) === 0)); }
+    async function dosarClient(radacina, meta) {
+        var cauta = cuvinte((meta && meta.client) || '').concat(cuvinte((meta && meta.santier) || ''));
+        if (!cauta.length) return null;
+        var buni = [];
+        for await (var h of radacina.values()) {
+            if (h.kind !== 'directory') continue;
+            var cv = cuvinte(h.name), n = 0;
+            cv.forEach(function (w) { if (cauta.some(function (c) { return seamana(c, w); })) n++; });
+            if (n) buni.push({ h: h, n: n, lung: cv.length });
+        }
+        buni.sort(function (x, y) { return y.n - x.n; });
+        /* doar un câștigător clar; la egalitate întreb, ca să nu pun PDF-ul la alt client */
+        if (!buni.length || (buni[1] && buni[1].n === buni[0].n)) return null;
+        return buni[0].h;
+    }
+    window.__dosarClient = dosarClient; // pentru verificarea automată a potrivirii
+    window.__pdfInFolder = async function (nume, b) {
+        if (!window.showDirectoryPicker) {
+            window.alert('Salvarea direct în folder merge pe laptop, în Chrome sau Edge.\n\nPe telefon apasă „📤 Trimite" și alege OneDrive / Drive / Fișiere.');
+            return;
+        }
+        var schimba = !!(window.event && window.event.shiftKey); // citit acum: după primul await nu mai există
+        var vechi = nume0(b);
+        try {
+            /* întâi dosarul și voia de scriere — browserul le cere imediat după apăsare */
+            var rad = await bd(function (s) { return s.get('proiecte'); });
+            if (!rad || schimba) {
+                window.alert('Alege O SINGURĂ DATĂ dosarul „Proiecte" (Desktop › Smart Electroconect › Proiecte). De acum PDF-urile intră direct în dosarul clientului.\n\n(Ca să alegi alt dosar mai târziu: Shift + clic pe buton.)');
+                rad = await window.showDirectoryPicker({ id: 'proiecte', mode: 'readwrite' });
+                await bd(function (s) { return s.put(rad, 'proiecte'); });
+            }
+            if ((await rad.queryPermission({ mode: 'readwrite' })) !== 'granted' && (await rad.requestPermission({ mode: 'readwrite' })) !== 'granted')
+                throw new Error('Nu am primit voie să scriu în dosarul „' + rad.name + '".');
+            var meta = window.__DOCMETA || {};
+            var dos = await dosarClient(rad, meta);
+            var fh = null, unde = '';
+            if (dos) {
+                var fis = nume || 'document.pdf', exista = false;
+                try { await dos.getFileHandle(fis); exista = true; } catch (e) {}
+                if (exista && !window.confirm('În „' + rad.name + '\\' + dos.name + '" există deja „' + fis + '". Îl înlocuiesc?')) {
+                    gata(b, vechi);
+                    return;
+                }
+                fh = await dos.getFileHandle(fis, { create: true });
+                unde = rad.name + '\\' + dos.name;
+            } else {
+                /* n-am găsit sigur dosarul clientului: îl alegi tu, pornind din „Proiecte" */
+                fh = await window.showSaveFilePicker({ suggestedName: nume || 'document.pdf', startIn: rad,
+                    types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }] });
+                unde = 'dosarul ales';
+            }
+            if (b) b.textContent = 'Fac PDF-ul...';
+            var blob = await window.__faPdf();
+            var w = await fh.createWritable();
+            await w.write(blob);
+            await w.close();
+            gata(b, vechi, '✅ Salvat în ' + unde);
+        } catch (e) {
+            if (e && e.name === 'AbortError') { gata(b, vechi); return; }
+            if (e && e.name === 'SecurityError') {
+                window.alert('Browserul a cerut încă o apăsare pentru alegerea dosarului. Mai apasă o dată „📁 În folder".');
+                gata(b, vechi);
+                return;
+            }
+            window.alert('Nu am putut salva în folder: ' + ((e && e.message) || e) + '\n\nPDF-ul nu s-a pierdut: apasă „💾 Salvează PDF".');
+            gata(b, vechi);
+        }
+    };
+    window.__numePdf = function () { return String(document.title || 'document').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() + '.pdf'; };
+    /* pe telefon butonul de folder n-are ce face — îl ascund (bara e deja în pagină, înaintea scriptului) */
+    if (!window.showDirectoryPicker)
+        document.querySelectorAll('#btnInFolder').forEach(function (x) { x.style.display = 'none'; });
+}
+const DOSAR_PDF_JS = '(' + dosarPdfFereastra.toString() + ')();';
+const PRINT_TOOLBAR = '<style>@media print{.doc-toolbar{display:none!important}}</style><div class="doc-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;gap:8px;justify-content:space-between;align-items:center;background:#14181C;padding:10px 14px;border-bottom:1px solid #2A323B;font-family:-apple-system,BlinkMacSystemFont,sans-serif;"><button onclick="window.close()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">← Închide</button><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><button onclick="window.print()" title="Trimite la imprimantă" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer;">🖨 Printează</button><button onclick="window.__descarcaPdf(document.title.replace(/[\\\\/:*?&quot;&lt;&gt;|]/g,&quot; &quot;).trim()+&quot;.pdf&quot;, this)" title="Face fișierul PDF și îl salvează pe telefon sau pe calculator" style="background:#2E8BD1;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">💾 Salvează PDF</button><button onclick="window.__trimitePdf(window.__numePdf(), this)" title="Trimite PDF-ul pe WhatsApp, e-mail, Drive…" style="background:#1F8A5B;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">📤 Trimite</button><button id="btnInFolder" onclick="window.__pdfInFolder(window.__numePdf(), this)" title="Salvează PDF-ul direct pe laptop, în dosarul clientului din Proiecte (Shift + clic = alegi alt dosar)" style="background:#0F6CBD;color:#fff;border:none;border-radius:8px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;">📁 În folder</button></div></div><div class="doc-toolbar" style="position:sticky;top:56px;z-index:9998;display:block;background:#1b222a;color:#9fb0bf;padding:7px 14px;font-size:12px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;border-bottom:1px solid #2A323B;">ℹ️ Se deschide direct fereastra de printare. Dacă la „Destinație" scrie <b>Salvează ca PDF</b>, schimb-o în <b>imprimanta ta</b> — browserul o reține data viitoare. <b>💾 Salvează PDF</b> face în schimb fișierul pe loc, fără fereastra de printare. Dacă la print apare jos adresa site-ului sau data, oprește <b>Antete și subsoluri</b> în fereastra de printare — e o setare a telefonului.</div>' + '<script>' + MOTOR_PDF_JS + '<\/script>' + '<script>' + DOSAR_PDF_JS + '<\/script>' + '<script>(function(){var done=false;function go(){if(done)return;done=true;try{window.focus();}catch(e){}try{window.print();}catch(e){}}if(document.readyState==="complete"){setTimeout(go,350);}else{window.addEventListener("load",function(){setTimeout(go,350);});}})();<\/script>';
 function sectiuniOferta(doc) {
     const S = doc && doc.sistem;
     if (!S || !S.id)
@@ -24980,7 +25105,9 @@ const PAGINATOR_TIPAR = `
 function openPrintWindow(items) {
     const p = items[0] || {};
     const titlu = ((p.isDeviz ? 'Deviz' : (p.kind || 'Document')) + ' ' + numarDoc(p.doc) + (p.doc && p.doc.data ? ' din ' + fmtData(p.doc.data) : '')).replace(/\s+/g, ' ').trim();
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(titlu)}</title><style>${PRINT_CSS}</style></head><body>${PRINT_TOOLBAR}${items.map((it) => it.isDeviz ? devizArhivaPageHtml(it) : pageHtml(it)).join('')}<script>${PAGINATOR_TIPAR}<\/script></body></html>`;
+    /* pentru „📁 În folder": a cui e hârtia — după asta se caută dosarul clientului în Proiecte */
+    const meta = { client: (p.client && p.client.nume) || '', santier: (p.doc && p.doc.santierNume) || '' };
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(titlu)}</title><style>${PRINT_CSS}</style><script>window.__DOCMETA=${JSON.stringify(meta).replace(/</g, '\\u003c')};<\/script></head><body>${PRINT_TOOLBAR}${items.map((it) => it.isDeviz ? devizArhivaPageHtml(it) : pageHtml(it)).join('')}<script>${PAGINATOR_TIPAR}<\/script></body></html>`;
     const w = window.open('', '_blank');
     if (!w) {
         window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.');
