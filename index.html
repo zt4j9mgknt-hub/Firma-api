@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.27-unde-nu-bate';
+const APP_VERSION = 'v04.28-gestiune-pe-deviz';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -5875,6 +5875,34 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave, sa
     const [obiectiv, setObiectiv] = useState(initial?.obiectiv || '');
     const [santierId, setSantierId] = useState(initial?.santierId || '');
     const [santierNume, setSantierNume] = useState(initial?.santierNume || '');
+    /* GESTIUNEA DEVIZULUI (v04.28, cerut de patron): alegi gestiunea o dată, iar toate materialele de pe
+       deviz se leagă singure de materialele din ea (după denumire) — la emitere se scad automat din ea.
+       Rândurile adăugate după aceea se leagă și ele. Ce nu există în gestiune rămâne nelegat și se vede. */
+    const [gestiuneDeviz, setGestiuneDeviz] = useState(initial?.gestiune || '');
+    const gestiuniMat = useMemo(() => [...new Set((materials || []).filter((m) => m && !m.arhivat).map((m) => String(m.categorie || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ro')), [materials]);
+    const dinGestiuneDeviz = (it, g) => {
+        const lista = (materials || []).filter((m) => m && !m.arhivat && String(m.categorie || '') === g);
+        return gasesteMaterialRand(lista, { denumire: it.denumire }) || null;
+    };
+    useEffect(() => {
+        if (!gestiuneDeviz)
+            return;
+        setItems((prev) => {
+            let schimbat = false;
+            const next = prev.map((it) => {
+                if (!it || sectiuneRand(it) !== 'materiale' || !String(it.denumire || '').trim() || it.gestiune === gestiuneDeviz)
+                    return it;
+                const m = dinGestiuneDeviz(it, gestiuneDeviz);
+                if (!m)
+                    return it;
+                schimbat = true;
+                return { ...it, materialId: m.id, gestiune: gestiuneDeviz };
+            });
+            return schimbat ? next : prev;
+        });
+    }, [gestiuneDeviz, items, materials]);
+    const materialeDeviz = items.filter((it) => it && sectiuneRand(it) === 'materiale' && String(it.denumire || '').trim());
+    const negasite = gestiuneDeviz ? materialeDeviz.filter((it) => it.gestiune !== gestiuneDeviz) : [];
     const alegeSantier = (id) => {
         setSantierId(id);
         const sx = (santiere || []).find((x) => x.id === id);
@@ -5897,12 +5925,26 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave, sa
             setActAditional(sx.actAditional);
     };
     const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
-    return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-3" }, React.createElement("h3", { className: "text-sm font-medium", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, initial?.numar ? 'Editare deviz' : 'Deviz nou'), React.createElement("button", { onClick: onCancel, style: { color: 'var(--muted)' } }, React.createElement(Icon, null, "✕"))), clients.length === 0 ? (React.createElement("p", { className: "text-sm", style: { color: 'var(--muted)' } }, "Adaugă mai întâi un client (Beneficiar) în tab-ul „Clienți\".")) : (React.createElement(React.Fragment, null, React.createElement("div", { className: "flex gap-3 mb-3" }, React.createElement(AlegeClient, { clients: clients, value: clientId, onChange: setClientId, style: inputStyle }), React.createElement("div", { className: "flex items-center gap-2 rounded-lg px-3", style: inputStyle }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "TVA"), React.createElement("input", { type: "number", value: tva, onChange: (e) => setTva(e.target.value), className: "w-12 bg-transparent outline-none text-sm py-2", style: { color: 'var(--text)' } }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "%"))), React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-3" }, React.createElement("input", { placeholder: "Nr. contract", value: nrContract, onChange: (e) => setNrContract(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data contract", React.createElement(RoCalendarPicker, { value: dataContract, onChange: setDataContract })), React.createElement("input", { placeholder: "Act adițional", value: actAditional, onChange: (e) => setActAditional(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data act adițional", React.createElement(RoCalendarPicker, { value: dataActAditional, onChange: setDataActAditional })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "🏗 Șantier ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— alege-l și se completează singure adresa și lucrarea")), React.createElement("select", { value: santierId, onChange: (e) => alegeSantier(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "— fără șantier / scriu manual —"), (santiere || []).map((sx) => (React.createElement("option", { key: sx.id, value: sx.id, style: { background: 'var(--panel)' } }, sx.nume)))), !santierId && (React.createElement("input", { placeholder: "sau scrie numele șantierului", value: santierNume, onChange: (e) => setSantierNume(e.target.value), className: "w-full mt-1.5 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Obiectiv ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— apare pe devizul clientului (în locul numelui de șantier)")), React.createElement("input", { placeholder: "ex: Bloc rezidențial „Polus Residence”", value: obiectiv, onChange: (e) => setObiectiv(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Adresa șantierului"), React.createElement("input", { placeholder: "ex: Str. Memorandumului 28, Cluj-Napoca", value: adresaLucrare, onChange: (e) => setAdresaLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Lucrarea"), React.createElement("input", { placeholder: "ex: Instalații electrice interioare", value: lucrare, onChange: (e) => setLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), React.createElement(DevizRubriciEditor, { items: items, setItems: setItems, materials: materials, santiere: santiere || [], santierId: santierId,
-        sugestiiGestiune: [santierNume || ((santiere || []).find((x) => x.id === santierId) || {}).nume, ((clients || []).find((c) => c.id === clientId) || {}).nume] }), React.createElement(ParteaScrisaEditor, { sistem: sistem, setSistem: setSistem, sabloane: sabloane, setSabloane: setSabloane, persist: persist, titlu: 'Partea scrisă a devizului' }), React.createElement(TotaluriRubrici, { items: items, tva: tva }), React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renunță"), React.createElement("button", { onClick: () => (!clientId && !window.confirm('Devizul nu are beneficiar ales. Îl salvez fără client?')) ? null : onSave({
+    return (React.createElement("div", { className: "rounded-xl p-4 mb-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "flex items-center justify-between mb-3" }, React.createElement("h3", { className: "text-sm font-medium", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, initial?.numar ? 'Editare deviz' : 'Deviz nou'), React.createElement("button", { onClick: onCancel, style: { color: 'var(--muted)' } }, React.createElement(Icon, null, "✕"))), clients.length === 0 ? (React.createElement("p", { className: "text-sm", style: { color: 'var(--muted)' } }, "Adaugă mai întâi un client (Beneficiar) în tab-ul „Clienți\".")) : (React.createElement(React.Fragment, null, React.createElement("div", { className: "flex gap-3 mb-3" }, React.createElement(AlegeClient, { clients: clients, value: clientId, onChange: setClientId, style: inputStyle }), React.createElement("div", { className: "flex items-center gap-2 rounded-lg px-3", style: inputStyle }, React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "TVA"), React.createElement("input", { type: "number", value: tva, onChange: (e) => setTva(e.target.value), className: "w-12 bg-transparent outline-none text-sm py-2", style: { color: 'var(--text)' } }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, "%"))), React.createElement("div", { className: "grid grid-cols-2 gap-2 mb-3" }, React.createElement("input", { placeholder: "Nr. contract", value: nrContract, onChange: (e) => setNrContract(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data contract", React.createElement(RoCalendarPicker, { value: dataContract, onChange: setDataContract })), React.createElement("input", { placeholder: "Act adițional", value: actAditional, onChange: (e) => setActAditional(e.target.value), className: "rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }), React.createElement("div", { className: "text-xs flex flex-col gap-1", style: { color: 'var(--muted)' } }, "Data act adițional", React.createElement(RoCalendarPicker, { value: dataActAditional, onChange: setDataActAditional })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "🏗 Șantier ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— alege-l și se completează singure adresa și lucrarea")), React.createElement("select", { value: santierId, onChange: (e) => alegeSantier(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }, React.createElement("option", { value: "", style: { background: 'var(--panel)' } }, "— fără șantier / scriu manual —"), (santiere || []).map((sx) => (React.createElement("option", { key: sx.id, value: sx.id, style: { background: 'var(--panel)' } }, sx.nume)))), !santierId && (React.createElement("input", { placeholder: "sau scrie numele șantierului", value: santierNume, onChange: (e) => setSantierNume(e.target.value), className: "w-full mt-1.5 rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Obiectiv ", React.createElement("span", { style: { color: 'var(--muted2)' } }, "— apare pe devizul clientului (în locul numelui de șantier)")), React.createElement("input", { placeholder: "ex: Bloc rezidențial „Polus Residence”", value: obiectiv, onChange: (e) => setObiectiv(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Adresa șantierului"), React.createElement("input", { placeholder: "ex: Str. Memorandumului 28, Cluj-Napoca", value: adresaLucrare, onChange: (e) => setAdresaLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle })), React.createElement("div", { className: "col-span-2" }, React.createElement("div", { className: "text-xs mb-1", style: { color: 'var(--muted)' } }, "Lucrarea"), React.createElement("input", { placeholder: "ex: Instalații electrice interioare", value: lucrare, onChange: (e) => setLucrare(e.target.value), className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: inputStyle }))), (() => {
+        const numeS = santierNume || ((santiere || []).find((x) => x.id === santierId) || {}).nume || '';
+        const numeC = ((clients || []).find((c) => c.id === clientId) || {}).nume || '';
+        const nn = (s) => normSect(s).replace(/[^a-z0-9]+/g, ' ').trim();
+        const sugerata = gestiuniMat.find((g) => nn(g) && (nn(g) === nn(numeS) || nn(g) === nn(numeC))) || '';
+        return React.createElement("div", { "data-gestiune-deviz": true, className: "rounded-xl px-3 py-2 mb-2 flex items-center gap-2 flex-wrap text-sm", style: { background: 'var(--panel2)', border: '1px solid ' + (gestiuneDeviz ? '#2E8BD166' : 'var(--border)') } },
+            React.createElement("span", { style: { color: 'var(--muted)' } }, "📦 Materialele se scad din gestiunea:"),
+            React.createElement("select", { value: gestiuneDeviz, onChange: (e) => setGestiuneDeviz(e.target.value), "data-act": "alege-gestiune-deviz", className: "rounded-lg px-2 py-1.5 text-sm outline-none", style: inputStyle },
+                React.createElement("option", { value: "" }, gestiuniMat.length ? "— alege gestiunea —" : "— nu ai încă gestiuni —"),
+                gestiuniMat.map((g) => React.createElement("option", { key: g, value: g }, (g === sugerata ? '★ ' : '') + g))),
+            !gestiuneDeviz && sugerata && React.createElement("button", { type: "button", onClick: () => setGestiuneDeviz(sugerata), className: "text-xs px-2 py-1 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "★ ", sugerata),
+            gestiuneDeviz && React.createElement("span", { className: "text-xs", style: { color: negasite.length ? 'var(--acc3)' : 'var(--acc2)' } },
+                materialeDeviz.length - negasite.length, " din ", materialeDeviz.length, " materiale găsite în gestiune",
+                negasite.length ? " · nu sunt în ea: " + negasite.map((x) => x.denumire).slice(0, 4).join(', ') + (negasite.length > 4 ? '…' : '') : " · la emitere se scad automat"));
+    })(), React.createElement(DevizRubriciEditor, { items: items, setItems: setItems, materials: materials, santiere: santiere || [], santierId: santierId,
+        sugestiiGestiune: [gestiuneDeviz, santierNume || ((santiere || []).find((x) => x.id === santierId) || {}).nume, ((clients || []).find((c) => c.id === clientId) || {}).nume] }), React.createElement(ParteaScrisaEditor, { sistem: sistem, setSistem: setSistem, sabloane: sabloane, setSabloane: setSabloane, persist: persist, titlu: 'Partea scrisă a devizului' }), React.createElement(TotaluriRubrici, { items: items, tva: tva }), React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renunță"), React.createElement("button", { onClick: () => (!clientId && !window.confirm('Devizul nu are beneficiar ales. Îl salvez fără client?')) ? null : onSave({
             ...(initial || {}),
             id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || dataLocala(new Date()),
             clientId, items: cuSectiuni(itemeNumerice(items)), tva: Number(tva), status: initial?.status || 'Ciornă',
-            nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, obiectiv, santierId, santierNume,
+            nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, obiectiv, santierId, santierNume, gestiune: gestiuneDeviz || undefined,
             sistem: sistem.id ? Object.assign({}, sistem, { puncte: (sistem.puncte || []).map((x) => String(x).trim()).filter(Boolean), conditii: (sistem.conditii || []).map((x) => String(x).trim()).filter(Boolean) }) : undefined,
         }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salvează"))))));
 }
@@ -32742,7 +32784,8 @@ function App() {
             const cant = Number(it.cantitate) || 0;
             if (!cant)
                 return;
-            const m = gasesteMaterialRand(mats, it);
+            /* devizul cu gestiune (v04.28): rândul nelegat se caută întâi în gestiunea devizului */
+            const m = (doc.gestiune && !it.materialId && gasesteMaterialRand(mats.filter((x) => String(x.categorie || '') === doc.gestiune), it)) || gasesteMaterialRand(mats, it);
             if (!m) {
                 if (String(it.denumire || '').trim())
                     unmatched.push(it.denumire);
@@ -32773,9 +32816,12 @@ function App() {
         if (!deScos.length)
             return { ...baza, stocMesaj: (notaNep + notaLiv).trim() || undefined };
         const lista = deScos.map((x) => `• ${x.denumire} — ${x.cantitate} ${x.um}${x.gestiune ? ` (din ${x.gestiune})` : ''}`).join('\n');
-        const ok = window.confirm(`${eticheta} — scot din magazie?\n\n${lista}\n\n`
+        /* devizul cu gestiune aleasă se scade SINGUR (cerut de patron); revenirea la ciornă pune totul la loc */
+        const ok = doc.gestiune ? true : window.confirm(`${eticheta} — scot din magazie?\n\n${lista}\n\n`
             + (areSantier ? '(ce s-a livrat deja pe șantier nu se mai scade)' : 'Documentul nu e legat de niciun șantier, deci nu știu ce s-a livrat deja.')
             + '\n\nOK = scad din stoc · Anulează = salvez fără să ating stocul');
+        if (doc.gestiune)
+            arataSalvat('📦 Scăzut din gestiunea „' + doc.gestiune + '": ' + deScos.map((x) => x.denumire + ' ' + x.cantitate + ' ' + x.um).join(', ') + (unmatched.length ? ' · negăsite: ' + unmatched.join(', ') : ''));
         if (!ok)
             return { ...baza, stocMesaj: (notaNep + notaLiv + 'Stocul n-a fost atins (ai ales să nu scazi).').trim() };
         let nextMaterials = mats;
