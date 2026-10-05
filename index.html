@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.20-deviz-o-pagina';
+const APP_VERSION = 'v04.21-cifre-negre';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -24091,8 +24091,11 @@ function modelDocSablon({ doc, client, company, fel }) {
     const titlu = eOf ? 'Oferta tehnico-comerciala pentru ' + ((doc && (doc.titluDoc || doc.lucrare || (doc.sistem && doc.sistem.subtitlu))) || '______________')
         : 'Deviz lucrări – ' + (lucrare || '______________');
     const linii = [nrT];
-    if (!eOf && doc && doc.nrContract)
-        linii.push('Contract nr. ' + doc.nrContract + ' din ' + (doc.dataContract ? dataDoc(doc.dataContract) : '__.__.______'));
+    /* rândul de contract e mereu în șablon; fără număr scrie doar „Contract din <data>" (cerut de patron) */
+    if (!eOf && doc) {
+        const dC = doc.dataContract ? dataDoc(doc.dataContract) : '__.__.______';
+        linii.push(String(doc.nrContract || '').trim() ? 'Contract nr. ' + String(doc.nrContract).trim() + ' din ' + dC : 'Contract din ' + dC);
+    }
     if (!eOf && doc && doc.actAditional)
         linii.push('Act adițional nr. ' + doc.actAditional + ' din ' + (doc.dataActAditional ? dataDoc(doc.dataActAditional) : '__.__.______'));
     const proiect = doc && (doc.proiect || doc.santierNume || doc.obiectiv || (eOf ? '' : doc.lucrare));
@@ -24148,7 +24151,7 @@ function docSablonHtml({ doc, client, company, fel }) {
     const M = modelDocSablon({ doc, client, company, fel });
     const K = 0.84;
     const pt = (v) => (v * K).toFixed(2) + 'pt';
-    const NAVY = '#0B2545', CYAN = '#00A8E8', CYAN2 = '#02A3E4', TINT = '#EEF6FB', TXT = '#1F2937', GRI = '#4B5563', ALBASTRU = '#0000FF', SLATE = '#64748B', HAIR = '#E5E7EB', LINK = '#0563C1';
+    const NAVY = '#0B2545', CYAN = '#00A8E8', CYAN2 = '#02A3E4', TINT = '#EEF6FB', TXT = '#1F2937', GRI = '#4B5563', SLATE = '#64748B', HAIR = '#E5E7EB', LINK = '#0563C1';
     const F = "font-family:Calibri,Carlito,'Segoe UI',Arial,sans-serif;";
     const lat = [7, 48, 9, 10, 12, 14, 17].map((w) => (w / 117 * 100).toFixed(2) + '%');
     const colg = `<colgroup>${lat.map((w) => `<col style="width:${w}" />`).join('')}</colgroup>`;
@@ -24200,7 +24203,7 @@ function docSablonHtml({ doc, client, company, fel }) {
                 return;
             }
             const st = `${linie}font-size:${pt(10.5)};color:${TXT};vertical-align:middle;`;
-            randuri.push(`<tr style="height:${pt(19.95)};">${td(esc(r.nr), st + 'text-align:center;')}${td(esc(r.den), st + 'line-height:1.25;', 2)}${td(esc(r.um), st + 'text-align:center;')}${td(esc(String(r.cant).replace('.', ',')), st + `text-align:center;color:${ALBASTRU};`)}${td(n2(r.pret), st + `text-align:right;color:${ALBASTRU};`)}${td(n2(r.val), st + 'text-align:right;')}</tr>`);
+            randuri.push(`<tr style="height:${pt(19.95)};">${td(esc(r.nr), st + 'text-align:center;')}${td(esc(r.den), st + 'line-height:1.25;', 2)}${td(esc(r.um), st + 'text-align:center;')}${td(esc(String(r.cant).replace('.', ',')), st + 'text-align:center;color:#000;')}${td(n2(r.pret), st + 'text-align:right;color:#000;')}${td(n2(r.val), st + 'text-align:right;')}</tr>`);
         });
     });
     if (!randuri.length)
@@ -24213,7 +24216,7 @@ function docSablonHtml({ doc, client, company, fel }) {
       ${rTot('TOTAL MATERIALE (fără TVA)', M.totMat)}
       ${rTot('TOTAL MANOPERĂ (fără TVA)', M.totMan)}
       ${rTot('TOTAL GENERAL (fără TVA)', M.totFara)}
-      ${rTot('TVA', M.tvaVal, td(esc(M.tvaRata + '%'), `background:${TINT};font-size:${pt(10.5)};font-weight:700;color:${ALBASTRU};text-align:left;`))}
+      ${rTot('TVA', M.tvaVal, td(esc(M.tvaRata + '%'), `background:${TINT};font-size:${pt(10.5)};font-weight:700;color:#000;text-align:left;`))}
       <tr style="height:${pt(25.95)};">${td('TOTAL GENERAL (cu TVA)', `background:${NAVY};font-size:${pt(12.5)};font-weight:700;color:#fff;text-align:right;`, 6)}${td(n2(M.total), `background:${NAVY};font-size:${pt(12.5)};font-weight:700;color:#fff;text-align:right;`)}</tr>
     </tbody></table>`;
     /* textele de după totaluri: fiecare bloc e un <div> separat, ca paginatorul să le poată muta pe foi */
@@ -24370,6 +24373,11 @@ async function excelDinSablon({ doc, client, company, fel }) {
         return r++;
     };
     const rand2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+    /* cantitatea, prețul și cota TVA: în șablon sunt albastre; patronul le vrea negre */
+    const negru = (rr, coloane) => coloane.forEach((c) => {
+        const cell = ws.getRow(rr).getCell(c);
+        cell.font = { ...(cell.font || {}), color: { argb: 'FF000000' } };
+    });
     const randSect = {};
     M.sectiuni.forEach((s, si) => {
         if (si > 0)
@@ -24387,6 +24395,7 @@ async function excelDinSablon({ doc, client, company, fel }) {
             const rr = r;
             /* prețul exact (cu adaos), nerotunjit: Excel recalculează E×F și trebuie să iasă suma din aplicație */
             scrie(p, [x.nr, x.den, null, x.um, x.cant, x.pret, { formula: `E${rr}*F${rr}`, result: rand2(x.val) }], [[2, 3]]);
+            negru(rr, [5, 6]);
             prim = prim || rr;
             ult = rr;
         });
@@ -24441,7 +24450,9 @@ async function excelDinSablon({ doc, client, company, fel }) {
             val[6] = { formula: `G${rTotNou.gen}+G${rTvaNou}`, result: rand2(M.total) };
             rTotNou.cu = r;
         }
-        scrie(x, val, x.imb);
+        const rScris = scrie(x, val, x.imb);
+        if (et === 'tva')
+            negru(rScris, [6]);
     });
     if (pTitlu)
         M.blocuri.forEach((bl, bi) => {
