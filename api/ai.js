@@ -72,6 +72,60 @@ const SISTEM_EXTRAGERE =
   '6. „lucrare" = denumirea lucrării/proiectului, „adresa" = adresa șantierului, dacă apar; altfel text gol.\n' +
   '7. Nu inventa rânduri. Nu uni rânduri diferite. Rândurile de titlu sau subtotal nu se iau.';
 
+/* v04.24 — FACTURA DE LA FURNIZOR → GESTIUNE. Altă treabă decât lista clientului: aici prețurile
+   CONTEAZĂ (intră în prețul mediu din gestiune), iar denumirile rămân EXACT ca pe factură — după ele
+   se potrivesc cu materialele din catalog. Patronul verifică totul pe ecran înainte să intre în stoc. */
+const SISTEM_FACTURA =
+  'Ești contabilul unei firme de instalații electrice din România. Primești FACTURA unui furnizor (PDF sau poză). ' +
+  'Extragi antetul și TOATE rândurile de produse, exact cum sunt scrise.\n' +
+  'Răspunzi DOAR cu JSON valid, exact cu structura: ' +
+  '{"furnizor":"","cuiFurnizor":"","serie":"","numar":"","data":"","scadenta":"","moneda":"RON",' +
+  '"totalFaraTva":0,"totalTva":0,"total":0,"observatii":"",' +
+  '"randuri":[{"denumire":"","cod":"","um":"","cantitate":0,"pretUnitar":0,"cotaTva":21,"valoare":0}]}\n' +
+  'Reguli obligatorii:\n' +
+  '1. „denumire" se copiază EXACT ca pe factură (aceleași cuvinte, coduri și dimensiuni). Nu reformula, nu traduce, nu prescurta.\n' +
+  '2. „pretUnitar" = prețul unitar FĂRĂ TVA, după reducere dacă factura arată reducerea pe rând. „valoare" = valoarea rândului fără TVA, cum e tipărită.\n' +
+  '3. Numerele: zecimale cu punct, fără separator de mii (1.234,56 → 1234.56). Data: AAAA-LL-ZZ.\n' +
+  '4. „um" scurt (buc, m, ml, kg, set, rola, cutie). Dacă lipsește, „buc".\n' +
+  '5. Rândurile de transport, ambalaj, garanție verde (timbru verde) sau discount pe total se iau și ele, ca rânduri separate, cu denumirea de pe factură.\n' +
+  '6. Furnizorul e cel care EMITE factura (vânzătorul), nu cumpărătorul.\n' +
+  '7. Nu inventa. Ce nu se citește rămâne text gol sau 0 și se spune în „observatii". Rândurile de subtotal/total nu sunt rânduri de produs.';
+
+function curataFactura(brut) {
+  let o = brut;
+  if (typeof o === 'string') o = JSON.parse(o.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim());
+  o = o || {};
+  const nr = (v) => { const c = Number(String(v == null ? '' : v).replace(/\s/g, '').replace(',', '.')); return isFinite(c) ? c : 0; };
+  const txt = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+  const data = (v) => { const s = txt(v, 20); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; };
+  const randuri = (Array.isArray(o.randuri) ? o.randuri : []).map((x) => ({
+    denumire: txt(x && x.denumire, 300),
+    cod: txt(x && x.cod, 60),
+    um: txt(x && x.um, 20) || 'buc',
+    cantitate: nr(x && x.cantitate),
+    pretUnitar: nr(x && x.pretUnitar),
+    cotaTva: nr(x && x.cotaTva),
+    valoare: nr(x && x.valoare),
+  })).filter((x) => x.denumire).slice(0, 500);
+  return {
+    furnizor: txt(o.furnizor, 200), cuiFurnizor: txt(o.cuiFurnizor, 30), serie: txt(o.serie, 20), numar: txt(o.numar, 40),
+    data: data(o.data), scadenta: data(o.scadenta), moneda: txt(o.moneda, 5).toUpperCase() || 'RON',
+    totalFaraTva: nr(o.totalFaraTva), totalTva: nr(o.totalTva), total: nr(o.total), observatii: txt(o.observatii, 1000), randuri,
+  };
+}
+
+function trimiteFactura(res, raspuns, model, finish) {
+  try {
+    return res.status(200).json({ factura: curataFactura(raspuns), model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
+  } catch (_) {
+    return res.status(502).json({
+      error: finish === 'MAX_TOKENS'
+        ? 'Factura are prea multe rânduri și răspunsul AI s-a tăiat. Încearcă doar paginile cu produse.'
+        : 'AI a răspuns, dar nu într-un format citibil. Mai încearcă o dată.',
+    });
+  }
+}
+
 function curataLista(brut) {
   let o = brut;
   if (typeof o === 'string') {
@@ -184,11 +238,13 @@ export default async function handler(req, res) {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     /* Acțiunea nouă: lista de materiale din PDF-ul / poza clientului. Doar Managerul —
        ofertele sunt treaba lui, iar un fișier mare consumă cota mult mai repede. */
-    const extrage = body.actiune === 'extrageLista';
+    /* extrageFactura (v04.24): factura furnizorului → rânduri cu prețuri, pentru gestiune */
+    const eFactura = body.actiune === 'extrageFactura';
+    const extrage = body.actiune === 'extrageLista' || eFactura;
     let fisier = null;
     if (extrage) {
       if (rolReal !== 'Manager') {
-        return res.status(403).json({ error: 'Doar Managerul poate face oferte din fișiere.' });
+        return res.status(403).json({ error: eFactura ? 'Doar Managerul poate importa facturi în gestiune.' : 'Doar Managerul poate face oferte din fișiere.' });
       }
       const f = body.fisier || {};
       const mime = String(f.mime || '').toLowerCase().trim();
@@ -202,7 +258,9 @@ export default async function handler(req, res) {
       }
       fisier = { mime, base64: b64 };
     }
-    const intrebare = extrage
+    const intrebare = eFactura
+      ? ('Extrage antetul și toate rândurile din factura furnizorului atașată' + (body.nume ? (' („' + String(body.nume).slice(0, 120) + '")') : '') + '. Răspunde doar cu JSON-ul cerut.')
+      : extrage
       ? ('Extrage lista de materiale și lucrări electrice din documentul atașat' + (body.nume ? (' („' + String(body.nume).slice(0, 120) + '")') : '') + '. Răspunde doar cu JSON-ul cerut.')
       : String(body.intrebare || '').slice(0, 8000).trim();
     const context = (!extrage && Array.isArray(body.context)) ? body.context.slice(0, 20).map((x) => String(x).slice(0, 1500)) : [];
@@ -226,7 +284,7 @@ export default async function handler(req, res) {
       '5. Fără exagerări și fără date inventate. Cifrele, denumirile și cantitățile rămân exact cele primite; ' +
       'doar formularea se schimbă. Ce nu s-a spus nu se completează.';
 
-    const sistem = extrage ? SISTEM_EXTRAGERE : json
+    const sistem = eFactura ? SISTEM_FACTURA : extrage ? SISTEM_EXTRAGERE : json
       ? 'Ești redactorul tehnic al unei firme de instalații electrice din România. Răspunzi DOAR cu JSON valid, ' +
         'exact în structura cerută de utilizator, fără text în afara lui.\n' + REGISTRU + '\n' +
         '6. Fiecare text din JSON (denumiri de lucrări, denumiri de materiale, rezumat) se rescrie în registrul de mai sus, ' +
@@ -281,7 +339,7 @@ export default async function handler(req, res) {
         // Îi spunem aplicației dacă răspunsul s-a oprit din lipsă de spațiu, ca să știe
         // că JSON-ul poate fi incomplet și să-l repare în loc să arunce totul.
         const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
-        if (extrage) return trimiteLista(res, raspuns, model, finish);
+        if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
         return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
       }
       const msg = (d && d.error && d.error.message) ? d.error.message : '';
@@ -330,7 +388,7 @@ export default async function handler(req, res) {
           } catch (_) {}
           if (raspuns) {
             const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
-            if (extrage) return trimiteLista(res, raspuns, model, finish);
+            if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
             return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', dupaAsteptare: true });
           }
         }
