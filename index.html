@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.23-sageti-rapoarte';
+const APP_VERSION = 'v04.24-factura-gestiune';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -5052,7 +5052,161 @@ const MATERIAL_IMPORT_SEED = [
     ['Taxă verde categoria 5.32', 'Smart', 'bucata', 4.0, 0.37],
     ['Taxă verde categoria 5.39', 'Smart', 'bucata', 4.0, 0.67],
 ];
-function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist, company, subTab, currentUser, achizitii, setAchizitii }) {
+/* 📄 IMPORT FACTURĂ FURNIZOR → GESTIUNE (v04.24, cerut de patron: „ca la SmartBill").
+   Pui PDF-ul (sau poza) facturii, AI-ul (/api/ai, extrageFactura) scoate furnizorul, numărul, data
+   și rândurile cu prețuri; patronul VERIFICĂ și corectează pe ecran, alege gestiunea și abia apoi
+   apasă „Adaugă în gestiune". Gestiunea = câmpul „categorie" al materialului (așa vine și din
+   SmartBill). Același produs în altă gestiune e alt material, cu stocul lui — ca în SmartBill.
+   Rândurile de transport / timbru verde / discount pornesc nebifate (nu sunt marfă de stoc). */
+const RE_NU_E_MARFA = /transport|livrare|timbru|garan[tț]ie verde|ambalaj|discount|reducere|taxa|tax[aă]/i;
+function ImportFacturaGestiune({ materials, gestiuni, achizitii, onAdauga, onInchide }) {
+    const inputStyle = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
+    const fileRef = useRef(null);
+    const [lucrez, setLucrez] = useState('');
+    const [eroare, setEroare] = useState('');
+    const [fact, setFact] = useState(null);
+    const [randuri, setRanduri] = useState([]);
+    const ultimaGest = (() => { try { return localStorage.getItem('ultimaGestiuneImport') || ''; } catch (_) { return ''; } })();
+    const [gestiune, setGestiune] = useState(ultimaGest && gestiuni.includes(ultimaGest) ? ultimaGest : (gestiuni[0] || ''));
+    const [gestNoua, setGestNoua] = useState('');
+    const gestFinala = gestiune === '__noua__' ? gestNoua.trim() : gestiune;
+    const n = (s) => normSect(s).replace(/[^a-z0-9]+/g, ' ').trim();
+    const activi = (materials || []).filter((m) => m && !m.arhivat);
+    /* potrivirea cu catalogul, ÎN gestiunea aleasă: întâi după cod, apoi după denumire */
+    const potriveste = (r, g) => {
+        const dinG = activi.filter((m) => String(m.categorie || '') === String(g || ''));
+        const peCod = r.cod && dinG.find((m) => m.cod && n(m.cod) === n(r.cod));
+        const peNume = dinG.find((m) => n(m.denumire) === n(r.denumire));
+        return (peCod || peNume || {}).id || '__nou__';
+    };
+    const inAlta = (r) => activi.find((m) => n(m.denumire) === n(r.denumire) && String(m.categorie || '') !== String(gestFinala || ''));
+    useEffect(() => { setRanduri((rs) => rs.map((r) => (r.tintaAtinsa ? r : { ...r, tinta: potriveste(r, gestFinala) }))); }, [gestFinala]);
+    const citeste = async (file) => {
+        setEroare('');
+        if (!file)
+            return;
+        const mime = String(file.type || '').toLowerCase();
+        const ePdf = mime === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+        const ePoza = mime.startsWith('image/');
+        if (!ePdf && !ePoza) { setEroare('Merge PDF-ul facturii sau o poză (JPG, PNG, WEBP).'); return; }
+        try {
+            setLucrez('Pregătesc fișierul…');
+            let tip = ePdf ? 'application/pdf' : mime;
+            let b64 = await citesteBase64(file);
+            if (ePoza && (b64.length > LIMITA_FISIER_AI_B64 || !TIPURI_AI.includes(tip))) {
+                b64 = await micsoreazaPozaListei(file);
+                if (b64.length > LIMITA_FISIER_AI_B64)
+                    b64 = await micsoreazaPozaListei(file, 1600, 0.6);
+                tip = 'image/jpeg';
+            }
+            if (b64.length > LIMITA_FISIER_AI_B64) {
+                setEroare('Fișierul e prea mare (' + (file.size / 1048576).toFixed(1) + ' MB; merge până la ~2,5 MB). Salvează doar paginile cu produse.');
+                setLucrez('');
+                return;
+            }
+            setLucrez('Citesc factura cu AI… (10–40 de secunde)');
+            const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, timeoutMs: 120000,
+                body: JSON.stringify({ actiune: 'extrageFactura', fisier: { mime: tip, base64: b64 }, nume: file.name || '' }) });
+            let d = {};
+            try { d = await r.json(); } catch (_) { }
+            if (r.ok && d && d.factura) {
+                const F = d.factura;
+                setFact({ furnizor: F.furnizor || '', cuiFurnizor: F.cuiFurnizor || '', serie: F.serie || '', numar: F.numar || '', data: F.data || dataLocala(new Date()),
+                    moneda: F.moneda || 'RON', totalFaraTva: F.totalFaraTva || 0, totalTva: F.totalTva || 0, total: F.total || 0, observatii: F.observatii || '', fisier: file.name || '' });
+                setRanduri((F.randuri || []).map((x) => {
+                    const rr = { id: uid(), denumire: x.denumire, cod: x.cod || '', um: x.um || 'buc', cantitate: x.cantitate || 0, pretUnitar: x.pretUnitar || 0, cotaTva: x.cotaTva, valoare: x.valoare || 0 };
+                    return { ...rr, ia: !RE_NU_E_MARFA.test(rr.denumire), tinta: potriveste(rr, gestFinala) };
+                }));
+                if (!(F.randuri || []).length)
+                    setEroare('N-am găsit rânduri de produse în factură. Verifică dacă e fișierul bun.');
+                else if (d.taiat)
+                    setEroare('Factura e lungă — s-ar putea să lipsească ultimele rânduri. Verifică la final.');
+            }
+            else if (r.status === 404 || r.status === 400 && /actiune|necunoscut/i.test((d && d.error) || ''))
+                setEroare('Serverul nu știe încă să citească facturi. Mai așteaptă un minut și încearcă din nou.');
+            else
+                setEroare((d && d.error) ? d.error : 'AI indisponibil momentan (cod ' + r.status + '). Mai încearcă.');
+        }
+        catch (e) {
+            setEroare(/abort|timeout/i.test(String(e && (e.name + e.message))) ? 'AI-ul a răspuns prea greu. Mai încearcă o dată.' : ('Fără conexiune la AI: ' + ((e && e.message) || e)));
+        }
+        setLucrez('');
+    };
+    const setRand = (id, camp, val) => setRanduri((rs) => rs.map((r) => r.id === id ? { ...r, [camp]: val, ...(camp === 'tinta' ? { tintaAtinsa: true } : {}) } : r));
+    const cifra = (v) => Number(String(v).replace(',', '.')) || 0;
+    const deLuat = randuri.filter((r) => r.ia);
+    const sumaRanduri = randuri.reduce((s, r) => s + cifra(r.cantitate) * cifra(r.pretUnitar), 0);
+    const dif = fact ? Math.round((sumaRanduri - (Number(fact.totalFaraTva) || 0)) * 100) / 100 : 0;
+    const dubla = fact && (achizitii || []).find((a) => a && a.nrFactura && fact.numar && n(a.nrFactura) === n((fact.serie || '') + fact.numar) && n(a.furnizor) === n(fact.furnizor));
+    const probleme = deLuat.filter((r) => !String(r.denumire || '').trim() || cifra(r.cantitate) <= 0);
+    const adauga = () => {
+        if (gestiune === '__noua__' && !gestFinala) { window.alert('Scrie numele gestiunii noi.'); return; }
+        if (!gestFinala && !window.confirm('Marfa intră fără gestiune. Continui? (Poți alege o gestiune din listă.)'))
+            return;
+        if (!deLuat.length) { window.alert('Niciun rând bifat pentru stoc.'); return; }
+        if (probleme.length) { window.alert(probleme.length + ' rânduri bifate n-au denumire sau cantitate. Corectează-le sau scoate-le bifa.'); return; }
+        if (dubla && !window.confirm('Factura ' + (fact.serie || '') + fact.numar + ' de la ' + fact.furnizor + ' a mai fost introdusă o dată. O adaug din nou? Cantitățile se adună.'))
+            return;
+        if (Math.abs(dif) > 1 && !window.confirm('Suma rândurilor (' + money(sumaRanduri) + ') nu bate cu totalul facturii fără TVA (' + money(fact.totalFaraTva) + '). Adaug totuși?'))
+            return;
+        try { localStorage.setItem('ultimaGestiuneImport', gestFinala); } catch (_) { }
+        onAdauga({ factura: fact, gestiune: gestFinala, randuri: deLuat.map((r) => ({ ...r, cantitate: cifra(r.cantitate), pretUnitar: cifra(r.pretUnitar), materialId: r.tinta && r.tinta !== '__nou__' ? r.tinta : undefined })) });
+    };
+    const dinG = activi.filter((m) => String(m.categorie || '') === String(gestFinala || '')).sort((a, b) => String(a.denumire).localeCompare(String(b.denumire), 'ro'));
+    return React.createElement("div", { "data-import-factura": true, className: "space-y-3" },
+        !fact && React.createElement("div", { className: "rounded-xl p-4 text-sm space-y-2", style: { background: 'var(--panel2)', border: '1px dashed var(--border)', color: 'var(--muted)' } },
+            React.createElement("div", null, "Pune PDF-ul facturii de la furnizor (sau o poză clară). Citesc furnizorul, numărul, data și rândurile cu prețuri; ", React.createElement("b", { style: { color: 'var(--text)' } }, "tu verifici"), " totul și abia apoi intră în gestiune."),
+            React.createElement("input", { ref: fileRef, type: "file", accept: "application/pdf,image/*", onChange: (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; citeste(f); }, className: "hidden" }),
+            React.createElement("button", { type: "button", onClick: () => fileRef.current && fileRef.current.click(), disabled: !!lucrez, "data-act": "alege-factura", className: "btnPrim disabled:opacity-50" }, lucrez || '📄 Alege factura (PDF / poză)')),
+        lucrez && fact == null && React.createElement("div", { className: "text-xs", style: { color: 'var(--acc1)' } }, lucrez),
+        eroare && React.createElement("div", { className: "text-xs rounded-lg px-3 py-2", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, eroare),
+        fact && React.createElement(React.Fragment, null,
+            React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-2 text-xs", style: { color: 'var(--muted)' } },
+                React.createElement("label", { className: "flex flex-col gap-1 col-span-2" }, "Furnizor", React.createElement("input", { value: fact.furnizor, onChange: (e) => setFact({ ...fact, furnizor: e.target.value }), className: "rounded-lg px-2 py-1.5 text-sm outline-none", style: inputStyle })),
+                React.createElement("label", { className: "flex flex-col gap-1" }, "Serie + nr. factură", React.createElement("input", { value: (fact.serie || '') + (fact.serie && fact.numar ? ' ' : '') + (fact.numar || ''), onChange: (e) => setFact({ ...fact, serie: '', numar: e.target.value }), className: "rounded-lg px-2 py-1.5 text-sm outline-none", style: inputStyle })),
+                React.createElement("label", { className: "flex flex-col gap-1" }, "Data", React.createElement(RoCalendarPicker, { value: fact.data, onChange: (v) => setFact({ ...fact, data: v }) }))),
+            React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-sm rounded-lg px-3 py-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+                React.createElement("span", { style: { color: 'var(--muted)' } }, "Intră în gestiunea:"),
+                React.createElement("select", { value: gestiune, onChange: (e) => setGestiune(e.target.value), "data-alege-gestiune": true, className: "rounded-lg px-2 py-1.5 text-sm outline-none", style: inputStyle },
+                    React.createElement("option", { value: "" }, "— fără gestiune —"),
+                    gestiuni.map((g) => React.createElement("option", { key: g, value: g }, g)),
+                    React.createElement("option", { value: "__noua__" }, "✍ Gestiune nouă…")),
+                gestiune === '__noua__' && React.createElement("input", { value: gestNoua, onChange: (e) => setGestNoua(e.target.value), placeholder: "ex: Magazie Florești", className: "rounded-lg px-2 py-1.5 text-sm outline-none", style: inputStyle }),
+                fact.moneda && fact.moneda !== 'RON' && React.createElement("span", { style: { color: 'var(--acc3)' } }, "⚠ Factura e în ", fact.moneda, " — prețurile intră ca atare; transformă-le în lei înainte dacă e cazul.")),
+            dubla && React.createElement("div", { className: "text-xs rounded-lg px-3 py-2", style: { color: 'var(--acc3)', background: 'var(--panel2)', border: '1px solid #E5A43F66' } }, "⚠ Factura asta pare introdusă deja (", fmtData(dubla.data), "). Verifică să nu dublezi stocul."),
+            React.createElement("div", { className: "space-y-1.5" },
+                randuri.map((r, i) => {
+                    const alta = r.tinta === '__nou__' && inAlta(r);
+                    const val = cifra(r.cantitate) * cifra(r.pretUnitar);
+                    const valDif = r.valoare && Math.abs(val - r.valoare) > 0.05;
+                    return React.createElement("div", { key: r.id, "data-rand-factura": i, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', opacity: r.ia ? 1 : 0.55, border: '1px solid ' + (valDif ? '#E5A43F66' : 'transparent') } },
+                        React.createElement("div", { className: "flex items-start gap-2" },
+                            React.createElement("input", { type: "checkbox", checked: !!r.ia, onChange: (e) => setRand(r.id, 'ia', e.target.checked), title: "Intră în stoc", className: "mt-1.5" }),
+                            React.createElement("textarea", { rows: 1, value: r.denumire, onChange: (e) => setRand(r.id, 'denumire', e.target.value.replace(/\n/g, ' ')), className: "flex-1 min-w-0 bg-transparent outline-none text-sm", style: { color: 'var(--text)', resize: 'vertical', lineHeight: 1.35 } })),
+                        React.createElement("div", { className: "flex items-center gap-2 flex-wrap mt-1 pl-6 text-xs", style: { color: 'var(--muted)' } },
+                            r.cod && React.createElement("span", { className: "cifre", style: { color: 'var(--muted2)' } }, "cod ", r.cod),
+                            React.createElement("input", { value: r.cantitate, inputMode: "decimal", onChange: (e) => setRand(r.id, 'cantitate', e.target.value), className: "w-16 rounded px-1.5 py-1 text-sm outline-none cifre", style: inputStyle, title: "Cantitate" }),
+                            React.createElement("input", { value: r.um, onChange: (e) => setRand(r.id, 'um', e.target.value), className: "w-14 rounded px-1.5 py-1 text-sm outline-none", style: inputStyle, title: "U.M." }),
+                            "×",
+                            React.createElement("input", { value: r.pretUnitar, inputMode: "decimal", onChange: (e) => setRand(r.id, 'pretUnitar', e.target.value), className: "w-24 rounded px-1.5 py-1 text-sm outline-none cifre", style: inputStyle, title: "Preț unitar fără TVA" }),
+                            "=", React.createElement("b", { className: "cifre", style: { color: valDif ? 'var(--acc3)' : 'var(--text)' } }, money(val)),
+                            valDif && React.createElement("span", { style: { color: 'var(--acc3)' } }, "(pe factură ", money(r.valoare), ")"),
+                            r.ia && React.createElement("select", { value: r.tinta, onChange: (e) => setRand(r.id, 'tinta', e.target.value), className: "rounded px-1.5 py-1 text-xs outline-none max-w-[260px]", style: inputStyle, title: "Cu ce material din gestiune se adună" },
+                                React.createElement("option", { value: "__nou__" }, "➕ material nou în " + (gestFinala || 'gestiune')),
+                                dinG.map((m) => React.createElement("option", { key: m.id, value: m.id }, "= " + m.denumire + " (" + (Number(m.stoc) || 0) + " " + (m.um || '') + ")"))),
+                            !r.ia && React.createElement("span", null, "nu intră în stoc"),
+                            alta && React.createElement("span", { style: { color: 'var(--muted2)' } }, "(există în „", alta.categorie || 'fără gestiune', "” — aici devine material separat)")));
+                })),
+            React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap text-sm rounded-lg px-3 py-2", style: { background: 'var(--panel)', border: '1px solid ' + (Math.abs(dif) > 1 ? '#E5A43F' : 'var(--border)') } },
+                React.createElement("span", { style: { color: 'var(--muted)' } }, "Rânduri: ", React.createElement("b", { className: "cifre", style: { color: 'var(--text)' } }, money(sumaRanduri)), " · pe factură fără TVA: ", React.createElement("b", { className: "cifre", style: { color: 'var(--text)' } }, money(fact.totalFaraTva)), fact.total ? [" · cu TVA ", React.createElement("b", { key: "t", className: "cifre" }, money(fact.total))] : null),
+                React.createElement("span", { style: { color: Math.abs(dif) > 1 ? 'var(--acc3)' : 'var(--acc2)' } }, Math.abs(dif) > 1 ? '⚠ diferență ' + money(dif) : '✓ se potrivește')),
+            fact.observatii && React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Notă AI: ", fact.observatii),
+            React.createElement("div", { className: "flex justify-end gap-2" },
+                React.createElement("button", { type: "button", onClick: () => { setFact(null); setRanduri([]); setEroare(''); }, className: "btnSec" }, "Altă factură"),
+                React.createElement("button", { type: "button", onClick: onInchide, className: "btnSec" }, "Renunță"),
+                React.createElement("button", { type: "button", onClick: adauga, "data-act": "adauga-in-gestiune", className: "btnPrim" }, "✅ Adaugă în gestiune (", deLuat.length, ")"))));
+}
+function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, persist, company, subTab, currentUser, achizitii, setAchizitii, onReceptie }) {
     /* Gestiune și Stocuri erau două intrări în meniu pentru aceeași pagină. Acum e o singură pagină cu două file. */
     // electricianul vede doar stocurile, ca înainte; lista de gestiune e a managerului
     const eMgrMateriale = currentUser?.rol === 'Manager';
@@ -5069,6 +5223,32 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     const [arataVechi, setArataVechi] = useState(false);
     const [importPreturi, setImportPreturi] = useState(false);
     const esteManager = currentUser?.rol === 'Manager';
+    /* v04.24: importul facturii de la furnizor și stocul pe mașini, văzut din Stocuri */
+    const [importFactura, setImportFactura] = useState(false);
+    const [mesajImport, setMesajImport] = useState('');
+    const [filtruGest, setFiltruGest] = useState('');
+    const [masini, setMasini] = useState([]);
+    useEffect(() => { loadKey('masini', []).then((x) => setMasini(Array.isArray(x) ? x : [])).catch(() => { }); }, []);
+    const stocMasini = useMemo(() => (masini || []).filter((x) => x && x.activ !== false).map((x) => ({ m: x, stoc: stocPeMasina(x.id, stockMoves) })), [masini, stockMoves]);
+    const adaugaDinFactura = ({ factura, gestiune, randuri }) => {
+        const nrF = [factura.serie, factura.numar].filter(Boolean).join(' ').trim();
+        const nota = 'Factură ' + (factura.furnizor || 'furnizor') + (nrF ? ' nr. ' + nrF : '') + (factura.data ? ' din ' + fmtData(factura.data) : '') + (gestiune ? ' → ' + gestiune : '');
+        const nIntrate = onReceptie ? onReceptie(randuri, nota, { categorie: gestiune, data: factura.data }) : 0;
+        if (!nIntrate) { window.alert('Nu a intrat nimic în stoc.'); return; }
+        /* factura rămâne și la Achiziții (furnizor, sumă, rânduri), ca să știi ce ai plătit și să nu o bagi de două ori */
+        if (setAchizitii) {
+            const a = { id: uid(), data: factura.data || dataLocala(new Date()), furnizor: factura.furnizor || '', descriere: 'Factură ' + nrF + ' → ' + gestiune,
+                suma: Number(factura.total) || Math.round(randuri.reduce((s, r) => s + r.cantitate * r.pretUnitar, 0) * 100) / 100,
+                status: 'Primit', inStoc: true, nrFactura: [factura.serie, factura.numar].filter(Boolean).join('') , cuiFurnizor: factura.cuiFurnizor || '', gestiune, dinFacturaPdf: factura.fisier || true,
+                randuri: randuri.map((r) => ({ id: uid(), denumire: r.denumire, cantitate: r.cantitate, um: r.um, pretUnitar: r.pretUnitar, ...(r.cod ? { cod: r.cod } : {}) })) };
+            const next = [a, ...(achizitii || [])];
+            setAchizitii(next);
+            persist('achizitii', next);
+        }
+        setImportFactura(false);
+        setMesajImport('✅ ' + nIntrate + (nIntrate === 1 ? ' material a intrat' : ' materiale au intrat') + (gestiune ? ' în gestiunea „' + gestiune + '"' : ' în stoc (fără gestiune)') + ' (' + (factura.furnizor || 'factură') + ').');
+        setTimeout(() => setMesajImport(''), 8000);
+    };
     const materialeActive = materials.filter((m) => !m.arhivat);
     const materialeVechi = materials.filter((m) => m.arhivat);
     const arhiveazaGestiune = () => {
@@ -5290,7 +5470,11 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     const [gestFlatAll, setGestFlatAll] = useState(false);
     const [gestGroup, setGestGroup] = useState(null);
     const searchingGestiune = filter.trim() !== '';
-    return (React.createElement("div", null, React.createElement("h2", { className: "titluPagina text-lg mb-2", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "📦 Materiale"), eMgrMateriale && React.createElement("div", { className: "flex gap-1.5 mb-3 flex-wrap" }, [['gestiune', '📋 Lista de materiale'], ['stocuri', '📈 Stocuri și mișcări']].map(([id, et]) => React.createElement("button", { key: id, onClick: () => setVedere(id), className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: vedere === id ? '#14181C' : 'var(--muted)', background: vedere === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, et))), vedere === 'gestiune' && (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-2 gap-3 flex-wrap" }, React.createElement("input", { placeholder: "Caută gestiune sau material...", value: filter, onChange: (e) => setFilter(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs min-w-0", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), !searchingGestiune && !gestShowAll && React.createElement("button", { onClick: () => setGestShowAll(true), className: "btnPrim shrink-0" }, "🗂 Afișează toate gestiunile"), !searchingGestiune && gestShowAll && React.createElement("button", { onClick: () => { setGestShowAll(false); setGestGroup(null); setGestFlatAll(false); }, className: "text-xs px-3 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Ascunde"), React.createElement("button", { onClick: importSmartBillStock, className: "text-xs px-2.5 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "📥 SmartBill"), React.createElement("button", { onClick: importCatalog, className: "text-xs px-2.5 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "📥 Catalog"), esteManager && React.createElement("button", { onClick: () => setImportPreturi(true), "data-act": "import-preturi", className: "text-xs px-2.5 py-1.5 rounded-lg shrink-0 font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' }, title: "Citește oferta furnizorului (Excel) și actualizează prețurile din catalog" }, "📥 Prețuri din oferta furnizorului"), !form && React.createElement("button", { onClick: () => setForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Adaugă material")), React.createElement("div", { className: "flex items-center gap-2 mb-3 flex-wrap" }, React.createElement("button", { onClick: () => setArataVechi(!arataVechi), className: "text-xs px-2.5 py-1.5 rounded-lg font-medium", style: { color: arataVechi ? '#14181C' : 'var(--muted)', background: arataVechi ? 'var(--acc3)' : 'var(--panel2)', border: '1px solid var(--border)' } }, arataVechi ? `🗄 Gestiune veche (${materialeVechi.length})` : `🗄 Arată gestiunea veche (${materialeVechi.length})`), !arataVechi && materialeActive.length > 0 && (React.createElement("button", { onClick: arhiveazaGestiune, className: "text-xs px-2.5 py-1.5 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525266' } }, "📦 Arhivează gestiunea curentă (fă loc uneia noi)"))), arataVechi && (React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--acc3)' } }, "Aceasta e gestiunea veche, din SmartBill — cifrele nu mai corespund cu stocul fizic real. E doar de referință; nu apare în Stocuri și nu se scade automat la devize.")), React.createElement("details", { className: "mb-3" }, React.createElement("summary", { className: "text-xs cursor-pointer select-none", style: { color: 'var(--muted2)' } }, "📊 Export balanță stoc"), React.createElement("div", { className: "flex items-center gap-1.5 mt-2 flex-wrap" }, React.createElement(RoCalendarPicker, { value: exportFrom, onChange: setExportFrom }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "—"), React.createElement(RoCalendarPicker, { value: exportTo, onChange: setExportTo }), React.createElement("button", { onClick: exportExcel, className: "btnSec" }, "Exportă Excel")), gestiuni.length > 0 && (React.createElement("div", { className: "flex items-center gap-1 mt-1.5 flex-wrap" }, React.createElement("span", { className: "text-[11px] mr-1", style: { color: 'var(--muted2)' } }, "Gestiuni (nimic bifat = toate):"), React.createElement("button", { onClick: () => setExportGestiuni(new Set(gestiuni)), className: "text-[11px] px-2 py-0.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' } }, "Selectează toate"), exportGestiuni.size > 0 && (React.createElement("button", { onClick: () => setExportGestiuni(new Set()), className: "text-[11px] px-2 py-0.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Deselectează")), gestiuni.map((g) => {
+    return (React.createElement("div", null, React.createElement("h2", { className: "titluPagina text-lg mb-2", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "📦 Materiale"),
+        mesajImport && React.createElement("p", { "data-mesaj-import": true, className: "text-sm mb-3 rounded-lg px-3 py-2", style: { color: 'var(--acc2)', background: 'var(--panel2)' } }, mesajImport),
+        importFactura && React.createElement(PaginaFormular, { titlu: '📄 Import factură furnizor', subtitlu: 'PDF / poză → verifici → intră în gestiune', onInchide: () => setImportFactura(false) },
+            React.createElement(ImportFacturaGestiune, { materials, gestiuni, achizitii, onAdauga: adaugaDinFactura, onInchide: () => setImportFactura(false) })),
+        eMgrMateriale && React.createElement("div", { className: "flex gap-1.5 mb-3 flex-wrap" }, [['gestiune', '📋 Lista de materiale'], ['stocuri', '📈 Stocuri și mișcări']].map(([id, et]) => React.createElement("button", { key: id, onClick: () => setVedere(id), className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: vedere === id ? '#14181C' : 'var(--muted)', background: vedere === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, et))), vedere === 'gestiune' && (React.createElement("div", null, React.createElement("div", { className: "flex justify-between items-center mb-2 gap-3 flex-wrap" }, React.createElement("input", { placeholder: "Caută gestiune sau material...", value: filter, onChange: (e) => setFilter(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs min-w-0", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), !searchingGestiune && !gestShowAll && React.createElement("button", { onClick: () => setGestShowAll(true), className: "btnPrim shrink-0" }, "🗂 Afișează toate gestiunile"), !searchingGestiune && gestShowAll && React.createElement("button", { onClick: () => { setGestShowAll(false); setGestGroup(null); setGestFlatAll(false); }, className: "text-xs px-3 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Ascunde"), esteManager && React.createElement("button", { onClick: () => setImportFactura(true), "data-act": "import-factura", className: "text-xs px-2.5 py-1.5 rounded-lg shrink-0 font-semibold", style: { color: '#14181C', background: 'var(--acc2)' }, title: "Pui PDF-ul facturii de la furnizor, verifici rândurile și intră în gestiunea aleasă" }, "📄 Import factură (PDF)"), React.createElement("button", { onClick: importSmartBillStock, className: "text-xs px-2.5 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "📥 SmartBill"), React.createElement("button", { onClick: importCatalog, className: "text-xs px-2.5 py-1.5 rounded-lg shrink-0", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "📥 Catalog"), esteManager && React.createElement("button", { onClick: () => setImportPreturi(true), "data-act": "import-preturi", className: "text-xs px-2.5 py-1.5 rounded-lg shrink-0 font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' }, title: "Citește oferta furnizorului (Excel) și actualizează prețurile din catalog" }, "📥 Prețuri din oferta furnizorului"), !form && React.createElement("button", { onClick: () => setForm({}), className: "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg font-medium shrink-0", style: { color: '#14181C', background: 'var(--acc1)' } }, React.createElement(Icon, null, "+"), " Adaugă material")), React.createElement("div", { className: "flex items-center gap-2 mb-3 flex-wrap" }, React.createElement("button", { onClick: () => setArataVechi(!arataVechi), className: "text-xs px-2.5 py-1.5 rounded-lg font-medium", style: { color: arataVechi ? '#14181C' : 'var(--muted)', background: arataVechi ? 'var(--acc3)' : 'var(--panel2)', border: '1px solid var(--border)' } }, arataVechi ? `🗄 Gestiune veche (${materialeVechi.length})` : `🗄 Arată gestiunea veche (${materialeVechi.length})`), !arataVechi && materialeActive.length > 0 && (React.createElement("button", { onClick: arhiveazaGestiune, className: "text-xs px-2.5 py-1.5 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)', border: '1px solid #E0525266' } }, "📦 Arhivează gestiunea curentă (fă loc uneia noi)"))), arataVechi && (React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--acc3)' } }, "Aceasta e gestiunea veche, din SmartBill — cifrele nu mai corespund cu stocul fizic real. E doar de referință; nu apare în Stocuri și nu se scade automat la devize.")), React.createElement("details", { className: "mb-3" }, React.createElement("summary", { className: "text-xs cursor-pointer select-none", style: { color: 'var(--muted2)' } }, "📊 Export balanță stoc"), React.createElement("div", { className: "flex items-center gap-1.5 mt-2 flex-wrap" }, React.createElement(RoCalendarPicker, { value: exportFrom, onChange: setExportFrom }), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "—"), React.createElement(RoCalendarPicker, { value: exportTo, onChange: setExportTo }), React.createElement("button", { onClick: exportExcel, className: "btnSec" }, "Exportă Excel")), gestiuni.length > 0 && (React.createElement("div", { className: "flex items-center gap-1 mt-1.5 flex-wrap" }, React.createElement("span", { className: "text-[11px] mr-1", style: { color: 'var(--muted2)' } }, "Gestiuni (nimic bifat = toate):"), React.createElement("button", { onClick: () => setExportGestiuni(new Set(gestiuni)), className: "text-[11px] px-2 py-0.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD166' } }, "Selectează toate"), exportGestiuni.size > 0 && (React.createElement("button", { onClick: () => setExportGestiuni(new Set()), className: "text-[11px] px-2 py-0.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Deselectează")), gestiuni.map((g) => {
         const active = exportGestiuni.has(g);
         return (React.createElement("button", { key: g, onClick: () => {
                 const next = new Set(exportGestiuni);
@@ -5303,15 +5487,28 @@ function MaterialsTab({ materials, setMaterials, stockMoves, setStockMoves, pers
     }), baseList.some((m) => !m.categorie) && (React.createElement("button", { onClick: () => setGestGroup('__fara__'), className: "w-full text-left rounded-xl px-4 py-3 flex items-center justify-between", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("span", { className: "text-sm", style: { color: 'var(--text)' } }, "Fără gestiune"), React.createElement("span", { className: "text-xs", style: { color: 'var(--muted)' } }, baseList.filter((m) => !m.categorie).length, " materiale →")))))) : (React.createElement(React.Fragment, null, React.createElement("button", { onClick: () => setGestGroup(null), className: "text-xs mb-2", style: { color: 'var(--muted2)' } }, "← Înapoi la gestiuni"), (() => {
         const groupItems = gestGroup === '__fara__' ? baseList.filter((m) => !m.categorie) : baseList.filter((m) => m.categorie === gestGroup);
         return (React.createElement(React.Fragment, null, React.createElement("div", { className: "flex justify-end mb-2 text-sm", style: { color: 'var(--muted)' } }, "Valoare totală (", groupItems.length, " produse): ", React.createElement("span", { style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(groupItems.reduce((s, m) => s + (Number(m.stoc) || 0) * (Number(m.pret) || 0), 0)))), React.createElement("div", { className: "space-y-2" }, groupItems.map((m) => (React.createElement("div", { key: m.id, className: "rounded-xl px-4 py-3 flex items-center justify-between gap-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm truncate", style: { color: 'var(--text)' } }, m.denumire), React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, m.stoc, " ", m.um, " × ", money(m.pret), "/", m.um, Number(m.pretLista) > 0 && React.createElement("span", { style: { color: 'var(--acc1)' } }, " · listă ", money(m.pretLista)))), React.createElement("div", { className: "flex items-center gap-4 shrink-0" }, React.createElement("span", { className: "text-sm", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money((Number(m.stoc) || 0) * (Number(m.pret) || 0))), React.createElement("button", { onClick: () => setForm(m), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editează"), React.createElement("button", { onClick: () => deleteMaterial(m.id), style: { color: 'var(--acc4)' } }, React.createElement(Icon, null, "🗑")))))))));
-    })())))), vedere === 'stocuri' && (React.createElement("div", null, React.createElement("div", { className: "flex items-center gap-2 mb-4 flex-wrap" }, React.createElement("input", { placeholder: "🔍 Caută (ex: cablu 3x2,5)", value: filter, onChange: (e) => setFilter(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs min-w-0", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), (() => {
+    })())))), vedere === 'stocuri' && (React.createElement("div", null,
+        /* pe gestiuni: „Toate" arată tot; un clic pe o gestiune o lasă doar pe ea (și deschide lista) */
+        (gestiuni.length > 0 || esteManager) && React.createElement("div", { "data-filtru-gestiune": true, className: "flex items-center gap-1.5 mb-3 flex-wrap" },
+            React.createElement("span", { className: "text-[11px] mr-1", style: { color: 'var(--muted2)' } }, "Gestiune:"),
+            [['', 'Toate'], ...gestiuni.map((g) => [g, g]), ...(materialeActive.some((m) => !m.categorie) ? [['__fara__', 'Fără gestiune']] : [])].map(([id, et]) => React.createElement("button", { key: id || '__toate', onClick: () => { setFiltruGest(id); if (id) setStocShowAll(true); },
+                className: "text-xs px-2.5 py-1 rounded-lg font-semibold", style: { color: filtruGest === id ? '#14181C' : 'var(--muted)', background: filtruGest === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } },
+                et, " (", id === '' ? materialeActive.length : materialeActive.filter((m) => id === '__fara__' ? !m.categorie : String(m.categorie || '') === id).length, ")")),
+            esteManager && React.createElement("button", { onClick: () => setImportFactura(true), "data-act": "import-factura-stoc", className: "text-xs px-2.5 py-1 rounded-lg font-semibold ml-auto", style: { color: '#14181C', background: 'var(--acc2)' } }, "📄 Import factură (PDF)")),
+        React.createElement("div", { className: "flex items-center gap-2 mb-4 flex-wrap" }, React.createElement("input", { placeholder: "🔍 Caută (ex: cablu 3x2,5)", value: filter, onChange: (e) => setFilter(e.target.value), className: "rounded-lg px-3 py-1.5 text-sm outline-none flex-1 max-w-xs min-w-[180px]", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }), (() => {
         const subMin = materialeActive.filter((m) => Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim));
         const n = subMin.length;
         return n > 0 ? (React.createElement(React.Fragment, null, React.createElement("button", { onClick: () => setDoarSubMinim(!doarSubMinim), className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: doarSubMinim ? '#14181C' : 'var(--acc4)', background: doarSubMinim ? 'var(--acc4)' : 'var(--panel2)', border: '1px solid #E0525266' } }, "⚠ Sub minim (", n, ")"), React.createElement("button", { onClick: () => listaDeComandat(subMin), className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#fff', background: '#25D366' }, title: "Compune o listă de comandat cu tot ce e sub minim și o trimite pe WhatsApp" }, "📲 Listă de comandat"), esteManager && setAchizitii && React.createElement("button", { onClick: () => puneInDeCumparat(subMin), "data-act": "pune-de-cumparat", className: "text-sm px-3 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc3)' }, title: "Trece tot ce e sub minim în „De cumpărat”, pe furnizori" }, "🛒 Pune în De cumpărat"))) : null;
-    })(), !stocShowAll && !searchingGestiune && (React.createElement("button", { onClick: () => setStocShowAll(true), className: "btnPrim" }, "📦 Afișează stoc integral")), stocShowAll && !searchingGestiune && (React.createElement("button", { onClick: () => setStocShowAll(false), className: "text-xs px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Ascunde lista"))), materialeActive.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun material — adaugă mai întâi din tab-ul „Gestiune\".")) : !stocShowAll && !searchingGestiune ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Caută un material, sau apasă „Afișează stoc integral\".")) : (React.createElement("div", { className: "space-y-2" }, filteredStocuri.filter((m) => !doarSubMinim || (Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim))).map((m) => {
+    })(), !stocShowAll && !searchingGestiune && (React.createElement("button", { onClick: () => setStocShowAll(true), className: "btnPrim" }, "📦 Afișează stoc integral")), stocShowAll && !searchingGestiune && (React.createElement("button", { onClick: () => setStocShowAll(false), className: "text-xs px-3 py-1.5 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "Ascunde lista"))), materialeActive.length === 0 ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Niciun material — adaugă mai întâi din tab-ul „Gestiune\".")) : !stocShowAll && !searchingGestiune ? (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Caută un material, sau apasă „Afișează stoc integral\".")) : (React.createElement("div", { className: "space-y-2" }, filteredStocuri.filter((m) => !doarSubMinim || (Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim))).filter((m) => !filtruGest || (filtruGest === '__fara__' ? !m.categorie : String(m.categorie || '') === filtruGest)).map((m) => {
         const low = Number(m.stocMinim) > 0 && Number(m.stoc) < Number(m.stocMinim);
         const toateMiscarile = stockMoves.filter((mv) => mv.materialId === m.id && !eMiscareFaraDepozit(mv));
         const moves = (istoricTot[m.id] ? toateMiscarile : toateMiscarile.slice(0, 8));
-        return (React.createElement("div", { key: m.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: `1px solid ${low ? '#E0525266' : 'var(--border)'}` } }, React.createElement("div", { className: "flex items-center justify-between gap-3" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm truncate", style: { color: 'var(--text)' } }, m.denumire), React.createElement("button", { onClick: () => setExpanded(expanded === m.id ? null : m.id), className: "text-xs mt-0.5", style: { color: 'var(--muted2)' } }, moves.length > 0 ? (expanded === m.id ? 'Ascunde istoricul' : 'Vezi istoricul') : 'Fără mișcări')), React.createElement("div", { className: "flex items-center gap-4 shrink-0" }, React.createElement("div", { className: "text-right" }, React.createElement("div", { className: "text-sm font-medium", style: { color: low ? 'var(--acc4)' : 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, m.stoc, " ", m.um), React.createElement("div", { className: "text-[11px] flex items-center gap-1 justify-end", style: { color: 'var(--muted2)' } }, "min ", React.createElement("input", { type: "number", inputMode: "decimal", value: m.stocMinim ?? 0, onChange: (e) => setMinim(m.id, e.target.value), className: "w-12 rounded px-1 py-0.5 text-[11px] outline-none text-center", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' }, title: "Sub cifra asta primești avertizare" }))), moveState?.materialId === m.id ? (React.createElement(MoveInput, { tip: moveState.tip, defaultPret: m.pret, aratapret: esteManager, onConfirm: (c, n, p) => confirmMove(m, moveState.tip, c, n, p), onCancel: () => setMoveState(null) })) : (React.createElement("div", { className: "flex items-center gap-1.5" }, React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'intrare' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc2)', background: 'var(--panel2)' } }, "+ Intrare"), React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'iesire' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "− Ieșire"))))), expanded === m.id && moves.length > 0 && (React.createElement("div", { className: "mt-2 space-y-1" }, moves.map((mv) => (React.createElement("div", { key: mv.id, className: "flex items-center justify-between text-xs px-2 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--muted)' } }, fmtData(mv.data), mv.userNume ? ` · ${mv.userNume}` : '', mv.nota ? ` · ${mv.nota}` : ''), React.createElement("span", { style: { color: mv.tip === 'intrare' ? 'var(--acc2)' : 'var(--acc4)', fontFamily: "'JetBrains Mono', monospace" } }, mv.tip === 'intrare' ? '+' : '−', mv.cantitate, esteManager && mv.tip === 'intrare' && mv.pret ? ` @ ${money(mv.pret)}` : '')))), !istoricTot[m.id] && toateMiscarile.length > 8 && (React.createElement("button", { onClick: () => setIstoricTot((x) => ({ ...x, [m.id]: true })), className: "w-full text-[11px] px-2 py-1.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)' } }, "Vezi toate mișcările (", toateMiscarile.length, ")"))))));
+        return (React.createElement("div", { key: m.id, className: "rounded-xl px-4 py-3", style: { background: 'var(--panel)', border: `1px solid ${low ? '#E0525266' : 'var(--border)'}` } }, React.createElement("div", { className: "flex items-center justify-between gap-3" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-sm truncate", style: { color: 'var(--text)' } }, m.denumire),
+            /* unde stă: gestiunea (magazia) și, dacă e cazul, mașinile — patronul vrea să vadă tot dintr-o privire */
+            React.createElement("div", { "data-unde-e": m.id, className: "flex items-center gap-1.5 flex-wrap mt-0.5" },
+                React.createElement("span", { className: "text-[10.5px] px-1.5 py-0.5 rounded-md font-semibold", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid #2E8BD144' } }, "📂 ", m.categorie || 'Fără gestiune'),
+                stocMasini.filter((x) => (x.stoc[m.id] || 0) > 0).map((x) => React.createElement("span", { key: x.m.id, className: "text-[10.5px] px-1.5 py-0.5 rounded-md cifre", style: { color: 'var(--acc3)', background: 'var(--panel2)' } }, "🚐 ", x.m.nume || 'Mașină', ": ", x.stoc[m.id], " ", m.um || ''))),
+            React.createElement("button", { onClick: () => setExpanded(expanded === m.id ? null : m.id), className: "text-xs mt-0.5", style: { color: 'var(--muted2)' } }, moves.length > 0 ? (expanded === m.id ? 'Ascunde istoricul' : 'Vezi istoricul') : 'Fără mișcări')), React.createElement("div", { className: "flex items-center gap-4 shrink-0" }, React.createElement("div", { className: "text-right" }, React.createElement("div", { className: "text-sm font-medium", style: { color: low ? 'var(--acc4)' : 'var(--text)', fontFamily: "'JetBrains Mono', monospace" } }, m.stoc, " ", m.um), React.createElement("div", { className: "text-[11px] flex items-center gap-1 justify-end", style: { color: 'var(--muted2)' } }, "min ", React.createElement("input", { type: "number", inputMode: "decimal", value: m.stocMinim ?? 0, onChange: (e) => setMinim(m.id, e.target.value), className: "w-12 rounded px-1 py-0.5 text-[11px] outline-none text-center", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' }, title: "Sub cifra asta primești avertizare" }))), moveState?.materialId === m.id ? (React.createElement(MoveInput, { tip: moveState.tip, defaultPret: m.pret, aratapret: esteManager, onConfirm: (c, n, p) => confirmMove(m, moveState.tip, c, n, p), onCancel: () => setMoveState(null) })) : (React.createElement("div", { className: "flex items-center gap-1.5" }, React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'intrare' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc2)', background: 'var(--panel2)' } }, "+ Intrare"), React.createElement("button", { onClick: () => setMoveState({ materialId: m.id, tip: 'iesire' }), className: "text-xs px-2 py-1 rounded-lg font-medium", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "− Ieșire"))))), expanded === m.id && moves.length > 0 && (React.createElement("div", { className: "mt-2 space-y-1" }, moves.map((mv) => (React.createElement("div", { key: mv.id, className: "flex items-center justify-between text-xs px-2 py-1.5 rounded-lg", style: { background: 'var(--panel2)' } }, React.createElement("span", { className: "min-w-0 truncate", style: { color: 'var(--muted)' } }, fmtData(mv.data), mv.userNume ? ` · ${mv.userNume}` : '', mv.nota ? ` · ${mv.nota}` : ''), React.createElement("span", { style: { color: mv.tip === 'intrare' ? 'var(--acc2)' : 'var(--acc4)', fontFamily: "'JetBrains Mono', monospace" } }, mv.tip === 'intrare' ? '+' : '−', mv.cantitate, esteManager && mv.tip === 'intrare' && mv.pret ? ` @ ${money(mv.pret)}` : '')))), !istoricTot[m.id] && toateMiscarile.length > 8 && (React.createElement("button", { onClick: () => setIstoricTot((x) => ({ ...x, [m.id]: true })), className: "w-full text-[11px] px-2 py-1.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)' } }, "Vezi toate mișcările (", toateMiscarile.length, ")"))))));
     })))))));
 }
 /* ===== v04.13 — 🚐 STOC PE MAȘINI =====
@@ -32792,19 +32989,24 @@ function App() {
         };
     });
     useEffect(() => () => { delete window.__puneMaterialeInDeviz; }, []);
-    const receptioneazaAchizitie = (randuri, nota) => {
+    /* opt.categorie (v04.24, importul de factură): marfa intră în gestiunea aleasă — materialul se caută
+       în ea, iar dacă nu e, se face acolo (același produs în altă gestiune are stocul lui).
+       r.materialId: materialul ales de patron pe ecranul de verificare. */
+    const receptioneazaAchizitie = (randuri, nota, opt) => {
         let nextMaterials = refStocMat.current.slice();
         const miscariNoi = [];
         const azi2 = dataLocala(new Date());
+        const gest = opt && opt.categorie != null ? String(opt.categorie) : null;
         (randuri || []).forEach((r) => {
             const den = String(r.denumire || '').trim();
             const cant = Number(r.cantitate) || 0;
             if (!den || cant <= 0)
                 return;
             const pret = Number(r.pretUnitar) || 0;
-            let mat = nextMaterials.find((m) => m.denumire === den && !m.arhivat);
+            let mat = (r.materialId && nextMaterials.find((m) => m.id === r.materialId && !m.arhivat))
+                || nextMaterials.find((m) => m.denumire === den && !m.arhivat && (gest == null || String(m.categorie || '') === gest));
             if (!mat) {
-                mat = { id: uid(), denumire: den, categorie: '', um: r.um || 'buc', stoc: 0, stocMinim: 0, pret: 0, arhivat: false };
+                mat = { id: uid(), denumire: den, categorie: gest || '', um: r.um || 'buc', stoc: 0, stocMinim: 0, pret: 0, arhivat: false, ...(r.cod ? { cod: r.cod } : {}) };
                 nextMaterials = [...nextMaterials, mat];
             }
             const stocVechi = Number(mat.stoc) || 0;
@@ -32812,7 +33014,7 @@ function App() {
             const stocNou = stocVechi + cant;
             const pretNou = pret > 0 ? (stocNou > 0 ? ((stocVechi * pretVechi) + (cant * pret)) / stocNou : pret) : pretVechi;
             nextMaterials = nextMaterials.map((m) => m.id === mat.id ? { ...m, stoc: stocNou, pret: Math.round(pretNou * 100) / 100 } : m);
-            miscariNoi.push({ id: uid(), materialId: mat.id, tip: 'intrare', cantitate: cant, pret: pret || undefined, nota: nota || 'Recepție achiziție', data: azi2, userNume: currentUser?.nume || '' });
+            miscariNoi.push({ id: uid(), materialId: mat.id, tip: 'intrare', cantitate: cant, pret: pret || undefined, nota: nota || 'Recepție achiziție', data: (opt && opt.data) || azi2, userNume: currentUser?.nume || '', ...(gest ? { gestiune: gest } : {}) });
         });
         if (!miscariNoi.length)
             return 0;
@@ -33318,7 +33520,7 @@ function App() {
                                     setTab('oferte');
                                 } }),
                             tab === 'proiecte' && effectiveUser.rol === 'Manager' && React.createElement(ProiecteTab, { clients: clients, invoices: invoices, setInvoices: setInvoices, devize: devize, setDevize: setDevize, offers: offers, santiere: santiere, rapoarte: rapoarte, structuraSantier: structuraSantier, proiecteFisiere: proiecteFisiere, setProiecteFisiere: setProiecteFisiere, persist: persist, currentUser: effectiveUser, goToSite: (id) => { setPendingSiteNav({ santierId: id, siteView: '__closed__' }); setTab('santiere'); }, onCreeazaProiect: creeazaProiect, printFactura: printOne('Factură'), printDeviz: printDevizOne, pdfDeviz: pdfDevizBlob, printOferta: printOne('Ofertă'), onDocNou: documentNou, onFactureazaDeviz: facturaDinDeviz, onReverse: (d) => anuleazaIesireDoc(d, `Ștergere deviz ${d.numar}`), onAnuleazaStoc: anuleazaIesireDoc }),
-                            (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab, achizitii: achizitii, setAchizitii: setAchizitii }),
+                            (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab, achizitii: achizitii, setAchizitii: setAchizitii, onReceptie: receptioneazaAchizitie }),
                             tab === 'santiere' && React.createElement(SantiereTab, { offers: offers, invoices: invoices, stockMoves: stockMoves, inapoiGlobal: mergiInapoi, inainteGlobal: mergiInainte, inapoiLaListaSantiere: pozitie > 0 && !!istoric[pozitie - 1] && istoric[pozitie - 1].tab === 'santiere' && !istoric[pozitie - 1].sant, potInapoiGlobal: potInapoiOriunde, potInainteGlobal: potInainteOriunde, onOrigine: (o) => { setDashCmd({ pagina: o && o.pagina != null ? o.pagina : null, cheie: Date.now() + Math.random() }); sarPeste.current = true; setTab(o && o.tab !== undefined ? o.tab : null); }, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                             tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
                             tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
