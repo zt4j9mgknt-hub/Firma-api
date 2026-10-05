@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.28-gestiune-pe-deviz';
+const APP_VERSION = 'v04.29-mai-multe-gestiuni';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -5878,31 +5878,47 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave, sa
     /* GESTIUNEA DEVIZULUI (v04.28, cerut de patron): alegi gestiunea o dată, iar toate materialele de pe
        deviz se leagă singure de materialele din ea (după denumire) — la emitere se scad automat din ea.
        Rândurile adăugate după aceea se leagă și ele. Ce nu există în gestiune rămâne nelegat și se vede. */
-    const [gestiuneDeviz, setGestiuneDeviz] = useState(initial?.gestiune || '');
+    /* și MAI MULTE gestiuni (v04.28b): bifezi gestiunile, în ordinea în care vrei să se ia; fiecare
+       material vine din prima bifată care îl are cu stoc suficient (altfel din prima care îl are). */
+    const [gestiuniDeviz, setGestiuniDeviz] = useState(() => (Array.isArray(initial?.gestiuni) && initial.gestiuni.length ? initial.gestiuni : (initial?.gestiune ? [initial.gestiune] : [])));
+    const gestiuneDeviz = gestiuniDeviz[0] || '';
     const gestiuniMat = useMemo(() => [...new Set((materials || []).filter((m) => m && !m.arhivat).map((m) => String(m.categorie || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ro')), [materials]);
-    const dinGestiuneDeviz = (it, g) => {
-        const lista = (materials || []).filter((m) => m && !m.arhivat && String(m.categorie || '') === g);
-        return gasesteMaterialRand(lista, { denumire: it.denumire }) || null;
+    const comutaGestiune = (g) => setGestiuniDeviz((l) => l.includes(g) ? l.filter((x) => x !== g) : [...l, g]);
+    const dinGestiuniDeviz = (it) => {
+        const cant = Number(String(it.cantitate).replace(',', '.')) || 0;
+        let primul = null;
+        for (const g of gestiuniDeviz) {
+            const m = gasesteMaterialRand((materials || []).filter((x) => x && !x.arhivat && String(x.categorie || '') === g), { denumire: it.denumire });
+            if (!m)
+                continue;
+            if ((Number(m.stoc) || 0) >= cant)
+                return m;
+            primul = primul || m;
+        }
+        return primul;
     };
     useEffect(() => {
-        if (!gestiuneDeviz)
+        if (!gestiuniDeviz.length)
             return;
         setItems((prev) => {
             let schimbat = false;
             const next = prev.map((it) => {
-                if (!it || sectiuneRand(it) !== 'materiale' || !String(it.denumire || '').trim() || it.gestiune === gestiuneDeviz)
+                if (!it || sectiuneRand(it) !== 'materiale' || !String(it.denumire || '').trim())
                     return it;
-                const m = dinGestiuneDeviz(it, gestiuneDeviz);
-                if (!m)
+                const m = dinGestiuniDeviz(it);
+                if (!m || (it.materialId === m.id && it.gestiune === (m.categorie || '')))
+                    return it;
+                /* rândul pus de mână dintr-o gestiune bifată rămâne acolo (nu-l mut la alta) */
+                if (it.gestiune && gestiuniDeviz.includes(it.gestiune) && it.materialId)
                     return it;
                 schimbat = true;
-                return { ...it, materialId: m.id, gestiune: gestiuneDeviz };
+                return { ...it, materialId: m.id, gestiune: m.categorie || '' };
             });
             return schimbat ? next : prev;
         });
-    }, [gestiuneDeviz, items, materials]);
+    }, [gestiuniDeviz, items, materials]);
     const materialeDeviz = items.filter((it) => it && sectiuneRand(it) === 'materiale' && String(it.denumire || '').trim());
-    const negasite = gestiuneDeviz ? materialeDeviz.filter((it) => it.gestiune !== gestiuneDeviz) : [];
+    const negasite = gestiuniDeviz.length ? materialeDeviz.filter((it) => !gestiuniDeviz.includes(it.gestiune)) : [];
     const alegeSantier = (id) => {
         setSantierId(id);
         const sx = (santiere || []).find((x) => x.id === id);
@@ -5930,21 +5946,26 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave, sa
         const numeC = ((clients || []).find((c) => c.id === clientId) || {}).nume || '';
         const nn = (s) => normSect(s).replace(/[^a-z0-9]+/g, ' ').trim();
         const sugerata = gestiuniMat.find((g) => nn(g) && (nn(g) === nn(numeS) || nn(g) === nn(numeC))) || '';
-        return React.createElement("div", { "data-gestiune-deviz": true, className: "rounded-xl px-3 py-2 mb-2 flex items-center gap-2 flex-wrap text-sm", style: { background: 'var(--panel2)', border: '1px solid ' + (gestiuneDeviz ? '#2E8BD166' : 'var(--border)') } },
-            React.createElement("span", { style: { color: 'var(--muted)' } }, "📦 Materialele se scad din gestiunea:"),
-            React.createElement("select", { value: gestiuneDeviz, onChange: (e) => setGestiuneDeviz(e.target.value), "data-act": "alege-gestiune-deviz", className: "rounded-lg px-2 py-1.5 text-sm outline-none", style: inputStyle },
-                React.createElement("option", { value: "" }, gestiuniMat.length ? "— alege gestiunea —" : "— nu ai încă gestiuni —"),
-                gestiuniMat.map((g) => React.createElement("option", { key: g, value: g }, (g === sugerata ? '★ ' : '') + g))),
-            !gestiuneDeviz && sugerata && React.createElement("button", { type: "button", onClick: () => setGestiuneDeviz(sugerata), className: "text-xs px-2 py-1 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "★ ", sugerata),
-            gestiuneDeviz && React.createElement("span", { className: "text-xs", style: { color: negasite.length ? 'var(--acc3)' : 'var(--acc2)' } },
-                materialeDeviz.length - negasite.length, " din ", materialeDeviz.length, " materiale găsite în gestiune",
-                negasite.length ? " · nu sunt în ea: " + negasite.map((x) => x.denumire).slice(0, 4).join(', ') + (negasite.length > 4 ? '…' : '') : " · la emitere se scad automat"));
+        return React.createElement("div", { "data-gestiune-deviz": true, className: "rounded-xl px-3 py-2 mb-2 space-y-1.5 text-sm", style: { background: 'var(--panel2)', border: '1px solid ' + (gestiuniDeviz.length ? '#2E8BD166' : 'var(--border)') } },
+            React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" },
+                React.createElement("span", { style: { color: 'var(--muted)' } }, "📦 Materialele se scad din:"),
+                gestiuniMat.length === 0 && React.createElement("span", { className: "text-xs", style: { color: 'var(--muted2)' } }, "nu ai încă gestiuni (le faci la Import factură)"),
+                gestiuniMat.map((g) => {
+                    const pozitie = gestiuniDeviz.indexOf(g);
+                    return React.createElement("button", { key: g, type: "button", onClick: () => comutaGestiune(g), "data-gestiune-buton": g,
+                        className: "text-xs px-2 py-1 rounded-lg font-semibold", style: { color: pozitie >= 0 ? '#14181C' : 'var(--muted)', background: pozitie >= 0 ? 'var(--acc1)' : 'var(--panel)', border: '1px solid ' + (g === sugerata ? 'var(--acc1)' : 'var(--border)') } },
+                        pozitie >= 0 ? (gestiuniDeviz.length > 1 ? (pozitie + 1) + '. ' : '✓ ') : '', g === sugerata ? '★ ' : '', g);
+                })),
+            gestiuniDeviz.length > 1 && React.createElement("div", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Fiecare material se ia din prima gestiune bifată care îl are cu stoc (ordinea = numerele de pe butoane)."),
+            gestiuniDeviz.length > 0 && React.createElement("div", { className: "text-xs", style: { color: negasite.length ? 'var(--acc3)' : 'var(--acc2)' } },
+                materialeDeviz.length - negasite.length, " din ", materialeDeviz.length, " materiale găsite",
+                negasite.length ? " · nu sunt în gestiunile bifate: " + negasite.map((x) => x.denumire).slice(0, 4).join(', ') + (negasite.length > 4 ? '…' : '') : " · la emitere se scad automat"));
     })(), React.createElement(DevizRubriciEditor, { items: items, setItems: setItems, materials: materials, santiere: santiere || [], santierId: santierId,
         sugestiiGestiune: [gestiuneDeviz, santierNume || ((santiere || []).find((x) => x.id === santierId) || {}).nume, ((clients || []).find((c) => c.id === clientId) || {}).nume] }), React.createElement(ParteaScrisaEditor, { sistem: sistem, setSistem: setSistem, sabloane: sabloane, setSabloane: setSabloane, persist: persist, titlu: 'Partea scrisă a devizului' }), React.createElement(TotaluriRubrici, { items: items, tva: tva }), React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, React.createElement("button", { onClick: onCancel, className: "px-3 py-1.5 rounded-lg text-sm", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Renunță"), React.createElement("button", { onClick: () => (!clientId && !window.confirm('Devizul nu are beneficiar ales. Îl salvez fără client?')) ? null : onSave({
             ...(initial || {}),
             id: initial?.id || uid(), numar: initial?.numar, data: initial?.data || dataLocala(new Date()),
             clientId, items: cuSectiuni(itemeNumerice(items)), tva: Number(tva), status: initial?.status || 'Ciornă',
-            nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, obiectiv, santierId, santierNume, gestiune: gestiuneDeviz || undefined,
+            nrContract, dataContract, actAditional, dataActAditional, adresaLucrare, lucrare, obiectiv, santierId, santierNume, gestiune: gestiuneDeviz || undefined, gestiuni: gestiuniDeviz.length ? gestiuniDeviz : undefined,
             sistem: sistem.id ? Object.assign({}, sistem, { puncte: (sistem.puncte || []).map((x) => String(x).trim()).filter(Boolean), conditii: (sistem.conditii || []).map((x) => String(x).trim()).filter(Boolean) }) : undefined,
         }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salvează"))))));
 }
@@ -32785,7 +32806,8 @@ function App() {
             if (!cant)
                 return;
             /* devizul cu gestiune (v04.28): rândul nelegat se caută întâi în gestiunea devizului */
-            const m = (doc.gestiune && !it.materialId && gasesteMaterialRand(mats.filter((x) => String(x.categorie || '') === doc.gestiune), it)) || gasesteMaterialRand(mats, it);
+            const gestDoc = Array.isArray(doc.gestiuni) && doc.gestiuni.length ? doc.gestiuni : (doc.gestiune ? [doc.gestiune] : []);
+            const m = (!it.materialId && gestDoc.map((g) => gasesteMaterialRand(mats.filter((x) => String(x.categorie || '') === g), it)).find(Boolean)) || gasesteMaterialRand(mats, it);
             if (!m) {
                 if (String(it.denumire || '').trim())
                     unmatched.push(it.denumire);
@@ -32821,7 +32843,7 @@ function App() {
             + (areSantier ? '(ce s-a livrat deja pe șantier nu se mai scade)' : 'Documentul nu e legat de niciun șantier, deci nu știu ce s-a livrat deja.')
             + '\n\nOK = scad din stoc · Anulează = salvez fără să ating stocul');
         if (doc.gestiune)
-            arataSalvat('📦 Scăzut din gestiunea „' + doc.gestiune + '": ' + deScos.map((x) => x.denumire + ' ' + x.cantitate + ' ' + x.um).join(', ') + (unmatched.length ? ' · negăsite: ' + unmatched.join(', ') : ''));
+            arataSalvat('📦 Scăzut din gestiune: ' + deScos.map((x) => x.denumire + ' ' + x.cantitate + ' ' + x.um + (x.gestiune ? ' (' + x.gestiune + ')' : ' (din stocul fără gestiune)')).join(', ') + (unmatched.length ? ' · negăsite: ' + unmatched.join(', ') : ''));
         if (!ok)
             return { ...baza, stocMesaj: (notaNep + notaLiv + 'Stocul n-a fost atins (ai ales să nu scazi).').trim() };
         let nextMaterials = mats;
