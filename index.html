@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.19-materiale-intai';
+const APP_VERSION = 'v04.20-deviz-o-pagina';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -24109,8 +24109,13 @@ function modelDocSablon({ doc, client, company, fel }) {
         const k = sectiuni.length + 1;
         let n = 0;
         const randuri = [];
-        grupeMateriale(rub.materiale.items).forEach((g) => {
-            randuri.push({ tip: 'grupa', nume: g.nume });
+        /* „Alte materiale" nu apare ca titlu (cerut de patron): rândurile fără subgrupă stau primele,
+           direct sub MATERIALE — puse la coadă, fără titlu, ar părea ale ultimei subgrupe */
+        const grupe = grupeMateriale(rub.materiale.items);
+        grupe.sort((a, b) => (b.nume === GRUPA_ALTE) - (a.nume === GRUPA_ALTE));
+        grupe.forEach((g) => {
+            if (g.nume !== GRUPA_ALTE)
+                randuri.push({ tip: 'grupa', nume: g.nume });
             g.items.forEach((it) => { n += 1; randuri.push(randItem(it, k + '.' + n)); });
         });
         sectiuni.push({ id: 'materiale', nr: k + '.', titlu: 'MATERIALE', subtotal: totMat, randuri });
@@ -24177,14 +24182,15 @@ function docSablonHtml({ doc, client, company, fel }) {
     </tr></table><div style="height:${pt(27.6)};"></div>`;
     /* tabelul: capul de tabel se repetă pe fiecare foaie (paginatorul clonează tabelul) */
     const cap = `<thead><tr style="height:${pt(34)};">
-      ${['Nr.', 'Denumire lucrare', '', 'UM', 'Cantitate', 'Preț unitar (lei)', 'Valoare (lei)'].map((h, i) => i === 2 ? '' : `<th${i === 1 ? ' colspan="2"' : ''} style="${F}font-size:${pt(9.5)};font-weight:700;color:${NAVY};text-align:center;vertical-align:middle;padding:0 1mm;border-top:0.5pt solid #D1D5DB;${i ? `border-bottom:${pt(1.5)} solid ${NAVY};` : ''}">${h}</th>`).join('')}
+      ${['Nr.', 'Denumire lucrare', '', 'UM', 'Cantitate', 'Preț unitar (lei)', 'Valoare (lei)'].map((h, i) => i === 2 ? '' : `<th${i === 1 ? ' colspan="2"' : ''} style="${F}font-size:${pt(9.5)};font-weight:700;color:${NAVY};text-align:center;vertical-align:middle;padding:0 1mm;border-top:0.5pt solid #D1D5DB;border-bottom:${pt(1.5)} solid ${NAVY};">${h}</th>`).join('')}
     </tr></thead>`;
     const randuri = [];
     M.sectiuni.forEach((s, si) => {
         if (si > 0)
             randuri.push(`<tr style="height:${pt(10)};"><td colspan="7"></td></tr>`);
+        /* dunga cyan e fundal, nu chenar: un chenar stâng gros strâmba linia navy de deasupra lui „1." */
         randuri.push(`<tr data-sectiune-sablon="${s.id}" style="height:${pt(24)};">
-          ${td(esc(s.nr), `background:${TINT};border-left:${pt(2.25)} solid ${CYAN};${si === 0 ? `border-top:${pt(1.5)} solid ${NAVY};` : ''}font-size:${pt(12)};font-weight:700;color:${NAVY};text-align:center;`)}
+          ${td(esc(s.nr), `background:linear-gradient(to right, ${CYAN} ${(2.25 * K * 4 / 3).toFixed(2)}px, ${TINT} ${(2.25 * K * 4 / 3).toFixed(2)}px);font-size:${pt(12)};font-weight:700;color:${NAVY};text-align:center;`)}
           ${td(esc(s.titlu), `background:${TINT};font-size:${pt(12)};font-weight:700;color:${NAVY};`, 5)}
           ${td(n2(s.subtotal), `background:${TINT};font-size:${pt(12)};font-weight:700;color:${CYAN};text-align:right;`)}</tr>`);
         s.randuri.forEach((r) => {
@@ -24203,7 +24209,7 @@ function docSablonHtml({ doc, client, company, fel }) {
     const tabel = `<table data-tabel-sablon style="width:100%;border-collapse:collapse;table-layout:fixed;">${colg}${cap}<tbody>${randuri.join('')}</tbody></table>`;
     /* totalurile, ca în șablon (A:F etichetă, G valoare) */
     const rTot = (et, val, extra) => `<tr style="height:${pt(19.95)};">${td(esc(et), `background:${TINT};font-size:${pt(10.5)};font-weight:700;color:${GRI};text-align:right;`, extra ? 5 : 6)}${extra || ''}${td(n2(val), `background:${TINT};font-size:${pt(10.5)};font-weight:700;color:${GRI};text-align:right;`)}</tr>`;
-    const totaluri = `<table data-totaluri-sablon style="width:100%;border-collapse:collapse;table-layout:fixed;margin-top:${pt(19.95)};">${colg}<tbody>
+    const totaluri = `<table data-totaluri-sablon data-intreg style="width:100%;border-collapse:collapse;table-layout:fixed;margin-top:${pt(19.95)};">${colg}<tbody>
       ${rTot('TOTAL MATERIALE (fără TVA)', M.totMat)}
       ${rTot('TOTAL MANOPERĂ (fără TVA)', M.totMan)}
       ${rTot('TOTAL GENERAL (fără TVA)', M.totFara)}
@@ -24217,13 +24223,14 @@ function docSablonHtml({ doc, client, company, fel }) {
           <div style="${F}font-size:${pt(11)};color:#000;line-height:1.3;margin-top:${pt(3)};">${esc(M.observatii)}</div></div>`);
     M.blocuri.forEach((bl, i) => {
         const sus = i === 0 && !M.observatii ? pt(64) : pt(12);
+        const strans = i === 0 && !M.observatii ? pt(14) : pt(8);
         const puncte = bl.puncte.map((p, j) => `<div style="${F}font-size:${pt(11)};color:${TXT};min-height:${pt(19.05)};display:flex;align-items:center;${!bl.paragraf && j === 0 ? `border-top:${pt(1.5)} solid ${SLATE};` : ''}white-space:pre;">${esc(BULINA_SABLON)}<span style="white-space:normal;">${esc(p)}</span></div>`).join('');
-        parti.push(`<div data-bloc-sablon="${esc(bl.titlu)}" style="margin-top:${sus};">
+        parti.push(`<div data-bloc-sablon="${esc(bl.titlu)}" data-strans="${strans}" style="margin-top:${sus};">
           <div style="${F}font-size:${pt(12)};font-weight:700;color:${NAVY};padding:${pt(4)} 0 ${pt(2)};border-bottom:${pt(1.5)} solid ${SLATE};">${esc(bl.titlu)}</div>
           ${bl.paragraf ? `<div style="${F}font-size:${pt(11)};color:${TXT};line-height:1.3;padding:${pt(4)} 0;">${esc(bl.paragraf)}</div>` : ''}${puncte}</div>`);
     });
     const stampila = (company && company.stampila) || STAMPILA_EXECUTANT;
-    const semn = `<table style="width:100%;border-collapse:collapse;margin-top:${pt(30)};page-break-inside:avoid;"><tr>
+    const semn = `<table data-strans="${pt(10)}" style="width:100%;border-collapse:collapse;margin-top:${pt(30)};page-break-inside:avoid;"><tr>
       <td style="width:50%;vertical-align:top;${F}">
         <div style="font-size:${pt(12)};font-weight:700;">EXECUTANT,</div>
         <div style="font-size:${pt(11)};font-weight:700;">${esc(M.semn.exec)}</div>
@@ -24234,14 +24241,18 @@ function docSablonHtml({ doc, client, company, fel }) {
         <div style="font-size:${pt(12)};font-weight:700;">BENEFICIAR,</div>
         <div style="font-size:${pt(11)};font-weight:700;">${esc(M.semn.benef)}</div>
       </td></tr></table>`;
+    /* ultimul text (la deviz: GARANȚIE) + semnăturile + ștampila = un singur bloc: paginatorul îl
+       mută întreg, iar dacă nu încape întâi îi strânge spațiile (data-strans), ca să rămână pe
+       aceeași foaie cu restul devizului atunci când se poate (cerut de patron) */
+    const final = `<div data-final-sablon>${parti.length ? parti[parti.length - 1] : ''}${semn}</div>`;
     return `<div class="print-page" data-sablon="${M.fel}" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;">
     ${antet}
     ${titluri}
     ${carduri}
     ${tabel}
     ${totaluri}
-    ${parti.join('\n')}
-    ${semn}
+    ${parti.slice(0, -1).join('\n')}
+    ${final}
     ${letterheadHtml(company) || '<div class="pp-letterhead">SC SMART ELECTROCONECT SRL &bull; Cetății 61, Florești, Cluj &bull; office@smartelectroconect.ro &bull; 0757 921 612</div>'}
     ${doc && doc.status ? `<div class="pp-status">Status: ${esc(doc.status)}</div>` : ''}
   </div>`;
@@ -24820,6 +24831,18 @@ const PAGINATOR_TIPAR = `
     return f.querySelector('.pp-corp');
   }
   function prea(c) { return c.scrollHeight > c.clientHeight + 1; }
+  // Strange spatiile blocului (data-strans = marginea mica). Intoarce true daca a avut ce strange.
+  function strange(b) {
+    if (!b || !b.querySelectorAll) return false;
+    var str = Array.prototype.slice.call(b.querySelectorAll('[data-strans]'));
+    if (b.hasAttribute('data-strans')) str.unshift(b);
+    var schimbat = false;
+    str.forEach(function (x) {
+      var m = x.getAttribute('data-strans');
+      if (x.style.marginTop !== m) { x.style.marginTop = m; schimbat = true; }
+    });
+    return schimbat;
+  }
   var surse = Array.prototype.slice.call(document.querySelectorAll('.print-page'));
   if (!surse.length) return;
   surse.forEach(function (sursa) {
@@ -24831,7 +24854,8 @@ const PAGINATOR_TIPAR = `
       // ultimul bloc ca să nu rămână semnăturile singure pe o foaie goală.
       var st = window.getComputedStyle(b);
       if (st && st.display === 'none') { return; }
-      var tabel = (b.tagName === 'TABLE') ? b : null;
+      // data-intreg = tabel mic (ex. totalurile) care nu se rupe pe două foi: se mută întreg
+      var tabel = (b.tagName === 'TABLE' && !b.hasAttribute('data-intreg')) ? b : null;
       if (tabel && tabel.querySelector('tbody > tr')) {
         var randuri = Array.prototype.slice.call(tabel.querySelectorAll('tbody > tr'));
         var t = tabel.cloneNode(true);
@@ -24852,6 +24876,9 @@ const PAGINATOR_TIPAR = `
         return;
       }
       c.appendChild(b);
+      // Blocul cu spatii care se pot strange (data-strans = marginea mica): inainte sa-l mut
+      // pe foaia urmatoare, ii strang spatiile — poate asa incape langa restul documentului.
+      if (prea(c)) strange(b);
       if (prea(c)) { c.removeChild(b); c = foaieNoua(sursa); c.appendChild(b); }
     });
     sursa.parentNode.removeChild(sursa);
@@ -24874,7 +24901,7 @@ const PAGINATOR_TIPAR = `
   function coboaraUnul(cDe, cLa) {
     var ultim = cDe.lastElementChild;
     if (!ultim) return false;
-    if (ultim.tagName === 'TABLE' && ultim.querySelector('tbody > tr')) {
+    if (ultim.tagName === 'TABLE' && !ultim.hasAttribute('data-intreg') && ultim.querySelector('tbody > tr')) {
       var rr = ultim.querySelectorAll('tbody > tr');
       var r = rr[rr.length - 1];
       var primul = cLa.firstElementChild;
@@ -24895,7 +24922,9 @@ const PAGINATOR_TIPAR = `
         var cc = corpul(toate[k]);
         if (!prea(cc)) continue;
         // un singur bloc, mai înalt decât o foaie: nu-l pot sparge, îl las și merg mai departe
-        if (cc.children.length === 1 && !(cc.firstElementChild.tagName === 'TABLE' && cc.firstElementChild.querySelectorAll('tbody > tr').length > 1)) continue;
+        if (cc.children.length === 1 && !(cc.firstElementChild.tagName === 'TABLE' && !cc.firstElementChild.hasAttribute('data-intreg') && cc.firstElementChild.querySelectorAll('tbody > tr').length > 1)) continue;
+        // întâi încerc să strâng spațiile ultimului bloc — poate așa încape și rămâne pe foaie
+        if (strange(cc.lastElementChild)) { mutat = true; continue; }
         var urm = toate[k + 1] && corpul(toate[k + 1]);
         if (!urm) urm = corpul(foaieDupa(toate[k]));
         if (coboaraUnul(cc, urm)) mutat = true;
@@ -24906,15 +24935,19 @@ const PAGINATOR_TIPAR = `
   aseazaCeNuIncape();
   // O foaie de final cu un singur bloc arată a greșeală de tipar: cobor și ultimul bloc
   // de pe foaia dinainte, ca pagina de final să pară intenționată.
-  var foi = document.querySelectorAll('.pp-foaie');
-  if (foi.length > 1) {
-    var u = foi[foi.length - 1].querySelector('.pp-corp');
-    var p = foi[foi.length - 2].querySelector('.pp-corp');
-    if (u.children.length === 1 && p.children.length > 1) {
-      u.insertBefore(p.lastElementChild, u.firstChild);
-      aseazaCeNuIncape(); // regula de mai sus a îngroșat ultima foaie; verific din nou că încape
+  // E funcție pentru că a doua trecere (după încărcarea pozelor) poate lăsa iar un bloc singur.
+  function faraBlocSingur() {
+    var foi = document.querySelectorAll('.pp-foaie');
+    if (foi.length > 1) {
+      var u = foi[foi.length - 1].querySelector('.pp-corp');
+      var p = foi[foi.length - 2].querySelector('.pp-corp');
+      if (u.children.length === 1 && p.children.length > 1) {
+        u.insertBefore(p.lastElementChild, u.firstChild);
+        aseazaCeNuIncape(); // regula de mai sus a îngroșat ultima foaie; verific din nou că încape
+      }
     }
   }
+  faraBlocSingur();
   function numeroteaza() {
     var f = document.querySelectorAll('.pp-foaie');
     for (var i = 0; i < f.length; i++) {
@@ -24926,7 +24959,7 @@ const PAGINATOR_TIPAR = `
   // A DOUA TRECERE, după ce s-a încărcat tot. Pozele (sigla, ștampila) și fonturile pot sosi
   // după ce am măsurat foile, iar atunci o foaie crește cu câțiva milimetri și taie un rând
   // pe tăcute. Mai verific o dată la „load" și încă o dată după o clipă, apoi renumerotez.
-  function dinNou() { aseazaCeNuIncape(); numeroteaza(); }
+  function dinNou() { aseazaCeNuIncape(); faraBlocSingur(); numeroteaza(); }
   if (document.readyState === 'complete') dinNou();
   else window.addEventListener('load', dinNou);
   setTimeout(dinNou, 350);
