@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.24-factura-gestiune';
+const APP_VERSION = 'v04.25-denumire-material';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -3888,11 +3888,23 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
         /* o factură emisă nu se mai trimite; una plecată deja nu pleacă a doua oară */
         if (d.sbNumarComplet || sbInZbor.current[d.id])
             return;
+        /* v04.25: poate patronul a emis-o deja de mână în SmartBill — atunci doar o trecem în evidență */
+        const cum = await alege({ titlu: '🧾 Factura ' + (d.numar || '') + ' și SmartBill',
+            text: 'O trimit acum în SmartBill sau ai emis-o deja acolo, de mână?',
+            variante: [{ valoare: 'trimite', eticheta: '📤 Trimite acum în SmartBill', principal: true }, { valoare: 'manual', eticheta: '✅ Am emis-o deja în SmartBill' }] });
+        if (!cum)
+            return;
+        let manual = null;
+        if (cum === 'manual') {
+            manual = await cereSerieSmartBill();
+            if (!manual)
+                return;
+        }
         sbInZbor.current[d.id] = true;
         setSbState((s) => ({ ...s, [d.id]: { status: 'loading', message: '' } }));
         try {
-            const result = await onSmartBill(d);
-            setSbState((s) => ({ ...s, [d.id]: { status: 'done', message: `Trimisă (${(result && (result.series || result.serie)) || ''}${(result && (result.number ?? result.numar)) ?? ''})` } }));
+            const result = await onSmartBill(d, manual ? { manual } : undefined);
+            setSbState((s) => ({ ...s, [d.id]: { status: 'done', message: `${manual ? 'Trecută ca emisă' : 'Trimisă'} (${(result && (result.series || result.serie)) || ''}${(result && (result.number ?? result.numar)) ?? ''})` } }));
         }
         catch (e) {
             setSbState((s) => ({ ...s, [d.id]: { status: 'error', message: e.message || 'Eroare la trimitere.' } }));
@@ -5730,7 +5742,7 @@ function DevizForm({ clients, materials, santiere, initial, onCancel, onSave, sa
             sistem: sistem.id ? Object.assign({}, sistem, { puncte: (sistem.puncte || []).map((x) => String(x).trim()).filter(Boolean), conditii: (sistem.conditii || []).map((x) => String(x).trim()).filter(Boolean) }) : undefined,
         }), className: "px-3 py-1.5 rounded-lg text-sm font-medium", style: { color: '#14181C', background: 'var(--acc1)' } }, "Salvează"))))));
 }
-function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill, onFactureaza, onProcesVerbal, sabloane, setSabloane, invoices, filtruClient, onStergeFiltruClient }) {
+function DevizTab({ devize, setDevize, clients, materials, santiere, company, persist, printOne, printAll, onEmis, onReverse, prefill, onConsumePrefill, onFactureaza, onFacturatSmartBill, onProcesVerbal, sabloane, setSabloane, invoices, filtruClient, onStergeFiltruClient }) {
     const [form, setForm] = useState(prefill || null);
     const [cauta, setCauta] = useState('');
     const [filtruStare, setFiltruStare] = useState('');
@@ -5966,6 +5978,7 @@ function DevizTab({ devize, setDevize, clients, materials, santiere, company, pe
                             React.createElement("button", { onClick: () => setMeniuId(deschis ? null : d.id), "data-act": "meniu-deviz", title: "Mai multe", className: "text-sm px-2 py-0.5 rounded-lg font-bold", style: { color: 'var(--muted)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "⋯"),
                             deschis && React.createElement("div", { "data-meniu-deviz": d.id, className: "absolute right-0 top-full mt-1 rounded-xl p-1 shadow-lg", style: { background: 'var(--panel)', border: '1px solid var(--border)', minWidth: 190, zIndex: 32, boxShadow: '0 8px 30px rgba(0,0,0,.45)' } },
                                 !deFacturat && onFactureaza && d.status !== 'Ciornă' && butonMeniu('🧾 Facturează', () => onFactureaza(d), 'var(--acc2)'),
+                                onFacturatSmartBill && restFact > 0.005 && butonMeniu('✅ Facturat deja în SmartBill', () => onFacturatSmartBill(d), 'var(--acc1)'),
                                 deFacturat && butonMeniu('✎ Editează', () => setForm(d)),
                                 butonMeniu('🖨 PDF', () => printOne(d)),
                                 butonMeniu('📊 Excel', () => exportUnDevizExcel(d)),
@@ -9485,6 +9498,26 @@ function alege({ titlu, text, variante }) {
         };
         document.body.appendChild(fundal);
     });
+}
+/* v04.25: seria + numărul unei facturi emise de mână în SmartBill („SBK0217", „SBK 217") și data ei.
+   Întoarce { serie, numar, data } sau null dacă patronul renunță. */
+async function cereSerieSmartBill(dataImplicita) {
+    const t = await cereText({ titlu: '🧾 Factura din SmartBill', text: 'Seria și numărul, cum apar în SmartBill.', valoare: 'SBK', buton: 'Mai departe', exemplu: 'SBK0217' });
+    if (t == null)
+        return null;
+    const s = String(t).trim().toUpperCase().replace(/\s+/g, '');
+    const m = s.match(/^([A-Z]+)[-_]?(\d+)$/);
+    if (!m) {
+        window.alert('Scrie seria (literele) urmată de număr, de exemplu SBK0217.');
+        return null;
+    }
+    const azi = dataImplicita || dataLocala(new Date());
+    const d = await cereText({ titlu: 'Data facturii', text: 'Data din SmartBill (zz.ll.aaaa).', valoare: azi.split('-').reverse().join('.'), buton: '✓ Gata', exemplu: '05.10.2026' });
+    if (d == null)
+        return null;
+    const md = String(d).trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+    const data = md ? md[3] + '-' + md[2].padStart(2, '0') + '-' + md[1].padStart(2, '0') : azi;
+    return { serie: m[1], numar: m[2], data };
 }
 function cereText({ titlu, text, valoare, tipNumar, buton, exemplu, multiline }) {
     return new Promise((rezolva) => {
@@ -24695,7 +24728,10 @@ function modelDocSablon({ doc, client, company, fel }) {
         blocuri.push({ titlu: 'CONDIȚII', paragraf: '', puncte: S ? curat(S.conditii) : SABLON_TEXT.conditii });
     if (eOf)
         blocuri.push({ titlu: 'DOCUMENTAȚIE LA PREDARE', paragraf: SABLON_TEXT.documentatieIntro, puncte: SABLON_TEXT.documentatie });
-    return { fel, eOf, exec, benef, titlu, linii, proiect: proiect ? 'Proiect: ' + proiect : '', carduri, sectiuni,
+    /* capul coloanei: tabelul începe cu MATERIALE, deci „Denumire material" (cerut de patron);
+       doar un document numai cu manoperă rămâne pe „Denumire lucrare", ca în șablon */
+    const capDenumire = rub.materiale.items.length ? 'Denumire material' : 'Denumire lucrare';
+    return { fel, eOf, exec, benef, titlu, linii, proiect: proiect ? 'Proiect: ' + proiect : '', carduri, sectiuni, capDenumire,
         totMan, totMat, totFara, tvaRata, tvaVal, total, observatii: eOf ? SABLON_TEXT.observatii : '', blocuri: blocuri.filter((b) => b.paragraf || b.puncte.length),
         semn: { exec: exec[0], admin: c.administrator || SABLON_TEXT.admin, benef: cl.nume || '' } };
 }
@@ -24740,7 +24776,7 @@ function docSablonHtml({ doc, client, company, fel }) {
     </tr></table><div style="height:${pt(27.6)};"></div>`;
     /* tabelul: capul de tabel se repetă pe fiecare foaie (paginatorul clonează tabelul) */
     const cap = `<thead><tr style="height:${pt(34)};">
-      ${['Nr.', 'Denumire lucrare', '', 'UM', 'Cantitate', 'Preț unitar (lei)', 'Valoare (lei)'].map((h, i) => i === 2 ? '' : `<th${i === 1 ? ' colspan="2"' : ''} style="${F}font-size:${pt(9.5)};font-weight:700;color:${NAVY};text-align:center;vertical-align:middle;padding:0 1mm;border-top:0.5pt solid #D1D5DB;border-bottom:${pt(1.5)} solid ${NAVY};">${h}</th>`).join('')}
+      ${['Nr.', M.capDenumire, '', 'UM', 'Cantitate', 'Preț unitar (lei)', 'Valoare (lei)'].map((h, i) => i === 2 ? '' : `<th${i === 1 ? ' colspan="2"' : ''} style="${F}font-size:${pt(9.5)};font-weight:700;color:${NAVY};text-align:center;vertical-align:middle;padding:0 1mm;border-top:0.5pt solid #D1D5DB;border-bottom:${pt(1.5)} solid ${NAVY};">${h}</th>`).join('')}
     </tr></thead>`;
     const randuri = [];
     M.sectiuni.forEach((s, si) => {
@@ -25072,6 +25108,9 @@ async function excelDinSablon({ doc, client, company, fel }) {
         if (rP && M.proiect)
             ws.getRow(rP).getCell(1).value = M.proiect;
     }
+    const rCap = gaseste((x) => normSect(text(x, 2)) === 'denumire lucrare');
+    if (rCap)
+        ws.getRow(rCap).getCell(2).value = M.capDenumire;
     const rCard = gaseste((x) => /^total (deviz|oferta) \(cu tva\)/.test(normSect(text(x, 1))));
     if (rCard) {
         const rv = ws.getRow(rCard + 1);
@@ -32388,7 +32427,20 @@ function App() {
             return next;
         });
     };
-    const sendInvoiceToSmartBill = async (invoice) => {
+    const sendInvoiceToSmartBill = async (invoice, opt) => {
+        /* v04.25: „am emis-o deja de mână în SmartBill" — nu trimit nimic, doar trec seria și numărul,
+           ca aplicația s-o știe emisă (nu se mai poate trimite a doua oară) */
+        if (opt && opt.manual) {
+            const { serie, numar, data } = opt.manual;
+            setInvoices((prev) => {
+                const next = prev.map((x) => x.id === invoice.id
+                    ? { ...x, sbSerie: String(serie || ''), sbNumar: String(numar || ''), sbNumarComplet: `${serie || ''}${numar || ''}`, sbEmisaLa: data || x.data || dataLocala(new Date()), sbManual: true, sbEroare: '', sbIncercatLa: '' }
+                    : x);
+                persist('invoices', next);
+                return next;
+            });
+            return { series: serie, number: numar, manual: true };
+        }
         const client = clients.find((c) => c.id === invoice.clientId);
         const scrieEsec = (mesaj) => noteazaSmartBill(invoice.id, {
             sbEroare: String(mesaj || 'Trimiterea a eșuat.').slice(0, 300),
@@ -32700,6 +32752,57 @@ function App() {
     };
     /* FACTURARE PE ETAPE: tot (restul), avans % sau o sumă. Facturat = facturile cu devizul în devizeIds.
        „Tot" pe un deviz nefacturat face exact factura de până acum (un rând, toată valoarea). */
+    /* ✅ FACTURAT DEJA ÎN SMARTBILL (v04.25, cerut de patron): factura s-a făcut direct în SmartBill,
+       nu din aplicație. O trecem în evidență — factură legată de deviz (devizeIds), cu seria și numărul
+       din SmartBill — fără să trimitem nimic. Devizul apare facturat, banii apar „de încasat" / încasați,
+       iar stocul nu se mișcă (factura din deviz nu scoate nimic, vezi REGULA STOCULUI). */
+    const facturatDejaSmartBill = async (d) => {
+        const valoare = rotunjLei(calcSubtotal(d.items || []));
+        const facturat = facturatDinDeviz(d, invoices, devize);
+        const rest = rotunjLei(valoare - facturat);
+        if (rest <= 0.005 && valoare > 0) {
+            await alege({ titlu: 'Devizul e facturat integral', text: `Deviz ${d.numar || ''}: facturat ${money(facturat)} din ${money(valoare)} (fără TVA).`, variante: [{ valoare: 'ok', eticheta: '↩ Bine', principal: true }] });
+            return;
+        }
+        const fel = await alege({ titlu: '✅ Facturat în SmartBill — deviz ' + (d.numar || ''),
+            text: `Valoare deviz: ${money(valoare)} fără TVA` + (facturat > 0 ? `\nFacturat deja: ${money(facturat)} · rest ${money(rest)}` : '') + '\nCât ai facturat în SmartBill?',
+            variante: [{ valoare: 'tot', eticheta: facturat > 0 ? `Restul (${money(rest)})` : `Tot devizul (${money(valoare)})`, principal: true }, { valoare: 'suma', eticheta: 'O sumă (lei, fără TVA)' }] });
+        if (!fel)
+            return;
+        let suma = rest;
+        if (fel === 'suma') {
+            const t = await cereText({ titlu: 'Ce sumă ai facturat? (fără TVA)', text: `Rest de facturat: ${money(rest)}`, valoare: String(rest), tipNumar: true, buton: 'Mai departe' });
+            if (t == null)
+                return;
+            let sT = String(t).replace(/\s/g, '').replace(/lei$/i, '');
+            if (sT.includes('.') && sT.includes(','))
+                sT = sT.replace(/\./g, '').replace(',', '.');
+            else if (/^\d{1,3}(\.\d{3})+$/.test(sT))
+                sT = sT.replace(/\./g, '');
+            else
+                sT = sT.replace(',', '.');
+            suma = rotunjLei(sT);
+            if (!(suma > 0)) { window.alert('Scrie o sumă mai mare ca zero.'); return; }
+        }
+        const sb = await cereSerieSmartBill();
+        if (!sb)
+            return;
+        const nr = sb.serie + sb.numar;
+        if ((invoices || []).some((i) => i && String(i.sbNumarComplet || '').toUpperCase() === nr) && !window.confirm('Factura ' + nr + ' e deja în aplicație. O mai trec o dată?'))
+            return;
+        const st = await alege({ titlu: 'Factura ' + nr + ' e încasată?', text: 'Ca să știe aplicația ce bani mai ai de primit.',
+            variante: [{ valoare: 'De încasat', eticheta: '⏳ Încă nu — de încasat', principal: true }, { valoare: 'Încasată', eticheta: '✅ Da, încasată' }] });
+        if (!st)
+            return;
+        const scad = (() => { const x = new Date(sb.data + 'T00:00:00'); x.setDate(x.getDate() + 30); return dataLocala(x); })();
+        await saveInvoice({ id: uid(), clientId: d.clientId,
+            items: [{ id: uid(), denumire: randDinDeviz(d, fel === 'tot' && facturat > 0 ? 'Rest' : (fel === 'suma' ? 'Parțial' : undefined)), um: 'buc', cantitate: 1, pretUnitar: suma, adaos: 0 }],
+            tva: d.tva, status: st, data: sb.data, scadenta: scad,
+            santierId: d.santierId, santierNume: d.santierNume, adresaLucrare: d.adresaLucrare, lucrare: d.lucrare,
+            nrContract: d.nrContract, dataContract: d.dataContract, actAditional: d.actAditional, dataActAditional: d.dataActAditional,
+            devizeIds: [d.id], sbSerie: sb.serie, sbNumar: sb.numar, sbNumarComplet: nr, sbEmisaLa: sb.data, sbManual: true, stocIntrebat: true });
+        arataSalvat('✅ Factura ' + nr + ' trecută în evidență (deviz ' + (d.numar || '') + ')');
+    };
     const refFactDeviz = useRef(false);
     const facturaDinDeviz = async (d) => {
         if (refFactDeviz.current)
@@ -33482,7 +33585,7 @@ function App() {
                                 "."),
                             React.createElement("button", { onClick: () => setTab('santiere'), className: "mt-4 text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83C\uDFD7 Mergi la \u0218antiere"))) : (React.createElement(React.Fragment, null,
                             HELP[tab] && React.createElement(HelpNote, { text: HELP[tab], isManager: effectiveUser.rol === 'Manager' }),
-                            tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, sabloane: sabloaneOferta, setSabloane: setSabloaneOferta, clients: clients, materials: materials, santiere: santiere, onProcesVerbal: (d) => { setPendingSiteNav({ santierId: d.santierId, siteView: 'pv', pvDinDeviz: d.id, origine: { tab: 'devize', pagina: null, eticheta: 'Devize' } }); setTab('santiere'); }, onFactureaza: facturaDinDeviz, invoices: invoices, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => scoateLaDocument(doc, `Deviz ${doc.numar}`), onReverse: (doc) => anuleazaIesireDoc(doc, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null), filtruClient: filtruPt('devize'), onStergeFiltruClient: () => setFiltruClient(null) })),
+                            tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, sabloane: sabloaneOferta, setSabloane: setSabloaneOferta, clients: clients, materials: materials, santiere: santiere, onProcesVerbal: (d) => { setPendingSiteNav({ santierId: d.santierId, siteView: 'pv', pvDinDeviz: d.id, origine: { tab: 'devize', pagina: null, eticheta: 'Devize' } }); setTab('santiere'); }, onFactureaza: facturaDinDeviz, onFacturatSmartBill: facturatDejaSmartBill, invoices: invoices, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => scoateLaDocument(doc, `Deviz ${doc.numar}`), onReverse: (doc) => anuleazaIesireDoc(doc, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null), filtruClient: filtruPt('devize'), onStergeFiltruClient: () => setFiltruClient(null) })),
                             tab === 'antemasuratoare' && effectiveUser.rol === 'Manager' && (React.createElement(AntemasuratoareTab, { antemasuratori: antemasuratori, setAntemasuratori: setAntemasuratori, clients: clients, santiere: santiere, persist: persist, currentUser: effectiveUser, onOferta: ofertaDinAntemasuratoare })),
                             tab === 'oferte' && (React.createElement("div", null,
                                 React.createElement("div", { className: "antetPagina" },
