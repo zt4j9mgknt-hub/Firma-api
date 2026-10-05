@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.26-gestiune-deviz';
+const APP_VERSION = 'v04.27-unde-nu-bate';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -5246,6 +5246,59 @@ function ImportFacturaGestiune({ materials, gestiuni, achizitii, onAdauga, onInc
     const deLuat = randuri.filter((r) => r.ia);
     const sumaRanduri = randuri.reduce((s, r) => s + cifra(r.cantitate) * cifra(r.pretUnitar), 0);
     const dif = fact ? Math.round((sumaRanduri - (Number(fact.totalFaraTva) || 0)) * 100) / 100 : 0;
+    /* UNDE NU BATE (v04.27, cerut de patron): nu doar „diferență X lei", ci care rând și de ce,
+       cu o corectură la un clic. Verificările: rândul (cant × preț ≠ valoarea tipărită), rânduri
+       lipsă / dublate (suma valorilor ≠ totalul), prețuri citite cu TVA, total necitit. */
+    const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+    const aproape = (a, b, tol) => Math.abs((Number(a) || 0) - (Number(b) || 0)) <= (tol == null ? 0.05 : tol);
+    const diagnostic = (() => {
+        if (!fact)
+            return [];
+        const out = [];
+        const T = Number(fact.totalFaraTva) || 0;
+        randuri.forEach((r, i) => {
+            const q = cifra(r.cantitate), p = cifra(r.pretUnitar), v = Number(r.valoare) || 0, calc = q * p;
+            if (q <= 0)
+                out.push({ randId: r.id, nr: i + 1, text: 'cantitatea lipsește sau e 0' });
+            if (r.ia && !String(r.denumire || '').trim())
+                out.push({ randId: r.id, nr: i + 1, text: 'scrie denumirea produsului, cum e pe factură' });
+            if (!v || aproape(calc, v))
+                return;
+            const fix = [];
+            if (q > 0)
+                fix.push({ et: 'preț = ' + money(v / q), fa: () => setRand(r.id, 'pretUnitar', String(Math.round(v / q * 10000) / 10000)) });
+            if (p > 0 && aproape(v / p, Math.round(v / p), 0.001) && Math.round(v / p) !== q)
+                fix.push({ et: 'cantitate = ' + Math.round(v / p), fa: () => setRand(r.id, 'cantitate', String(Math.round(v / p))) });
+            const cota = Number(r.cotaTva) || 21;
+            const cuTva = aproape(calc, v * (1 + cota / 100), Math.max(0.05, v * 0.002));
+            out.push({ randId: r.id, nr: i + 1, fix,
+                text: `${q} × ${money(p)} = ${money(calc)}, dar pe factură valoarea rândului e ${money(v)} (diferență ${money(calc - v)})` + (cuTva ? ' — prețul pare citit CU TVA' : '') });
+        });
+        if (Math.abs(dif) > 1) {
+            const V = randuri.reduce((s, r) => s + (Number(r.valoare) || 0), 0);
+            const toateAuValoare = randuri.length > 0 && randuri.every((r) => Number(r.valoare) > 0 || Number(r.valoare) < 0);
+            if (!T)
+                out.push({ text: 'AI-ul n-a citit totalul fără TVA al facturii. Scrie-l de pe factură în căsuța de jos.' });
+            else if (aproape(sumaRanduri, Number(fact.total) || 0, 1))
+                out.push({ text: 'Suma rândurilor e egală cu totalul CU TVA — prețurile au fost citite cu TVA inclus.', fix: [{ et: 'scoate TVA din toate prețurile', fa: () => setRanduri((rs) => rs.map((r) => ({ ...r, pretUnitar: String(Math.round(cifra(r.pretUnitar) / (1 + (Number(r.cotaTva) || 21) / 100) * 10000) / 10000) }))) }] });
+            else if (toateAuValoare && !aproape(V, T, 1)) {
+                const lipsa = r2(T - V);
+                const dublat = randuri.findIndex((r) => aproape(Math.abs(Number(r.valoare) || 0), Math.abs(lipsa), 0.05));
+                if (lipsa > 0)
+                    out.push({ text: `Lipsesc rânduri de ${money(lipsa)}: valorile rândurilor citite fac ${money(V)}, factura are ${money(T)} fără TVA. Probabil AI-ul a sărit un rând (des pe pagina a doua) — caută pe factură un rând de ${money(lipsa)}.`,
+                        fix: [{ et: '➕ adaugă rândul lipsă', fa: () => setRanduri((rs) => [...rs, { id: uid(), denumire: '', cod: '', um: 'buc', cantitate: 1, pretUnitar: lipsa, valoare: lipsa, ia: true, tinta: '__nou__' }]) }] });
+                else if (dublat >= 0)
+                    out.push({ randId: randuri[dublat].id, nr: dublat + 1, text: `Rândurile fac cu ${money(-lipsa)} mai mult decât factura — exact cât rândul ${dublat + 1}. Pare citit de două ori.`, fix: [{ et: 'scoate rândul ' + (dublat + 1), fa: () => setRanduri((rs) => rs.filter((x) => x.id !== randuri[dublat].id)) }] });
+                else
+                    out.push({ text: `Rândurile fac cu ${money(-lipsa)} mai mult decât factura fără TVA. Caută o reducere pe total (discount) sau un rând citit greșit.`,
+                        fix: [{ et: '➖ adaugă reducerea de ' + money(-lipsa), fa: () => setRanduri((rs) => [...rs, { id: uid(), denumire: 'Reducere pe factură', cod: '', um: 'buc', cantitate: 1, pretUnitar: lipsa, valoare: lipsa, ia: false, tinta: '__nou__' }]) }] });
+            }
+            else if (!out.some((x) => x.randId))
+                out.push({ text: `Rândurile fac ${money(sumaRanduri)}, factura ${money(T)} fără TVA (diferență ${money(dif)}). Verifică pe factură prețurile și cantitățile rând cu rând.` });
+        }
+        return out;
+    })();
+    const mergiLaRand = (id) => { const el = document.querySelector('[data-rand-id="' + id + '"]'); if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.style.outline = '2px solid var(--acc3)'; setTimeout(() => { el.style.outline = ''; }, 1800); } };
     const dubla = fact && (achizitii || []).find((a) => a && a.nrFactura && fact.numar && n(a.nrFactura) === n((fact.serie || '') + fact.numar) && n(a.furnizor) === n(fact.furnizor));
     const probleme = deLuat.filter((r) => !String(r.denumire || '').trim() || cifra(r.cantitate) <= 0);
     const adauga = () => {
@@ -5255,7 +5308,7 @@ function ImportFacturaGestiune({ materials, gestiuni, achizitii, onAdauga, onInc
         if (probleme.length) { window.alert(probleme.length + ' rânduri bifate n-au denumire sau cantitate. Corectează-le sau scoate-le bifa.'); return; }
         if (dubla && !window.confirm('Factura ' + (fact.serie || '') + fact.numar + ' de la ' + fact.furnizor + ' a mai fost introdusă o dată. O adaug din nou? Cantitățile se adună.'))
             return;
-        if (Math.abs(dif) > 1 && !window.confirm('Suma rândurilor (' + money(sumaRanduri) + ') nu bate cu totalul facturii fără TVA (' + money(fact.totalFaraTva) + '). Adaug totuși?'))
+        if ((Math.abs(dif) > 1 || diagnostic.length) && !window.confirm('Factura nu bate: ' + (diagnostic[0] ? (diagnostic[0].nr ? 'rândul ' + diagnostic[0].nr + ' — ' : '') + diagnostic[0].text : 'rândurile fac ' + money(sumaRanduri) + ', factura ' + money(fact.totalFaraTva)) + (diagnostic.length > 1 ? '\n(+ încă ' + (diagnostic.length - 1) + ' probleme, vezi „Unde nu bate")' : '') + '\n\nAdaug totuși?'))
             return;
         try { localStorage.setItem('ultimaGestiuneImport', gestFinala); } catch (_) { }
         onAdauga({ factura: fact, gestiune: gestFinala, randuri: deLuat.map((r) => ({ ...r, cantitate: cifra(r.cantitate), pretUnitar: cifra(r.pretUnitar), materialId: r.tinta && r.tinta !== '__nou__' ? r.tinta : undefined })) });
@@ -5290,8 +5343,10 @@ function ImportFacturaGestiune({ materials, gestiuni, achizitii, onAdauga, onInc
                     const alta = r.tinta === '__nou__' && inAlta(r);
                     const val = cifra(r.cantitate) * cifra(r.pretUnitar);
                     const valDif = r.valoare && Math.abs(val - r.valoare) > 0.05;
-                    return React.createElement("div", { key: r.id, "data-rand-factura": i, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', opacity: r.ia ? 1 : 0.55, border: '1px solid ' + (valDif ? '#E5A43F66' : 'transparent') } },
+                    const areProblema = diagnostic.some((x) => x.randId === r.id);
+                    return React.createElement("div", { key: r.id, "data-rand-factura": i, "data-rand-id": r.id, className: "rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', opacity: r.ia ? 1 : 0.55, border: '1px solid ' + (areProblema ? 'var(--acc3)' : valDif ? '#E5A43F66' : 'transparent') } },
                         React.createElement("div", { className: "flex items-start gap-2" },
+                            React.createElement("span", { className: "text-[11px] mt-1.5 cifre shrink-0", style: { color: areProblema ? 'var(--acc3)' : 'var(--muted2)', width: 18 } }, i + 1, areProblema ? '⚠' : ''),
                             React.createElement("input", { type: "checkbox", checked: !!r.ia, onChange: (e) => setRand(r.id, 'ia', e.target.checked), title: "Intră în stoc", className: "mt-1.5" }),
                             React.createElement("textarea", { rows: 1, value: r.denumire, onChange: (e) => setRand(r.id, 'denumire', e.target.value.replace(/\n/g, ' ')), className: "flex-1 min-w-0 bg-transparent outline-none text-sm", style: { color: 'var(--text)', resize: 'vertical', lineHeight: 1.35 } })),
                         React.createElement("div", { className: "flex items-center gap-2 flex-wrap mt-1 pl-6 text-xs", style: { color: 'var(--muted)' } },
@@ -5309,8 +5364,17 @@ function ImportFacturaGestiune({ materials, gestiuni, achizitii, onAdauga, onInc
                             alta && React.createElement("span", { style: { color: 'var(--muted2)' } }, "(există în „", alta.categorie || 'fără gestiune', "” — aici devine material separat)")));
                 })),
             React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap text-sm rounded-lg px-3 py-2", style: { background: 'var(--panel)', border: '1px solid ' + (Math.abs(dif) > 1 ? '#E5A43F' : 'var(--border)') } },
-                React.createElement("span", { style: { color: 'var(--muted)' } }, "Rânduri: ", React.createElement("b", { className: "cifre", style: { color: 'var(--text)' } }, money(sumaRanduri)), " · pe factură fără TVA: ", React.createElement("b", { className: "cifre", style: { color: 'var(--text)' } }, money(fact.totalFaraTva)), fact.total ? [" · cu TVA ", React.createElement("b", { key: "t", className: "cifre" }, money(fact.total))] : null),
+                React.createElement("span", { className: "flex items-center gap-1 flex-wrap", style: { color: 'var(--muted)' } }, "Rânduri: ", React.createElement("b", { className: "cifre", style: { color: 'var(--text)' } }, money(sumaRanduri)), " · pe factură fără TVA:",
+                    React.createElement("input", { value: fact.totalFaraTva, inputMode: "decimal", "data-total-factura": true, title: "Totalul fără TVA de pe factură — corectează-l dacă AI-ul l-a citit greșit",
+                        onChange: (e) => setFact({ ...fact, totalFaraTva: String(e.target.value).replace(',', '.') }), className: "w-28 rounded px-1.5 py-0.5 text-sm outline-none cifre font-bold", style: inputStyle }),
+                    fact.total ? [" · cu TVA ", React.createElement("b", { key: "t", className: "cifre" }, money(fact.total))] : null),
                 React.createElement("span", { style: { color: Math.abs(dif) > 1 ? 'var(--acc3)' : 'var(--acc2)' } }, Math.abs(dif) > 1 ? '⚠ diferență ' + money(dif) : '✓ se potrivește')),
+            diagnostic.length > 0 && React.createElement("div", { "data-diagnostic-factura": true, className: "rounded-lg px-3 py-2 space-y-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--acc3)' } },
+                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--acc3)' } }, "🔎 Unde nu bate (", diagnostic.length, ")"),
+                diagnostic.map((x, k) => React.createElement("div", { key: k, className: "text-xs flex items-start gap-2 flex-wrap", style: { color: 'var(--text)' } },
+                    React.createElement("span", { className: "flex-1 min-w-[200px]" }, x.nr ? React.createElement("b", null, "Rândul ", x.nr, ": ") : null, x.text),
+                    x.randId && React.createElement("button", { type: "button", onClick: () => mergiLaRand(x.randId), className: "px-2 py-0.5 rounded", style: { color: 'var(--acc1)', background: 'var(--panel)' } }, "↓ du-mă la rând"),
+                    (x.fix || []).map((f, j) => React.createElement("button", { key: j, type: "button", onClick: f.fa, className: "px-2 py-0.5 rounded font-semibold", style: { color: '#14181C', background: 'var(--acc3)' } }, f.et))))),
             fact.observatii && React.createElement("div", { className: "text-xs", style: { color: 'var(--muted2)' } }, "Notă AI: ", fact.observatii),
             React.createElement("div", { className: "flex justify-end gap-2" },
                 React.createElement("button", { type: "button", onClick: () => { setFact(null); setRanduri([]); setEroare(''); }, className: "btnSec" }, "Altă factură"),
