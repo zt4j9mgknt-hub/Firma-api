@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.34-scanare-brief';
+const APP_VERSION = 'v04.35-gard-gps';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -21405,6 +21405,47 @@ function situatiePrezentaZi({ prezenta, oameni, concedii, zi }) {
 const urlHartaPunct = (r) => 'https://www.google.com/maps?q=' + r.lat + ',' + r.lng;
 const initialeNume = (n) => String(n || '?').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join('').toUpperCase() || '?';
 /* Butonul electricianului: în „Activitatea mea" (mare) și pe pagina șantierului (compact). */
+/* „GARD" GPS (v04.34, din comparația cu Fieldwire/Jobber): cât aplicația e deschisă, dacă telefonul are
+   DEJA voie la locație (nu o cerem aici), recunoaștem șantierul din apropiere și propunem „Am ajuns" dintr-o
+   atingere; dacă ești marcat pe un șantier și te-ai îndepărtat mult (> 600 m), propunem „Am plecat".
+   Nu se notează nimic singur — omul apasă, iar marcarea trece prin aceleași reguli ca butonul obișnuit. */
+function BannerGardGps({ P, eu, st, sc, santierId, lucreaza, apasa }) {
+    const [aproape, setAproape] = useState(null);
+    const curentId = sc && sc.santierId;
+    useEffect(() => {
+        let viu = true;
+        const verifica = async () => {
+            try {
+                if (!navigator.geolocation || !navigator.permissions)
+                    return;
+                const p = await navigator.permissions.query({ name: 'geolocation' });
+                if (p.state !== 'granted')
+                    return;
+                navigator.geolocation.getCurrentPosition((poz) => {
+                    if (!viu)
+                        return;
+                    const { latitude: la, longitude: lo, accuracy } = poz.coords;
+                    const ale = (P.santiere || []).filter((s) => s && s.status === 'Activ' && Number(s.lat) && Number(s.lng) && lucreazaInEchipa(s.echipa, eu.id) && (!santierId || s.id === santierId));
+                    const cu = ale.map((s) => ({ s, d: distantaMetri(la, lo, Number(s.lat), Number(s.lng)) })).sort((a, b) => a.d - b.d);
+                    const raza = Math.max(150, Math.min(400, (accuracy || 0) + 120));
+                    setAproape({ cel: cu[0] && cu[0].d <= raza ? cu[0] : null, curent: curentId ? (cu.find((x) => x.s.id === curentId) || null) : null });
+                }, () => { }, { enableHighAccuracy: true, maximumAge: 60000, timeout: 15000 });
+            }
+            catch (_) { }
+        };
+        verifica();
+        const t = setInterval(verifica, 120000);
+        return () => { viu = false; clearInterval(t); };
+    }, [st.deschis, curentId, santierId]);
+    const propSosire = !st.deschis && aproape && aproape.cel ? aproape.cel : null;
+    const propPlecare = st.deschis && aproape && aproape.curent && aproape.curent.d > 600 ? aproape.curent : null;
+    if (!propSosire && !propPlecare)
+        return null;
+    return React.createElement("button", { type: "button", "data-gard-gps": propSosire ? 'sosire' : 'plecare', disabled: lucreaza,
+        onClick: () => propSosire ? apasa('sosire', propSosire.s.id) : apasa('plecare'),
+        className: "w-full text-left rounded-xl px-3 py-2.5 text-sm font-semibold", style: { color: '#14181C', background: propSosire ? '#4CAF7D' : '#E9A23B', minHeight: 52 } },
+        propSosire ? `📍 Ești la ${propSosire.s.nume} (${Math.round(propSosire.d)} m) — atinge pentru „Am ajuns"` : `🏁 Ești la ${(propPlecare.d / 1000).toFixed(1).replace('.', ',')} km de ${propPlecare.s.nume} — ai plecat? Atinge pentru „Am plecat"`);
+}
 function CardPrezenta({ santierId, compact, dala }) {
     const P = React.useContext(PrezentaCtx);
     const [lucreaza, setLucreaza] = useState(false);
@@ -21422,6 +21463,9 @@ function CardPrezenta({ santierId, compact, dala }) {
     const sc = st.sosireCurenta;
     const deschisAici = st.deschis && (!santierId || sc.santierId === santierId);
     const deschisAltundeva = st.deschis && !!santierId && sc.santierId !== santierId;
+    /* „GARD" GPS (v04.34): bannerul e o componentă separată (BannerGardGps), ca hook-urile ei să nu stea
+       după întoarcerile timpurii de mai sus. apasa e declarată mai jos — se cheamă abia la atingere. */
+    const bannerGard = React.createElement(BannerGardGps, { P, eu, st, sc, santierId, lucreaza, apasa: (tip, sid) => apasa(tip, sid) });
     const apasa = async (tip, sid) => {
         if (lucreaza)
             return;
@@ -21444,6 +21488,7 @@ function CardPrezenta({ santierId, compact, dala }) {
     if (dala) {
         const plec = deschisAici;
         return React.createElement("div", { className: "min-w-0" },
+            bannerGard,
             React.createElement(DalaManusi, { id: plec ? 'plecare' : 'sosire', icon: lucreaza ? '⏳' : (plec ? '🏁' : '📍'), text: lucreaza ? 'Se caută locația…' : (plec ? 'Am plecat' : 'Am ajuns'),
                 sub: plec && sc ? 'de la ' + sc.ora + (sc.santierNume ? ' · ' + sc.santierNume : '') : (st.ultimaPlecare ? 'plecat ' + st.ultimaPlecare.ora : ''),
                 culoare: plec ? '#E9A23B' : '#4CAF7D', disabled: lucreaza, onClick: () => apasa(plec ? 'plecare' : 'sosire', null) }),
@@ -21457,6 +21502,7 @@ function CardPrezenta({ santierId, compact, dala }) {
     return (React.createElement("div", { "data-card-prezenta": compact ? 'compact' : 'mare', className: compact ? "mb-3 rounded-lg p-3 space-y-2" : "mb-5 rounded-xl p-4 space-y-2.5",
         style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (st.deschis ? '#4CAF7D' : 'var(--acc1)') } },
         !compact && React.createElement("div", { className: "text-sm font-bold", style: { color: 'var(--text)' } }, "📍 Prezența pe șantier"),
+        bannerGard,
         deschisAici && linie(sc, 'Sosit'),
         deschisAltundeva && React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, "Ești marcat la ", React.createElement("b", { style: { color: 'var(--text)' } }, sc.santierNume || 'alt șantier'), " de la ", sc.ora, "."),
         !st.deschis && st.ultimaPlecare && linie(st.ultimaPlecare, 'Plecat'),
