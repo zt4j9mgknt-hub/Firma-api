@@ -91,6 +91,56 @@ const SISTEM_FACTURA =
   '6. Furnizorul e cel care EMITE factura (vânzătorul), nu cumpărătorul.\n' +
   '7. Nu inventa. Ce nu se citește rămâne text gol sau 0 și se spune în „observatii". Rândurile de subtotal/total nu sunt rânduri de produs.';
 
+/* v04.38 — NUMĂRAREA SIMBOLURILOR DIN PLANȘĂ (antemăsurătoare). Primește imaginea unei pagini
+   de planșă + lista articolelor patronului (priză, întrerupător, corp...) și întoarce fiecare
+   simbol găsit cu chenarul lui (box_2d, 0–1000, ca la Gemini), ca aplicația să pună punctele
+   pe planșă. Patronul le vede pe toate și le scoate pe cele greșite — AI-ul doar propune. */
+const SISTEM_SIMBOLURI =
+  'Ești devizierul unei firme de instalații electrice din România și citești o PLANȘĂ de instalații electrice ' +
+  '(plan de nivel cu simboluri: prize, întrerupătoare, corpuri de iluminat, doze, tablouri, detectoare etc.).\n' +
+  'Primești imaginea planșei și lista ARTICOLELOR firmei (id + denumire). Găsești pe planșă FIECARE simbol care ' +
+  'corespunde unui articol și îl întorci separat, cu chenarul lui.\n' +
+  'Răspunzi DOAR cu JSON valid: {"gasite":[{"articolId":"","box_2d":[ymin,xmin,ymax,xmax],"incredere":0.0}],' +
+  '"altele":[{"denumire":"","cantitate":0}],"legenda":"","observatii":""}\n' +
+  'Reguli obligatorii:\n' +
+  '1. box_2d în coordonate normalizate 0–1000 față de imaginea întreagă (y înainte de x), strâns pe simbol.\n' +
+  '2. Folosește LEGENDA planșei dacă există: ea spune ce înseamnă fiecare simbol. Pune în „legenda" pe scurt ce ai citit din ea.\n' +
+  '3. Un simbol = un rând în „gasite". Nu număra simbolurile din legendă, din cartuș sau din detalii/scheme de tablou.\n' +
+  '4. „articolId" e exact unul din id-urile primite. Simbolurile care nu se potrivesc cu niciun articol merg în „altele", numărate, cu denumirea corectă în română.\n' +
+  '5. „incredere" între 0 și 1. Nu inventa simboluri; dacă nu se vede clar, pune încredere mică.\n' +
+  '6. Priză dublă ≠ două prize simple; întrerupător dublu/cap scară/cruce sunt articole diferite dacă lista le are separat.';
+
+function curataSimboluri(brut, ids) {
+  let o = brut;
+  if (typeof o === 'string') o = JSON.parse(o.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim());
+  o = o || {};
+  const ok = new Set(ids);
+  const nr = (v) => { const c = Number(v); return isFinite(c) ? c : 0; };
+  const gasite = (Array.isArray(o.gasite) ? o.gasite : []).map((g) => {
+    const b = Array.isArray(g && g.box_2d) ? g.box_2d.map(nr) : [];
+    if (b.length !== 4 || !ok.has(String(g.articolId))) return null;
+    const [y0, x0, y1, x1] = b.map((v) => Math.max(0, Math.min(1000, v)));
+    if (y1 <= y0 || x1 <= x0) return null;
+    return { articolId: String(g.articolId), box: [y0, x0, y1, x1], incredere: Math.max(0, Math.min(1, nr(g.incredere) || 0.5)) };
+  }).filter(Boolean).slice(0, 2000);
+  const altele = (Array.isArray(o.altele) ? o.altele : []).map((a) => ({
+    denumire: String((a && a.denumire) || '').trim().slice(0, 200), cantitate: Math.max(0, Math.round(nr(a && a.cantitate))),
+  })).filter((a) => a.denumire && a.cantitate > 0).slice(0, 100);
+  return { gasite, altele, legenda: String(o.legenda || '').trim().slice(0, 1500), observatii: String(o.observatii || '').trim().slice(0, 1000) };
+}
+
+function trimiteSimboluri(res, raspuns, model, finish, ids) {
+  try {
+    return res.status(200).json({ simboluri: curataSimboluri(raspuns, ids), model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
+  } catch (_) {
+    return res.status(502).json({
+      error: finish === 'MAX_TOKENS'
+        ? 'Planșa are prea multe simboluri pentru o singură citire. Mărește pe o zonă și încearcă pe bucăți.'
+        : 'AI a răspuns, dar nu într-un format citibil. Mai încearcă o dată.',
+    });
+  }
+}
+
 function curataFactura(brut) {
   let o = brut;
   if (typeof o === 'string') o = JSON.parse(o.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim());
@@ -240,7 +290,11 @@ export default async function handler(req, res) {
        ofertele sunt treaba lui, iar un fișier mare consumă cota mult mai repede. */
     /* extrageFactura (v04.24): factura furnizorului → rânduri cu prețuri, pentru gestiune */
     const eFactura = body.actiune === 'extrageFactura';
-    const extrage = body.actiune === 'extrageLista' || eFactura;
+    const eSimboluri = body.actiune === 'numaraSimboluri';
+    const extrage = body.actiune === 'extrageLista' || eFactura || eSimboluri;
+    const articoleSimb = eSimboluri ? (Array.isArray(body.articole) ? body.articole : []).slice(0, 60)
+      .map((a) => ({ id: String((a && a.id) || '').slice(0, 40), nume: String((a && a.nume) || '').slice(0, 120) })).filter((a) => a.id && a.nume) : [];
+    if (eSimboluri && !articoleSimb.length) return res.status(400).json({ error: 'Lipsesc articolele de căutat.' });
     let fisier = null;
     if (extrage) {
       if (rolReal !== 'Manager') {
@@ -258,8 +312,11 @@ export default async function handler(req, res) {
       }
       fisier = { mime, base64: b64 };
     }
-    const intrebare = eFactura
-      ? ('Extrage antetul și toate rândurile din factura furnizorului atașată' + (body.nume ? (' („' + String(body.nume).slice(0, 120) + '")') : '') + '. Răspunde doar cu JSON-ul cerut.')
+    const intrebare = eSimboluri
+      ? ('Articolele firmei (id → denumire):\n' + articoleSimb.map((a) => a.id + ' → ' + a.nume).join('\n') +
+         '\n\nGăsește pe planșa atașată fiecare simbol corespunzător și întoarce-l cu chenarul lui. Răspunde doar cu JSON-ul cerut.')
+      : eFactura
+      ?('Extrage antetul și toate rândurile din factura furnizorului atașată' + (body.nume ? (' („' + String(body.nume).slice(0, 120) + '")') : '') + '. Răspunde doar cu JSON-ul cerut.')
       : extrage
       ? ('Extrage lista de materiale și lucrări electrice din documentul atașat' + (body.nume ? (' („' + String(body.nume).slice(0, 120) + '")') : '') + '. Răspunde doar cu JSON-ul cerut.')
       : String(body.intrebare || '').slice(0, 8000).trim();
@@ -284,7 +341,7 @@ export default async function handler(req, res) {
       '5. Fără exagerări și fără date inventate. Cifrele, denumirile și cantitățile rămân exact cele primite; ' +
       'doar formularea se schimbă. Ce nu s-a spus nu se completează.';
 
-    const sistem = eFactura ? SISTEM_FACTURA : extrage ? SISTEM_EXTRAGERE : json
+    const sistem = eSimboluri ? SISTEM_SIMBOLURI : eFactura ? SISTEM_FACTURA : extrage ? SISTEM_EXTRAGERE : json
       ? 'Ești redactorul tehnic al unei firme de instalații electrice din România. Răspunzi DOAR cu JSON valid, ' +
         'exact în structura cerută de utilizator, fără text în afara lui.\n' + REGISTRU + '\n' +
         '6. Fiecare text din JSON (denumiri de lucrări, denumiri de materiale, rezumat) se rescrie în registrul de mai sus, ' +
@@ -339,6 +396,7 @@ export default async function handler(req, res) {
         // Îi spunem aplicației dacă răspunsul s-a oprit din lipsă de spațiu, ca să știe
         // că JSON-ul poate fi incomplet și să-l repare în loc să arunce totul.
         const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
+        if (eSimboluri) return trimiteSimboluri(res, raspuns, model, finish, articoleSimb.map((a) => a.id));
         if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
         return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
       }
@@ -388,7 +446,8 @@ export default async function handler(req, res) {
           } catch (_) {}
           if (raspuns) {
             const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
-            if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
+            if (eSimboluri) return trimiteSimboluri(res, raspuns, model, finish, articoleSimb.map((a) => a.id));
+        if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
             return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', dupaAsteptare: true });
           }
         }

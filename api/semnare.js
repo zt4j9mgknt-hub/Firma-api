@@ -19,7 +19,7 @@
 import crypto from 'crypto';
 import Pusher from 'pusher';
 import portalClient from '../lib/client.js';
-import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
+import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal, ID_CEAS_MEMENTO, SCOP_BILET_INTERN } from '../lib/sesiune.js';
 
 /* Semnalul instant către telefoanele firmei (același ca în data.js). Fără el, semnătura
    venită de la client stătea în bază, dar aplicația deschisă n-o vedea — și la următoarea
@@ -130,6 +130,203 @@ function pagina({ titlu, corp }) {
 </style></head><body><div class="wrap">${corp}</div></body></html>`;
 }
 
+/* ===================== OFERTA ACCEPTATĂ ONLINE (v04.38) =====================
+   Clientul primește linkul pe WhatsApp, vede oferta (cu variantele Standard / Confort / Premium,
+   dacă există), alege, semnează cu degetul și apasă „Accept". Oferta trece singură pe „Acceptată",
+   celelalte variante pe „Respinsă", iar managerul primește notificare pe telefon.
+   Semnătura linkului e pe GRUPUL ofertei (prima variantă), ca un singur link să le arate pe toate. */
+const semnaturaOferta = (grupId) => crypto.createHmac('sha256', SESSION_SECRET).update('oferta-online:' + String(grupId)).digest('base64url').slice(0, 32);
+const rotunjB = (v) => Math.round((Number(v) || 0) * 100) / 100;
+const pretRand = (it) => (Number(it && it.pretUnitar) || 0) * (1 + (Number(it && it.adaos) || 0) / 100);
+const subtotalOf = (items) => (Array.isArray(items) ? items : []).reduce((s, it) => s + (Number(it && it.cantitate) || 0) * pretRand(it), 0);
+const leiRo = (v) => (Number(v) || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' lei';
+const aziRo = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Bucharest' });
+const INCHISE = ['Respinsă', 'Anulată'];
+
+function biletInternPush() {
+  const data = Buffer.from(JSON.stringify({ userId: ID_CEAS_MEMENTO, rol: '', scope: SCOP_BILET_INTERN, exp: Date.now() + 120000 })).toString('base64url');
+  return data + '.' + crypto.createHmac('sha256', SESSION_SECRET).update(data).digest('base64url');
+}
+function adresaProprieSemnare() {
+  const curata = (x) => String(x || '').trim().replace(/\/+$/, '');
+  if (process.env.APP_ORIGIN) return curata(process.env.APP_ORIGIN);
+  const gazda = curata(process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL);
+  if (!gazda) return '';
+  return /^https?:\/\//i.test(gazda) ? gazda : 'https://' + gazda;
+}
+async function anuntaManagerii(mesaj) {
+  const origine = adresaProprieSemnare();
+  if (!origine) return;
+  try {
+    await fetch(origine + '/api/push-send', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + biletInternPush() },
+      body: JSON.stringify({ ...mesaj, destinatar: 'manageri' }) });
+  } catch (_) {}
+}
+
+async function ofertaOnline(req, res, q) {
+  /* linkul îl cere doar Managerul — ofertele și prețurile sunt treaba lui */
+  if (String(q.action || '') === 'linkOferta') {
+    const auth = autentifica(req);
+    if (!auth) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    let real;
+    try { real = await utilizatorulAdevarat(auth, async () => redis(['GET', 'firma:users'])); }
+    catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul.' }); }
+    if (!real) return raspunsContSters(res, auth);
+    if (real.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul trimite oferte la semnat.' });
+    const id = String(q.of || '');
+    const oferte = await citeste('offers', []);
+    const o = (Array.isArray(oferte) ? oferte : []).find((x) => x && x.id === id);
+    if (!o) return res.status(404).json({ error: 'Oferta nu e încă salvată pe server. Salveaz-o și încearcă din nou.' });
+    const grup = String(o.grupVariante || o.id);
+    const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
+    return res.status(200).json({ link: `https://${gazda}/api/semnare?of=${encodeURIComponent(grup)}&k=${semnaturaOferta(grup)}` });
+  }
+
+  const body = req.method === 'POST' ? (typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})) : {};
+  const grup = String(q.of || body.of || '');
+  const k = String(q.k || body.k || '');
+  if (!grup || !egal(k, semnaturaOferta(grup))) {
+    return res.status(403).send(pagina({ titlu: 'Link invalid', corp: '<div class="card"><div class="rau"><b>Link invalid sau expirat.</b><br>Cereți firmei un link nou.</div></div>' }));
+  }
+  const dinGrup = (lista) => (Array.isArray(lista) ? lista : []).filter((x) => x && (x.id === grup || x.grupVariante === grup));
+
+  try {
+    const [oferte, clients, company] = await Promise.all([citeste('offers', []), citeste('clients', []), citeste('company', {})]);
+    const toate = dinGrup(oferte);
+    if (!toate.length) return res.status(404).send(pagina({ titlu: 'Ofertă inexistentă', corp: '<div class="card"><div class="rau"><b>Oferta nu mai există.</b> Contactați firma.</div></div>' }));
+    const baza = toate.find((x) => x.id === grup) || toate[0];
+    const client = (Array.isArray(clients) ? clients : []).find((c) => c && c.id === baza.clientId) || {};
+    const acceptata = toate.find((x) => x.status === 'Acceptată');
+    const refuzata = !acceptata && toate.every((x) => INCHISE.includes(x.status)) && toate.some((x) => x.refuzOnline);
+
+    /* ---------- RĂSPUNSUL CLIENTULUI ---------- */
+    if (req.method === 'POST') {
+      const decizie = body.decizie === 'refuz' ? 'refuz' : 'accept';
+      const numeCurat = String(body.nume || '').trim().slice(0, 120);
+      const nota = String(body.nota || '').trim().slice(0, 1500);
+      if (!numeCurat) return res.status(400).json({ error: 'Scrieți numele.' });
+      const semnatura = typeof body.semnatura === 'string' ? body.semnatura : '';
+      if (decizie === 'accept') {
+        if (semnatura.length < 200) return res.status(400).json({ error: 'Semnați în căsuță.' });
+        if (semnatura.length > SEMNATURA_MAX || !SEMNATURA_OK.test(semnatura)) return res.status(400).json({ error: 'Semnătura nu e validă. Reîncărcați pagina și semnați din nou.' });
+      }
+      const lacat = 'lock:oferta:' + grup;
+      if (await redis(['SET', lacat, '1', 'NX', 'EX', '30']) !== 'OK') return res.status(409).json({ error: 'Oferta se procesează chiar acum. Reîncărcați pagina peste câteva secunde.' });
+      try {
+        const proaspete = await citeste('offers', []);
+        const grupNou = dinGrup(proaspete);
+        if (!grupNou.length) return res.status(404).json({ error: 'Oferta nu mai există.' });
+        if (grupNou.some((x) => x.status === 'Acceptată')) return res.status(409).json({ error: 'Oferta a fost deja acceptată.' });
+        const deschise = grupNou.filter((x) => !INCHISE.includes(x.status));
+        const aleasa = decizie === 'accept' ? (deschise.find((x) => x.id === String(body.varianta || '')) || (deschise.length === 1 ? deschise[0] : null)) : null;
+        if (decizie === 'accept' && !aleasa) return res.status(400).json({ error: 'Alegeți varianta pe care o acceptați.' });
+        const azi = aziRo();
+        const urma = { nume: numeCurat, la: new Date().toISOString(), ip: String(req.headers['x-forwarded-for'] || '').split(',')[0].trim(), dispozitiv: String(req.headers['user-agent'] || '').slice(0, 160), nota };
+        const noi = proaspete.map((x) => {
+          if (!x || !(x.id === grup || x.grupVariante === grup)) return x;
+          if (decizie === 'accept') {
+            if (x.id === aleasa.id) return { ...x, status: 'Acceptată', dataRaspuns: azi, acceptareOnline: { ...urma, semnatura } };
+            return INCHISE.includes(x.status) ? x : { ...x, status: 'Respinsă', dataRaspuns: azi, respinsaPentruVarianta: aleasa.numeVarianta || true };
+          }
+          return INCHISE.includes(x.status) ? x : { ...x, status: 'Respinsă', dataRaspuns: azi, refuzOnline: urma };
+        });
+        await scrie('offers', noi);
+        const p = getPusher();
+        if (p) { try { await p.trigger('firma-updates', 'data-changed', { key: 'offers' }); } catch (_) {} }
+        const nr = baza.numar || '';
+        const totalAles = aleasa ? rotunjB(subtotalOf(aleasa.items) * (1 + (Number(aleasa.tva) || 0) / 100)) : 0;
+        await anuntaManagerii(decizie === 'accept'
+          ? { title: '✍ Ofertă acceptată online', url: '/', body: (client.nume || numeCurat) + ' a semnat oferta ' + nr + (aleasa.numeVarianta ? ' (' + aleasa.numeVarianta + ')' : '') + ' — ' + leiRo(totalAles) + (nota ? '. Mesaj: ' + nota.slice(0, 120) : ''), tag: 'oferta-' + grup }
+          : { title: '✋ Ofertă refuzată online', url: '/', body: (client.nume || numeCurat) + ' a refuzat oferta ' + nr + (nota ? ': ' + nota.slice(0, 160) : ''), tag: 'oferta-' + grup });
+        return res.status(200).json({ ok: true, decizie });
+      } finally {
+        try { await redis(['DEL', lacat]); } catch (_) {}
+      }
+    }
+
+    /* ---------- PAGINA ---------- */
+    const tabel = (o) => {
+      const items = Array.isArray(o.items) ? o.items : [];
+      const sub = subtotalOf(items), tva = Number(o.tva) || 0;
+      const randuri = items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.denumire)}</td><td style="white-space:nowrap">${esc(it.cantitate ?? '')} ${esc(it.um || '')}</td><td style="text-align:right;white-space:nowrap">${esc(leiRo(pretRand(it)))}</td><td style="text-align:right;white-space:nowrap">${esc(leiRo((Number(it.cantitate) || 0) * pretRand(it)))}</td></tr>`).join('');
+      return `<table><tr><th>Nr.</th><th>Denumire</th><th>Cant.</th><th>Preț unitar</th><th>Valoare</th></tr>${randuri}</table>
+        <table style="margin-top:8px"><tr><th style="width:60%">Total fără TVA</th><td style="text-align:right">${esc(leiRo(sub))}</td></tr>
+        <tr><th>TVA ${esc(tva)}%</th><td style="text-align:right">${esc(leiRo(sub * tva / 100))}</td></tr>
+        <tr><th>TOTAL</th><td style="text-align:right;font-weight:800;font-size:17px">${esc(leiRo(sub * (1 + tva / 100)))}</td></tr></table>`;
+    };
+    const antet = `<div class="card"><h1>Ofertă de preț${baza.numar ? ' nr. ' + esc(baza.numar) : ''}</h1>
+      <div class="mic">${baza.data ? 'din ' + esc(fmtData(baza.data)) : ''}${baza.lucrare ? ' · ' + esc(baza.lucrare) : ''}</div>
+      <table style="margin-top:10px"><tr><th style="width:38%">Ofertant</th><td>${esc(company?.nume || '')}</td></tr>
+      <tr><th>Beneficiar</th><td>${esc(client.nume || '')}</td></tr>
+      ${baza.adresaLucrare ? `<tr><th>Adresa lucrării</th><td>${esc(baza.adresaLucrare)}</td></tr>` : ''}</table></div>`;
+    const incheiere = `<div class="incheiere">Vă mulțumim!<br><span class="respect">Cu respect,</span><br><b>${esc(company?.nume || '')}</b>${company?.telefon ? '<br>Tel: ' + esc(company.telefon) : ''}${company?.email ? '<br>' + esc(company.email) : ''}</div>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+    if (acceptata || refuzata) {
+      const a = acceptata && acceptata.acceptareOnline;
+      return res.status(200).send(pagina({ titlu: acceptata ? 'Ofertă acceptată' : 'Ofertă refuzată', corp: antet + `<div class="card">
+        ${acceptata ? `<div class="bun"><b>✅ Oferta${acceptata.numeVarianta ? ' — varianta ' + esc(acceptata.numeVarianta) : ''} a fost acceptată</b>${a ? ' de ' + esc(a.nume) + ' la ' + esc(new Date(a.la).toLocaleString('ro-RO', { timeZone: 'Europe/Bucharest' })) : ''}.</div>
+          ${tabel(acceptata)}
+          ${a && a.semnatura ? `<div class="eticheta">Semnătura beneficiarului</div><img src="${esc(a.semnatura)}" alt="semnătură" style="max-width:100%;background:#fff;border:1px solid #d8dee4;border-radius:10px"><div class="mic">${esc(a.nume)}</div>` : ''}
+          <button class="tipar" onclick="window.print()">🖨 Tipărește / salvează ca PDF</button>`
+        : '<div class="rau"><b>Oferta a fost refuzată.</b> Dacă v-ați răzgândit, contactați-ne și vă trimitem o ofertă nouă.</div>'}
+        </div>` + incheiere }));
+    }
+
+    const deschise = toate.filter((x) => !INCHISE.includes(x.status));
+    const multe = deschise.length > 1;
+    const blocVariante = deschise.map((o, i) => `<div class="card">
+        ${multe ? `<label style="display:flex;gap:10px;align-items:center;font-size:18px;font-weight:800;cursor:pointer"><input type="radio" name="var" value="${esc(o.id)}" ${i === 0 ? 'checked' : ''} style="width:22px;height:22px">Varianta ${esc(o.numeVarianta || (i + 1))}</label>` : ''}
+        ${o.descriere || o.observatii ? `<div class="mic" style="margin:6px 0">${esc(o.descriere || o.observatii)}</div>` : ''}
+        ${tabel(o)}</div>`).join('');
+    const corp = antet + `<div class="card"><div class="salut"><b>Bună ziua!</b><br>Vă mulțumim pentru interes. Mai jos regăsiți oferta noastră${multe ? ', în ' + deschise.length + ' variante — alegeți-o pe cea potrivită' : ''}.
+      Dacă sunteți de acord, semnați la final și apăsați <b>„Accept oferta"</b>. Lucrarea se programează imediat după.</div></div>
+      ${blocVariante}
+      <div class="card">
+        <div class="eticheta" style="margin-top:0">Mesaj pentru noi (opțional)</div>
+        <textarea id="nota" rows="3" placeholder="ex.: Putem începe de luni? / Aș vrea priza din bucătărie mutată"></textarea>
+        <div class="eticheta">Semnătura dumneavoastră</div>
+        <div class="avertisment" style="margin-bottom:10px">Prin semnare acceptați oferta${multe ? ' în varianta aleasă mai sus' : ''}, cu prețurile și condițiile din ea.</div>
+        <canvas id="pad"></canvas>
+        <button class="sters" onclick="sterge()">↺ Șterge semnătura</button>
+        <div style="margin-top:12px"><input id="nume" placeholder="Numele și prenumele" value="${esc(client.nume && !/S\.?R\.?L|S\.?A\.?\b|PFA|II\b/i.test(client.nume) ? client.nume : '')}"></div>
+        <div id="mesaj" class="mic" style="margin:10px 0;min-height:20px"></div>
+        <button class="primar" id="btn" onclick="trimite('accept')">✓ Accept oferta</button>
+        <button class="tipar" id="btnRefuz" onclick="trimite('refuz')">Nu accept oferta</button>
+      </div>` + incheiere + `
+      <script>
+        var c=document.getElementById('pad'),ctx,desen=false,gol=true;
+        function initPad(){var dpr=window.devicePixelRatio||1;var w=c.clientWidth||300;c.width=w*dpr;c.height=170*dpr;ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.lineJoin='round';ctx.lineCap='round';ctx.strokeStyle='#111';ctx.lineWidth=2.4;}
+        initPad();
+        function poz(e){var r=c.getBoundingClientRect();var t=e.touches?e.touches[0]:e;return {x:t.clientX-r.left,y:t.clientY-r.top};}
+        function start(e){e.preventDefault();desen=true;var p=poz(e);ctx.beginPath();ctx.moveTo(p.x,p.y);}
+        function misca(e){if(!desen)return;e.preventDefault();var p=poz(e);ctx.lineTo(p.x,p.y);ctx.stroke();gol=false;}
+        function gata(){desen=false;}
+        c.addEventListener('mousedown',start);c.addEventListener('mousemove',misca);window.addEventListener('mouseup',gata);
+        c.addEventListener('touchstart',start,{passive:false});c.addEventListener('touchmove',misca,{passive:false});c.addEventListener('touchend',gata);
+        function sterge(){ctx.clearRect(0,0,c.width,c.height);gol=true;}
+        function trimite(dec){
+          var m=document.getElementById('mesaj'),b=document.getElementById(dec==='accept'?'btn':'btnRefuz');
+          var nume=document.getElementById('nume').value.trim(), nota=document.getElementById('nota').value.trim();
+          if(!nume){m.style.color='#B03030';m.textContent='Scrieți numele.';return;}
+          if(dec==='accept'&&gol){m.style.color='#B03030';m.textContent='Semnați întâi în căsuță.';return;}
+          if(dec==='refuz'&&!confirm('Sigur refuzați oferta? Dacă aveți o întrebare, scrieți-o în rubrica de mesaj și vă contactăm.'))return;
+          var v=document.querySelector('input[name=var]:checked');
+          b.disabled=true;var t0=b.textContent;b.textContent='Se trimite…';m.textContent='';
+          fetch(location.pathname+location.search,{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({of:${jsonInScript(grup)},k:${jsonInScript(k)},decizie:dec,varianta:v?v.value:'',semnatura:dec==='accept'?c.toDataURL('image/png'):'',nume:nume,nota:nota})})
+            .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+            .then(function(x){ if(!x.ok) throw new Error(x.d.error||'Nu s-a putut trimite.'); location.reload(); })
+            .catch(function(e){ b.disabled=false;b.textContent=t0; m.style.color='#B03030'; m.textContent=e.message; });
+        }
+      <\/script>`;
+    return res.status(200).send(pagina({ titlu: 'Ofertă' + (baza.numar ? ' ' + baza.numar : ''), corp }));
+  } catch (e) {
+    return res.status(500).send(pagina({ titlu: 'Eroare', corp: '<div class="card"><div class="rau">Pagina nu poate fi încărcată acum. Încercați mai târziu.</div></div>' }));
+  }
+}
+
 export default async function handler(req, res) {
   /* Pagina lucrării pentru client trece pe aici: planul Vercel dă cel mult 12 funcții în
      /api, iar a 13-a (api/client.js) oprea toate publicările. Codul ei stă în lib/client.js;
@@ -162,6 +359,11 @@ export default async function handler(req, res) {
     if (!pv) return res.status(400).json({ error: 'Lipsește documentul.' });
     const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
     return res.status(200).json({ link: `https://${gazda}/api/semnare?pv=${encodeURIComponent(pv)}&k=${semnaturaLink(pv)}` });
+  }
+
+  /* --- v04.38: ACCEPTAREA OFERTEI ONLINE (linkul de ofertă, separat de procesul-verbal) --- */
+  if (String(q.action || '') === 'linkOferta' || q.of || (req.body && typeof req.body === 'object' && req.body.of)) {
+    return ofertaOnline(req, res, q);
   }
 
   const pvId = String(q.pv || '');
