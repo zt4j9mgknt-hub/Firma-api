@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.37-contract-mentenanta';
+const APP_VERSION = 'v04.38-ai-planse-acceptare-online';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -4006,7 +4006,7 @@ function ChipFiltruClient({ filtruClient, clients, onSterge }) {
         React.createElement("span", { className: "truncate min-w-0" }, "Client: ", nume),
         React.createElement("span", { className: "shrink-0", "aria-hidden": "true" }, "✕"));
 }
-function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusChange, onConvert, onPrint, onExcel, onSmartBill, onDuplica, onIncasari, currentUser, company, filtruClient, onStergeFiltruClient, onVariante, onCompara }) {
+function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusChange, onConvert, onPrint, onExcel, onSmartBill, onDuplica, onIncasari, currentUser, company, filtruClient, onStergeFiltruClient, onVariante, onCompara, onSemnareOnline }) {
     const [sbState, setSbState] = useState({});
     const sbInZbor = useRef({});   // facturile plecate acum spre SmartBill — apărare la dublu-click
     const aziTabel = dataLocala(new Date());
@@ -4098,7 +4098,11 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
                             React.createElement("span", { "data-data-doc": true, className: "shrink-0 whitespace-nowrap" },
                             " \u00B7 ",
                             fmtData(d.data),
-                            d.scadenta ? ` · scadent ${fmtData(d.scadenta)}` : ''))),
+                            d.scadenta ? ` · scadent ${fmtData(d.scadenta)}` : '')),
+                        d.acceptareOnline && React.createElement("span", { "data-semnat-online": true, className: "text-[11px] font-semibold", style: { color: 'var(--acc2)' } },
+                            '✍ acceptată online de ' + (d.acceptareOnline.nume || 'client') + ' · ' + new Date(d.acceptareOnline.la).toLocaleString('ro-RO', { dateStyle: 'short', timeStyle: 'short' }) + (d.acceptareOnline.nota ? ' — „' + d.acceptareOnline.nota + '"' : '')),
+                        d.refuzOnline && React.createElement("span", { className: "text-[11px] font-semibold", style: { color: 'var(--acc4)' } },
+                            '✋ refuzată online de ' + (d.refuzOnline.nume || 'client') + (d.refuzOnline.nota ? ' — „' + d.refuzOnline.nota + '"' : ''))),
                     React.createElement("span", { className: "cifre text-sm shrink-0 text-right md:min-w-[100px]", style: { color: 'var(--acc1)', fontFamily: "'JetBrains Mono', monospace" } }, money(total)),
                     React.createElement("div", { className: "shrink-0" },
                         React.createElement(StatusSwitch, { status: kind === 'Factură' ? normStatusFactura(d.status) : d.status, options: statuses, onChange: (s) => onStatusChange(d.id, s) })),
@@ -4124,6 +4128,7 @@ function DocTable({ kind, docs, clients, statuses, onEdit, onDelete, onStatusCha
                         React.createElement("button", { onClick: () => onEdit(d), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "Editeaz\u0103"),
                         onDuplica && React.createElement("button", { onClick: () => onDuplica(d), className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--muted)', background: 'var(--panel2)' }, title: "Face un document nou, cu acelea\u0219i pozi\u021Bii" }, "\u29C9 Dubleaz\u0103"),
                         onVariante && !d.grupVariante && React.createElement("button", { onClick: () => onVariante(d), "data-act": "variante-oferta", className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)' }, title: "Face aceeași ofertă în 3 variante: Standard / Confort / Premium" }, "🎚 Variante"),
+                        onSemnareOnline && !['Acceptată', 'Respinsă', 'Anulată'].includes(d.status) && React.createElement("button", { onClick: () => onSemnareOnline(d), "data-act": "semnare-oferta", className: "text-xs px-2 py-1 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' }, title: "Link pe WhatsApp: clientul vede oferta pe telefon, alege varianta, semnează și o acceptă" }, "✍ Acceptare online"),
                         onCompara && d.grupVariante && React.createElement("button", { onClick: () => onCompara(d), "data-act": "compara-variante", className: "text-xs px-2 py-1 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)' }, title: "Pagina pentru client: variantele una lângă alta" }, "📊 Compară"),
                         React.createElement("button", { onClick: () => onDelete(d.id), className: "px-2 py-1 rounded-lg", title: "\u0218terge", "aria-label": "\u0218terge", style: { color: 'var(--acc4)' } },
                             React.createElement(Icon, null, "\uD83D\uDDD1")))),
@@ -28272,6 +28277,84 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             setCoteazaBusy(false);
         }, 30);
     };
+    /* 🤖 NUMĂRĂ CU AI (v04.38, din comparația cu Togal.AI / Kreo): pagina randată pleacă la Gemini
+       cu lista articolelor; se întorc chenarele fiecărui simbol, iar aici devin puncte pe planșă
+       (marcate „ai", ca să se vadă de unde vin). Patronul le verifică; „↺" le scoate dintr-o apăsare. */
+    const [aiBusy, setAiBusy] = useState(false);
+    const numaraCuAi = async () => {
+        const cv = refPagina.current;
+        if (aiBusy)
+            return;
+        if (!cv) {
+            setMesaj('Planșa nu s-a deschis încă — așteaptă să apară pe ecran, apoi apasă din nou.');
+            return;
+        }
+        const deCautat = articole.filter((a) => (a.um || 'buc') === 'buc' && String(a.nume || '').trim());
+        if (!deCautat.length) {
+            setMesaj('Pune întâi articolele pe care le numeri (priză, întrerupător, corp…) — cu unitatea „buc".');
+            return;
+        }
+        setAiBusy(true);
+        setMesaj('🤖 Citesc planșa cu AI… (20–60 de secunde)');
+        try {
+            const lat = cv.width, inalt = cv.height;
+            let b64 = '';
+            for (const [max, cal] of [[2400, 0.85], [2000, 0.75], [1600, 0.65]]) {
+                const k = Math.min(1, max / Math.max(lat, inalt));
+                const c2 = document.createElement('canvas');
+                c2.width = Math.round(lat * k);
+                c2.height = Math.round(inalt * k);
+                const cx = c2.getContext('2d');
+                cx.fillStyle = '#fff';
+                cx.fillRect(0, 0, c2.width, c2.height);
+                cx.drawImage(cv, 0, 0, c2.width, c2.height);
+                b64 = c2.toDataURL('image/jpeg', cal).split(',')[1] || '';
+                if (b64.length <= LIMITA_FISIER_AI_B64)
+                    break;
+            }
+            const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, timeoutMs: 150000,
+                body: JSON.stringify({ actiune: 'numaraSimboluri', fisier: { mime: 'image/jpeg', base64: b64 }, nume: ante.nume || '',
+                    articole: deCautat.map((a) => ({ id: a.id, nume: a.nume })) }) });
+            let d = {};
+            try { d = await r.json(); } catch (_) { }
+            if (!r.ok || !d || !d.simboluri) {
+                setMesaj('🤖 ' + ((d && d.error) || 'AI-ul n-a răspuns (cod ' + r.status + '). Mai încearcă o dată.'));
+                setAiBusy(false);
+                return;
+            }
+            const S = d.simboluri;
+            const existente = (refAnte.current.pini || []).filter((p) => (p.pagina || 1) === pagina);
+            const noi = [];
+            (S.gasite || []).forEach((g) => {
+                const [y0, x0, y1, x1] = g.box;
+                const x = (x0 + x1) / 2000, y = ((y0 + y1) / 2000) * inalt / lat;
+                const lang = [...existente, ...noi].some((p) => Math.hypot(p.x - x, p.y - y) < 0.008);
+                if (!lang)
+                    noi.push({ id: uid(), pagina, articolId: g.articolId, x, y, ai: true, incredere: g.incredere });
+            });
+            instantaneu();
+            onSchimb({ pini: [...(refAnte.current.pini || []), ...noi] });
+            const pe = {};
+            noi.forEach((p) => { pe[p.articolId] = (pe[p.articolId] || 0) + 1; });
+            const rez = deCautat.filter((a) => pe[a.id]).map((a) => a.nume + ': ' + pe[a.id]).join(' · ');
+            const nesigure = noi.filter((p) => p.incredere < 0.5).length;
+            const altele = (S.altele || []).map((a) => a.denumire + ' ×' + a.cantitate).join(', ');
+            setMesaj('🤖 Am pus ' + noi.length + ' puncte' + (rez ? ' — ' + rez : '') + '.'
+                + ((S.gasite || []).length > noi.length ? ' (' + ((S.gasite || []).length - noi.length) + ' erau deja numărate.)' : '')
+                + (nesigure ? ' ' + nesigure + ' nesigure (punct cu contur punctat) — uită-te la ele.' : '')
+                + (altele ? ' Mai sunt pe planșă, fără articol la tine: ' + altele + '.' : '')
+                + ' Verifică planșa; dacă nu-ți place, ↺ dă totul înapoi.');
+        }
+        catch (e) {
+            setMesaj('🤖 ' + ((e && e.message) || 'Citirea cu AI nu a mers.'));
+        }
+        setAiBusy(false);
+    };
+    const scoatePuncteAi = () => {
+        instantaneu();
+        onSchimb({ pini: (refAnte.current.pini || []).filter((p) => !(p.ai && (p.pagina || 1) === pagina)) });
+        setMesaj('Am scos punctele puse de AI pe pagina asta.');
+    };
     const intoarceCota = (pl) => {
         let cea = null, dmin = 1e9;
         cote.forEach((c) => {
@@ -28705,6 +28788,17 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 1.5;
             ctx.stroke();
+            /* punct pus de AI: inel violet; nesigur (sub 50%) = inel punctat, să sară în ochi la verificare */
+            if (p.ai) {
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, 10, 0, Math.PI * 2);
+                ctx.strokeStyle = '#9B7BFF';
+                ctx.lineWidth = 2;
+                if ((p.incredere ?? 1) < 0.5)
+                    ctx.setLineDash([3, 3]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
             const et = textEticheta(p.eticheta);
             if (et && vedere.zoom > 0.5) {
                 ctx.font = 'bold 10px sans-serif';
@@ -29460,6 +29554,8 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                         zone.length === 1 ? 'zonă' : 'zone'),
                     React.createElement("button", { onClick: onOferta, className: "ml-auto text-[11px] px-2.5 py-1.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc2)' } }, "\u2192 F\u0103 oferta")),
                 React.createElement("div", { className: "flex flex-wrap gap-1.5 pt-1.5", style: { borderTop: '1px solid var(--border)' } },
+                    React.createElement("button", { "data-numara-ai": true, onClick: numaraCuAi, disabled: aiBusy, title: "AI-ul caută pe pagina asta toate simbolurile articolelor tale și pune punctele — tu le verifici", className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#fff', background: 'linear-gradient(90deg,#7B5CE0,#2E8BD1)' } }, aiBusy ? '🤖 Citesc planșa…' : '🤖 Numără cu AI'),
+                    pini.some((p) => p.ai) && React.createElement("button", { onClick: scoatePuncteAi, className: "text-[11px] px-2 py-1.5 rounded-lg", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "Scoate punctele AI"),
                     React.createElement("button", { onClick: coteazaTot, disabled: coteazaBusy, className: "text-[11px] px-2 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: '#14181C', background: '#E05252' } }, coteazaBusy ? 'Cotez planșa…' : '📐 Cotează automat'),
                     cote.length > 0 && React.createElement("span", { className: "text-[11px] self-center", style: { color: 'var(--muted2)' } },
                         cote.length,
@@ -33536,6 +33632,22 @@ function App() {
         setTab('devize');
     };
     /* OFERTĂ ACCEPTATĂ → „Pornești lucrarea?": șantier nou + deviz legat, deviz pe un șantier existent, sau mai târziu */
+    /* oferta acceptată ONLINE de client (vine de la server, prin Pusher): întrebarea „pornești lucrarea?"
+       apare o singură dată pe dispozitiv, la Manager — ca și când ar fi bifat el „Acceptată". */
+    useEffect(() => {
+        if (effectiveUser?.rol !== 'Manager')
+            return;
+        let vazute = [];
+        try { vazute = JSON.parse(localStorage.getItem('oferteOnlineVazute') || '[]'); } catch (_) { }
+        const noua = (offers || []).find((o) => o.acceptareOnline && o.status === 'Acceptată' && !vazute.includes(o.id));
+        if (!noua)
+            return;
+        try { localStorage.setItem('oferteOnlineVazute', JSON.stringify([...vazute, noua.id].slice(-300))); } catch (_) { }
+        const zileDeLa = (Date.now() - new Date(noua.acceptareOnline.la).getTime()) / 864e5;
+        const areDeviz = (devize || []).some((d) => d.dinOfertaId === noua.id || d.offerId === noua.id);
+        if (zileDeLa < 14 && !areDeviz)
+            intrebaPornireLucrare(noua);
+    }, [offers, effectiveUser?.rol]);
     const intrebaPornireLucrare = async (offer) => {
         const cl = (clients || []).find((c) => c.id === offer.clientId);
         const r = await alege({ titlu: '✅ Oferta ' + (offer.numar || '') + ' e acceptată — pornești lucrarea?',
@@ -33668,6 +33780,35 @@ function App() {
         const w = window.open('', '_blank');
         if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
         w.document.open(); w.document.write(html); w.document.close(); w.focus();
+    };
+    /* ✍ ACCEPTARE ONLINE (v04.38): linkul semnat de server (api/semnare.js?of=…). Clientul vede oferta
+       — cu toate variantele, dacă are — alege, semnează și acceptă; oferta trece singură pe „Acceptată"
+       și managerii primesc notificare. Ciorna trece pe „Trimisă" (de acolo se numără zilele fără răspuns). */
+    const trimiteOfertaOnline = async (o) => {
+        try {
+            const r = await authFetch('/api/semnare?action=linkOferta&of=' + encodeURIComponent(o.id));
+            let d = {};
+            try { d = await r.json(); } catch (_) { throw new Error('Serverul nu are încă partea de acceptare online (api/semnare.js).'); }
+            if (!r.ok || !d.link)
+                throw new Error(d.error || 'Nu am putut face linkul.');
+            const cl = (clients || []).find((c) => c.id === o.clientId);
+            const text = 'Bună ziua' + (cl && cl.nume ? ', ' + cl.nume : '') + '! Vă trimitem oferta' + (o.numar ? ' nr. ' + o.numar : '') + (company && company.nume ? ' de la ' + company.nume : '')
+                + '. O puteți vedea și accepta direct de pe telefon, cu semnătură:\n' + d.link;
+            const grup = o.grupVariante || o.id;
+            if (offers.some((x) => (x.id === grup || x.grupVariante === grup) && x.status === 'Ciornă'))
+                offerStatus(o.id, 'Trimisă');
+            let impartit = false;
+            if (navigator.share) {
+                try { await navigator.share({ title: 'Ofertă' + (o.numar ? ' ' + o.numar : ''), text }); impartit = true; } catch (e) { if (e && e.name === 'AbortError') impartit = true; }
+            }
+            if (!impartit) {
+                try { await navigator.clipboard.writeText(text); window.alert('✍ Am copiat mesajul cu linkul. Lipește-l clientului pe WhatsApp / e-mail.\n\n' + d.link); }
+                catch (_) { window.prompt('Copiază mesajul pentru client:', text); }
+            }
+        }
+        catch (e) {
+            window.alert('⚠ ' + ((e && e.message) || 'Eroare.'));
+        }
     };
     const offerStatus = (id, status) => {
         const inainte = offers.find((o) => o.id === id);
@@ -34278,7 +34419,7 @@ function App() {
                                         } })),
                                 offerForm && React.createElement(PaginaFormular, { titlu: offerForm.id && offerForm.numar ? '✏️ Modifici oferta ' + offerForm.numar : '📄 Ofertă nouă', onInchide: () => setOfferForm(null) },
                                     React.createElement(DocForm, { kind: "Ofert\u0103", sabloane: sabloaneOferta, setSabloane: setSabloaneOferta, persist: persist, clients: clients, materials: materials, initial: (offerForm.id || offerForm.items) ? offerForm : null, onCancel: () => setOfferForm(null), onSave: saveOffer })),
-                                React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: devizDinOferta, onPrint: printOne('Ofertă'), onExcel: (o) => descarcaExcelSablon({ doc: o, client: clients.find((c) => c.id === o.clientId), company, fel: 'oferta' }).catch((e) => window.alert('Nu am putut face Excel-ul ofertei: ' + (e && e.message || e))), onDuplica: duplicaDoc('Ofertă'), onVariante: creeazaVariante, onCompara: comparaVariante, company: company, filtruClient: filtruPt('oferte'), onStergeFiltruClient: () => setFiltruClient(null) }))),
+                                React.createElement(DocTable, { kind: "Ofert\u0103", docs: offers, clients: clients, statuses: OFFER_STATUSES, onEdit: setOfferForm, onDelete: deleteOffer, onStatusChange: offerStatus, onConvert: devizDinOferta, onPrint: printOne('Ofertă'), onExcel: (o) => descarcaExcelSablon({ doc: o, client: clients.find((c) => c.id === o.clientId), company, fel: 'oferta' }).catch((e) => window.alert('Nu am putut face Excel-ul ofertei: ' + (e && e.message || e))), onDuplica: duplicaDoc('Ofertă'), onVariante: creeazaVariante, onCompara: comparaVariante, onSemnareOnline: trimiteOfertaOnline, company: company, filtruClient: filtruPt('oferte'), onStergeFiltruClient: () => setFiltruClient(null) }))),
                             tab === 'facturi' && (React.createElement("div", null,
                                 React.createElement("div", { className: "antetPagina" },
                                     React.createElement("h2", { className: "titluPagina text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "Facturi"),
