@@ -62,6 +62,7 @@ const CHEI_DOAR_MANAGER = new Set([
   'soldConcediu',    // soldul de concediu al fiecărui om
   'salarii',         // salariile — colegii nu au ce căuta în leafa celuilalt
   'notite',          // notițele Managerului (în aplicație le vede doar el)
+  'catalogProduse',  // catalogul de ofertare: prețurile de dealer ale furnizorilor (v04.31)
 ]);
 const CHEI_DOAR_MANAGER_SCRIE = new Set([
   'company',          // datele firmei (antet, IBAN, ștampilă)
