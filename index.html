@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.36-variante-oferta';
+const APP_VERSION = 'v04.37-contract-mentenanta';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -8695,7 +8695,21 @@ function SantierForm({ initial, onCancel, onSave, clients, structuraSantier, set
                 React.createElement("input", { type: "number", inputMode: "numeric", placeholder: "12", value: form.revizieLuni === undefined ? '' : form.revizieLuni,
                     onChange: (e) => setForm({ ...form, revizieLuni: e.target.value === '' ? undefined : Number(e.target.value) }),
                     className: "rounded-lg px-3 py-2 text-sm outline-none", style: { width: 84, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)' } }),
-                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "luni (gol = 12)"))),
+                React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "luni (gol = 12)")),
+            /* CONTRACT DE MENTENANȚĂ (v04.37, din comparația cu Simpro/BuildOps): prețul pe revizie și ce include —
+               la „Am făcut revizia" se pregătește și factura reviziei, dintr-o apăsare */
+            form.revizieActiva && React.createElement("div", { "data-contract-mentenanta": true, className: "rounded-lg p-2 space-y-1.5", style: { background: 'var(--panel)', border: '1px dashed var(--border)' } },
+                React.createElement("div", { className: "text-[11px] font-semibold", style: { color: 'var(--text)' } }, "🧾 Contract de mentenanță (opțional)"),
+                React.createElement("div", { className: "flex items-center gap-2 flex-wrap" },
+                    React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "Preț pe revizie"),
+                    React.createElement("input", { inputMode: "decimal", placeholder: "ex. 450", value: form.contractPret === undefined ? '' : form.contractPret,
+                        onChange: (e) => { const v = String(e.target.value).replace(',', '.'); setForm({ ...form, contractPret: v === '' ? undefined : v }); },
+                        className: "rounded-lg px-3 py-2 text-sm outline-none cifre", style: { width: 100, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+                    React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, "lei fără TVA"),
+                    React.createElement("input", { placeholder: "nr. contract (opțional)", value: form.contractNr || '', onChange: (e) => setForm({ ...form, contractNr: e.target.value }),
+                        className: "rounded-lg px-3 py-2 text-sm outline-none", style: { width: 150, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } })),
+                React.createElement("input", { placeholder: "Ce include revizia (ex. verificare tablou, strângere conexiuni, test diferențiale, termoviziune)", value: form.contractInclude || '', onChange: (e) => setForm({ ...form, contractInclude: e.target.value }),
+                    className: "w-full rounded-lg px-3 py-2 text-sm outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }))),
         React.createElement("div", { className: "text-xs mb-1.5 mt-2 font-semibold", style: { color: 'var(--muted)' } }, "BENEFICIAR (apare pe deviz/factură)"), React.createElement("div", { className: "space-y-2" }, React.createElement("div", null, React.createElement("input", { list: "clienti-catalog", placeholder: "🔍 Alege client din listă (după nume sau CUI)", value: form.benefPicker || '', onChange: (e) => {
             const val = e.target.value;
             const c = (clients || []).find((x) => `${x.nume} — ${x.cui || ''}` === val || x.nume === val || (x.cui && x.cui === val));
@@ -19966,6 +19980,8 @@ function PaginaDeUrmarit({ invoices, clients, santiere, setTab, setPendingSiteNa
                     React.createElement("div", { className: "flex gap-2 mt-1.5 flex-wrap" },
                         React.createElement("button", { onClick: () => onMarcheazaRevizie && onMarcheazaRevizie(x.s.id), className: "text-[11px] px-2.5 py-1 rounded-lg font-semibold",
                             style: { color: '#14181C', background: 'var(--acc2)' } }, "✓ Am făcut-o azi"),
+                        Number(String(x.s.contractPret ?? '').replace(',', '.')) > 0 && React.createElement("button", { "data-revizie-factura": x.s.id, onClick: () => onMarcheazaRevizie && onMarcheazaRevizie(x.s.id, { factura: true }), className: "text-[11px] px-2.5 py-1 rounded-lg font-semibold",
+                            style: { color: '#14181C', background: 'var(--acc1)' } }, '🧾 Făcută + factură ' + money(Number(String(x.s.contractPret).replace(',', '.')))),
                         React.createElement("button", { onClick: () => { if (setPendingSiteNav) {
                                 setPendingSiteNav({ santierId: x.s.id, siteView: '__closed__' });
                             } if (setTab) {
@@ -31610,12 +31626,28 @@ function App() {
     const [santiere, setSantiere] = useState([]);
     /* „Am făcut revizia azi" — mută termenul următor cu încă un interval, fără să umble
        nimeni la date de mână. Se scrie pe șantier, deci intră normal în copiile de siguranță. */
-    const marcheazaRevizie = (santierId) => {
+    const marcheazaRevizie = (santierId, opt) => {
+        const sR = (santiere || []).find((x) => x.id === santierId);
         setSantiere((prev) => {
             const next = prev.map((x) => x.id === santierId ? { ...x, ultimaRevizie: dataLocala(new Date()) } : x);
             saveKey('santiere', next).catch((e) => tacut('marcheazaRevizie', e));
             return next;
         });
+        /* CONTRACT DE MENTENANȚĂ: cu preț pe revizie, factura vine gata completată (client, șantier,
+           rândul reviziei) — o verifici și o emiți ca pe oricare alta. */
+        const pret = Number(String(sR?.contractPret ?? '').replace(',', '.')) || 0;
+        if (opt && opt.factura && sR && pret > 0) {
+            const den = 'Revizie periodică' + (sR.contractInclude ? ' — ' + sR.contractInclude : '') + ' · ' + dataRo(dataLocala(new Date()));
+            setInvoiceForm({
+                id: uid(), clientId: sR.benefClientId || '',
+                items: [{ id: uid(), denumire: den, um: 'buc', cantitate: 1, pretUnitar: pret, adaos: 0 }],
+                tva: TVA_IMPLICIT, status: 'De încasat', data: dataLocala(new Date()),
+                santierId: sR.id, santierNume: sR.nume || '', adresaLucrare: sR.adresaDeviz || sR.adresa || '', lucrare: sR.lucrare || '',
+                nrContract: sR.contractNr || sR.contract || '',
+                dinRevizie: true,
+            });
+            setTab('facturi');
+        }
     };
 
     const [rapoarte, setRapoarte] = useState([]);
