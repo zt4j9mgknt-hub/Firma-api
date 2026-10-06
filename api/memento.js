@@ -172,9 +172,6 @@ export default async function handler(req, res) {
     const lacat = await redis(['SET', 'mem:lacat', String(Date.now()), 'NX', 'EX', '45']);
     if (lacat !== 'OK') return res.status(200).json({ ok: true, sarit: true, motiv: 'verificare deja în curs' });
 
-    const mementouri = await citeste('mementouri', []);
-    if (!Array.isArray(mementouri) || !mementouri.length) return res.status(200).json({ ok: true, trimise: 0 });
-
     const acum = new Date();
     const acumMs = acum.getTime();
     const p = partiLocale(acum);
@@ -182,6 +179,34 @@ export default async function handler(req, res) {
     const mainLocal = dataLocala(new Date(acumMs + 24 * 3600 * 1000));
 
     let trimise = 0;
+
+    /* ---------- 0. BRIEFINGUL DE DIMINEAȚĂ (08:00 – 08:09), o dată pe zi, la manageri ----------
+       v04.34 (cerut de patron, după comparația cu Jobber/ServiceTitan — „reamintiri automate"):
+       ce trebuie urmărit azi: oferte trimise fără răspuns de 7+ zile, facturi trecute de scadență,
+       revizii / contracte de mentenanță scadente. Doar citim datele; nu schimbăm nimic. */
+    if (p.hour === '08' && Number(p.minute) < 10) {
+      const deja = await redis(['SET', 'mem:brief-dimineata', aziLocal, 'NX', 'EX', String(20 * 3600)]);
+      if (deja === 'OK') {
+        const [oferte, facturi, santiere, clienti] = await Promise.all([citeste('offers', []), citeste('invoices', []), citeste('santiere', []), citeste('clients', [])]);
+        const zile = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
+        const numeC = (id) => ((Array.isArray(clienti) ? clienti : []).find((c) => c && c.id === id) || {}).nume || '';
+        const rand = [];
+        const ofVechi = (Array.isArray(oferte) ? oferte : []).filter((o) => o && o.status === 'Trimisă' && o.data && zile(String(o.dataTrimisa || o.data).slice(0, 10), aziLocal) >= 7);
+        if (ofVechi.length) rand.push(`⏳ ${ofVechi.length} ${ofVechi.length === 1 ? 'ofertă' : 'oferte'} fără răspuns de 7+ zile` + (ofVechi[0] ? ` (ex. ${numeC(ofVechi[0].clientId) || 'client'})` : ''));
+        const neincasata = (f) => !/^(Încasată|Plătită|Anulată)$/.test(String(f.status || ''));
+        const restante = (Array.isArray(facturi) ? facturi : []).filter((f) => f && neincasata(f) && f.scadenta && String(f.scadenta) < aziLocal);
+        if (restante.length) rand.push(`💸 ${restante.length} ${restante.length === 1 ? 'factură trecută' : 'facturi trecute'} de scadență`);
+        /* următoarea revizie = ultima (sau finalizarea) + revizieLuni (implicit 12), ca stareRevizie din aplicație */
+        const urmRev = (s) => { const b = String(s.ultimaRevizie || s.finalizatLa || '').slice(0, 10); const [a, l, z] = b.split('-').map(Number); if (!a) return ''; const d = new Date(Date.UTC(a, (l - 1) + (Number(s.revizieLuni) || 12), 1)); const ultimaZi = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate(); d.setUTCDate(Math.min(z || 1, ultimaZi)); return d.toISOString().slice(0, 10); };
+        const peste7 = dataLocala(new Date(acumMs + 7 * 86400000));
+        const revizii = (Array.isArray(santiere) ? santiere : []).filter((s) => s && s.revizieActiva && urmRev(s) && urmRev(s) <= peste7);
+        if (revizii.length) rand.push(`🔧 ${revizii.length} ${revizii.length === 1 ? 'revizie' : 'revizii'} în următoarele 7 zile`);
+        if (rand.length) trimise += await push('manageri', { title: '☀️ De urmărit azi', body: rand.join('\n'), url: '/', tag: 'brief-dim-' + aziLocal });
+      }
+    }
+
+    const mementouri = await citeste('mementouri', []);
+    if (!Array.isArray(mementouri) || !mementouri.length) return res.status(200).json({ ok: true, trimise });
     const atinse = new Map();   // id -> câmpurile de actualizat
 
     /* ---------- 1. BRIEFINGUL DE SEARĂ (17:00 – 17:09) ---------- */
