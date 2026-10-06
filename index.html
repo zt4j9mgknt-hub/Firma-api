@@ -3067,7 +3067,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.30-bord-rapoarte-oferte';
+const APP_VERSION = 'v04.31-catalog-produse';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -3199,6 +3199,31 @@ const eticheteSectiuneDoc = (it) => { const e = idSectiuneExplicit(it && it.sect
    scrie. Lista din catalog e a noastră (un <datalist> nu merge pe textarea): scrii 2+ litere și apar
    până la 8 materiale; ↑ ↓ Enter le aleg, Esc închide. Fără listă deschisă, Enter sare la cantitate,
    iar ↑ / ↓ la capătul textului trec la rândul vecin (prin onNav). */
+/* 📒 CATALOGUL DE PRODUSE (v04.31, cerut de patron): produsele furnizorilor (LED MARKET etc.), cu poză
+   și descriere, doar pentru ofertare — nu intră în stoc. Le găsești din căutarea denumirii; prețul
+   intră ca preț de cost, adaosul îl pune patronul pe ofertă. Poza stă în Blob (catalog/), se vede prin
+   /api/files ca orice fișier al firmei. CATALOG_PRODUSE îl ține la zi App-ul (cheia catalogProduse). */
+let CATALOG_PRODUSE = [];
+function cursEurCatalog(intreaba) {
+    let c = 0;
+    try { c = Number(String(localStorage.getItem('cursEurCatalog') || '').replace(',', '.')) || 0; } catch (_) { }
+    if (intreaba && typeof window !== 'undefined') {
+        const t = window.prompt('Cursul EUR → lei pentru prețurile din catalog (ex: 4,97):', c ? String(c).replace('.', ',') : '4,97');
+        const n = Number(String(t || '').replace(',', '.'));
+        if (n > 0) { c = n; try { localStorage.setItem('cursEurCatalog', String(n)); } catch (_) { } }
+    }
+    return c || 0;
+}
+/* prețul de cost în lei, fără TVA (cum îl vrea rândul din ofertă) */
+function pretCatalogLei(p) {
+    let v = Number(p && p.pret) || 0;
+    if (p && String(p.moneda || '').toUpperCase() === 'EUR')
+        v = v * (cursEurCatalog(false) || 0);
+    if (p && p.pretCuTva)
+        v = v / 1.21;
+    return Math.round(v * 10000) / 10000;
+}
+const pozaCatalogUrl = (pathname) => pathname ? (/^data:|^https?:/.test(pathname) ? pathname : (location.origin + blobViewUrl(pathname))) : '';
 function DenumireCamp({ value, onChange, materials, faraCatalog, placeholder, onNav, mare, style }) {
     const ref = useRef(null);
     const [deschis, setDeschis] = useState(false);
@@ -3226,10 +3251,15 @@ function DenumireCamp({ value, onChange, materials, faraCatalog, placeholder, on
         const q = n(value).split(/\s+/).filter(Boolean);
         if (faraCatalog || !q.length || String(value || '').trim().length < 2)
             return [];
-        return (materials || []).filter((m) => m && !m.arhivat && m.denumire && n(m.denumire) !== n(value) && q.every((w) => n(m.denumire).includes(w))).slice(0, 8);
+        const dinMat = (materials || []).filter((m) => m && !m.arhivat && m.denumire && n(m.denumire) !== n(value) && q.every((w) => n(m.denumire).includes(w))).slice(0, 8);
+        /* și din catalogul de produse (după denumire, cod, descriere) — cu poză în listă */
+        const nume = new Set(dinMat.map((m) => n(m.denumire)));
+        const dinCat = (CATALOG_PRODUSE || []).filter((p) => p && p.denumire && !nume.has(n(p.denumire)) && n(p.denumire) !== n(value)
+            && q.every((w) => n(p.denumire + ' ' + (p.cod || '') + ' ' + (p.descriere || '')).includes(w))).slice(0, 10).map((p) => ({ ...p, __catalog: true }));
+        return [...dinMat, ...dinCat];
     }, [value, materials, faraCatalog]);
     const arata = deschis && potriviri.length > 0;
-    const alege = (m) => { onChange(m.denumire); setDeschis(false); };
+    const alege = (m) => { onChange(m.denumire, m); setDeschis(false); };
     const cheie = (e) => {
         if (arata && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
             e.preventDefault();
@@ -3249,8 +3279,12 @@ function DenumireCamp({ value, onChange, materials, faraCatalog, placeholder, on
             style: { resize: 'none', overflow: 'hidden', lineHeight: 1.35, display: 'block', color: 'var(--text)', ...(style || {}) } }),
         arata && React.createElement("div", { "data-sugestii-catalog": true, className: "absolute left-0 right-0 mt-1 rounded-lg overflow-hidden shadow-lg", style: { top: '100%', zIndex: 40, background: 'var(--panel)', border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,.35)' } },
             potriviri.map((m, i) => React.createElement("button", { key: m.id || m.denumire, type: "button", onMouseDown: (e) => { e.preventDefault(); alege(m); },
-                className: "block w-full text-left text-sm px-3 py-1.5", style: { background: i === ales ? 'var(--panel2)' : 'transparent', color: 'var(--text)' } },
-                m.denumire, m.um ? React.createElement("span", { style: { color: 'var(--muted2)' } }, " · ", m.um) : null))));
+                className: "flex items-center gap-2 w-full text-left text-sm px-3 py-1.5", style: { background: i === ales ? 'var(--panel2)' : 'transparent', color: 'var(--text)' } },
+                m.__catalog && React.createElement("span", { className: "shrink-0 rounded overflow-hidden", style: { width: 34, height: 34, background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } },
+                    m.poza ? React.createElement("img", { src: pozaCatalogUrl(m.poza), alt: "", loading: "lazy", style: { maxWidth: 34, maxHeight: 34, objectFit: 'contain' } }) : React.createElement("span", { style: { fontSize: 14 } }, "📒")),
+                React.createElement("span", { className: "min-w-0 flex-1" },
+                    m.denumire, m.um ? React.createElement("span", { style: { color: 'var(--muted2)' } }, " · ", m.um) : null,
+                    m.__catalog && React.createElement("span", { className: "block text-[11px] truncate", style: { color: 'var(--muted2)' } }, "📒 ", m.cod ? m.cod + ' · ' : '', money(pretCatalogLei(m)), m.moneda === 'EUR' ? ' (din ' + m.pret + ' €)' : '', m.descriere ? ' · ' + m.descriere : ''))))));
 }
 function LineItemsEditor({ items, setItems, materials, faraCatalog, randNou, textAdauga, onMuta, etichetaMuta, golText, cuGrupe }) {
     const update = (id, f, v) => setItems(items.map((it) => it.id === id ? { ...it, [f]: v } : it));
@@ -3281,7 +3315,21 @@ function LineItemsEditor({ items, setItems, materials, faraCatalog, randNou, tex
     const remove = (id) => setItems(items.filter((it) => it.id !== id));
     const add = () => setItems([...items, randNou ? randNou() : { id: uid(), denumire: '', um: 'buc', cantitate: 1, pretUnitar: 0, adaos: 0 }]);
     /* rubrica de manoperă n-are catalog: ce scrii rămâne scris */
-    const pickMaterial = (id, denumire) => {
+    const pickMaterial = (id, denumire, ales) => {
+        /* produs din catalogul de ofertare (v04.31): preț de cost în lei, U.M., descriere, poză, cod;
+           adaosul rămâne cel scris de patron pe rând (el îl pune, ca la oferte) */
+        if (!faraCatalog && ales && ales.__catalog) {
+            if (String(ales.moneda || '').toUpperCase() === 'EUR' && !cursEurCatalog(false))
+                cursEurCatalog(true);
+            setItems(items.map((it) => {
+                if (it.id !== id)
+                    return it;
+                const { materialId, gestiune, ...rest } = it;
+                return { ...rest, denumire: ales.denumire, um: ales.um || it.um || 'buc', pretUnitar: pretCatalogLei(ales), catalogId: ales.id,
+                    cod: ales.cod || undefined, descriere: ales.descriere || undefined, poza: ales.poza || undefined, furnizor: ales.furnizor || undefined };
+            }));
+            return;
+        }
         const m = !faraCatalog && (materials || []).find((mm) => mm.denumire === denumire && !mm.arhivat);
         if (m) {
             /* prețul din catalog e de achiziție („peste el se pune adaosul firmei", ca la celelalte
@@ -3379,13 +3427,20 @@ function LineItemsEditor({ items, setItems, materials, faraCatalog, randNou, tex
                 /* r\u00E2ndul 1: num\u0103rul, denumirea pe toat\u0103 l\u0103\u021Bimea, subgrupa \u0219i butoanele */
                 React.createElement("div", { className: "flex items-center gap-2 min-w-0" },
                     React.createElement("span", { className: "text-xs text-center shrink-0", style: { width: 28, color: 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } }, i + 1),
-                    React.createElement(DenumireCamp, { value: it.denumire, materials, faraCatalog, onNav: navigheaza, onChange: (v) => pickMaterial(it.id, v), placeholder: faraCatalog ? "ex: Montaj tablou electric / ore manoper\u0103" : "ex: Cablu N2XH 3x2,5 mmp \u2014 caut\u0103 din catalog" }),
+                    React.createElement(DenumireCamp, { value: it.denumire, materials, faraCatalog, onNav: navigheaza, onChange: (v, ales) => pickMaterial(it.id, v, ales), placeholder: faraCatalog ? "ex: Montaj tablou electric / ore manoper\u0103" : "ex: Cablu N2XH 3x2,5 mmp \u2014 caut\u0103 din catalog" }),
                     !faraCatalog && it.gestiune && React.createElement("span", { "data-gestiune-rand": it.id, title: "La emitere se scade din gestiunea asta", className: "text-[10px] px-1.5 py-0.5 rounded-md shrink-0", style: { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid #2E8BD144' } }, "\ud83d\udcc2 ", it.gestiune),
                     cuGrupe && React.createElement("span", { className: "shrink-0", style: { maxWidth: 170 } }, alegeGrupa(it, true)),
                     React.createElement("span", { className: "flex items-center justify-end gap-1.5 shrink-0" },
                         butonMuta(it, false),
                         React.createElement("button", { onClick: () => remove(it.id), title: "\u0218terge r\u00E2ndul", className: "opacity-50 hover:opacity-100", style: { color: 'var(--acc4)' } },
                             React.createElement(Icon, null, "\uD83D\uDDD1")))),
+                /* produs din catalog: poza \u0219i descrierea (apar \u0219i \u00EEn PDF-ul ofertei); descrierea se poate scrie */
+                !faraCatalog && (it.poza || it.descriere != null || it.catalogId) && React.createElement("div", { "data-detalii-produs": it.id, className: "flex items-start gap-2 mt-1 pl-[36px]" },
+                    it.poza && React.createElement("span", { className: "shrink-0 rounded overflow-hidden relative", style: { width: 52, height: 52, background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } },
+                        React.createElement("img", { src: pozaCatalogUrl(it.poza), alt: "", loading: "lazy", style: { maxWidth: 52, maxHeight: 52, objectFit: 'contain' } }),
+                        React.createElement("button", { type: "button", title: "Scoate poza de pe ofert\u0103", onClick: () => update(it.id, 'poza', undefined), className: "absolute top-0 right-0 text-[10px] px-1 rounded-bl", style: { background: 'rgba(0,0,0,.55)', color: '#fff' } }, "\u2715")),
+                    React.createElement("textarea", { rows: 2, value: it.descriere || '', placeholder: "Descriere (apare sub denumire \u00EEn ofert\u0103)", onChange: (e) => update(it.id, 'descriere', e.target.value),
+                        className: "flex-1 min-w-0 bg-transparent outline-none text-xs rounded px-1.5 py-1", style: { color: 'var(--muted)', border: '1px solid var(--border)', resize: 'vertical', lineHeight: 1.35 } })),
                 /* r\u00E2ndul 2: cifrele, sub capul de tabel */
                 React.createElement("div", { className: "grid gap-2 items-center mt-1", style: { gridTemplateColumns: coloane } },
                     React.createElement("span", null),
@@ -3399,7 +3454,7 @@ function LineItemsEditor({ items, setItems, materials, faraCatalog, randNou, tex
         React.createElement("div", { className: "md:hidden space-y-2" }, items.map((it, i) => (React.createElement("div", { key: it.id, className: "rounded-xl p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
             React.createElement("div", { className: "flex items-start gap-2 mb-2" },
                 React.createElement("span", { className: "shrink-0 rounded-md text-[10px] font-bold flex items-center justify-center mt-2", style: { width: 20, height: 20, background: 'var(--panel)', color: 'var(--muted2)', fontFamily: "'JetBrains Mono', monospace" } }, i + 1),
-                React.createElement(DenumireCamp, { value: it.denumire, materials, faraCatalog, mare: true, onChange: (v) => pickMaterial(it.id, v), placeholder: faraCatalog ? "Denumire manoper\u0103 (ex: Montaj prize)" : "Denumire \u2014 scrie \u0219i alege din catalog", style: { ...campStil, fontSize: 16 } }),
+                React.createElement(DenumireCamp, { value: it.denumire, materials, faraCatalog, mare: true, onChange: (v, ales) => pickMaterial(it.id, v, ales), placeholder: faraCatalog ? "Denumire manoper\u0103 (ex: Montaj prize)" : "Denumire \u2014 scrie \u0219i alege din catalog", style: { ...campStil, fontSize: 16 } }),
                 butonMuta(it, true),
                 React.createElement("button", { onClick: () => remove(it.id), className: "shrink-0 px-2", style: { color: 'var(--acc4)' } },
                     React.createElement(Icon, { size: 16 }, "\uD83D\uDDD1"))),
@@ -24953,7 +25008,9 @@ function modelDocSablon({ doc, client, company, fel }) {
     /* rubricile: MATERIALE (cu subgrupe) apoi MANOPERĂ — v04.19, cerut de patron; rubrica goală
        nu apare; numerele merg 1.1, 1.2… (prin toate subgrupele), apoi 2.1… */
     const sectiuni = [];
-    const randItem = (it, nr) => ({ tip: 'item', nr, den: it.denumire || '', um: it.um || '', cant: Number(it.cantitate) || 0, pret: pretFinal(it), val: (Number(it.cantitate) || 0) * pretFinal(it) });
+    const randItem = (it, nr) => ({ tip: 'item', nr, den: it.denumire || '', um: it.um || '', cant: Number(it.cantitate) || 0, pret: pretFinal(it), val: (Number(it.cantitate) || 0) * pretFinal(it),
+        /* v04.31: produsele din catalog vin cu descriere și poză — apar în PDF sub / lângă denumire */
+        descriere: String(it.descriere || '').trim(), poza: it.poza || '' });
     if (rub.materiale.items.length) {
         const k = sectiuni.length + 1;
         let n = 0;
@@ -25052,7 +25109,10 @@ function docSablonHtml({ doc, client, company, fel }) {
                 return;
             }
             const st = `${linie}font-size:${pt(10.5)};color:${TXT};vertical-align:middle;`;
-            randuri.push(`<tr style="height:${pt(19.95)};">${td(esc(r.nr), st + 'text-align:center;')}${td(esc(r.den), st + 'line-height:1.25;', 2)}${td(esc(r.um), st + 'text-align:center;')}${td(esc(String(r.cant).replace('.', ',')), st + 'text-align:center;color:#000;')}${td(n2(r.pret), st + 'text-align:right;color:#000;')}${td(n2(r.val), st + 'text-align:right;')}</tr>`);
+            const celDen = (r.poza || r.descriere)
+                ? `<div style="display:flex;align-items:center;gap:2mm;padding:0.8mm 0;">${r.poza ? `<img src="${esc(pozaCatalogUrl(r.poza))}" alt="" style="width:15mm;height:15mm;object-fit:contain;flex-shrink:0;background:#fff;" />` : ''}<div style="min-width:0;">${esc(r.den)}${r.descriere ? `<div style="font-size:${pt(8.5)};color:${GRI};line-height:1.25;margin-top:0.5mm;white-space:pre-wrap;">${esc(r.descriere)}</div>` : ''}</div></div>`
+                : esc(r.den);
+            randuri.push(`<tr style="height:${pt(19.95)};">${td(esc(r.nr), st + 'text-align:center;')}${td(celDen, st + 'line-height:1.25;', 2)}${td(esc(r.um), st + 'text-align:center;')}${td(esc(String(r.cant).replace('.', ',')), st + 'text-align:center;color:#000;')}${td(n2(r.pret), st + 'text-align:right;color:#000;')}${td(n2(r.val), st + 'text-align:right;')}</tr>`);
         });
     });
     if (!randuri.length)
@@ -29232,6 +29292,77 @@ function PlansaEditor({ ante, onSchimb, onInchide, onOferta, clients, santiere }
                             background: dialogNume.trim() ? 'var(--acc2)' : 'var(--panel2)',
                             color: dialogNume.trim() ? '#14181C' : 'var(--muted2)', border: 'none', cursor: dialogNume.trim() ? 'pointer' : 'default' } }, "\u2713 Adaug\u0103 \u00EEn list\u0103")))))));
 }
+/* 📒 CATALOG PRODUSE (v04.31): răsfoiești produsele furnizorilor, cu poză; corectezi prețul / descrierea,
+   pui o poză nouă, ștergi. Produsele de aici le găsești din căutarea denumirii în oferte și devize. */
+function CatalogProduseTab({ catalogProduse, setCatalogProduse, persist }) {
+    const lista = Array.isArray(catalogProduse) ? catalogProduse : [];
+    const [cauta, setCauta] = useState('');
+    const [cat, setCat] = useState('');
+    const [editId, setEditId] = useState(null);
+    const [ed, setEd] = useState({});
+    const [urc, setUrc] = useState('');
+    const fileRef = useRef(null);
+    const tintaPoza = useRef(null);
+    const n = (s) => normSect(s).replace(/[^a-z0-9]+/g, ' ').trim();
+    const categorii = [...new Set(lista.map((p) => p.categorie || 'Altele'))].sort((a, b) => a.localeCompare(b, 'ro'));
+    const q = n(cauta).split(' ').filter(Boolean);
+    const vizibile = lista.filter((p) => (!cat || (p.categorie || 'Altele') === cat) && (!q.length || q.every((w) => n(p.denumire + ' ' + (p.cod || '') + ' ' + (p.descriere || '') + ' ' + (p.furnizor || '')).includes(w))));
+    const salveaza = (next) => { setCatalogProduse(next); persist('catalogProduse', next); };
+    const pastreaza = () => {
+        const pret = Number(String(ed.pret).replace(',', '.')) || 0;
+        salveaza(lista.map((p) => p.id === editId ? { ...p, denumire: String(ed.denumire || '').trim() || p.denumire, descriere: ed.descriere || '', pret, moneda: ed.moneda || 'RON', um: ed.um || p.um } : p));
+        setEditId(null);
+    };
+    const sterge = (p) => { if (window.confirm('Ștergi din catalog „' + p.denumire + '"? (Ofertele făcute deja rămân neatinse.)')) salveaza(lista.filter((x) => x.id !== p.id)); };
+    const pozaNoua = async (e) => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        const p = tintaPoza.current;
+        if (!f || !p)
+            return;
+        try {
+            setUrc(p.id);
+            const r = await uploadFileToBlob(f, 'catalog');
+            salveaza(lista.map((x) => x.id === p.id ? { ...x, poza: r.pathname } : x));
+        } catch (err) { window.alert('Nu am putut urca poza: ' + ((err && err.message) || err)); }
+        setUrc('');
+    };
+    const st = { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "antetPagina" }, React.createElement("h2", { className: "titluPagina text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "📒 Catalog produse"),
+            React.createElement("div", { className: "grupBtn" }, React.createElement("button", { type: "button", onClick: () => { cursEurCatalog(true); setCauta((x) => x + ''); }, className: "btnSec" }, "€ Curs EUR: ", (cursEurCatalog(false) || '—')))),
+        React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted2)' } }, lista.length, " produse de la furnizori, pentru ofertare (nu sunt în stoc). În ofertă sau deviz scrii 2–3 litere la denumire și le alegi din listă — vin cu poză, descriere și preț de cost; adaosul îl pui tu."),
+        React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", className: "hidden", onChange: pozaNoua }),
+        React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔍 Caută (denumire, cod, descriere — ex: profil 2m, banda 24V, driver 100W)", className: "w-full rounded-lg px-3 py-2 text-sm outline-none mb-2", style: st }),
+        categorii.length > 1 && React.createElement("div", { className: "flex gap-1.5 flex-wrap mb-3" },
+            [['', 'Toate (' + lista.length + ')'], ...categorii.map((c) => [c, c + ' (' + lista.filter((p) => (p.categorie || 'Altele') === c).length + ')'])].map(([id, et]) => React.createElement("button", { key: id || '__t', type: "button", onClick: () => setCat(id), className: "text-xs px-2.5 py-1 rounded-lg font-semibold", style: { color: cat === id ? '#14181C' : 'var(--muted)', background: cat === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, et))),
+        lista.length === 0 && React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "Catalogul e gol."),
+        React.createElement("div", { className: "grid gap-2", style: { gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' } },
+            vizibile.slice(0, 300).map((p) => React.createElement("div", { key: p.id, "data-produs-catalog": p.id, className: "rounded-xl p-2.5 flex gap-2.5", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                React.createElement("button", { type: "button", title: "Schimbă poza", onClick: () => { tintaPoza.current = p; fileRef.current && fileRef.current.click(); }, className: "shrink-0 rounded-lg overflow-hidden", style: { width: 76, height: 76, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' } },
+                    urc === p.id ? '…' : p.poza ? React.createElement("img", { src: pozaCatalogUrl(p.poza), alt: "", loading: "lazy", style: { maxWidth: 76, maxHeight: 76, objectFit: 'contain' } }) : React.createElement("span", { style: { fontSize: 22 } }, "📷")),
+                editId === p.id
+                    ? React.createElement("div", { className: "flex-1 min-w-0 space-y-1" },
+                        React.createElement("input", { value: ed.denumire || '', onChange: (e) => setEd({ ...ed, denumire: e.target.value }), className: "w-full rounded px-2 py-1 text-sm outline-none", style: st }),
+                        React.createElement("textarea", { rows: 2, value: ed.descriere || '', onChange: (e) => setEd({ ...ed, descriere: e.target.value }), className: "w-full rounded px-2 py-1 text-xs outline-none", style: st }),
+                        React.createElement("div", { className: "flex gap-1 items-center" },
+                            React.createElement("input", { value: ed.pret, inputMode: "decimal", onChange: (e) => setEd({ ...ed, pret: e.target.value }), className: "w-24 rounded px-2 py-1 text-sm outline-none cifre", style: st }),
+                            React.createElement("select", { value: ed.moneda || 'RON', onChange: (e) => setEd({ ...ed, moneda: e.target.value }), className: "rounded px-1 py-1 text-xs outline-none", style: st }, React.createElement("option", { value: "RON" }, "lei"), React.createElement("option", { value: "EUR" }, "€")),
+                            React.createElement("input", { value: ed.um || '', onChange: (e) => setEd({ ...ed, um: e.target.value }), className: "w-14 rounded px-2 py-1 text-xs outline-none", style: st }),
+                            React.createElement("button", { type: "button", onClick: pastreaza, className: "text-xs px-2 py-1 rounded font-semibold ml-auto", style: { color: '#14181C', background: 'var(--acc1)' } }, "✓"),
+                            React.createElement("button", { type: "button", onClick: () => setEditId(null), className: "text-xs px-2 py-1 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "✕")))
+                    : React.createElement("div", { className: "flex-1 min-w-0" },
+                        React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)', lineHeight: 1.3 } }, p.denumire),
+                        p.descriere && React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--muted2)', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' } }, p.descriere),
+                        React.createElement("div", { className: "flex items-center gap-2 mt-1 flex-wrap text-xs" },
+                            React.createElement("b", { className: "cifre", style: { color: 'var(--acc1)' } }, p.moneda === 'EUR' ? (Number(p.pret) || 0).toLocaleString('ro-RO', { minimumFractionDigits: 2 }) + ' €' : money(p.pret), " / ", p.um || 'buc'),
+                            p.moneda === 'EUR' && cursEurCatalog(false) > 0 && React.createElement("span", { className: "cifre", style: { color: 'var(--muted2)' } }, "≈ ", money(pretCatalogLei(p))),
+                            p.cod && React.createElement("span", { className: "cifre", style: { color: 'var(--muted2)' } }, p.cod),
+                            React.createElement("span", { className: "ml-auto flex gap-1" },
+                                React.createElement("button", { type: "button", onClick: () => { setEditId(p.id); setEd({ denumire: p.denumire, descriere: p.descriere || '', pret: p.pret, moneda: p.moneda || 'RON', um: p.um || 'buc' }); }, className: "px-1.5 py-0.5 rounded", style: { color: 'var(--muted)', background: 'var(--panel2)' } }, "✎"),
+                                React.createElement("button", { type: "button", onClick: () => sterge(p), className: "px-1.5 py-0.5 rounded", style: { color: 'var(--acc4)', background: 'var(--panel2)' } }, "🗑")))))),
+        vizibile.length > 300 && React.createElement("div", { className: "text-xs text-center mt-2", style: { color: 'var(--muted2)' } }, "Arăt primele 300 din ", vizibile.length, " — caută ca să restrângi.")));
+}
 function AntemasuratoareTab({ antemasuratori, setAntemasuratori, clients, santiere, persist, currentUser, onOferta }) {
     const refAnteLista = useRef(antemasuratori);
     refAnteLista.current = antemasuratori;
@@ -31253,7 +31384,7 @@ function App() {
     /* Meniul pe pașii reali ai unei lucrări: proiectezi → ofertezi → iei materiale → încasezi.
        „Execuție" amesteca proiectarea cu magazia; acum sunt grupuri separate. */
     const PROIECTARE_TABS = ['instalatii', 'tablouri'];
-    const OFERTARE_TABS = ['antemasuratoare', 'oferte', 'devize', 'clienti', 'proiecte'];
+    const OFERTARE_TABS = ['antemasuratoare', 'oferte', 'devize', 'catalog', 'clienti', 'proiecte'];
     const MAGAZIE_TABS = ['gestiune', 'stocuri', 'masini', 'achizitii', 'scule-global'];
     const INCASARE_TABS = ['facturi', 'scadentar', 'cashflow30', 'raportlunar', 'devizrealizat', 'cheltuieli'];
     const OAMENI_TABS = ['pontaj', 'prezenta', 'concedii', 'adeverinte', 'utilizatori', 'calendar', 'fisaom'];
@@ -31571,6 +31702,9 @@ function App() {
     const [salarii, setSalariiState] = useState([]);
     const setSalarii = (v) => { const arr = Array.isArray(v) ? v : []; setSalariiRegistru(arr); setSalariiState(arr); };
     const [achizitii, setAchizitii] = useState([]);
+    /* v04.31: catalogul de produse pentru ofertare (furnizori, cu poză și descriere) — nu e stoc */
+    const [catalogProduse, setCatalogProduse] = useState([]);
+    useEffect(() => { CATALOG_PRODUSE = Array.isArray(catalogProduse) ? catalogProduse : []; }, [catalogProduse]);
     const [categoriiTimp, setCategoriiTimpState] = useState([]);
     const setCategoriiTimp = (v) => { const a = Array.isArray(v) ? v : []; setCategoriiTimpExtra(a); setCategoriiTimpState(a); };
     const [cheltuieliFirma, setCheltuieliFirma] = useState([]);
@@ -31735,7 +31869,7 @@ function App() {
                 ['notite', [], setNotite],
                 ['achizitii', [], setAchizitii],
                 ['proiecteFisiere', [], setProiecteFisiere],
-                ...(eMgrDate ? [['antemasuratori', [], setAntemasuratori]] : []),
+                ...(eMgrDate ? [['antemasuratori', [], setAntemasuratori], ['catalogProduse', [], setCatalogProduse]] : []),
                 ['normativPdf', null, setNormativPdf],
                 ['normativIndexFile', null, setNormativIndexFile],
                 ...(eMgrDate ? [['cheltuieliFirma', [], setCheltuieliFirma], ['salarii', [], setSalarii]] : []),
@@ -32204,6 +32338,7 @@ function App() {
             materialeListaSantier: (v) => setMaterialeListaSantier(v ?? []),
             concedii: (v) => setConcedii(v ?? []),
             achizitii: (v) => setAchizitii(v ?? []),
+        catalogProduse: (v) => setCatalogProduse(v ?? []),
             pontajCorectii: (v) => setPontajCorectii(v ?? []),
             planificareSantier: (v) => setPlanificareSantier(v ?? []),
             prezenta: (v) => setPrezenta(v ?? []),
@@ -33567,6 +33702,7 @@ function App() {
                 ['antemasuratoare', '📏 Antemăsurătoare', true, 'masuratori cantitati liste extras', 'Măsori pe planșă și treci cantitățile, înainte să faci prețul.'],
                 ['oferte', '📄 Oferte', true, 'oferta propunere pret client', 'Ce trimiți clientului înainte să bată palma.'],
                 ['devize', '🧾 Devize', true, 'deviz preturi calcul manopera', 'Prețul lucrării după ce s-a bătut palma: manoperă plus materiale.'],
+                ['catalog', '📒 Catalog produse', true, 'catalog produse furnizor led profil banda driver poza pret lista', 'Produsele furnizorilor, cu poză și descriere — le găsești din căutare în oferte.'],
                 ['clienti', '👥 Clienți', true, 'beneficiar firma contact telefon cui', 'Firmele și oamenii cu care lucrezi, cu date de facturare.'],
                 ['proiecte', '📁 Dosarele lucrărilor', true, 'proiecte dosar acte contract documente', 'Arhiva pe clienți: dosar pe lucrare, cu devizele și facturile ei.'],
             ]],
@@ -33849,6 +33985,7 @@ function App() {
                             React.createElement("button", { onClick: () => setTab('santiere'), className: "mt-4 text-sm px-4 py-2 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)' } }, "\uD83C\uDFD7 Mergi la \u0218antiere"))) : (React.createElement(React.Fragment, null,
                             HELP[tab] && React.createElement(HelpNote, { text: HELP[tab], isManager: effectiveUser.rol === 'Manager' }),
                             tab === 'devize' && (React.createElement(DevizTab, { devize: devize, setDevize: setDevize, sabloane: sabloaneOferta, setSabloane: setSabloaneOferta, clients: clients, materials: materials, santiere: santiere, onProcesVerbal: (d) => { setPendingSiteNav({ santierId: d.santierId, siteView: 'pv', pvDinDeviz: d.id, origine: { tab: 'devize', pagina: null, eticheta: 'Devize' } }); setTab('santiere'); }, onFactureaza: facturaDinDeviz, onFacturatSmartBill: facturatDejaSmartBill, invoices: invoices, company: company, persist: persist, printOne: printDevizOne, printAll: printDevizAll, onEmis: (doc) => scoateLaDocument(doc, `Deviz ${doc.numar}`), onReverse: (doc) => anuleazaIesireDoc(doc, `Anulare deviz ${doc.numar}`), prefill: devizPrefill, onConsumePrefill: () => setDevizPrefill(null), filtruClient: filtruPt('devize'), onStergeFiltruClient: () => setFiltruClient(null) })),
+                            tab === 'catalog' && effectiveUser.rol === 'Manager' && React.createElement(CatalogProduseTab, { catalogProduse, setCatalogProduse, persist }),
                             tab === 'antemasuratoare' && effectiveUser.rol === 'Manager' && (React.createElement(AntemasuratoareTab, { antemasuratori: antemasuratori, setAntemasuratori: setAntemasuratori, clients: clients, santiere: santiere, persist: persist, currentUser: effectiveUser, onOferta: ofertaDinAntemasuratoare })),
                             tab === 'oferte' && (React.createElement("div", null,
                                 React.createElement("div", { className: "antetPagina" },
