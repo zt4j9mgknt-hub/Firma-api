@@ -63,7 +63,52 @@ const CHEI_DOAR_MANAGER = new Set([
   'salarii',         // salariile — colegii nu au ce căuta în leafa celuilalt
   'notite',          // notițele Managerului (în aplicație le vede doar el)
   'catalogProduse',  // catalogul de ofertare: prețurile de dealer ale furnizorilor (v04.31)
+  'iluminatPreturi', // prețurile corpurilor din modulul de iluminat (v04.41) — doar Managerul
 ]);
+
+/* ===== PROIECTELE DE ILUMINAT (v04.41): fiecare om își vede proiectele LUI și pe cele date de
+   Manager; Managerul le vede pe toate. Proiectul are proprietarId și acces:[{userId, nivel:
+   'vede'|'modifica'}]. Accesul îl dă DOAR Managerul. Ștergerea e EXPLICITĂ ({id, _sterge:true}),
+   de proprietar sau de Manager — un proiect lipsă dintr-o copie veche nu dispare. Prețurile stau
+   separat, în „iluminatPreturi" (doar Manager). */
+const CHEIE_ILUMINAT = 'iluminatProiecte';
+const ilumProprietar = (p, uid) => !!(p && String(p.proprietarId) === String(uid));
+const ilumNivel = (p, uid) => {
+  if (ilumProprietar(p, uid)) return 'modifica';
+  const a = (Array.isArray(p && p.acces) ? p.acces : []).find((x) => x && String(x.userId) === String(uid));
+  return a ? (a.nivel === 'modifica' ? 'modifica' : 'vede') : null;
+};
+const ILUM_MAX_NOI = 20;
+function pazaIluminat(inainte, nou, eu, eManager) {
+  if (!Array.isArray(nou)) return { motiv: 'Proiectele de iluminat trebuie trimise ca listă.' };
+  const server = new Map((Array.isArray(inainte) ? inainte : []).filter((p) => p && p.id != null).map((p) => [String(p.id), p]));
+  const iesire = new Map(server);
+  let noi = 0;
+  for (const p of nou) {
+    if (!p || typeof p !== 'object' || p.id == null) continue;
+    const id = String(p.id);
+    const s = server.get(id);
+    if (p._sterge) {
+      if (s && (eManager || ilumProprietar(s, eu.id))) iesire.delete(id);
+      continue;
+    }
+    if (eManager) {
+      // Managerul: orice; un proiect nou fără proprietar e al lui
+      iesire.set(id, s ? { ...p, proprietarId: p.proprietarId || s.proprietarId, proprietarNume: p.proprietarNume || s.proprietarNume }
+        : { ...p, proprietarId: p.proprietarId || eu.id, proprietarNume: p.proprietarNume || eu.nume || '' });
+      continue;
+    }
+    if (!s) {
+      if (++noi > ILUM_MAX_NOI) return { motiv: 'Prea multe proiecte noi deodată.', cod: 409 };
+      iesire.set(id, { ...p, proprietarId: eu.id, proprietarNume: eu.nume || '', acces: [] });
+    } else if (ilumNivel(s, eu.id) === 'modifica') {
+      // poate modifica conținutul, dar nu cine e proprietar și nici cine are acces
+      iesire.set(id, { ...p, proprietarId: s.proprietarId, proprietarNume: s.proprietarNume, acces: s.acces || [] });
+    }
+    // „vede" sau fără acces: rămâne exact ce e pe server
+  }
+  return { lista: [...iesire.values()] };
+}
 const CHEI_DOAR_MANAGER_SCRIE = new Set([
   'company',          // datele firmei (antet, IBAN, ștampilă)
   'pontajCorectii',   // corecțiile de ore — omul își vede orele, dar nu și le umflă
@@ -561,6 +606,12 @@ export default async function handler(req, res) {
       if (key === 'pushSubs' && !eManager && Array.isArray(value)) {
         return res.status(200).json({ value: value.filter((r) => r && String(r.userId) === String(auth.userId)) });
       }
+      /* PROIECTELE DE ILUMINAT: omul primește doar ce e al lui sau ce i-a dat Managerul,
+         fiecare cu „nivelulMeu" (vede / modifica), ca pagina să știe ce butoane arată. */
+      if (key === CHEIE_ILUMINAT && Array.isArray(value)) {
+        if (eManager) return res.status(200).json({ value: value.map((p) => (p && typeof p === 'object' ? { ...p, nivelulMeu: 'modifica' } : p)) });
+        return res.status(200).json({ value: value.filter((p) => p && ilumNivel(p, auth.userId)).map((p) => ({ ...p, nivelulMeu: ilumNivel(p, auth.userId) })) });
+      }
       return res.status(200).json({ value });
     }
 
@@ -599,14 +650,19 @@ export default async function handler(req, res) {
       }
       /* Restul cheilor deschise, pentru NEmanager: PV-urile au paza lor, registrul de ștergeri
          pe a lui, iar toate celelalte liste — paza pe ștergerile masive. */
-      if (!eManager && !CHEI_RANDURI_PROPRII.has(key) && key !== 'pushSubs') {
+      if (key === CHEIE_ILUMINAT) {
+        const inainte = await citesteStrict(base, token, `firma:${key}`);
+        const rez = pazaIluminat(inainte, Array.isArray(value) ? value.map((p) => { if (p && typeof p === 'object') { const { nivelulMeu, ...rest } = p; return rest; } return p; }) : value, { ...eu, id: eu.id != null ? eu.id : auth.userId }, eManager);
+        if (rez.motiv) return res.status(rez.cod || 400).json({ error: rez.motiv });
+        deScris = rez.lista;
+      } else if (!eManager && !CHEI_RANDURI_PROPRII.has(key) && key !== 'pushSubs') {
         const inainte = await citesteStrict(base, token, `firma:${key}`);
         if (key === 'proceseVerbale') {
           const rez = pazaProceseVerbale(inainte, value);
           if (rez.motiv) return res.status(400).json({ error: rez.motiv });
           deScris = rez.lista;
         } else if (key === 'sterse') {
-          const oprite = (k) => k === 'proceseVerbale' || k === 'prezenta' || k === 'users' || k === 'sterse'
+          const oprite = (k) => k === 'proceseVerbale' || k === 'prezenta' || k === 'users' || k === 'sterse' || k === CHEIE_ILUMINAT
             || CHEI_DOAR_MANAGER.has(k) || CHEI_DOAR_MANAGER_SCRIE.has(k);
           const rez = pazaSterse(inainte, value, oprite);
           if (rez.motiv) return res.status(rez.cod || 400).json({ error: rez.motiv, stergereMasiva: rez.cod === 409 });
