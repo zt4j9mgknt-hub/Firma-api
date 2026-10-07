@@ -241,6 +241,7 @@ input[type=range]{width:100%;accent-color:var(--ink)}
   <button data-tab="leg" aria-pressed="false">Legendă</button>
  </div>
  <button class="btn" id="live" aria-pressed="false"><span class="dot"></span>Sub tensiune</button>
+ <button class="btn" id="aiBtn" title="Descrie tabloul, tablou din poză, eticheta QR, modul simplu">✨ AI</button>
  <button class="btn" id="newBox">Tablou nou</button>
  <button class="btn" id="shareBtn">Trimite</button>
  <button class="btn" id="undo" title="Anulează (Ctrl+Z)">↶ Anulează</button><button class="btn" id="redo" title="Refă pasul anulat">↷ Refă</button>
@@ -248,6 +249,10 @@ input[type=range]{width:100%;accent-color:var(--ink)}
  <div class="menu" id="menu" role="menu">
   <div class="menu3"><button data-m="new-electric"><svg viewBox="0 0 40 40" width="34" height="34"><rect x="5" y="3" width="30" height="34" rx="3" fill="#b7bcc0"/><rect x="9" y="7" width="22" height="26" fill="#eef0f0"/><rect x="11" y="10" width="18" height="7" fill="#fff" stroke="#8f989e" stroke-width=".6"/><rect x="11" y="22" width="18" height="7" fill="#fff" stroke="#8f989e" stroke-width=".6"/></svg><b>Tablou electric</b><small>proiect nou</small></button><button data-m="new-media"><svg viewBox="0 0 40 40" width="34" height="34"><rect x="5" y="3" width="30" height="34" rx="3" fill="#b7bcc0"/><rect x="9" y="7" width="22" height="26" fill="#eef0f0"/><rect x="11" y="10" width="18" height="6" fill="#2c3136"/><rect x="11" y="19" width="18" height="6" fill="#e3e6e8" stroke="#8f989e" stroke-width=".5"/><rect x="11" y="27" width="11" height="4" fill="#23282c"/></svg><b>Tablou media</b><small>proiect nou</small></button><button data-m="new-rack"><svg viewBox="0 0 40 40" width="34" height="34"><rect x="8" y="2" width="24" height="36" rx="2" fill="#23272b"/><rect x="11" y="6" width="18" height="5" fill="#e9ebec"/><rect x="11" y="13" width="18" height="5" fill="#2b2f33" stroke="#555" stroke-width=".4"/><rect x="11" y="20" width="18" height="5" fill="#c9ced2"/><rect x="11" y="27" width="18" height="8" fill="#15181a" stroke="#555" stroke-width=".4"/></svg><b>Rack</b><small>proiect nou</small></button></div>
   <p class="muted" style="font-size:12px;margin:2px 0 6px">Versiune configurator: <b id="appver"></b></p>
+  <button data-m="ai-desc"><b>✨ Descrie și se face tabloul</b> (scrii sau spui, AI-ul propune)</button>
+  <button data-m="ai-foto"><b>📷 Tablou din poză</b> (renovare: recunoaște aparatele)</button>
+  <button data-m="ai-qr"><b>📱 Tabloul vorbește</b> (etichetă QR pentru ușă)</button>
+  <button data-m="ai-simplu"><b>🙂 Mod simplu</b> (asistent în 3 pași)</button>
   <button data-m="mylib"><b>📂 Proiectele mele</b> (salvate automat)</button>
   <button data-m="dup"><b>⧉ Duplică tabloul</b> (copie identică, alt nume)</button>
   <button data-m="lblfield"><b>🏷 Etichetează terenul după cleme</b></button>
@@ -2620,7 +2625,7 @@ function textPages(title,rows,cols){const W=1240,H=1754,M=70,pages=[];let cv,x,y
 /* === schemă foarte lizibilă pentru ușa tabloului (PDF A4 / A3) === */
 function doorCircuits(){const L=layout();const pos=c=>compOrigin(c,L);const prot=model.comps.filter(c=>c.zone==='panel'&&/^(mcb|rcbo)/.test(B(c))).sort((a,b)=>{const oa=pos(a),ob=pos(b);return (oa.y-ob.y)||(oa.x-ob.x);});
  const SEC={6:1.5,10:1.5,13:2.5,16:2.5,20:2.5,25:4,32:6,40:10};const out=[];
- for(const c of prot){const d=DEFS[c.t];let up=null;try{for(const id of traceComp(c.id).chain){const x=byId(id);if(x&&x.id!==c.id&&/^rcd|^isol/.test(B(x)))up=x;}}catch(_){}
+ for(const c of prot){const d=DEFS[c.t];let up=null;/* aparatul din amonte după protecții (ccUpMap): drumul firelor trece și prin bornele de intrare ale diferențialelor puntate între ele, așa că „ultimul diferențial de pe drum” nu e neapărat cel care protejează circuitul */try{up=ccUpMap().up(c).find(x=>/^rcd|^isol/.test(B(x)))||null;}catch(_){try{for(const id of traceComp(c.id).chain){const x=byId(id);if(x&&x.id!==c.id&&/^rcd|^isol/.test(B(x)))up=x;}}catch(__){}}
   let cons=[];try{cons=[...traceProt(c.id).loads].map(byId).filter(q=>q&&q.zone==='field');}catch(_){}
   let sec=0;for(const q of cons)for(const w of model.wires)if((w.a.startsWith(q.id+':')||w.b.startsWith(q.id+':'))&&+w.sec>sec)sec=+w.sec;const In=d.prot?+d.prot(c):+c.p.rating||16;if(!sec)sec=SEC[In]||2.5;
   const b=B(c);const poles=/3|4/.test(b)?(b.includes('4')?'4P':'3P'):(b==='mcb1n'||b==='rcbo'?'1P+N':'1P');const cores=poles==='1P'||poles==='1P+N'?3:5;
@@ -2880,6 +2885,10 @@ const CIRC_TYPES=[
  {k:'EV',n:'Stație încărcare mașină (trifazat)',r:20,sec:4,dev:'load400',tip:'Stație încărcare mașină',kw:11,tri:1,rcd:1},
  {k:'PC',n:'Pompă de căldură (trifazat)',r:16,sec:2.5,dev:'load400',tip:'Pompă de căldură',kw:7.5,tri:1,rcd:1},
  {k:'MT',n:'Motor trifazat',r:16,sec:2.5,dev:'load400',tip:'Motor',kw:5,tri:1,rcd:0},
+ {k:'PV',n:'Invertor fotovoltaic (trifazat)',r:20,sec:4,dev:'load400',tip:'Altul',kw:10,tri:1,rcd:1},
+ {k:'PV1',n:'Invertor fotovoltaic (monofazat)',r:25,sec:4,dev:'load230',tip:'Altul',kw:5,rcd:1},
+ {k:'EV1',n:'Stație încărcare mașină (monofazat)',r:32,sec:6,dev:'load230',tip:'Altul',kw:7.4,rcd:1},
+ {k:'PC1',n:'Pompă de căldură (monofazat)',r:20,sec:4,dev:'load230',tip:'Altul',kw:4,rcd:1},
  {k:'AL',n:'Alt consumator 230 V',r:16,sec:2.5,dev:'load230',tip:'Altul',kw:2,rcd:1},
  {k:'RZ',n:'Alimentare în așteptare (jaluzele, poartă, rezervă)',r:16,sec:2.5,dev:'fsupply',rcd:1}];
 const ctOf=k=>CIRC_TYPES.find(x=>x.k===k)||CIRC_TYPES[CIRC_TYPES.length-1];
@@ -2943,7 +2952,7 @@ function proposePanel(ci){const old=model;const box=old.cfg.box==='rack'?'metal'
  // grupe de diferențiale (max 6 circuite)
  const kwOf=r=>(r.t.kw||(r.t.dev==='socket'?2:0.5));const groups=[];
  /* gruparea din proiect se păstrează: circuitele cu „RCBO” primesc siguranță cu diferențial proprie, cele cu un diferențial numit (DDR1…) stau împreună sub el; restul se grupează automat */
- const rcboR=mono.filter(r=>/RCBO/i.test(r.dif||'')),named=mono.filter(r=>r.dif&&!/RCBO/i.test(r.dif)),autoR=mono.filter(r=>!r.dif);
+ const rcboR=mono.filter(r=>/RCBO/i.test(r.dif||'')),noneR=mono.filter(r=>r.dif==='-'),named=mono.filter(r=>r.dif&&r.dif!=='-'&&!/RCBO/i.test(r.dif)),autoR=mono.filter(r=>!r.dif);
  const load=[0,0,0];const byD=new Map();for(const r of named){if(!byD.has(r.dif))byD.set(r.dif,[]);byD.get(r.dif).push(r);}
  for(const [nm,lst] of [...byD].sort((x,y)=>x[0].localeCompare(y[0],'ro',{numeric:true}))){const kw=lst.reduce((s,r)=>s+kwOf(r),0);const f=lst.find(r=>r.faza);let ph=0;if(tri){ph=f?+f.faza[1]-1:load.indexOf(Math.min(...load));}load[ph]+=kw;groups.push({list:lst,ph,kw,name:nm});}
  /* trifazat: întâi echilibrez circuitele pe faze (cel mai mare pe faza cea mai liberă), apoi fac grupele de diferențial pe fiecare fază */
@@ -2970,8 +2979,16 @@ function proposePanel(ci){const old=model;const box=old.cfg.box==='rack'?'metal'
   for(let j=0;j<n;j++){const p=t.dev==='load230'?{tip:t.tip,kw:t.kw}:{};const dv=add(t.dev,p,(r.nume||lab)+(n>1?' '+(j+1):''),'field');
    if(j===0){if(sw)W(sw,'b',dv,'L',t.sec);else W(rb,'Lo',dv,'L',t.sec);W(rb,'No',dv,'N',t.sec);const pt=peT();if(pt)W(pt[0],pt[1],dv,'PE',t.sec);}
    else{W(prevDev,'L',dv,'L',t.sec);W(prevDev,'N',dv,'N',t.sec);W(prevDev,'PE',dv,'PE',t.sec);}prevDev=dv;}}
- /* stația EV primește diferențialul ei, tip B; celelalte trifazate stau împreună pe un diferențial tip A */
- const triG=[triR.filter(r=>r.t.k!=='EV'),...triR.filter(r=>r.t.k==='EV').map(r=>[r])].filter(g=>g.length);
+ /* circuite fără diferențial (dif „-”, ex. tablou existent reconstruit din poză): siguranța se alimentează direct de pe bara generalului */
+ if(noneR.length){const nb0=add('nbar',{n:noneR.length+1>6?10:6},'N0');{const lpn=lastOnPhase.N;if(lpn)W(lpn[0],lpn[1],nb0,'t1',FS);else if(spdC)W(spdC,tri?'N':'Ni',nb0,'t1',FS);else W(main,'No',nb0,'t1',FS);}let nF=2;
+  for(const r of noneR){const t=r.t;const lab=r.cod||code(t.k);let ph=0;if(tri){ph=r.faza?+r.faza[1]-1:load.indexOf(Math.min(...load));load[ph]+=kwOf(r);}
+   const mcb=add('mcb1',{rating:t.r,curve:t.curve||(t.k==='IL'||t.k==='CT'||t.k==='PO'?'B':'C')},lab);if(+r.len>0)mcb.len=+r.len;const pk=tri?'ph'+ph:'m';const lp=lastOnPhase[pk];if(lp)W(lp[0],lp[1],mcb,'i',FS);else if(spdC)W(spdC,tri?['L1','L2','L3'][ph]:'Li',mcb,'i',FS);else W(main,phOut(ph),mcb,'i',FS);lastOnPhase[pk]=[mcb,'i'];
+   const n=r.n||1;let prevDev=null;const sw=t.sw?add('sw1',{},r.nume||lab,'field'):null;if(sw)W(mcb,'o',sw,'a',t.sec);
+   for(let j=0;j<n;j++){const p=t.dev==='load230'?{tip:t.tip,kw:t.kw}:{};const dv=add(t.dev,p,(r.nume||lab)+(n>1?' '+(j+1):''),'field');
+    if(j===0){if(sw)W(sw,'b',dv,'L',t.sec);else W(mcb,'o',dv,'L',t.sec);if(nF<=+nb0.p.n){W(nb0,'t'+nF,dv,'N',t.sec);nF++;}const pt=peT();if(pt)W(pt[0],pt[1],dv,'PE',t.sec);}
+    else{W(prevDev,'L',dv,'L',t.sec);W(prevDev,'N',dv,'N',t.sec);W(prevDev,'PE',dv,'PE',t.sec);}prevDev=dv;}}}
+ /* stația EV primește diferențialul ei, tip B; invertorul PV are și el diferențialul lui; celelalte trifazate stau împreună pe un diferențial tip A */
+ const soloT=r=>r.t.k==='EV'||r.t.k==='PV';const triG=[triR.filter(r=>!soloT(r)),...triR.filter(soloT).map(r=>[r])].filter(g=>g.length);
  let prevR4=null;for(const grp of triG){const isEV=grp[0].t.k==='EV';const r4=add('rcd4',{rating:RR,sens:30,tip:isEV?'B':'A'},'ID'+(++gi));/* diferențialele trifazate se alimentează unul din altul, ca în borna generalului să nu intre mai mult de 2 fire */const s4=prevR4||main,o4=prevR4?['1i','2i','3i','Ni']:['1o','2o','3o','No'];W(s4,o4[0],r4,'1i',FS);W(s4,o4[1],r4,'2i',FS);W(s4,o4[2],r4,'3i',FS);W(s4,o4[3],r4,'Ni',FS);prevR4=r4;
   const nb=add('nbar',{n:6},'N'+gi);W(r4,'No',nb,'t1',FS);let nFree=2,prevM=null;
   for(const r of grp){const t=r.t;const lab=r.cod||code(t.k);const mcb=add('mcb3',{rating:t.r,curve:t.curve||'C'},lab);if(+r.len>0)mcb.len=+r.len;if(prevM){W(prevM,'1i',mcb,'1i',FS);W(prevM,'2i',mcb,'2i',FS);W(prevM,'3i',mcb,'3i',FS);}else{W(r4,'1o',mcb,'1i',FS);W(r4,'2o',mcb,'2i',FS);W(r4,'3o',mcb,'3i',FS);}prevM=mcb;
@@ -4380,7 +4397,7 @@ function loadQR(){if(QRLIB||window.qrcode)return Promise.resolve(QRLIB=window.qr
 function drawQR(x,cw,ch){const url=qrLink();if(!url||!QRLIB)return;try{const q=QRLIB(0,'M');q.addData(url);q.make();const n=q.getModuleCount(),sz=Math.min(200,cw*.2),cell=sz/n,x0=cw-sz-60,y0=ch-sz-60;x.fillStyle='#fff';x.fillRect(x0-12,y0-12,sz+24,sz+24);x.fillStyle='#111';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))x.fillRect(x0+c*cell,y0+r*cell,cell+.5,cell+.5);x.font='600 22px Arial';x.textAlign='center';x.fillText('Scanează: schema tabloului',x0+sz/2,y0-20);}catch(_){}}
 /* monofilară */
 function monoSVG(){const L=layout();const prot=model.comps.filter(c=>c.zone==='panel'&&/^mcb|^rcbo/.test(B(c))).sort((a,b)=>{const oa=compOrigin(a,L),ob=compOrigin(b,L);return (oa.y-ob.y)||(oa.x-ob.x);});
- const grp=new Map();for(const c of prot){let up=null;try{for(const id of traceComp(c.id).chain){const x=byId(id);if(x&&x.id!==c.id&&/^rcd|^isol/.test(B(x))){up=x;}}}catch(_){}const k=up?up.id:'_';if(!grp.has(k))grp.set(k,{up,list:[]});grp.get(k).list.push(c);}
+ const grp=new Map();for(const c of prot){let up=null;try{up=ccUpMap().up(c).find(x=>/^rcd|^isol/.test(B(x)))||null;}catch(_){try{for(const id of traceComp(c.id).chain){const x=byId(id);if(x&&x.id!==c.id&&/^rcd|^isol/.test(B(x))){up=x;}}}catch(__){}}const k=up?up.id:'_';if(!grp.has(k))grp.set(k,{up,list:[]});grp.get(k).list.push(c);}
  const colW=110,pad=40;let cols=0;for(const g of grp.values())cols+=Math.max(1,g.list.length);const W=Math.max(700,pad*2+cols*colW+ (grp.size-1)*30),Hh=560;const src=model.comps.find(c=>/^src/.test(B(c)));
  let s=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" font-family="Arial"><rect width="${W}" height="${Hh}" fill="#fff"/><text x="${pad}" y="30" font-size="18" font-weight="700">Schemă monofilară — ${esc(model.name||'Tablou')}</text><text x="${pad}" y="50" font-size="12" fill="#555">${esc(model.company.name||'Smart Electroconect')} · ${esc(model.company.email||'')} · ${esc(model.company.phone||'')} · aut. ${esc(model.company.auth||'')} · ${fmtDate(model.date)}</text>`;
  const cx0=W/2;s+=`<text x="${cx0}" y="82" font-size="13" text-anchor="middle" font-weight="700">${esc(src?compName(src):'Rețea')}</text><line x1="${cx0}" y1="88" x2="${cx0}" y2="120" stroke="#000" stroke-width="2"/>`;
@@ -5504,7 +5521,456 @@ function s3Bind(r){const host=$('#v3d'),dom=r.renderer.domElement;r.ctl.dampingF
   S3.tap={id:c.id,t:now,fn,h:setTimeout(()=>{S3.tap=null;fn();},270)};},true);
  dom.addEventListener('dblclick',e=>{const hit=s3Hit(e);const c=hit&&hit.object.userData.cid&&byId(hit.object.userData.cid);if(c&&c.zone==='panel')s3Focus(c);});
  document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(S3.tour)s3TourStop(true);else if(S3.card)s3CardClose();}});}
-init();cloudInit();
+/*@@AI_MODULE@@*/
+/* ================= AI ȘI „TABLOUL VORBEȘTE” =================
+   De ce: patronul descrie casa (scris sau vorbit) și primește tabloul gata; pozează un tablou vechi și îl are în configurator, verificat;
+   lipește pe ușă o foaie cu QR din care clientul află singur ce siguranță a sărit și ce face.
+   AI-ul doar înțelege textul / poza. Aparatele, fazele, carcasa, firele și verificările le face codul de mai jos, cu regulile din configurator. */
+{const st=document.createElement('style');st.textContent=`
+#aiBtn{background:linear-gradient(135deg,#1F2B33,#2c4a5a);color:#fff;border-color:#1F2B33}#aiBtn:hover{filter:brightness(1.15)}
+@media (max-width:900px){header>.brand{order:-2}header>#aiBtn{order:-1}}
+.aihub{display:grid;grid-template-columns:1fr 1fr;gap:10px}.aihub .nbc{min-height:96px}.aihub .nbc .ico{font-size:30px;line-height:1;flex:none}
+@media (max-width:600px){.aihub{grid-template-columns:1fr}}
+.aibox{width:100%;min-height:110px;font:500 15px/1.45 var(--f);padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;resize:vertical}
+.aibox:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.aimic{width:46px;height:46px;border-radius:50%;border:1.5px solid var(--line);background:#fff;font-size:20px;cursor:pointer;flex:none}
+.aimic.on{background:#C62828;color:#fff;border-color:#C62828;animation:aiPulse 1.2s infinite}
+@keyframes aiPulse{0%{box-shadow:0 0 0 0 rgba(198,40,40,.5)}70%{box-shadow:0 0 0 12px rgba(198,40,40,0)}100%{box-shadow:0 0 0 0 rgba(198,40,40,0)}}
+.aiex{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.aiex button{border:1px dashed #b9c1bd;background:#fff;border-radius:14px;padding:4px 11px;font:600 12.5px var(--fc);cursor:pointer;text-align:left}
+.aiwait{display:flex;gap:12px;align-items:center;padding:18px 4px}.aiwait i{width:26px;height:26px;border-radius:50%;border:3px solid var(--accent-soft);border-top-color:var(--accent);animation:aiSpin .8s linear infinite;flex:none}
+@keyframes aiSpin{to{transform:rotate(360deg)}}
+.aierr{background:#fdecea;border:1px solid #f3c3bf;color:#7f1d1d;border-radius:9px;padding:10px 12px;margin:8px 0;font-size:14px}
+.aichips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 10px}.aichips span{background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:3px 10px;font:600 13px var(--fc)}
+.aiwhy{margin:0;padding-left:18px}.aiwhy li{margin:4px 0}
+.ailv{display:grid;gap:6px;margin:6px 0}.ailv>div{border-radius:9px;padding:9px 11px;border:1px solid var(--line);display:flex;gap:10px;align-items:flex-start}
+.ailv .pericol{background:#fdecea;border-color:#f0b4ae}.ailv .atentie{background:#fff6e0;border-color:#f1d48a}.ailv .verifica{background:#eef4fb;border-color:#bcd3ee}.ailv .ok{background:#eaf5ea;border-color:#b8dcb9}
+.ailv b{display:block;font:700 15px var(--fc)}.ailv small{display:block;color:#3b464d;font-size:13px}.ailv .bdg{font:700 11px var(--fc);text-transform:uppercase;border-radius:5px;padding:2px 6px;color:#fff;flex:none;margin-top:2px}
+.ailv .pericol .bdg{background:#C62828}.ailv .atentie .bdg{background:#A86400}.ailv .verifica .bdg{background:#2166c4}.ailv .ok .bdg{background:#2E7D32}
+.aiph{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--line);background:#111;display:table;margin:0 auto;max-width:100%}.aiph img{display:block;max-width:100%;max-height:46vh;width:auto;height:auto}
+.aiph .bx{position:absolute;border:2px solid #2E7D32;border-radius:3px;box-sizing:border-box;cursor:pointer}.aiph .bx.m{border-color:#E3A008}.aiph .bx.l{border-color:#C62828;border-style:dashed}.aiph .bx.sel{box-shadow:0 0 0 3px #fff,0 0 0 5px #1F2B33}
+.aiph .bx span{position:absolute;left:-2px;top:-16px;background:inherit;font:700 11px var(--fc);color:#fff;padding:0 4px;border-radius:3px;background:#1F2B33}
+.aidv{display:grid;grid-template-columns:28px 1.2fr .8fr .7fr .7fr 1.6fr 52px;gap:4px;align-items:center;padding:5px 0;border-top:1px solid var(--line);font-size:13px}
+.aidv select,.aidv input{padding:5px 6px;font-size:13px}.aidv .cf{font:700 12px var(--fc);text-align:center;border-radius:5px;padding:2px 0}.aidv.on{background:var(--accent-soft)}
+@media (max-width:640px){.aidv{grid-template-columns:34px 1fr 1fr 1fr}.aidv .cf{grid-column:1;grid-row:2}.aidv [data-f=curba],.aidv [data-f=mA]{grid-column:2;grid-row:2}.aidv .et{grid-column:3/-1;grid-row:2}}
+.aiwz{display:grid;gap:10px}.aiwz .steps{display:flex;gap:6px}.aiwz .steps i{flex:1;height:6px;border-radius:3px;background:var(--line)}.aiwz .steps i.on{background:var(--accent)}
+.aitiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:8px}
+@media (max-width:600px){.aiwz .aitile{padding:10px 8px;min-height:64px}.aiwz .aitile .e{font-size:22px}.aiwz .aitile b{font-size:15px}.sheet .aiwz{gap:8px}}
+.aitile{border:2px solid var(--line);background:#fff;border-radius:12px;padding:12px 10px;min-height:72px;text-align:left;cursor:pointer;font:inherit;display:flex;gap:8px;align-items:center}
+.aitile .e{font-size:26px;flex:none}.aitile b{font:700 16px/1.15 var(--fc);display:block}.aitile small{color:var(--muted);font-size:12px;display:block}
+.aitile[aria-pressed=true]{border-color:var(--ink);background:var(--accent-soft);box-shadow:0 0 0 1px var(--ink)}
+.aistep{display:flex;align-items:center;gap:8px;justify-content:space-between;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.aistep b{font:700 16px var(--fc)}.aistep .ctl{display:flex;gap:6px;align-items:center}.aistep .ctl button{width:40px;height:40px;border-radius:50%;border:1.5px solid var(--line);background:#fff;font:700 20px var(--f);cursor:pointer}.aistep .ctl output{min-width:42px;text-align:center;font:700 20px var(--fc)}
+.aibig{font-size:17px!important;padding:13px 18px!important;border-radius:10px!important}
+.aiwz h3{font:700 22px var(--fc);margin:2px 0}.aiwz p.lead{margin:0;color:var(--muted);font-size:14.5px}
+@keyframes aiPop{0%{opacity:0}55%{opacity:1;filter:drop-shadow(0 0 7px #E3A008) brightness(1.25)}100%{opacity:1;filter:none}}
+@keyframes aiFade{from{opacity:0}to{opacity:1}}
+@keyframes aiDoubt{0%,100%{filter:none}50%{filter:drop-shadow(0 0 6px #E3A008) drop-shadow(0 0 2px #E3A008)}}
+@keyframes aiDanger{0%,100%{filter:none}50%{filter:drop-shadow(0 0 7px #C62828) drop-shadow(0 0 2px #C62828)}}
+#cv g.comp.aidoubt{animation:aiDoubt 1.4s ease-in-out 6}#cv g.comp.aidanger{animation:aiDanger 1.1s ease-in-out 8}
+.tvprev{border:1px solid var(--line);border-radius:8px;background:#f4f5f2;padding:8px;display:flex;justify-content:center}.tvprev svg{width:100%;max-width:420px;height:auto;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+`;document.head.appendChild(st);}
+const AI={busy:false,rec:null};
+/* ---------- legătura cu serverul AI (aceeași sesiune ca /api/data) ---------- */
+function aiWhyNot(){if(typeof CLOUD==='undefined'||!CLOUD)return 'AI-ul merge doar din aplicația firmei, când ești logat. Aici configuratorul e deschis fără sesiune, așa că nu am cu ce să-l întreb.';if(navigator.onLine===false)return 'Nu ai internet acum. AI-ul are nevoie de legătură cu serverul.';return '';}
+async function aiPost(body,ms){const why=aiWhyNot();if(why)throw new Error(why);const ctl=new AbortController();const tm=setTimeout(()=>ctl.abort(),ms||120000);let r;
+ try{r=await fetch('/api/ai',{method:'POST',headers:{Authorization:'Bearer '+CLOUD.tok,'Content-Type':'application/json'},body:JSON.stringify(body),signal:ctl.signal});}
+ catch(e){throw new Error(e&&e.name==='AbortError'?'AI-ul n-a răspuns la timp (peste 2 minute). Încearcă din nou.':'Nu am putut ajunge la server. Verifică internetul.');}finally{clearTimeout(tm);}
+ const d=await r.json().catch(()=>({}));
+ if(r.status===401)throw new Error('Sesiunea a expirat. Intră din nou în aplicația firmei și reîncearcă.');
+ if(r.status===403)throw new Error(d.error||'Contul tău nu are voie la această funcție AI (analiza pozelor e doar pentru Manager).');
+ if(r.status===413)throw new Error('Fișierul e prea mare pentru AI. Fă o poză mai mică sau decupează doar tabloul.');
+ if(r.status===429)throw new Error(d.error||'Prea multe cereri AI într-un timp scurt. Mai așteaptă un minut.');
+ if(!r.ok)throw new Error(d.error||('Serverul AI a răspuns cu eroarea '+r.status+'.'));return d;}
+function aiJSON(x){if(x&&typeof x==='object')return x;let s=String(x||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'');const a=s.indexOf('{'),b=s.lastIndexOf('}');
+ if(a<0||b<a)throw new Error('AI-ul a răspuns, dar nu cu o listă pe care s-o pot citi. Încearcă din nou sau scrie mai clar.');try{return JSON.parse(s.slice(a,b+1));}catch(e){throw new Error('AI-ul a dat un răspuns incomplet. Încearcă din nou.');}}
+const aiWaitHTML=t=>`<div class="aiwait"><i></i><div><b>${esc(t)}</b><small class="muted" style="display:block">Durează de obicei 10–40 de secunde.</small></div></div>`;
+const aiErrHTML=m=>`<div class="aierr"><b>Nu a mers:</b> ${esc(m)}</div>`;
+const aiNum=v=>{const n=parseFloat(String(v==null?'':v).replace(',','.'));return isFinite(n)?n:0;};
+/* ---------- hub ---------- */
+function aiHub(){$('#sheet').className='sheet wide';$('#sheet').innerHTML=`<h2>✨ Configuratorul inteligent</h2><p class="muted" style="margin:-6px 0 12px">Tu spui ce vrei, eu fac tabloul, îl verific și îl explic clientului.</p>
+ <div class="aihub"><button class="nbc" data-aih="desc"><span class="ico">✨</span><span><b>Descrie și se face tabloul</b><small>Scrii sau spui „casă P+1, plită, pompă de căldură…”. Primești tabloul complet: aparate, faze, carcasă, fire, calcule.</small></span></button>
+ <button class="nbc" data-aih="foto"><span class="ico">📷</span><span><b>Tablou din poză</b><small>Renovare: pozezi tabloul vechi, îl reconstruiesc aici și îți arăt ce e periculos.</small></span></button>
+ <button class="nbc" data-aih="qr"><span class="ico">📱</span><span><b>Tabloul vorbește</b><small>Foaie A5/A4 pentru ușa tabloului, cu schema, legenda și un QR: clientul scanează și află ce a sărit și ce face.</small></span></button>
+ <button class="nbc" data-aih="simplu"><span class="ico">🙂</span><span><b>Mod simplu</b><small>Trei întrebări cu butoane mari: ce casă, ce consumatori mari, gata.</small></span></button></div>
+ ${aiWhyNot()?`<p class="muted" style="font-size:12.5px;margin:10px 0 0">ℹ ${esc(aiWhyNot())} „Tabloul vorbește” și „Mod simplu” merg și fără AI.</p>`:''}
+ <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" id="aih_x">Închide</button></div>`;$('#modal').classList.add('open');
+ $('#aih_x').onclick=closeModal;$('#sheet').querySelectorAll('[data-aih]').forEach(b=>b.onclick=()=>aiGo(b.dataset.aih));}
+function aiGo(k){if(k==='desc')aiDescribe();else if(k==='foto')aiPhoto();else if(k==='qr')openTv();else if(k==='simplu')aiSimple(0);}
+/* ---------- 1) DESCRIE ȘI SE FACE TABLOUL ---------- */
+const AI_CODES='IL iluminat; CP prize camere; PB prize baie; PE prize exterior/garaj; PL plită monofazată; PT plită trifazată; CU cuptor; BO boiler; AC aer condiționat; MS mașină de spălat rufe; MV mașină de spălat vase; US uscător; CT centrală termică; PO poartă automată; PP pompă (apă, hidrofor); IN încălzire electrică; EV stație încărcare mașină trifazată; EV1 stație încărcare monofazată; PC pompă de căldură trifazată; PC1 pompă de căldură monofazată; PV invertor fotovoltaic trifazat; PV1 invertor fotovoltaic monofazat; MT motor trifazat; AL alt consumator 230 V; RZ circuit de rezervă';
+function aiDescPrompt(txt){return `Ești proiectant de instalații electrice în România (normativul I7/2011). Din descrierea de mai jos fă lista circuitelor pentru tabloul electric al locuinței.
+Răspunde DOAR cu un obiect JSON, fără niciun alt text, exact cu structura:
+{"casa":{"descriere":"scurt, ex. casă P+1, 180 mp","suprafata_mp":180,"niveluri":["parter","etaj"],"camere":6,"bai":2},"alimentare":"mono" sau "tri","circuite":[{"denumire":"Iluminat parter","tip":"IL","puncte":6,"putere_kw":0,"trifazat":false,"zona":"parter"}],"observatii":["ce ai presupus, pe scurt"]}
+Coduri pentru "tip": ${AI_CODES}.
+Reguli: denumire scurtă în română (max 30 caractere), pe locul unde e circuitul; iluminat: un circuit pe nivel, maximum 8 lămpi pe circuit, "puncte" = nr. de lămpi; prize: maximum 8 prize pe circuit, "puncte" = nr. de prize, bucătăria are circuit propriu de prize, fiecare baie are circuitul ei de prize (PB); fiecare consumator mare (plită, cuptor, boiler, AC, mașini, pompă de căldură, stație auto, invertor PV) are circuitul lui, cu "puncte":1 și "putere_kw" din descriere sau o valoare obișnuită; două boilere = două circuite; "trifazat": true doar pentru consumatorii trifazați; "alimentare":"tri" dacă există consumatori trifazați sau puterea totală depășește ~15 kW. Nu alege siguranțe, diferențiale sau secțiuni: le aleg eu. Nu inventa consumatori care nu reies din descriere, în afară de iluminat și prize, care trebuie să existe.
+Descrierea: """${String(txt).slice(0,2500)}"""`;}
+const AI_RES=new Set(['PL','PT','CU','BO','IN','EV','EV1']);
+const AI_MONO={EV:'EV1',PC:'PC1',PV:'PV1',PT:'PL',MT:'AL'},AI_TRI={EV1:'EV',PC1:'PC',PV1:'PV',PL:'PT'};
+function aiRate(kw,tri,res){const I=kw*1000/((tri?Math.sqrt(3)*400:230)*(res?1:0.9));return [10,13,16,20,25,32,40,50,63].find(v=>v>=I*1.05)||63;}
+/* lista de la AI (sau din asistent) → circuitele configuratorului; aparatele le alege proposePanel */
+function aiRowsFromAI(o){const notes=[],rows=[];const list=Array.isArray(o&&o.circuite)?o.circuite:[];let tri=/^tri/i.test(String(o&&o.alimentare||''));const why=[];
+ for(const c of list){if(!c||typeof c!=='object')continue;const nume=String(c.denumire||c.nume||'').trim().slice(0,32);let k=String(c.tip||'').toUpperCase().trim();const kw=Math.max(0,aiNum(c.putere_kw));const t3=c.trifazat===true||/^(true|da|1)$/i.test(String(c.trifazat));
+  if(!CIRC_TYPES.some(x=>x.k===k))k=circKind(nume,'',t3);
+  if(t3&&AI_TRI[k])k=AI_TRI[k];
+  if(!t3&&c.trifazat!==undefined&&ctOf(k).tri&&kw>0&&kw<=7.4&&AI_MONO[k])k=AI_MONO[k];
+  if(k==='PL'&&kw>7.4){k='PT';why.push(`Plita de ${fmtN(kw)} kW e prea mare pentru o fază: am pus-o trifazată.`);}
+  if(t3&&!ctOf(k).tri&&ctOf(k).dev==='load230')k='MT';
+  const t=ctOf(k);let n=Math.round(aiNum(c.puncte))||(t.dev==='bulb'?5:t.dev==='socket'?4:1);n=Math.max(1,Math.min(40,n));
+  const ov={};if((t.dev==='load230'||t.dev==='load400')&&kw>0){ov.kw=kw;const r=Math.max(10,aiRate(kw,!!t.tri,AI_RES.has(k)));ov.r=r;ov.sec=minSec(r);}
+  let dif='';if(k==='EV1')dif='ID-EV';else if(k==='PV1')dif='ID-PV';else if(['PE','PO','PP','CT'].includes(k))dif='RCBO';
+  const base={k,nume:nume||t.n,ov,dif};
+  if(t.dev==='bulb'||t.dev==='socket'){const per=8;const parts=Math.ceil(n/per);for(let i=0;i<parts;i++)rows.push(Object.assign({},base,{ov:{},nume:parts>1?`${base.nume} ${i+1}`.slice(0,32):base.nume,n:Math.min(per,n-i*per)}));if(parts>1)why.push(`„${base.nume}” are ${n} ${t.dev==='bulb'?'lămpi':'prize'}: l-am împărțit în ${parts} circuite (maximum ${per} pe circuit).`);}
+  else{const cnt=Math.min(6,n);for(let i=0;i<cnt;i++)rows.push(Object.assign({},base,{n:1,nume:cnt>1?`${base.nume} ${i+1}`.slice(0,32):base.nume}));}}
+ if(rows.some(r=>ctOf(r.k).tri))tri=true;
+ const Pi=rows.reduce((s,r)=>s+(r.ov.kw||ctOf(r.k).kw||(ctOf(r.k).dev==='socket'?0.2*r.n:ctOf(r.k).dev==='bulb'?0.06*r.n:0)),0);
+ const given=/^(tri|mono)/i.test(String(o&&o.alimentare||''))&&!(o&&o.alimentare_auto);
+ if(!tri&&Pi*0.6>11){if(given)why.push(`Atenție: la monofazat puterea simultană estimată (~${f1(Pi*0.6)} kW) e mare; verifică puterea aprobată în avizul de racordare sau cere branșament trifazat.`);else{tri=true;why.push(`Puterea instalată (~${f1(Pi)} kW) e mare pentru o singură fază: am ales alimentare trifazată.`);}}
+ if(!tri&&rows.some(r=>r.k==='PV1'))why.push('Invertorul fotovoltaic e monofazat (la branșament monofazat, de obicei maximum ~5 kW).');
+ if(Array.isArray(o&&o.observatii))for(const x of o.observatii.slice(0,8))if(x)notes.push(String(x).slice(0,240));
+ return {ci:{tri,spd:true,rows},notes,why,casa:(o&&o.casa)||{}};}
+function aiDescribe(pre){if(AI.rec){try{AI.rec.stop();}catch(_){}}$('#sheet').className='sheet wide';const SR=window.SpeechRecognition||window.webkitSpeechRecognition;const why=aiWhyNot();
+ $('#sheet').innerHTML=`<h2>✨ Descrie și se face tabloul</h2><p class="muted" style="margin:-6px 0 10px">Scrie (sau apasă microfonul și spune) ce casă e și ce consumatori are. Eu aleg siguranțele, diferențialele, descărcătorul, echilibrez fazele, aleg carcasa, trag firele și fac calculele.</p>
+ <div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:8px"><textarea class="aibox" id="ai_txt" placeholder="ex. casă P+1, 180 mp, plită inducție 7 kW, cuptor, pompă de căldură 9 kW trifazată, 2 băi cu boiler, 6 camere, panouri PV 10 kW, stație auto 11 kW">${esc(pre||'')}</textarea>${SR?'<button class="aimic" id="ai_mic" title="Spune în loc să scrii" aria-label="Dictează">🎤</button>':''}</div>
+ <div class="aiex"><button data-aiex="casă P+1, 180 mp, plită inducție 7 kW, cuptor, pompă de căldură 9 kW trifazată, 2 băi cu boiler, 6 camere, panouri PV 10 kW, stație auto 11 kW">Exemplu: casă P+1 cu PV și mașină electrică</button><button data-aiex="apartament 3 camere, 70 mp, o baie cu boiler, plită inducție, cuptor, 2 aparate de aer condiționat, mașină de spălat vase">Exemplu: apartament 3 camere</button></div>
+ <div id="ai_out">${why?aiErrHTML(why)+'<p class="muted" style="font-size:13px;margin:4px 0 0">Poți folosi „🙂 Mod simplu”: îți fac tabloul din câteva butoane, după regulile din aplicație, și fără AI.</p>':''}</div>
+ <div class="row" style="justify-content:space-between;margin-top:10px;gap:8px"><button class="btn" id="ai_simplu">🙂 Mod simplu (fără scris)</button><span class="row" style="gap:8px;margin:0"><button class="btn" id="ai_x">Renunță</button><button class="btn primary aibig" id="ai_go">✨ Fă tabloul</button></span></div>`;
+ $('#modal').classList.add('open');const ta=$('#ai_txt');setTimeout(()=>{try{ta.focus();}catch(_){}},50);
+ $('#ai_x').onclick=()=>{if(AI.rec)try{AI.rec.stop();}catch(_){};closeModal();};$('#ai_simplu').onclick=()=>aiSimple(0);
+ $('#sheet').querySelectorAll('[data-aiex]').forEach(b=>b.onclick=()=>{ta.value=b.dataset.aiex;ta.focus();});
+ if(SR)$('#ai_mic').onclick=()=>{const mb=$('#ai_mic');if(AI.rec){try{AI.rec.stop();}catch(_){}return;}let rec;try{rec=new SR();}catch(e){toast('Microfonul nu merge în acest browser.','warn');return;}
+  rec.lang='ro-RO';rec.interimResults=true;rec.continuous=true;const base=ta.value?ta.value.replace(/\s*$/,' '):'';let fin='';
+  rec.onresult=e=>{let tmp='';for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];if(r.isFinal)fin+=r[0].transcript+' ';else tmp+=r[0].transcript;}ta.value=(base+fin+tmp).trim();};
+  rec.onerror=e=>{toast(e.error==='not-allowed'||e.error==='service-not-allowed'?'Nu am voie la microfon. Permite-l din setările browserului.':e.error==='no-speech'?'Nu am auzit nimic. Mai încearcă.':'Microfonul s-a oprit ('+e.error+').','warn');};
+  rec.onend=()=>{AI.rec=null;mb.classList.remove('on');mb.textContent='🎤';};AI.rec=rec;try{rec.start();mb.classList.add('on');mb.textContent='■';toast('Te ascult… Spune ce casă e și ce consumatori are. Apasă ■ când termini.');}catch(e){AI.rec=null;toast('Nu am putut porni microfonul.','warn');}};
+ $('#ai_go').onclick=()=>{if(AI.rec)try{AI.rec.stop();}catch(_){};const t=ta.value.trim();if(t.length<6){toast('Scrie măcar câteva cuvinte despre casă și consumatori.','warn');ta.focus();return;}aiDescribeRun(t,'#ai_out',$('#ai_go'));};}
+async function aiDescribeRun(text,outSel,btn,fallback){if(AI.busy)return;const out=$(outSel);AI.busy=true;if(btn)btn.disabled=true;out.innerHTML=aiWaitHTML('Citesc descrierea și fac lista de circuite…');
+ try{const d=await aiPost({intrebare:aiDescPrompt(text),json:true});const o=aiJSON(d.raspuns!=null?d.raspuns:d.rezultat!=null?d.rezultat:d);const P=aiRowsFromAI(o);
+  if(!P.ci.rows.length)throw new Error('AI-ul nu a găsit niciun circuit în descriere. Spune ce camere și ce consumatori are casa.');AI.busy=false;aiBuild(P,{src:'ai',text});}
+ catch(e){AI.busy=false;if(btn)btn.disabled=false;if(fallback){const P=fallback();P.why.unshift('AI-ul nu a fost disponibil ('+e.message.replace(/\.$/,'')+'), așa că am făcut lista de circuite după regulile din aplicație.');aiBuild(P,{src:'local'});return;}out.innerHTML=aiErrHTML(e.message)+'<p class="muted" style="font-size:13px;margin:4px 0 0">Nu am schimbat nimic în tablou.</p>';}}
+/* codul (nu AI-ul) face tabloul: aparate, diferențiale, faze, carcasă cu rezervă, fire, calcule */
+function aiPickBox(){const dins=model.comps.filter(c=>c.zone==='panel'&&DEFS[c.t].mount==='din');const u=dins.reduce((s,c)=>s+DEFS[c.t].w(c)/2,0);const need=Math.ceil(u*1.2-1e-9);
+ const bi=id=>model.bands.findIndex(b=>b.id===id);const list=model.comps.filter(c=>c.zone==='panel').sort((a,b)=>bi(a.band)-bi(b.band)||a.x-b.x);
+ const fitsIn=(r,m)=>{const fill=Array(r).fill(0);for(const c of list){const w=DEFS[c.t].w(c);let ok=false;for(let i=0;i<r;i++)if(fill[i]+w<=m*2){fill[i]+=w;ok=true;break;}if(!ok)return false;}return true;};
+ const cand=MOD_BOXES.slice().sort((a,b)=>a[0]*a[1]-b[0]*b[1]||a[0]-b[0]);for(const [r,m] of cand){if(r*m<need||!fitsIn(r,m))continue;const t0=toast;let ok=false;try{toast=()=>{};ok=setModBox(r+'x'+m);}finally{toast=t0;}if(ok)return {r,m,u,tot:r*m,res:Math.round((1-u/(r*m))*100)};}
+ return {r:model.bands.length,m:0,u,tot:0,res:null};}
+function aiAddSeparator(dev,lab){const tri=B(dev)==='load400';const iso=mk(tri?'isol4':'isol','panel',null,0,{rating:tri?40:32},lab);model.comps.push(iso);const r=ensureSpot(DEFS[iso.t],DEFS[iso.t].w(iso),iso.id);if(r&&r.sp)place(iso,r.sp);touch();
+ const map=tri?{L1:'1',L2:'2',L3:'3',N:'N'}:{L:'L',N:'N'};for(const [dt,p] of Object.entries(map)){const k=tk(dev,dt);const w=model.wires.find(w=>w.a===k||w.b===k);if(!w)continue;const sec=w.sec;if(w.a===k)w.a=tk(iso,p+'i');else w.b=tk(iso,p+'i');const nw=newWire(tk(iso,p+'o'),k);if(sec)nw.sec=sec;model.wires.push(nw);}touch();return iso;}
+function aiBuild(P,meta){const ci=P.ci,pv=model;let m,box=null,seps=[];const why=P.why.slice();
+ const make=bx=>{seps=[];model=blank(pv.comps.length?(meta.name||'Tablou casă'):(pv.name||meta.name||'Tablou casă'),{type:'electric',box:bx,modAuto:bx==='modular',rows:bx==='modular'?1:3,modules:18});model.client=pv.client||'';model.company=pv.company;model.logo=pv.logo;model.santierId=pv.santierId;if(!pv.comps.length){model.cloudId=pv.cloudId;model.localId=pv.localId;}touch();
+  m=proposePanel(ci);model=m;touch();
+  for(const c of m.comps){if(c.label==='ID-EV'&&DEFS[c.t].rcd)c.p.tip='B';}
+  for(const r of ci.rows){if(r.k!=='PV'&&r.k!=='PV1')continue;const dev=m.comps.find(c=>c.zone==='field'&&c.label===r.nume);if(dev){seps.push(aiAddSeparator(dev,'QPV'+(seps.length?seps.length+1:'')));}}};
+ try{make('modular');box=aiPickBox();
+  /* nu încape într-un tablou modular (max. 6×18) cu 20% rezervă: cutie metalică, care se dimensionează singură (cu rezervă de 30%) */
+  if(!box.tot){make('metal');let L=null;try{L=layout();}catch(_){}box={metal:true,u:box.u,W:L&&L.BW,H:L&&L.BH};}
+  m.name=m.name||'Tablou casă';
+  if(P.casa&&P.casa.descriere&&!pv.comps.length)m.name=String(P.casa.descriere).slice(0,60);else if(P.casa&&P.casa.descriere)m.name=('Tablou '+String(P.casa.descriere)).slice(0,60);}
+ catch(e){model=pv;touch();console.warn(e);toast('Nu am putut face tabloul: '+e.message,'err');return;}
+ model=pv;touch();closeModal();setModel(m,'');try{autoLabelWires();touch();save();render();}catch(e){}renderLib();if(tab!=='2d')setTab('2d');requestAnimationFrame(()=>{fit();aiAnimate();});
+ const pn=$('#pname');if(pn)pn.value=model.name;
+ setTimeout(()=>aiSummary(P,meta,box,seps,why),900);}
+/* marcajul (de verificat / periculos) rezistă la redesenarea schemei, câteva secunde */
+function aiMarkApply(){const k=AI.mark;if(!k)return;if(performance.now()>k.until){AI.mark=null;return;}const sv=$('#cv');if(!sv)return;sv.querySelectorAll('g.comp[data-c]').forEach(g=>{if(k.ids.includes(g.dataset.c))g.classList.add(k.cls);});}
+{const _r=render;render=function(){const o=_r.apply(this,arguments);try{aiMarkApply();}catch(_){}return o;};}
+function aiAnimate(ids,cls){const run=()=>{const sv=$('#cv');if(!sv)return;if(ids){AI.mark={ids,cls:cls||'aidoubt',until:performance.now()+11000};aiMarkApply();return;}
+ [...sv.querySelectorAll('g.comp[data-c]')].forEach((g,i)=>{g.style.animation=`aiPop .5s ${Math.min(i*40,2400)}ms both`;});[...sv.querySelectorAll('[data-w]')].forEach((g,i)=>{g.style.animation=`aiFade .45s ${Math.min(700+i*10,3000)}ms both`;});};
+ requestAnimationFrame(run);}
+function aiCheckNow(){let rows=[],sr=[],iss=[];try{rows=calcCached();}catch(_){}try{sr=selRows();}catch(_){}try{iss=issues().filter(x=>x.level==='err');}catch(_){}
+ const bad=rows.filter(r=>r.ok&&!(r.ok.ib&&r.ok.iz&&r.ok.du&&r.ok.ik));return {rows,bad,sr,selNu:sr.filter(p=>p.res==='nu'),selPart:sr.filter(p=>p.res==='parțial'),iss,sum:rows.length?calcSummary(rows):null};}
+function aiSummary(P,meta,box,seps,why){const K=aiCheckNow(),ci=P.ci;const nm=c=>c.label||compName(c);
+ const main=model.comps.find(c=>c.zone==='panel'&&c.label==='Q0');const rcds=model.comps.filter(c=>c.zone==='panel'&&DEFS[c.t].rcd&&!DEFS[c.t].prot);const rcbo=model.comps.filter(c=>B(c)==='rcbo');const spd=model.comps.find(c=>/^spd/.test(B(c)));
+ const dc=tvCircuits();const per=new Map();for(const x of dc)if(x.up)per.set(x.up.id,(per.get(x.up.id)||0)+1);
+ const s=K.sum;const li=[];
+ li.push(`<b>Alimentare ${ci.tri?'trifazată 3×400/230 V':'monofazată 230 V'}</b>${ci.tri?(ci.rows.some(r=>ctOf(r.k).tri)?' — ai consumatori trifazați ('+[...new Set(ci.rows.filter(r=>ctOf(r.k).tri).map(r=>r.nume))].slice(0,4).map(esc).join(', ')+').':' — puterea totală e mare pentru o fază.'):' — nu ai consumatori trifazați și puterea încape pe o fază.'}`);
+ if(main)li.push(`<b>General ${esc(nm(main))}: ${esc((main.p.curve||'C')+main.p.rating)} A</b> — ales după bilanț${s?` (instalat ~${f1(s.Pi/1000)} kW, simultan ~${f1(s.Pc/1000)} kW, coeficient ${fmtN(s.K.ks)})`:''}; e siguranță automată, ca să protejeze și diferențialele la suprasarcină.`);
+ if(spd)li.push(`<b>Descărcător de supratensiune ${esc(nm(spd))}</b> (tip 2) imediat după general — protejează electronica (pompa de căldură, invertorul, plita) la trăsnete și supratensiuni din rețea.`);
+ if(rcds.length)li.push(`<b>${rcds.length} ${rcds.length===1?'diferențial':'diferențiale'} de 30 mA</b>: ${rcds.map(r=>`${esc(nm(r))} tip ${esc(r.p.tip)}${per.get(r.id)?' ('+per.get(r.id)+' circ.)':''}`).join(', ')}. Maximum 6 circuite pe diferențial, ca să nu sară din scurgeri adunate și să nu rămână toată casa fără curent la un defect.${rcds.some(r=>r.p.tip==='B')?' Stația auto are diferențial tip B separat: încărcătorul poate avea scurgeri de curent continuu, pe care tipul A nu le vede.':''}`);
+ if(rcbo.length)li.push(`<b>${rcbo.length} ${rcbo.length===1?'siguranță cu diferențial (RCBO)':'siguranțe cu diferențial (RCBO)'}</b> pentru ${rcbo.map(r=>{const x=dc.find(y=>y.c===r);return esc(nm(r))+(x&&x.cons[0]?' ('+esc(String(x.cons[0]).replace(/ \d+$/,''))+')':'');}).join(', ')} — circuite de afară / care trebuie să meargă mereu: un defect acolo nu oprește restul casei.`);
+ if(seps.length)li.push(`<b>Separator ${seps.map(x=>esc(nm(x))).join(', ')} pentru invertorul fotovoltaic</b> — îl poți scoate de sub tensiune separat pentru intervenții. Diferențialul invertorului e tip A; dacă fișa invertorului cere tip B, schimbă-l din inspector.`);
+ if(ci.tri&&s)li.push(`<b>Fazele echilibrate</b>: cel mai mare consumator monofazat pe faza cea mai liberă. L1 ${f1(s.ph.L1/1000)} kW · L2 ${f1(s.ph.L2/1000)} kW · L3 ${f1(s.ph.L3/1000)} kW.`);
+ if(box&&box.tot)li.push(`<b>Carcasă ${box.r} ${box.r===1?'rând':'rânduri'} × ${box.m} module</b> (${box.tot} module): aparatele ocupă ${fmtN(Math.round(box.u*10)/10)}, rămân ${box.res}% libere pentru extinderi (am cerut minimum 20%).`);
+ else if(box&&box.metal)li.push(`<b>Cutie metalică${box.W&&box.H?` ${Math.round(box.H)}×${Math.round(box.W)} mm`:''}</b> cu șine și jgheaburi: aparatele ocupă ${fmtN(Math.round(box.u))} module, mai mult decât încape într-un tablou modular de 6×18 cu 20% rezervă. Cutia se mărește singură și păstrează 30% loc liber.`);
+ else li.push('<b>Carcasa</b> se alege singură după aparate (cu rezervă).');
+ li.push(`<b>Secțiunile cablurilor</b> după siguranță (ex. 1,5 mm² la B10, 2,5 mm² la C16, 6 mm² la C32), iluminatul pe curba B, restul pe C. Firele sunt trase și etichetate.`);
+ for(const w of why)li.push(esc(w));
+ const okC=K.rows.length-K.bad.length;
+ const calc=K.rows.length?(K.bad.length?`<div class="ailv"><div class="atentie"><span class="bdg">Atenție</span><span><b>Calcule I7/2011: ${okC} din ${K.rows.length} circuite trec</b><small>De verificat: ${K.bad.slice(0,6).map(r=>esc(r.c.label||compName(r.c))+(!r.ok.du?' (cădere de tensiune: pune lungimea reală)':!r.ok.iz?' (cablul e prea subțire)':!r.ok.ib?' (siguranța e prea mică)':' (scurtcircuit la capăt)')).join(', ')}. Lungimile sunt estimate la ${calcCfg().len} m; pune-le pe cele reale în „Calcule”.</small></span></div></div>`:`<div class="ailv"><div class="ok"><span class="bdg">OK</span><span><b>Calcule I7/2011: toate cele ${K.rows.length} circuite trec</b><small>Curent, secțiune, cădere de tensiune și scurtcircuit, cu lungimi estimate la ${calcCfg().len} m.</small></span></div></div>`):'';
+ const sel=K.sr.length?`<div class="ailv"><div class="${K.selNu.length?'atentie':'ok'}"><span class="bdg">${K.selNu.length?'Atenție':'OK'}</span><span><b>Selectivitate: ${K.sr.length-K.selNu.length} din ${K.sr.length} perechi bune</b><small>${K.selNu.length?'Nu e selectiv: '+K.selNu.slice(0,4).map(p=>esc((p.u&&nm(p.u))||'')+' → '+esc((p.d&&nm(p.d))||'')).join(', '):K.selPart.length?K.selPart.length+' perechi sunt selective doar parțial (normal la siguranțe modulare: la scurtcircuit chiar lângă tablou pot sări amândouă).':'La un defect sare doar aparatul cel mai apropiat.'}</small></span></div></div>`:'';
+ const iss=K.iss.length?`<div class="ailv"><div class="atentie"><span class="bdg">Atenție</span><span><b>${K.iss.length} probleme de legare</b><small>Le vezi pe schemă, marcate cu roșu.</small></span></div></div>`:'';
+ $('#sheet').className='sheet wide';$('#sheet').innerHTML=`<h2>✨ Gata: tabloul e făcut</h2>
+ <div class="aichips"><span>${ci.rows.length} circuite</span><span>${model.comps.filter(c=>c.zone==='panel').length} aparate în tablou</span><span>${model.wires.length} fire</span>${s?`<span>~${f1(s.Pi/1000)} kW instalat</span>`:''}${box&&box.tot?`<span>${box.r}×${box.m} module · ${box.res}% liber</span>`:''}${meta.src==='local'?'<span>fără AI, după reguli</span>':''}</div>
+ ${calc}${sel}${iss}
+ <details${isMobile()?'':' open'} style="margin-top:8px"><summary><b>Ce am făcut și de ce</b> <span class="muted">(${li.length})</span></summary><ul class="aiwhy">${li.map(x=>`<li>${x}</li>`).join('')}</ul></details>
+ ${P.notes.length?`<details style="margin-top:6px"><summary><b>Ce a presupus AI-ul</b> <span class="muted">(${P.notes.length})</span></summary><ul class="aiwhy">${P.notes.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:''}
+ <details style="margin-top:6px"><summary><b>Circuitele</b></summary><table class="bomt" style="font-size:13px"><thead><tr><th>Cod</th><th>Circuit</th><th>Protecție</th><th>Cablu</th><th>Diferențial</th></tr></thead><tbody>${dc.map(x=>`<tr><td><b>${esc(x.label)}</b></td><td>${esc((x.cons[0]||'').replace(/ 1$/,''))}${x.cons.length>1?` <span class="muted">(${x.cons.length} puncte)</span>`:''}</td><td>${esc(x.prot)}</td><td>${esc(x.cable)}</td><td>${esc(x.upTxt)}</td></tr>`).join('')}</tbody></table></details>
+ <div class="row" style="justify-content:space-between;margin-top:14px;gap:8px"><button class="btn danger" id="as_undo">↶ Anulează tot</button><span class="row" style="gap:6px;margin:0;flex-wrap:wrap"><button class="btn" id="as_3d">Vezi în 3D</button><button class="btn" id="as_calc">🧮 Calcule</button><button class="btn" id="as_sel">⚖ Selectivitate</button><button class="btn" id="as_qr">📱 Eticheta QR</button><button class="btn primary" id="as_ok">Gata</button></span></div>`;
+ $('#modal').classList.add('open');
+ $('#as_undo').onclick=()=>{closeModal();undo();toast('Am anulat tabloul făcut de AI: ai înapoi ce aveai.');};$('#as_ok').onclick=closeModal;
+ $('#as_3d').onclick=()=>{closeModal();setTab('3d');};$('#as_calc').onclick=()=>openCalc();$('#as_sel').onclick=()=>openSel();$('#as_qr').onclick=()=>openTv();}
+/* ---------- 4) MOD SIMPLU: 3 pași ---------- */
+const AIW={casa:'P+1',mp:150,camere:4,bai:2,alim:'auto',on:{plita:1,cuptor:1,boiler:1,ms:1,mv:1,ext:1},kw:{plita:7,pc:9,ev:11,pv:10,ac:2.5},nAc:2};
+const AIW_CASE=[['apartament','🏢','Apartament','bloc, un nivel'],['parter','🏠','Casă parter','un nivel'],['P+1','🏡','Casă P+1','parter + etaj'],['P+M','🛖','Casă P+M','parter + mansardă'],['P+2','🏘','Casă P+2','trei niveluri'],['spatiu','🏪','Spațiu comercial','birou, magazin']];
+const AIW_CONS=[['plita','🍳','Plită (inducție)','kW'],['cuptor','🔥','Cuptor electric'],['boiler','🚿','Boiler electric','câte unul pe baie'],['pc','♨','Pompă de căldură','kW'],['ac','❄','Aer condiționat','bucăți'],['ev','🚗','Stație încărcare mașină','kW'],['pv','☀','Panouri fotovoltaice','kW'],['ms','🧺','Mașină de spălat'],['mv','🍽','Mașină de vase'],['us','🌀','Uscător'],['ct','🔧','Centrală pe gaz'],['poarta','🚪','Poartă automată'],['ext','🌳','Prize afară / garaj']];
+function aiWizCircuits(w){const lv=w.casa==='P+2'?['parter','etaj 1','etaj 2']:w.casa==='P+1'?['parter','etaj']:w.casa==='P+M'?['parter','mansardă']:[w.casa==='spatiu'?'spațiu':'locuință'];
+ const c=[];const lamps=Math.max(6,Math.round(w.mp/8));lv.forEach(l=>c.push({denumire:'Iluminat '+l,tip:'IL',puncte:Math.ceil(lamps/lv.length)}));
+ const rooms=Math.max(1,w.camere);c.push({denumire:'Prize living',tip:'CP',puncte:6});c.push({denumire:'Prize bucătărie',tip:'CP',puncte:5});
+ for(let i=0;i<Math.ceil((rooms-1)/2);i++)c.push({denumire:'Prize camere '+(i+1),tip:'CP',puncte:Math.min(8,((rooms-1-2*i)>=2?2:1)*4)});
+ for(let i=0;i<w.bai;i++)c.push({denumire:'Prize baie '+(i+1),tip:'PB',puncte:2});
+ const on=w.on,kw=w.kw;const T=w.alim==='tri';
+ if(on.plita)c.push({denumire:'Plită',tip:kw.plita>7.4&&w.alim!=='mono'?'PT':'PL',puncte:1,putere_kw:kw.plita,trifazat:kw.plita>7.4&&w.alim!=='mono'});
+ if(on.cuptor)c.push({denumire:'Cuptor',tip:'CU',puncte:1,putere_kw:3.5});
+ if(on.boiler)for(let i=0;i<Math.max(1,w.bai);i++)c.push({denumire:w.bai>1?'Boiler baie '+(i+1):'Boiler',tip:'BO',puncte:1,putere_kw:2});
+ if(on.pc){const t3=kw.pc>5&&w.alim!=='mono';c.push({denumire:'Pompă de căldură',tip:t3?'PC':'PC1',puncte:1,putere_kw:kw.pc,trifazat:t3});}
+ if(on.ac)for(let i=0;i<Math.max(1,w.nAc);i++)c.push({denumire:'Aer condiționat '+(i+1),tip:'AC',puncte:1,putere_kw:kw.ac});
+ if(on.ev){const t3=kw.ev>7.4&&w.alim!=='mono';c.push({denumire:'Stație auto',tip:t3?'EV':'EV1',puncte:1,putere_kw:t3?kw.ev:Math.min(7.4,kw.ev),trifazat:t3});}
+ if(on.pv){const t3=kw.pv>5&&w.alim!=='mono';c.push({denumire:'Invertor PV',tip:t3?'PV':'PV1',puncte:1,putere_kw:t3?kw.pv:Math.min(5,kw.pv),trifazat:t3});}
+ if(on.ms)c.push({denumire:'Mașină de spălat',tip:'MS',puncte:1,putere_kw:2.2});if(on.mv)c.push({denumire:'Mașină de vase',tip:'MV',puncte:1,putere_kw:2});if(on.us)c.push({denumire:'Uscător',tip:'US',puncte:1,putere_kw:2.5});
+ if(on.ct)c.push({denumire:'Centrală termică',tip:'CT',puncte:1,putere_kw:0.2});if(on.poarta)c.push({denumire:'Poartă automată',tip:'PO',puncte:1,putere_kw:0.5});
+ if(on.ext&&w.casa!=='apartament')c.push({denumire:'Prize exterior',tip:'PE',puncte:3});
+ c.push({denumire:'Rezervă',tip:'RZ',puncte:1});
+ return {casa:{descriere:(AIW_CASE.find(x=>x[0]===w.casa)||[0,0,'Casă'])[2]+', '+w.mp+' mp'},alimentare:T?'tri':'mono',alimentare_auto:w.alim==='auto',circuite:c};}
+function aiWizText(w){const C=AIW_CASE.find(x=>x[0]===w.casa)||[];const on=w.on,kw=w.kw;const p=[`${C[2]||'casă'}, ${w.mp} mp, ${w.camere} camere, ${w.bai} ${w.bai===1?'baie':'băi'}`];
+ if(w.alim!=='auto')p.push('alimentare '+(w.alim==='tri'?'trifazată':'monofazată'));if(on.plita)p.push(`plită inducție ${fmtN(kw.plita)} kW`);if(on.cuptor)p.push('cuptor electric');if(on.boiler)p.push(`boiler electric în fiecare baie`);
+ if(on.pc)p.push(`pompă de căldură ${fmtN(kw.pc)} kW`);if(on.ac)p.push(`${w.nAc} aparate de aer condiționat`);if(on.ev)p.push(`stație încărcare mașină ${fmtN(kw.ev)} kW`);if(on.pv)p.push(`panouri fotovoltaice ${fmtN(kw.pv)} kW`);
+ if(on.ms)p.push('mașină de spălat rufe');if(on.mv)p.push('mașină de spălat vase');if(on.us)p.push('uscător');if(on.ct)p.push('centrală termică pe gaz');if(on.poarta)p.push('poartă automată');if(on.ext)p.push('prize afară și în garaj');return p.join(', ');}
+function aiSimple(step,intro){const w=AIW;{const ic=$('#aiIntro');if(ic)ic.remove();}$('#sheet').className='sheet wide';const dots=`<div class="steps">${[0,1,2].map(i=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>`;
+ const stepper=(id,lab,val,min,max,stepv,unit)=>`<div class="aistep"><span><b>${lab}</b>${unit?`<small class="muted" style="display:block">${unit}</small>`:''}</span><span class="ctl"><button data-dec="${id}" aria-label="Mai puțin">−</button><output id="w_${id}">${fmtN(val)}</output><button data-inc="${id}" aria-label="Mai mult">+</button></span></div>`;
+ let body='';
+ if(step===0)body=`<h3>1. Ce fel de clădire e?</h3><p class="lead">Atinge una. Poți schimba numerele cu + și −.</p>
+  <div class="aitiles">${AIW_CASE.map(([k,e,t,s])=>`<button class="aitile" data-casa="${k}" aria-pressed="${w.casa===k}"><span class="e">${e}</span><span><b>${t}</b><small>${s}</small></span></button>`).join('')}</div>
+  <div class="aitiles" style="grid-template-columns:repeat(auto-fill,minmax(210px,1fr))">${stepper('mp','Suprafața',w.mp,30,600,10,'metri pătrați')}${stepper('camere','Camere',w.camere,1,15,1,'dormitoare + living')}${stepper('bai','Băi',w.bai,0,6,1,'')}</div>
+  <div><b style="font:700 16px var(--fc)">Curentul de la rețea</b><div class="aitiles" style="margin-top:6px">${[['auto','🤔','Nu știu','aleg eu'],['mono','➖','Monofazat','230 V'],['tri','≡','Trifazat','400 V']].map(([k,e,t,s])=>`<button class="aitile" data-alim="${k}" aria-pressed="${w.alim===k}"><span class="e">${e}</span><span><b>${t}</b><small>${s}</small></span></button>`).join('')}</div></div>`;
+ else if(step===1)body=`<h3>2. Ce consumatori mari are?</h3><p class="lead">Atinge tot ce are casa. Iluminatul și prizele le pun eu.</p>
+  <div class="aitiles">${AIW_CONS.map(([k,e,t,s])=>`<button class="aitile" data-cons="${k}" aria-pressed="${!!w.on[k]}"><span class="e">${e}</span><span><b>${t}</b>${s?`<small>${s==='kW'?(w.kw[k]!=null?fmtN(w.kw[k])+' kW':''):s==='bucăți'?w.nAc+' buc.':s}</small>`:''}</span></button>`).join('')}</div>
+  ${['plita','pc','ev','pv'].filter(k=>w.on[k]).map(k=>stepper('kw_'+k,(AIW_CONS.find(x=>x[0]===k)||[])[2],w.kw[k],1,30,k==='plita'?0.5:1,'putere (kW)')).join('')}${w.on.ac?stepper('nAc','Aparate de aer condiționat',w.nAc,1,8,1,'bucăți'):''}`;
+ else body=`<h3>3. Gata, fac tabloul</h3><p class="lead">Am înțeles așa (poți corecta textul):</p><textarea class="aibox" id="w_txt">${esc(aiWizText(w))}</textarea>
+  <p class="muted" style="font-size:13px;margin:0">${aiWhyNot()?'AI-ul nu e disponibil aici, așa că fac tabloul după regulile din aplicație (merge la fel de bine pentru o casă obișnuită).':'Îl trimit la AI ca să înțeleagă și ce ai scris în plus; dacă AI-ul nu răspunde, îl fac după regulile din aplicație.'}</p><div id="w_out"></div>`;
+ $('#sheet').innerHTML=`<div class="aiwz">${intro&&step===0?`<div style="background:var(--accent-soft);border-radius:10px;padding:10px 12px"><b style="font:700 18px var(--fc)">Bun venit! 👋</b><div style="font-size:14px">Îți fac un tablou complet în 3 pași, fără să știi configuratorul. Sau închide și lucrează ca de obicei.</div></div>`:''}${dots}${body}
+  <div class="row" style="justify-content:space-between;gap:8px;margin-top:4px"><button class="btn aibig" id="w_back">${step?'← Înapoi':intro?'Nu acum':'Renunță'}</button><button class="btn primary aibig" id="w_next">${step<2?'Mai departe →':'✨ Fă tabloul'}</button></div>
+  ${intro&&step===0?'<label class="chk" style="font-size:13px"><input type="checkbox" id="w_never" checked> Nu mai arăta la pornire (îl găsești la ✨ AI)</label>':''}</div>`;
+ $('#modal').classList.add('open');const S=$('#sheet');
+ const lim={mp:[30,600,10],camere:[1,15,1],bai:[0,6,1],nAc:[1,8,1],kw_plita:[2,15,0.5],kw_pc:[2,30,1],kw_ev:[3.7,22,1],kw_pv:[1,30,1]};
+ const get=k=>k.startsWith('kw_')?w.kw[k.slice(3)]:w[k],set=(k,v)=>{if(k.startsWith('kw_'))w.kw[k.slice(3)]=v;else w[k]=v;};
+ S.querySelectorAll('[data-inc],[data-dec]').forEach(b=>b.onclick=()=>{const k=b.dataset.inc||b.dataset.dec,[mn,mx,sv]=lim[k];let v=get(k)+(b.dataset.inc?sv:-sv);v=Math.round(Math.max(mn,Math.min(mx,v))*10)/10;set(k,v);const o=$('#w_'+k);if(o)o.textContent=fmtN(v);});
+ S.querySelectorAll('[data-casa]').forEach(b=>b.onclick=()=>{w.casa=b.dataset.casa;if(w.casa==='apartament'){w.mp=Math.min(w.mp,90);w.bai=Math.min(w.bai,1)||1;}S.querySelectorAll('[data-casa]').forEach(x=>x.setAttribute('aria-pressed',x===b));const o=$('#w_mp');if(o)o.textContent=w.mp;const ob=$('#w_bai');if(ob)ob.textContent=w.bai;});
+ S.querySelectorAll('[data-alim]').forEach(b=>b.onclick=()=>{w.alim=b.dataset.alim;S.querySelectorAll('[data-alim]').forEach(x=>x.setAttribute('aria-pressed',x===b));});
+ S.querySelectorAll('[data-cons]').forEach(b=>b.onclick=()=>{const k=b.dataset.cons;w.on[k]=w.on[k]?0:1;aiSimple(1);});
+ const never=()=>{const n=$('#w_never');if(!n||n.checked)try{localStorage.setItem('se-ai-intro-v1','1');}catch(_){}};
+ $('#w_back').onclick=()=>{if(step===0){never();closeModal();}else aiSimple(step-1);};
+ $('#w_next').onclick=()=>{never();if(step<2){aiSimple(step+1);return;}const txt=($('#w_txt').value||'').trim();const fb=()=>aiRowsFromAI(aiWizCircuits(w));
+  if(aiWhyNot()){const P=fb();aiBuild(P,{src:'local'});return;}aiDescribeRun(txt||aiWizText(w),'#w_out',$('#w_next'),fb);};}
+/* ---------- 2) TABLOU DIN POZĂ ---------- */
+const AI_PH_TYPES=[['MCB','Siguranță'],['RCD','Diferențial'],['RCBO','Siguranță cu diferențial'],['SPD','Descărcător'],['SEPARATOR','Separator / general'],['FUZIBIL','Siguranță fuzibilă'],['CONTOR','Contor'],['ALTUL','Alt aparat']];
+const AI_POLI=['1P','1P+N','2P','3P','4P'];
+function aiPhotoPrompt(){return `Poza arată un tablou electric existent dintr-o locuință din România (renovare). Recunoaște fiecare aparat modular de pe șine, rând cu rând de sus în jos, și în fiecare rând de la stânga la dreapta.
+Răspunde DOAR cu un obiect JSON, fără alt text, cu structura:
+{"randuri":[{"rand":1,"aparate":[{"tip":"MCB","poli":"1P","curent_A":16,"curba":"C","sens_mA":null,"tip_dif":null,"eticheta":"Prize bucătărie","module":1,"incredere":0.9,"box":[x1,y1,x2,y2]}]}],"carcasa":{"randuri":2,"module_pe_rand":12},"calitate_poza":"buna","observatii":["..."]}
+"tip": MCB = siguranță automată; RCD = întrerupător diferențial (are buton T, valoare în mA); RCBO = siguranță cu diferențial într-un singur aparat; SPD = descărcător de supratensiune; SEPARATOR = întrerupător general fără curbă (separator, I-0); FUZIBIL = siguranță fuzibilă / cu filet / patron; CONTOR = contor de energie; ALTUL = releu, sonerie, temporizator, lampă de semnalizare etc. Spațiile goale sau capacele nu le trece.
+"poli": 1P, 1P+N, 2P, 3P sau 4P (numără manetele/modulele unite). "curent_A": numărul de pe aparat (ex. C16 → 16). "curba": B, C sau D pentru siguranțe, altfel null. "sens_mA": 30, 100, 300 la diferențiale, altfel null. "tip_dif": AC, A, F sau B (simbolul de pe diferențial), altfel null.
+"eticheta": textul scris pe aparat sau pe banda de sub/deasupra lui (inclusiv scris de mână), exact cum se vede, altfel "". "incredere": între 0 și 1, cât de sigur ești de tip și valori; dacă nu se vede clar o valoare pune null și scade încrederea. "box": dreptunghiul aparatului în poză, coordonate normalizate 0–1000 (x de la stânga, y de sus). Nu inventa aparate sau valori.`;}
+async function aiImgPrep(f){const MAX=3.4e6;if(f.type==='application/pdf'){const b64=await new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(String(rd.result).split(',')[1]||'');rd.onerror=()=>rej(new Error('Nu am putut citi fișierul.'));rd.readAsDataURL(f);});if(b64.length>MAX)throw new Error('PDF-ul e prea mare ('+Math.round(b64.length/1e6*0.75*10)/10+' MB). Trimite o poză sau un PDF mai mic de ~2,5 MB.');return {mime:'application/pdf',base64:b64,url:null};}
+ if(!/^image\//.test(f.type||'image/'))throw new Error('Alege o poză (JPG, PNG) sau un PDF.');const url=URL.createObjectURL(f);
+ try{const img=await new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error('Nu pot deschide poza (format nesuportat — de ex. HEIC). Fă poza ca JPG sau trimite o captură de ecran.'));im.src=url;});
+  let side=2400,q=0.8,out='';for(let k=0;k<6;k++){const s=Math.min(1,side/Math.max(img.naturalWidth,img.naturalHeight));const cv=document.createElement('canvas');cv.width=Math.max(1,Math.round(img.naturalWidth*s));cv.height=Math.max(1,Math.round(img.naturalHeight*s));const x=cv.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,cv.width,cv.height);x.drawImage(img,0,0,cv.width,cv.height);out=cv.toDataURL('image/jpeg',q);if(out.length-23<=MAX)break;side=Math.round(side*0.8);q=Math.max(0.6,q-0.05);}
+  return {mime:'image/jpeg',base64:out.split(',')[1],url:out};}finally{URL.revokeObjectURL(url);}}
+function aiPhNorm(o){const rows=(Array.isArray(o&&o.randuri)?o.randuri:[]).slice().sort((a,b)=>aiNum(a&&a.rand)-aiNum(b&&b.rand));const out=[];let i=0;
+ rows.forEach((r,ri)=>{for(const a of (Array.isArray(r&&r.aparate)?r.aparate:[])){if(!a)continue;let t=String(a.tip||'').toUpperCase().replace(/[^A-Z]/g,'');if(t==='GOL'||t==='CAPAC')continue;if(t==='SIGURANTAFUZIBILA')t='FUZIBIL';if(!AI_PH_TYPES.some(x=>x[0]===t))t='ALTUL';
+  let p=String(a.poli||'').toUpperCase().replace(/\s/g,'');if(!AI_POLI.includes(p))p=t==='RCD'||t==='RCBO'?'2P':'1P';
+  let cf=aiNum(a.incredere);if(cf>1)cf=cf/100;cf=Math.max(0,Math.min(1,cf||0.5));const bx=Array.isArray(a.box)&&a.box.length===4?a.box.map(v=>Math.max(0,Math.min(1000,aiNum(v)))):null;
+  out.push({i:++i,row:ri,tip:t,poli:p,A:aiNum(a.curent_A)||null,curba:/^[BCD]$/i.test(String(a.curba||''))?String(a.curba).toUpperCase():null,mA:aiNum(a.sens_mA)||null,td:/^(AC|A|F|B)$/i.test(String(a.tip_dif||''))?String(a.tip_dif).toUpperCase():null,et:String(a.eticheta||'').trim().slice(0,40),cf,box:bx});}});
+ return {devs:out,nrows:Math.max(1,rows.length),carc:(o&&o.carcasa)||{},q:String(o&&o.calitate_poza||''),notes:(Array.isArray(o&&o.observatii)?o.observatii:[]).slice(0,8).map(x=>String(x).slice(0,240))};}
+const aiDoubt=d=>d.cf<0.7||((d.tip==='MCB'||d.tip==='RCBO'||d.tip==='RCD'||d.tip==='FUZIBIL')&&!d.A)||((d.tip==='RCD'||d.tip==='RCBO')&&!d.mA);
+/* structura tabloului din poză: generalul, ce diferențial e deasupra fiecărei siguranțe */
+function aiPhStruct(D){const devs=D.devs.filter(d=>d.tip!=='CONTOR'&&d.tip!=='ALTUL');const circ=[],rcds=[],spd=[];let main=null;const ass=[];
+ main=devs.find(d=>d.tip==='SEPARATOR')||null;
+ if(!main){const f=devs[0];const mcbs=devs.filter(d=>d.tip==='MCB'||d.tip==='FUZIBIL');if(f&&(f.tip==='MCB'||f.tip==='FUZIBIL')&&mcbs.length>1&&(f.A||0)>=Math.max(...mcbs.slice(1).map(d=>d.A||0))&&(f.A||0)>=25)main=f;}
+ let cur=null,curRow=-1;
+ for(const d of devs){if(d===main)continue;if(d.tip==='SPD'){spd.push(d);continue;}if(d.tip==='SEPARATOR'){continue;}
+  if(d.tip==='RCD'){cur=d;curRow=d.row;d.kids=[];rcds.push(d);continue;}
+  if(d.tip==='RCBO'){d.up='self';circ.push(d);continue;}
+  if(d.tip==='MCB'||d.tip==='FUZIBIL'){if(cur){d.up=cur;cur.kids.push(d);if(d.row!==curRow&&!ass.includes(cur)){ass.push(cur);}}else d.up=null;circ.push(d);}}
+ return {devs,main,circ,rcds,spd,ass,tri:devs.some(d=>/^[34]P$/.test(d.poli))};}
+const AI_RX={wet:/baie|b[aă]i\b|du[sș]|wc|bucăt|bucat|exterior|curte|teras|gr[aă]din|garaj|pivni|subsol|boiler|ma[sș]in|sp[aă]l|piscin|jacuzzi|fântân|fantan|pomp/i,sock:/priz|priza|socket|bucăt|bucat|camer|dormit|living|sufragerie|hol|birou/i,light:/ilum|lumin|lamp|spot|led|bec|candel|aplic/i};
+function aiPhCheck(D){const S=aiPhStruct(D),out=[];const nm=d=>`#${d.i} ${d.et?'„'+d.et+'”':({MCB:'siguranță',RCD:'diferențial',RCBO:'RCBO',FUZIBIL:'siguranță fuzibilă'}[d.tip]||d.tip)}${d.A?' '+(d.curba||'')+d.A+' A':''}`;
+ const p30=d=>d.up==='self'?(d.mA&&d.mA<=30):d.up?(d.up.mA&&d.up.mA<=30):false;const add=(lv,t,s,ds)=>out.push({lv,t,s,ds:(ds||[]).map(d=>d.i)});
+ if(!S.rcds.length&&!S.circ.some(d=>d.up==='self'))add('pericol','Tabloul nu are niciun diferențial','Fără diferențial, o atingere accidentală a unei faze (aparat defect, fir ros, copil la priză) nu e întreruptă. I7/2011 cere diferențial de cel mult 30 mA pe circuitele de prize și în băi. Montează diferențiale 30 mA tip A.',S.circ);
+ const wet=S.circ.filter(d=>!p30(d)&&(AI_RX.wet.test(d.et)||AI_RX.sock.test(d.et)));if(wet.length)add('pericol',`${wet.length} ${wet.length===1?'circuit de prize / baie fără':'circuite de prize / baie fără'} diferențial de 30 mA`,'Pe prize, băi, bucătărie, exterior și la boiler sau mașina de spălat protecția la electrocutare e obligatorie (diferențial ≤ 30 mA). '+wet.map(nm).join(', ')+'.',wet);
+ const unk=S.circ.filter(d=>!p30(d)&&!d.et);if(unk.length&&S.rcds.length+S.circ.filter(d=>d.up==='self').length)add('atentie',`${unk.length} ${unk.length===1?'siguranță fără etichetă și fără':'siguranțe fără etichetă și fără'} 30 mA`,'Nu știu ce alimentează. Dacă au prize sau sunt în baie, sunt periculoase. Identifică circuitele și pune-le sub diferențial. '+unk.map(nm).join(', ')+'.',unk);
+ const big=S.rcds.filter(r=>r.mA&&r.mA>30);if(big.length)add(S.rcds.length===big.length?'pericol':'atentie','Diferențial de '+big.map(r=>r.mA+' mA').join(', ')+' — nu protejează oamenii','Un diferențial de 100/300 mA protejează doar la incendiu. Pentru oameni trebuie 30 mA pe circuitele de prize și băi.',big);
+ const ac=[...S.rcds,...S.circ.filter(d=>d.up==='self')].filter(r=>r.td==='AC');if(ac.length)add('atentie','Diferențial tip AC','Aparatele moderne (inducție, mașini cu invertor, pompe de căldură, LED) produc scurgeri pe care tipul AC nu le vede corect. Recomandat tip A (la stația auto tip B).',ac);
+ const many=S.rcds.filter(r=>r.kids.length>6);if(many.length)add('atentie','Prea multe circuite pe un diferențial',many.map(r=>`${nm(r)} are ${r.kids.length} circuite`).join('; ')+'. Scurgerile se adună și diferențialul sare din senin; la un defect rămâne fără curent jumătate din casă. Recomandat maximum 6.',many);
+ const mainA=S.main&&S.main.A;const smallR=S.rcds.filter(r=>mainA&&r.A&&r.A<mainA&&r.kids.reduce((s,k)=>s+(k.A||0),0)>r.A);if(smallR.length)add('atentie','Diferențial mai mic decât generalul',smallR.map(nm).join(', ')+` are curent nominal mai mic decât generalul (${mainA} A) și suma siguranțelor de sub el e mai mare: diferențialul nu e protejat la suprasarcină. Pune diferențial de cel puțin ${mainA} A sau general mai mic.`,smallR);
+ const lt=S.circ.filter(d=>AI_RX.light.test(d.et)&&(d.A||0)>16);if(lt.length)add('atentie','Iluminat pe siguranță prea mare',lt.map(nm).join(', ')+' — la iluminat (1,5 mm²) siguranța trebuie să fie de cel mult 10 A (B10).',lt);
+ const sk=S.circ.filter(d=>!AI_RX.light.test(d.et)&&AI_RX.sock.test(d.et)&&(d.A||0)>16);if(sk.length)add('atentie','Prize pe siguranță mai mare de 16 A',sk.map(nm).join(', ')+' — cablul de 2,5 mm² de la prize ține 16 A. Verifică secțiunea sau pune C16.',sk);
+ const fz=S.devs.filter(d=>d.tip==='FUZIBIL');if(fz.length)add('atentie','Siguranțe fuzibile vechi',`${fz.length} ${fz.length===1?'siguranță fuzibilă':'siguranțe fuzibile'}: de obicei semn că tabloul e vechi, fără diferențiale și cu aluminiu. Recomandat tablou nou.`,fz);
+ if(!S.main)add('atentie','Nu văd un întrerupător general','Trebuie un aparat care oprește tot tabloul (separator sau siguranță generală), ușor de găsit în caz de incendiu sau intervenție.',[]);
+ if(!S.spd.length)add('atentie','Lipsește descărcătorul de supratensiune','Recomandat (obligatoriu în zone cu trăsnete frecvente și la case cu panouri fotovoltaice): protejează aparatele electronice.',[]);
+ const one=S.circ.filter(d=>d.tip==='MCB'&&d.poli==='1P'&&!S.tri);if(one.length>2&&!S.rcds.length)add('info','Siguranțe 1P fără întrerupere de nul','La o intervenție, nulul rămâne legat. Cu diferențiale în amonte și siguranțe 1P+N e mai sigur.',[]);
+ if(S.ass.length)add('verifica','Am presupus legăturile între rânduri',`Siguranțele de pe rândurile fără diferențial la început le-am pus sub ${S.ass.map(nm).join(', ')} (ultimul diferențial dinainte). Verifică pe tablou cu un tester.`,S.ass);
+ const db=D.devs.filter(d=>aiDoubt(d)&&d.tip!=='CONTOR'&&d.tip!=='ALTUL');if(db.length)add('verifica',`${db.length} ${db.length===1?'aparat nesigur':'aparate nesigure'} în poză`,'Nu se vede clar tipul sau valoarea: '+db.map(nm).join(', ')+'. Verifică-le pe tablou și corectează-le aici.',db);
+ if(!out.some(x=>x.lv==='pericol'))out.unshift({lv:'ok',t:'Nu am găsit pericole grave în poză',s:'Protecția la electrocutare pare să existe. Rămân de măsurat la fața locului: priza de pământ, timpii diferențialelor, izolația (fișa PRAM).',ds:[]});
+ const ord={pericol:0,atentie:1,verifica:2,info:3,ok:4};return out.sort((a,b)=>ord[a.lv]-ord[b.lv]);}
+function aiPhoto(){$('#sheet').className='sheet wide';const why=aiWhyNot();
+ $('#sheet').innerHTML=`<h2>📷 Tablou din poză</h2><p class="muted" style="margin:-6px 0 10px">Pozează tabloul deschis, drept din față, cu toate aparatele și etichetele în cadru. Recunosc aparatele rând cu rând, îl reconstruiesc aici și îți arăt ce e periculos. Ce nu se vede clar marchez pentru verificare.</p>
+ ${why?aiErrHTML(why):''}
+ <div class="row" style="gap:8px"><label class="btn primary aibig" style="cursor:pointer">📷 Fă o poză<input type="file" id="ph_cam" accept="image/*" capture="environment" hidden></label><label class="btn aibig" style="cursor:pointer">🖼 Alege poză sau PDF<input type="file" id="ph_file" accept="image/*,application/pdf" hidden></label></div>
+ <ul class="aiwhy muted" style="font-size:13px;margin-top:8px"><li>Lumină bună, fără bliț direct pe plastic (face reflexii).</li><li>Dacă tabloul e mare, poți face o poză pe fiecare jumătate și le treci pe rând.</li><li>Doar Managerul poate trimite poze la AI.</li></ul>
+ <div id="ph_out"></div><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn" id="ph_x">Închide</button></div>`;
+ $('#modal').classList.add('open');$('#ph_x').onclick=closeModal;
+ const go=async e=>{const f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;const out=$('#ph_out');if(AI.busy)return;
+  try{AI.busy=true;out.innerHTML=aiWaitHTML('Pregătesc poza…');const im=await aiImgPrep(f);out.innerHTML=aiWaitHTML('Recunosc aparatele din tablou…');
+   const d=await aiPost({actiune:'analizaImagine',fisier:{mime:im.mime,base64:im.base64},instructiune:aiPhotoPrompt()},150000);const o=aiJSON(d.rezultat!=null?d.rezultat:d.raspuns!=null?d.raspuns:d);
+   const D=aiPhNorm(o);if(!D.devs.length)throw new Error('Nu am recunoscut niciun aparat. Fă poza mai de aproape, drept din față, cu tabloul deschis.');D.img=im.url;AI.busy=false;aiPhReview(D);}
+  catch(er){AI.busy=false;out.innerHTML=aiErrHTML(er.message)+'<p class="muted" style="font-size:13px;margin:4px 0 0">Nu am schimbat nimic în tablou.</p>';}};
+ $('#ph_cam').onchange=go;$('#ph_file').onchange=go;}
+function aiPhReview(D){$('#sheet').className='sheet wide xwide';const cfC=d=>aiDoubt(d)?(d.cf<0.5?'l':'m'):'';
+ const draw=()=>{const nd=D.devs.filter(aiDoubt).length;
+  $('#sheet').innerHTML=`<h2>📷 Am recunoscut ${D.devs.length} aparate pe ${D.nrows} ${D.nrows===1?'rând':'rânduri'}</h2>
+  <p class="muted" style="margin:-6px 0 8px">${nd?`<b style="color:var(--warn)">${nd} marcate cu portocaliu/roșu</b> nu se văd clar: verifică-le pe tablou și corectează aici.`:'Totul se vede clar.'} Atinge un aparat ca să-l vezi în poză.${D.q&&D.q!=='buna'?` Calitatea pozei: ${esc(D.q)}.`:''}</p>
+  ${D.img?`<div class="aiph" id="ph_img"><img src="${D.img}" alt="Poza tabloului">${D.devs.filter(d=>d.box).map(d=>`<div class="bx ${cfC(d)}" data-bx="${d.i}" style="left:${d.box[0]/10}%;top:${d.box[1]/10}%;width:${Math.max(.5,(d.box[2]-d.box[0])/10)}%;height:${Math.max(.5,(d.box[3]-d.box[1])/10)}%"><span>${d.i}</span></div>`).join('')}</div>`:''}
+  <div style="margin-top:8px">${D.devs.map(d=>`<div class="aidv" data-dv="${d.i}"><b>${d.i}</b><select data-f="tip" aria-label="Tip">${AI_PH_TYPES.map(([k,n])=>`<option value="${k}"${k===d.tip?' selected':''}>${n}</option>`).join('')}</select><select data-f="poli" aria-label="Poli">${AI_POLI.map(p=>`<option${p===d.poli?' selected':''}>${p}</option>`).join('')}</select><input type="number" data-f="A" value="${d.A||''}" placeholder="A" aria-label="Curent"><input type="text" data-f="${d.tip==='RCD'||d.tip==='RCBO'?'mA':'curba'}" value="${esc(d.tip==='RCD'||d.tip==='RCBO'?(d.mA||''):(d.curba||''))}" placeholder="${d.tip==='RCD'||d.tip==='RCBO'?'mA':'curbă'}" aria-label="${d.tip==='RCD'||d.tip==='RCBO'?'Sensibilitate mA':'Curbă'}"><input type="text" class="et" data-f="et" value="${esc(d.et)}" placeholder="eticheta (ce alimentează)" aria-label="Etichetă"><span class="cf" style="background:${aiDoubt(d)?(d.cf<0.5?'#fdecea':'#fff3d1'):'#eaf5ea'}" title="Încredere">${aiDoubt(d)?'⚠ ':''}${Math.round(d.cf*100)}%</span></div>`).join('')}</div>
+  ${D.notes.length?`<details style="margin-top:6px"><summary><b>Ce a observat AI-ul</b></summary><ul class="aiwhy">${D.notes.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:''}
+  <div id="ph_res"></div>
+  <div class="row" style="justify-content:space-between;margin-top:12px;gap:8px"><button class="btn" id="ph_again">↺ Altă poză</button><span class="row" style="gap:8px;margin:0;flex-wrap:wrap"><button class="btn aibig" id="ph_chk">🛡 Verifică-l</button><button class="btn primary aibig" id="ph_build">⚡ Reconstruiește tabloul</button></span></div>`;
+  const S=$('#sheet');const hi=i=>{S.querySelectorAll('.bx').forEach(b=>b.classList.toggle('sel',b.dataset.bx==String(i)));S.querySelectorAll('.aidv').forEach(r=>r.classList.toggle('on',r.dataset.dv==String(i)));};
+  S.querySelectorAll('[data-bx]').forEach(b=>b.onclick=()=>{hi(b.dataset.bx);const r=S.querySelector(`[data-dv="${b.dataset.bx}"]`);if(r)r.scrollIntoView({block:'nearest',behavior:'smooth'});});
+  S.querySelectorAll('.aidv').forEach(r=>{r.addEventListener('focusin',()=>hi(r.dataset.dv));r.querySelectorAll('[data-f]').forEach(inp=>inp.onchange=()=>{const d=D.devs.find(x=>x.i==r.dataset.dv);const f=inp.dataset.f;let v=inp.value.trim();
+   if(f==='A'||f==='mA')d[f]=aiNum(v)||null;else if(f==='curba')d.curba=/^[BCD]$/i.test(v)?v.toUpperCase():null;else d[f]=v;d.cf=Math.max(d.cf,0.95);if(f==='tip')draw();else{const c=r.querySelector('.cf');if(c){c.textContent=(aiDoubt(d)?'⚠ ':'')+'✓';c.style.background=aiDoubt(d)?'#fff3d1':'#eaf5ea';}}});});
+  $('#ph_again').onclick=aiPhoto;$('#ph_chk').onclick=()=>aiPhShowCheck(D,false);$('#ph_build').onclick=()=>aiPhBuild(D);};
+ draw();}
+const aiSnap=(v,opts)=>{if(!v)return null;return opts.reduce((b,o)=>Math.abs(o-v)<Math.abs(b-v)?o:b,opts[0]);};
+function aiPhBuild(D){const S=aiPhStruct(D);if(!S.circ.length){toast('Nu am recunoscut nicio siguranță din care să fac circuitele.','err');return;}
+ const rcdName=new Map();S.rcds.forEach((r,i)=>rcdName.set(r,'ID'+(i+1)));const rows=[];
+ for(const d of S.circ){const t3=/^[34]P$/.test(d.poli);let k=circKind(d.et,'',t3);if(t3&&!ctOf(k).tri)k=AI_TRI[k]||'MT';if(!t3&&ctOf(k).tri)k=AI_MONO[k]||'AL';
+  const ov={};const r=aiSnap(d.A,P_RATING.opts);if(r){ov.r=r;ov.sec=minSec(r);}if(d.curba)ov.curve=d.curba;
+  rows.push({k,nume:d.et||('Circuit '+d.i),n:1,ov,cod:'F'+d.i,dif:t3?'':d.up==='self'?'RCBO':d.up?rcdName.get(d.up):'-',_d:d});}
+ const ci={tri:S.tri,spd:!!S.spd.length,rows};const pv=model;let m,map={},doubt=[],notes=[];
+ try{model=blank('Tablou existent (din poză)',{type:'electric',box:'modular',modAuto:true,rows:1,modules:18});model.client=pv.client||'';model.company=pv.company;model.logo=pv.logo;model.santierId=pv.santierId;touch();
+  m=proposePanel(ci);model=m;touch();
+  const by=l=>m.comps.find(c=>c.zone==='panel'&&c.label===l);const Q0=by('Q0');
+  if(S.main&&Q0){map[S.main.i]=Q0.id;if(S.main.tip==='SEPARATOR'){const b0=B(Q0);Q0.t=b0==='mcb4'?'isol4':'isol';Q0.p={rating:aiSnap(S.main.A||63,Q0.t==='isol4'?[40,63,80,100]:[32,40,63,80,100])};Q0.state={on:true};}else{const r=aiSnap(S.main.A,P_RATING.opts);if(r)Q0.p.rating=r;if(S.main.curba)Q0.p.curve=S.main.curba;}}
+  else if(Q0){notes.push('În poză nu se vede un întrerupător general; în model am pus Q0 ca să meargă calculele (nu există în realitate).');doubt.push(Q0.id);}
+  const spdC=m.comps.find(c=>c.zone==='panel'&&/^spd/.test(B(c)));if(spdC&&S.spd[0])map[S.spd[0].i]=spdC.id;
+  for(const [r,nm] of rcdName){const c=by(nm);if(!c)continue;map[r.i]=c.id;const rt=aiSnap(r.A,DEFS[c.t].props.rating.opts);if(rt)c.p.rating=rt;if(r.mA)c.p.sens=aiSnap(r.mA,DEFS[c.t].props.sens.opts);if(r.td&&DEFS[c.t].props.tip.opts.includes(r.td))c.p.tip=r.td;if(r.et)c.label=r.et.slice(0,14);}
+  for(const row of rows){const d=row._d;const c=by(row.cod);if(!c)continue;map[d.i]=c.id;if(B(c)==='rcbo'){if(d.mA)c.p.sens=aiSnap(d.mA,[10,30,100]);if(d.td==='AC'||d.td==='A')c.p.tip=d.td;}if(d.tip==='FUZIBIL'&&B(c)==='mcb1'){c.t='din_fuse';c.state={on:true};}}
+  for(const d of S.circ)if(/^[34]P$/.test(d.poli)&&d.up&&d.up!=='self'){notes.push('Circuitele trifazate le-am pus pe un diferențial 4P al lor; în poză pot fi legate altfel.');break;}
+  /* așezarea ca în poză: fiecare aparat recunoscut pe rândul și în ordinea lui; barele N/PE și ce am adăugat eu, pe un rând separat dedesubt */
+  const R=D.nrows;const place2=[];for(let r=0;r<R;r++)place2.push(D.devs.filter(d=>d.row===r&&map[d.i]).map(d=>byId(map[d.i])).filter(Boolean));
+  const used=new Set(place2.flat().map(c=>c.id));const extra=m.comps.filter(c=>c.zone==='panel'&&!used.has(c.id));
+  const wOf=c=>DEFS[c.t].w(c);const needM=Math.max(12,...place2.map(l=>Math.ceil(l.reduce((s,c)=>s+wOf(c),0)/2)),aiNum(D.carc.module_pe_rand));const M=[12,18,24,36].find(v=>v>=needM)||36;
+  const exRows=[];let cur=[],cw=0;for(const c of extra){const w=wOf(c);if(cw+w>M*2&&cur.length){exRows.push(cur);cur=[];cw=0;}cur.push(c);cw+=w;}if(cur.length)exRows.push(cur);
+  const all=place2.concat(exRows).filter((l,i)=>l.length||i<R);m.bands=all.map(()=>({id:uid(),type:'din'}));all.forEach((l,ri)=>{let x=0;for(const c of l){c.zone='panel';c.band=m.bands[ri].id;delete c.row;c.x=x;x+=wOf(c);}});
+  m.cfg.modAuto=false;m.cfg.rows=m.bands.length;m.cfg.modules=M;delete m.cfg.modKey;touch();
+  {let nN=0;for(const c of m.comps)if(B(c)==='nbar')c.label='N'+(++nN);}
+  for(const d of D.devs)if(aiDoubt(d)&&map[d.i])doubt.push(map[d.i]);
+  const skip=D.devs.filter(d=>!map[d.i]&&d.tip!=='CONTOR'&&d.tip!=='ALTUL');const oth=D.devs.filter(d=>d.tip==='CONTOR'||d.tip==='ALTUL');if(oth.length)notes.push(`${oth.length} aparate (contor, relee etc.) nu le-am pus în model: nu contează la protecție.`);if(skip.length)notes.push(`${skip.length} aparate nu le-am putut așeza: ${skip.map(d=>'#'+d.i).join(', ')}.`);
+  notes.push('Consumatorii din teren (lămpi, prize, aparate) sunt câte unul pe circuit, după etichetă: ca să meargă calculele. Lungimile cablurilor sunt estimate.');
+  m.aiPhoto={at:new Date().toISOString(),doubt,map,devs:D.devs.map(d=>({i:d.i,row:d.row,tip:d.tip,poli:d.poli,A:d.A,curba:d.curba,mA:d.mA,td:d.td,et:d.et,cf:d.cf})),nrows:D.nrows};}
+ catch(e){model=pv;touch();console.warn(e);toast('Nu am putut reconstrui tabloul: '+e.message,'err');return;}
+ model=pv;touch();setModel(m,'');try{autoLabelWires();touch();save();render();}catch(_){}renderLib();if(tab!=='2d')setTab('2d');const pn=$('#pname');if(pn)pn.value=model.name;
+ requestAnimationFrame(()=>{fit();aiAnimate();setTimeout(()=>aiAnimate(doubt,'aidoubt'),2600);});
+ aiPhShowCheck(D,true,notes);}
+function aiPhShowCheck(D,built,notes){const L=aiPhCheck(D);const mp=(model.aiPhoto&&built)?model.aiPhoto.map:{};const np=L.filter(x=>x.lv==='pericol').length;
+ const res=`${built?`<div class="aichips"><span>${model.comps.filter(c=>c.zone==='panel').length} aparate în model</span><span>${model.bands.length} rânduri</span><span>${(model.aiPhoto.doubt||[]).length} de verificat</span></div>`:''}
+ <h3 style="font:700 20px var(--fc);margin:10px 0 2px">${np?`⚠ ${np} ${np===1?'problemă periculoasă':'probleme periculoase'}`:'🛡 Verificare'}</h3>
+ <div class="ailv">${L.map((x,i)=>`<div class="${x.lv==='info'?'verifica':x.lv}"><span class="bdg">${{pericol:'Pericol',atentie:'Atenție',verifica:'Verifică',info:'Info',ok:'OK'}[x.lv]}</span><span style="flex:1"><b>${esc(x.t)}</b><small>${esc(x.s)}</small>${built&&x.ds.some(i=>mp[i])?`<button class="btn sm" data-aishow="${i}" style="margin-top:5px">Arată pe schemă</button>`:''}</span></div>`).join('')}</div>
+ ${notes&&notes.length?`<details style="margin-top:6px"><summary><b>Cum am reconstruit</b></summary><ul class="aiwhy">${notes.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></details>`:''}`;
+ if(!built){const o=$('#ph_res');if(o){o.innerHTML=res;o.scrollIntoView({block:'start',behavior:'smooth'});}return;}
+ $('#sheet').className='sheet wide';$('#sheet').innerHTML=`<h2>⚡ Tabloul existent e în configurator</h2>${res}
+ <div class="row" style="justify-content:space-between;margin-top:12px;gap:8px"><button class="btn danger" id="pb_undo">↶ Anulează</button><span class="row" style="gap:6px;margin:0;flex-wrap:wrap"><button class="btn" id="pb_new" title="Păstrez circuitele, refac protecțiile după I7/2011">✨ Propune tablou nou corect</button><button class="btn" id="pb_calc">🧮 Calcule</button><button class="btn primary" id="pb_ok">Vezi schema</button></span></div>`;$('#modal').classList.add('open');
+ $('#pb_undo').onclick=()=>{closeModal();undo();};$('#pb_ok').onclick=closeModal;$('#pb_calc').onclick=()=>openCalc();
+ $('#sheet').querySelectorAll('[data-aishow]').forEach(b=>b.onclick=()=>{const x=L[+b.dataset.aishow];const ids=x.ds.map(i=>mp[i]).filter(Boolean);closeModal();if(tab!=='2d')setTab('2d');sel=ids[0]||null;render();try{openInsp();}catch(_){}aiAnimate(ids,x.lv==='pericol'?'aidanger':'aidoubt');});
+ $('#pb_new').onclick=()=>{const S=aiPhStruct(D);const o={alimentare:S.tri?'tri':'mono',circuite:S.circ.map(d=>({denumire:d.et||('Circuit '+d.i),tip:circKind(d.et,'',/^[34]P$/.test(d.poli)),puncte:circKind(d.et,'')==='IL'?6:circKind(d.et,'')==='CP'||circKind(d.et,'')==='PB'?5:1,trifazat:/^[34]P$/.test(d.poli)}))};const P=aiRowsFromAI(o);P.why.unshift('Am păstrat circuitele din tabloul vechi (după etichete) și am refăcut protecțiile: general, descărcător, diferențiale 30 mA tip A (max. 6 circuite pe diferențial), siguranțe și secțiuni după I7/2011.');aiBuild(P,{src:'local',name:'Tablou nou (renovare)'});};}
+/* ---------- 3) TABLOUL VORBEȘTE: foaie pentru ușă + QR spre pagina clientului ---------- */
+/* circuitele finale (fără generalul care alimentează alte siguranțe) */
+function tvCircuits(){let l=[];try{l=doorCircuits();}catch(_){return [];}let fin=null;try{const r=calcCached();if(r.length)fin=new Set(r.map(x=>x.c.id));}catch(_){}return fin?l.filter(x=>fin.has(x.c.id)):l;}
+function tvData(){const list=tvCircuits();const co=model.company||{};const src=model.comps.find(c=>/^src/.test(B(c)));const main=model.comps.find(c=>c.zone==='panel'&&c.label==='Q0')||model.comps.find(c=>c.zone==='panel'&&/^isol/.test(B(c)));
+ const ups=[];const upI=u=>{if(!u)return -1;let i=ups.findIndex(x=>x.id===u.id);if(i<0){ups.push(u);i=ups.length-1;}return i;};
+ const c=list.map(x=>{const cons=[...new Set((x.cons||[]).map(s=>String(s).replace(/ \d+$/,'')))].join(', ').slice(0,44);return [x.label||'',x.short,cons,B(x.c)==='rcbo'?-2:upI(x.up)];});
+ const r=ups.map(u=>[u.label||compName(u),/^rcd/.test(B(u))?`${u.p.rating||''}A ${u.p.sens||30}mA ${u.p.tip||'A'}`:`${u.p.rating||''}A`,/^rcd/.test(B(u))?1:0]);
+ return {v:1,n:model.name||'Tablou',cl:model.client||'',d:model.date||'',f:co.name||'',t:co.phone||'',e:co.email||'',tri:src&&B(src)==='src400'?1:0,m:main?[main.label||'Q0',DEFS[main.t].prot?(main.p.curve||'C')+main.p.rating:(main.p.rating||'')+'A']:null,c,r};}
+const b64u=u8=>{let s='';for(let i=0;i<u8.length;i+=8192)s+=String.fromCharCode.apply(null,u8.subarray(i,i+8192));return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');};
+const ub64=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u;};
+async function tvEncode(d){const u8=new TextEncoder().encode(JSON.stringify(d));try{const ff=await loadFflate();return 'z'+b64u(ff.deflateSync(u8,{level:9}));}catch(_){return 'j'+b64u(u8);}}
+async function tvDecode(s){if(s[0]==='z'){const ff=await loadFflate();return JSON.parse(new TextDecoder().decode(ff.inflateSync(ub64(s.slice(1)))));}if(s[0]==='j')return JSON.parse(new TextDecoder().decode(ub64(s.slice(1))));throw new Error('cod necunoscut');}
+function tvBase(){return location.origin+location.pathname;}
+async function tvURL(){const d=tvData();let enc=await tvEncode(d);if(enc.length>1700){d.c=d.c.map(x=>[x[0],x[1],x[2].slice(0,22),x[3]]);enc=await tvEncode(d);}return tvBase()+'#tv='+enc;}
+function tvQRpath(url,x0,y0,size){const q=QRLIB(0,url.length>600?'L':'M');q.addData(url);q.make();const n=q.getModuleCount(),cs=size/n;let p='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))p+=`M${(x0+c*cs).toFixed(3)} ${(y0+r*cs).toFixed(3)}h${(cs+0.02).toFixed(3)}v${(cs+0.02).toFixed(3)}h-${(cs+0.02).toFixed(3)}z`;return {p,n};}
+function tvSheetSVG(url,fmt){const A4=fmt==='a4';const W=A4?210:148,H=A4?297:210,M=A4?10:7,k=A4?1.3:1;const co=model.company||{};const d=tvData();const t=(x,y,s,sz,o)=>`<text x="${x}" y="${y}" font-size="${sz}"${o||''}>${esc(s)}</text>`;
+ let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" font-family="Arial, Helvetica, sans-serif"><rect width="${W}" height="${H}" fill="#fff"/>`;
+ s+=`<rect x="${M}" y="${M}" width="${W-2*M}" height="${14*k}" rx="2" fill="#1F2B33"/>`+t(M+3,M+6.2*k,(d.n||'Tablou').toUpperCase().slice(0,40),5*k,' font-weight="700" fill="#fff"')+t(M+3,M+11.4*k,`${d.cl?d.cl+' · ':''}${d.tri?'trifazat 400 V':'monofazat 230 V'}${d.m?' · general '+d.m[0]+' '+d.m[1]:''}`,3*k,' fill="#cfd8dd"')+t(W-M-3,M+6.2*k,(d.f||'').slice(0,30),3.4*k,' font-weight="700" fill="#fff" text-anchor="end"')+t(W-M-3,M+11.4*k,d.t||'',3.2*k,' fill="#E3A008" font-weight="700" text-anchor="end"');
+ /* schema simplificată: general → diferențiale → circuite (blocuri), care e și legenda */
+ const groups=[];const gi=new Map();d.c.forEach(x=>{const key=String(x[3]);if(!gi.has(key)){gi.set(key,groups.length);groups.push({u:x[3],list:[]});}groups[gi.get(key)].list.push(x);});
+ const qrS=A4?62:50,yQ=H-M-qrS-8*k;let y=M+14*k+5;const xL=M+2,colW=W-2*M-4;
+ s+=t(xL,y+2,'SCHEMA SIMPLIFICATĂ ȘI LEGENDA CIRCUITELOR',3*k,' font-weight="700" fill="#5E6B73"');y+=4*k;
+ /* rândurile se măresc dacă e loc (tablou mic) și se strâng puțin dacă sunt multe */
+ const need=groups.length*(5.4*k+2.2)+d.c.length*4.6*k,sc=Math.max(0.8,Math.min(1.6,(yQ-4-y)/Math.max(1,need)));const rowH=4.6*k*sc,fs=Math.min(3.05*k*sc,4.4*k),hh=5.4*k*Math.min(sc,1.3);const xP=xL+8.5+11*k*sc,xC=xP+9.5*k*Math.min(sc,1.3);
+ let over=false;for(const g of groups){const u=g.u>=0?d.r[g.u]:null;if(y+hh+rowH>yQ-2){over=true;break;}
+  s+=`<rect x="${xL}" y="${y}" width="${colW}" height="${hh}" rx="1.4" fill="${u&&u[2]?'#FFF3D1':'#EEF0EE'}" stroke="${u&&u[2]?'#E3A008':'#B9C1BD'}" stroke-width=".35"/>`+t(xL+2,y+hh*0.7,u?`${u[0]} — ${u[2]?'diferențial':'aparat'} ${u[1]}`:g.u===-2?'Siguranțe cu diferențial încorporat (RCBO)':'Direct din general (fără diferențial)',Math.min(3.1*k*sc,3.9*k),' font-weight="700" fill="#1F2B33"');y+=hh+0.8;
+  for(const x of g.list){if(y+rowH>yQ-2){over=true;break;}s+=`<line x1="${xL+3}" y1="${y-0.8}" x2="${xL+3}" y2="${y+rowH*0.55}" stroke="#8f989e" stroke-width=".3"/><line x1="${xL+3}" y1="${y+rowH*0.55}" x2="${xL+6}" y2="${y+rowH*0.55}" stroke="#8f989e" stroke-width=".3"/>`;
+   s+=`<rect x="${xL+6.5}" y="${y+0.4}" width="${11*k*sc}" height="${rowH-0.8}" rx="1" fill="#1F2B33"/>`+t(xL+6.5+5.5*k*sc,y+rowH*0.7,x[0]||'—',fs,' font-weight="700" fill="#fff" text-anchor="middle"')+t(xP,y+rowH*0.7,x[1]||'',fs,' font-weight="700" fill="#2166c4"')+t(xC,y+rowH*0.7,(x[2]||'').slice(0,Math.round((A4?60:46)/Math.max(1,sc))),fs,' fill="#1F2B33"');y+=rowH;}
+  if(over)break;y+=1.4;}
+ if(over)s+=t(xL,yQ-3,'… lista continuă în pagina din telefon (scanează codul)',2.8*k,' fill="#C62828" font-weight="700"');
+ const qx=W-M-qrS-2,qy=yQ;const Q=tvQRpath(url,qx,qy,qrS);s+=`<rect x="${qx-2}" y="${qy-2}" width="${qrS+4}" height="${qrS+4}" rx="2" fill="#fff" stroke="#1F2B33" stroke-width=".5"/><path d="${Q.p}" fill="#111"/>`;
+ const tx0=M+2,tw=qx-tx0-6;s+=`<rect x="${tx0}" y="${qy-2}" width="${tw}" height="${qrS+4}" rx="2" fill="#F4F5F2"/>`;
+ const lines=[['📱 TABLOUL VORBEȘTE',4.4*k,'700','#1F2B33'],['Scanează codul cu camera telefonului:',3.1*k,'400','#1F2B33'],['• ce siguranță a sărit și ce faci',3.1*k,'400','#1F2B33'],['• ce alimentează fiecare circuit',3.1*k,'400','#1F2B33'],['• cum testezi diferențialul (butonul T)',3.1*k,'400','#1F2B33'],['',2,'400',''],['Miros de ars, fum, scântei:',3.1*k,'700','#C62828'],[`coboară ${d.m?d.m[0]:'generalul'} și sună 112.`,3.1*k,'700','#C62828'],['',2,'400',''],[d.f?`${d.f}${d.t?' · '+d.t:''}`:'',2.9*k,'700','#1F2B33']];
+ let ly=qy+5*k;for(const [tx,sz,wt,c] of lines){if(tx)s+=t(tx0+3,ly,tx.slice(0,48),sz,` font-weight="${wt}" fill="${c}"`);ly+=sz*1.45;}
+ s+=t(W/2,H-M+3.5,`Data montajului: ${d.d?fmtDate(d.d):'—'} · nu scoate eticheta de pe ușă`,2.4*k,' fill="#8f989e" text-anchor="middle"')+'</svg>';return {svg:s,over};}
+async function openTv(){const dc=tvCircuits();$('#sheet').className='sheet wide';
+ if(!dc.length){$('#sheet').innerHTML=`<h2>📱 Tabloul vorbește</h2><p>Tabloul nu are încă siguranțe. Fă tabloul (de ex. cu „✨ Descrie și se face tabloul”) și revino.</p><div class="row" style="justify-content:flex-end"><button class="btn" onclick="document.getElementById('modal').classList.remove('open')">Închide</button></div>`;$('#modal').classList.add('open');return;}
+ $('#sheet').innerHTML=`<h2>📱 Tabloul vorbește</h2>${aiWaitHTML('Pregătesc eticheta și codul QR…')}`;$('#modal').classList.add('open');
+ await loadQR();if(!QRLIB){$('#sheet').innerHTML=`<h2>📱 Tabloul vorbește</h2>${aiErrHTML('Nu am putut încărca generatorul de coduri QR (internet?).')}<div class="row" style="justify-content:flex-end"><button class="btn" id="tv_x">Închide</button></div>`;$('#tv_x').onclick=closeModal;return;}
+ let url;try{url=await tvURL();}catch(e){url=null;}if(!url){$('#sheet').innerHTML=`<h2>📱 Tabloul vorbește</h2>${aiErrHTML('Nu am putut face linkul.')}`;return;}
+ let fmt='a5';try{if(tvSheetSVG(url,'a5').over)fmt='a4';}catch(_){}const draw=()=>{let sv;try{sv=tvSheetSVG(url,fmt);}catch(e){$('#sheet').innerHTML=`<h2>📱 Tabloul vorbește</h2>${aiErrHTML('Nu am putut desena eticheta: '+e.message)}`;return;}
+  $('#sheet').innerHTML=`<h2>📱 Tabloul vorbește</h2><p class="muted" style="margin:-6px 0 8px">Printează foaia și lipește-o pe interiorul ușii tabloului. Clientul scanează codul și vede pe telefon, fără cont și fără aplicație, ce alimentează fiecare siguranță și ce face dacă sare ceva.</p>
+  <div class="row" style="gap:6px;margin:0 0 8px"><button class="btn sm" data-tvf="a5" aria-pressed="${fmt==='a5'}">A5 (jumătate de A4)</button><button class="btn sm" data-tvf="a4" aria-pressed="${fmt==='a4'}">A4</button></div>
+  <div class="tvprev">${sv.svg}</div>${sv.over?`<p style="color:var(--warn);font-size:13px">Nu încap toate circuitele pe ${fmt.toUpperCase()}${fmt==='a5'?': alege A4':''}. Pe telefon apar toate.</p>`:''}
+  <p class="muted" style="font-size:12.5px;margin:6px 0 0">Codul conține schema tabloului de acum (${dc.length} circuite). Dacă schimbi tabloul, printează din nou eticheta. Linkul deschide configuratorul firmei în modul „doar citire”, fără logare.</p>
+  <div class="row" style="justify-content:space-between;margin-top:10px;gap:8px;flex-wrap:wrap"><span class="row" style="gap:6px;margin:0"><button class="btn" id="tv_open">👁 Pagina clientului</button><button class="btn" id="tv_copy">🔗 Copiază linkul</button></span><span class="row" style="gap:6px;margin:0"><button class="btn" id="tv_x">Închide</button><button class="btn primary" id="tv_pdf">🖨 PDF de printat</button></span></div>`;
+  $('#sheet').querySelectorAll('[data-tvf]').forEach(b=>b.onclick=()=>{fmt=b.dataset.tvf;draw();});$('#tv_x').onclick=closeModal;
+  $('#tv_open').onclick=()=>{window.open(url,'_blank');};$('#tv_copy').onclick=async()=>{try{await navigator.clipboard.writeText(url);toast('Linkul e copiat.');}catch(_){prompt('Copiază linkul:',url);}};
+  $('#tv_pdf').onclick=async()=>{const b=$('#tv_pdf');b.disabled=true;try{const {jsPDF}=await loadJsPDF();const A4=fmt==='a4';const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:A4?'a4':'a5',compress:true});const px=A4?[2480,3508]:[1748,2480];const cv=await rasterSVG(sv.svg.replace(/📱 /g,''),px[0],px[1]);pdf.addImage(cv.toDataURL('image/jpeg',.92),'JPEG',0,0,A4?210:148,A4?297:210);await shareOrSave((slug(model.name)||'tablou')+'-eticheta-qr-'+fmt.toUpperCase()+'.pdf',pdf.output('blob'),'application/pdf');}catch(e){toast('Nu am putut face PDF-ul'+(e&&e.message?': '+e.message:''),'err');}finally{b.disabled=false;}};};
+ draw();}
+/* pagina clientului: se deschide din QR, fără logare; datele sunt în link (#tv=…), nu pe server */
+function tvBoot(){const h=location.hash||'';if(!/^#tv=/.test(h))return false;document.title='Tabloul electric';
+ /* pagina clientului nu pornește configuratorul: model gol (nu se salvează nimic peste proiectul din acest browser), tastele nu ajung la scurtăturile configuratorului */
+ try{model=blank('Tablou',{});}catch(_){}window.addEventListener('keydown',e=>e.stopImmediatePropagation(),true);document.body.innerHTML='<div id="tvc" style="padding:40px 16px;font:500 16px Arial">Se deschide…</div>';
+ tvDecode(h.slice(4)).then(d=>tvClient(d)).catch(()=>{$('#tvc').innerHTML='<h2 style="font-family:Arial">Codul nu a putut fi citit</h2><p>Linkul e incomplet. Scanează din nou codul de pe ușa tabloului.</p>';});return true;}
+function tvClient(d){const E=esc;const ups=d.r||[];const tel=String(d.t||'').replace(/[^\d+]/g,'');const mainN=d.m?d.m[0]:'generalul';
+ const st=document.createElement('style');st.textContent=`body{background:#ECEEEB;margin:0;font-family:Barlow,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1F2B33;overflow:auto;height:auto}
+ .tvw{max-width:640px;margin:0 auto;padding:0 16px 40px}.tvh{background:#1F2B33;color:#fff;padding:16px;padding-top:calc(16px + env(safe-area-inset-top,0px))}.tvh small{color:#cfd8dd;display:block}.tvh b{font-size:22px;display:block;margin-top:2px}
+ .tvc{background:#fff;border:1px solid #D6DBD8;border-radius:12px;padding:14px;margin:12px 0}.tvc h2{font-size:19px;margin:0 0 6px}.tvc ol{margin:6px 0 0;padding-left:20px}.tvc li{margin:5px 0}
+ .tvs{width:100%;font-size:17px;padding:13px 14px;border:2px solid #D6DBD8;border-radius:12px;box-sizing:border-box;margin:12px 0 4px}.tvs:focus{outline:none;border-color:#E3A008}
+ .tvk{display:flex;gap:12px;align-items:center;background:#fff;border:1px solid #D6DBD8;border-radius:12px;padding:12px;margin:8px 0;cursor:pointer;width:100%;text-align:left;font:inherit;color:inherit}
+ .tvk .cd{background:#1F2B33;color:#fff;border-radius:8px;font-weight:700;min-width:52px;text-align:center;padding:8px 4px;font-size:16px}.tvk b{display:block;font-size:16px}.tvk small{color:#5E6B73;display:block;font-size:13px}
+ .tvx{background:#FFF8E6;border:1px solid #f1d48a;border-radius:10px;padding:10px 12px;margin:-2px 0 10px;font-size:15px}.tvx p{margin:4px 0}
+ .tve{background:#fdecea;border:1px solid #f0b4ae;color:#7f1d1d}.tvb{display:block;text-align:center;background:#1F2B33;color:#fff;text-decoration:none;font-weight:700;font-size:18px;padding:14px;border-radius:12px;margin:8px 0}.tvb.y{background:#E3A008;color:#1F2B33}
+ .tvf{color:#8f989e;font-size:12px;text-align:center;margin-top:18px}`;document.head.appendChild(st);
+ const upTxt=x=>x[3]===-2?'siguranță cu diferențial încorporat':x[3]>=0&&ups[x[3]]?(ups[x[3]][2]?`sub diferențialul ${ups[x[3]][0]} (${ups[x[3]][1]})`:`după ${ups[x[3]][0]}`):'direct din general';
+ const help=x=>{const u=x[3]>=0?ups[x[3]]:null;const same=u?d.c.filter(y=>y[3]===x[3]&&y!==x).map(y=>y[0]+(y[2]?' ('+y[2]+')':'')).slice(0,8):[];
+  return `<div class="tvx"><p><b>Dacă siguranța ${E(x[0])} e jos:</b> ridic-o o dată. Dacă sare din nou imediat, e un scurtcircuit sau un aparat defect pe „${E(x[2]||'acest circuit')}”: lasă-o jos, scoate din priză aparatele de pe circuit și sună electricianul.</p>${u&&u[2]?`<p><b>Dacă a sărit diferențialul ${E(u[0])}:</b> s-au oprit și ${same.length?E(same.join(', ')):'celelalte circuite de sub el'}. Scoate din priză aparatele de pe aceste circuite, ridică ${E(u[0])}, apoi bagă-le înapoi pe rând. Cel la care sare iar e defect (des: fierbător, mașină de spălat, prelungitor de afară, lampă udă).</p>`:x[3]===-2?`<p>Are diferențialul în același aparat: sare și dacă cineva atinge o fază sau un aparat are scurgere. Scoate aparatele din priză și ridic-o.</p>`:`<p><b>Atenție:</b> circuitul nu are diferențial — nu protejează la electrocutare. Cere electricianului o verificare.</p>`}</div>`;};
+ document.body.innerHTML=`<div class="tvh"><small>${E(d.f||'Tabloul tău electric')}</small><b>⚡ ${E(d.n||'Tablou electric')}</b><small>${E([d.cl,d.tri?'trifazat 400 V':'monofazat 230 V',d.m?'general '+d.m[0]+' '+d.m[1]:''].filter(Boolean).join(' · '))}</small></div>
+ <div class="tvw"><div class="tvc tve"><h2>🔥 Miros de ars, fum, scântei?</h2>Coboară imediat <b>${E(mainN)}</b> (întrerupătorul general) și sună la <b>112</b>. Nu turna apă pe tablou.</div>
+ <div class="tvc"><h2>💡 S-a oprit curentul?</h2><ol><li>Deschide ușa tabloului și caută maneta care e <b>jos</b>.</li><li>Caut-o mai jos după cod sau scrie ce nu merge (ex. „baie”, „cuptor”).</li><li>Dacă nu e nicio manetă jos, s-a oprit curentul în rețea: sună furnizorul.</li></ol></div>
+ <input class="tvs" id="tv_q" type="search" placeholder="🔎 Ce nu merge? ex. baie, prize, cuptor" aria-label="Caută circuitul">
+ <div id="tv_l"></div>
+ ${ups.some(u=>u[2])?`<div class="tvc"><h2>🧪 Testează diferențialele o dată la 6 luni</h2>Apasă butonul <b>T</b> de pe ${E(ups.filter(u=>u[2]).map(u=>u[0]).join(', '))}: maneta trebuie să cadă imediat. Ridic-o la loc. Dacă nu cade, sună electricianul — nu te mai protejează.</div>`:''}
+ ${tel?`<a class="tvb y" href="tel:${E(tel)}">📞 Sună electricianul ${E(d.t)}</a>`:''}${d.e?`<a class="tvb" href="mailto:${E(d.e)}?subject=${encodeURIComponent('Tablou: '+(d.n||''))}">✉ Scrie-ne</a>`:''}
+ <div class="tvf">Schema din ${d.d?E(fmtDate(d.d)):'ziua montajului'} · ${E(d.f||'')} · pagina nu trimite nimic, datele sunt în cod</div></div>`;
+ const list=$('#tv_l');let open=-1;const norm=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+ const draw=()=>{const q=norm($('#tv_q').value.trim());const items=d.c.map((x,i)=>({x,i})).filter(({x})=>!q||norm(x.join(' ')+' '+upTxt(x)).includes(q));
+  list.innerHTML=items.length?items.map(({x,i})=>`<button class="tvk" data-k="${i}" aria-expanded="${open===i}"><span class="cd">${E(x[0]||'—')}</span><span style="flex:1"><b>${E(x[2]||'Circuit')}</b><small>Siguranță ${E(x[1]||'')} · ${E(upTxt(x))}</small></span><span aria-hidden="true">${open===i?'▲':'▼'}</span></button>${open===i?help(x):''}`).join(''):'<p style="color:#5E6B73">Nu am găsit. Încearcă alt cuvânt sau uită-te după codul de pe manetă.</p>';
+  list.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{open=open===+b.dataset.k?-1:+b.dataset.k;draw();});};
+ $('#tv_q').oninput=()=>{open=-1;draw();};draw();}
+/* ---------- pornire ---------- */
+function aiAfterInit(){const b=$('#aiBtn');if(b)b.onclick=aiHub;const mn=$('#menu');if(mn)mn.addEventListener('click',e=>{const x=e.target.closest('[data-m^="ai-"]');if(!x)return;aiGo(x.dataset.m.slice(3));});
+ /* prima folosire: dacă nu e deschisă altă fereastră pornesc direct asistentul; altfel (de ex. lista de șantiere) las un card mic jos, care nu încurcă */
+ let seen=true;try{seen=!!localStorage.getItem('se-ai-intro-v1');}catch(_){}if(seen)return;
+ setTimeout(()=>{if(!$('#modal').classList.contains('open')){aiSimple(0,true);return;}const c=document.createElement('div');c.id='aiIntro';c.style.cssText='position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom,0px));max-width:420px;margin:0 auto;background:#1F2B33;color:#fff;border-radius:12px;padding:12px 14px;z-index:40;box-shadow:0 8px 26px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center';
+  c.innerHTML='<span style="font-size:26px">🙂</span><span style="flex:1;font-size:14px"><b style="font:700 16px var(--fc);display:block">Prima dată aici?</b>Fă un tablou complet în 3 pași, cu butoane mari.</span><button class="btn primary" id="aii_go" style="background:#E3A008;border-color:#E3A008;color:#1F2B33">Încep</button><button class="btn" id="aii_x" aria-label="Nu acum" style="padding:7px 10px">✕</button>';
+  document.body.appendChild(c);const done=()=>{try{localStorage.setItem('se-ai-intro-v1','1');}catch(_){}c.remove();};$('#aii_go').onclick=()=>{c.remove();aiSimple(0,true);};$('#aii_x').onclick=done;},1400);}
+/*@@AI_END@@*/
+if(!tvBoot()){init();cloudInit();aiAfterInit();}
 })();
 </script>
 </body>
