@@ -1902,6 +1902,28 @@ function TablouriFrame({ currentUser, onClose }) {
 /* ═══ PROIECTE INSTALAȚII: proiectarea instalației electrice (fișierul proiecte.html) ═══
    Planuri, Plan 3D, plimbare și film, tablouri 3D, planșe A3, materiale, recepție.
    Proiectele se salvează pe server, pe șantier: cheile „instalatii” (lista) și „instalatie_<id>_<n>” (bucăți). */
+/* ═══ ILUMINAT 3D (v04.41): proiectarea iluminatului — peisagistic, exterior, interior (fișierul iluminat.html) ═══
+   Fiecare om își începe proiectele lui; Managerul le vede pe toate și dă acces colegilor (vede / modifică).
+   Regulile de acces stau pe server (api/data.js, cheia „iluminatProiecte"); prețurile („iluminatPreturi") doar la Manager.
+   Lista colegilor o trimitem paginii prin window.__iluminatColegi; „Trimite în ofertă" vine înapoi prin postMessage. */
+function IluminatFrame({ currentUser, onClose, onOferta }) {
+    window.__iluminatUser = currentUser ? { id: currentUser.id, nume: currentUser.nume, rol: currentUser.rol } : null;
+    window.__iluminatInchide = () => onClose();
+    useEffect(() => {
+        if (currentUser?.rol === 'Manager')
+            listaUtilizatori().then((d) => { window.__iluminatColegi = (d.users || []).map((u) => ({ id: u.id, nume: u.nume, rol: u.rol })); }).catch(() => { });
+        const laMesaj = (e) => {
+            if (e.origin !== window.location.origin || !e.data || e.data.tip !== 'iluminat-oferta')
+                return;
+            if (currentUser?.rol === 'Manager' && onOferta && Array.isArray(e.data.randuri))
+                onOferta(e.data.randuri, e.data.titlu || '');
+        };
+        window.addEventListener('message', laMesaj);
+        return () => window.removeEventListener('message', laMesaj);
+    }, [currentUser?.rol]);
+    return React.createElement("div", { style: { position: 'fixed', inset: 0, zIndex: 300, background: '#0F1418' } },
+        React.createElement("iframe", { src: '/iluminat.html', title: 'Iluminat 3D', allow: 'camera; microphone; xr-spatial-tracking; fullscreen; autoplay', allowFullScreen: true, style: { width: '100%', height: '100%', border: 0, display: 'block' } }));
+}
 function InstalatiiFrame({ currentUser, onClose }) {
     window.__instalatiiUser = currentUser ? { id: currentUser.id, nume: currentUser.nume, rol: currentUser.rol } : null;
     window.__instalatiiInchide = () => { window.__instalatiiSantier = null; onClose(); };
@@ -3067,7 +3089,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.38-ai-planse-acceptare-online';
+const APP_VERSION = 'v04.41-iluminat-3d';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -31681,7 +31703,7 @@ function App() {
     const tabBlocatTest = accesLimitat && !!tab && !TABURI_TEST.includes(tab);
     /* Meniul pe pașii reali ai unei lucrări: proiectezi → ofertezi → iei materiale → încasezi.
        „Execuție" amesteca proiectarea cu magazia; acum sunt grupuri separate. */
-    const PROIECTARE_TABS = ['instalatii', 'tablouri'];
+    const PROIECTARE_TABS = ['instalatii', 'tablouri', 'iluminat'];
     const OFERTARE_TABS = ['antemasuratoare', 'oferte', 'devize', 'catalog', 'clienti', 'proiecte'];
     const MAGAZIE_TABS = ['gestiune', 'stocuri', 'masini', 'achizitii', 'scule-global'];
     const INCASARE_TABS = ['facturi', 'scadentar', 'cashflow30', 'raportlunar', 'devizrealizat', 'cheltuieli'];
@@ -33401,6 +33423,16 @@ function App() {
             setTab('facturi');
         }
     };
+    /* 💡 din Iluminat 3D: corpurile + sursele dimabile ajung într-o ofertă nouă (doar Managerul) */
+    const ofertaDinIluminat = (randuri, titlu) => {
+        const items = (randuri || []).filter((r) => r && String(r.denumire || '').trim()).slice(0, 300).map((r) => ({ id: uid(),
+            denumire: String(r.denumire).slice(0, 300) + (r.cod ? ' (' + String(r.cod).slice(0, 60) + ')' : ''), um: String(r.um || 'buc').slice(0, 20),
+            cantitate: Number(r.cantitate) || 1, pretUnitar: Number(r.pretUnitar) || 0, adaos: 0 }));
+        if (!items.length)
+            return;
+        setOfferForm({ id: uid(), clientId: '', tva: TVA_IMPLICIT, data: dataLocala(new Date()), lucrare: String(titlu || 'Iluminat').slice(0, 200), items, dinIluminat: true });
+        setTab('oferte');
+    };
     const ofertaDinAntemasuratoare = async (a) => {
         const cant = cantitatiAntemasuratoare(a);
         if (!cant.length) {
@@ -34110,6 +34142,7 @@ function App() {
         ['proiectare', '📐', 'Proiectare', PROIECTARE_TABS, false, [
                 ['instalatii', '📐 Proiecte instalații', false, 'proiect instalatie plan 3d plimbare tur casa film executie planse a3 materiale receptie', 'Planuri, 3D, plimbare prin casă, planșe A3 și materiale, pe șantiere.'],
                 ['tablouri', '⚡ Tablouri și rack-uri', false, 'tablou electric media rack siguranta jgheab configurator schema', 'Proiectezi tablouri electrice, media și rack-uri, pe șantiere.'],
+                ['iluminat', '💡 Iluminat 3D', false, 'iluminat lumina lux dialux peisagistic gradina exterior interior corp stalpisor buzzer dimare', 'Proiectezi iluminatul peisagistic, exterior și interior, cu calcul de luxi și vedere de noapte.'],
             ]],
         ['ofertare', '🧾', 'Ofertare', OFERTARE_TABS, true, [
                 ['antemasuratoare', '📏 Antemăsurătoare', true, 'masuratori cantitati liste extras', 'Măsori pe planșă și treci cantitățile, înainte să faci prețul.'],
@@ -34453,7 +34486,7 @@ function App() {
                             tab === 'asistent' && React.createElement(AsistentTab, { problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, santiere: santiere, persist: persist, currentUser: effectiveUser, qaTarget: qaTarget, clearQaTarget: () => setQaTarget(null) }),
                             tab === 'memento' && React.createElement(MementoTab, { mementouri: mementouri, setMementouri: setMementouri, persist: persist, clients: clients, santiere: santiere, currentUser: effectiveUser, colegi: totiUtilizatorii }),
                             tab === 'calculator' && React.createElement(CalculatorTab, null),
-                            tab === 'tablouri' && React.createElement(TablouriFrame, { currentUser: effectiveUser, onClose: mergiInapoi }), tab === 'instalatii' && React.createElement(InstalatiiFrame, { currentUser: effectiveUser, onClose: mergiInapoi }),
+                            tab === 'tablouri' && React.createElement(TablouriFrame, { currentUser: effectiveUser, onClose: mergiInapoi }), tab === 'instalatii' && React.createElement(InstalatiiFrame, { currentUser: effectiveUser, onClose: mergiInapoi }), tab === 'iluminat' && React.createElement(IluminatFrame, { currentUser: effectiveUser, onClose: mergiInapoi, onOferta: ofertaDinIluminat }),
                             tab === 'normativ' && React.createElement(NormativTab, { normativPdf: normativPdf, setNormativPdf: setNormativPdf, normativIndexFile: normativIndexFile, setNormativIndexFile: setNormativIndexFile, persist: persist, isManager: effectiveUser.rol === 'Manager' }),
                             tab === 'ghid' && React.createElement(GhidTab, { isManager: effectiveUser.rol === 'Manager' }),
                             tab === 'utilizatori' && effectiveUser.rol === 'Manager' && React.createElement(UsersTab, { currentUser: effectiveUser }),
