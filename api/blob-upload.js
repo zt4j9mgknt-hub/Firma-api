@@ -93,6 +93,9 @@ export default async function handler(req, res) {
             'image/jpeg', 'image/png', 'image/webp', 'image/gif',
             'image/heic', 'image/heif',
             'video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'video/3gpp',
+            /* v04.42: scanările 3D din Iluminat 3D (GLB / splat / PLY) — DOAR în dosarul de iluminat */
+            ...(String(pathname).startsWith('proiecte/iluminat/') && /\.(glb|gltf|ply|splat|ksplat|spz)$/i.test(String(pathname))
+              ? ['model/gltf-binary', 'model/gltf+json', 'application/octet-stream'] : []),
           ],
           maximumSizeInBytes: 200 * 1024 * 1024, // 200 MB
           addRandomSuffix: false,
