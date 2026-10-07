@@ -559,14 +559,19 @@ function dwgMap(P, fname){ const map = Object.fromEntries(P.layers.map(l => [l.n
   let view = DWGC.region(P.items, map), zone = null, hl = null;
   const autoZone = () => { if (view.x1 - view.x0 <= 120000 && view.y1 - view.y0 <= 120000) return Object.assign({}, view); const F = DWGC.footprints(P.items, map, view); if (!F.length) return Object.assign({}, view); const xs = F.flatMap(f => f.pts.map(p => p[0])), ys = F.flatMap(f => f.pts.map(p => p[1])), e = 15000;
     return {x0:Math.max(view.x0, Math.min(...xs) - e), x1:Math.min(view.x1, Math.max(...xs) + e), y0:Math.max(view.y0, Math.min(...ys) - e), y1:Math.min(view.y1, Math.max(...ys) + e)}; };
-  const m = aiModal(`<h2 style="margin:0 0 4px">📐 Desenul: ${fname.replace(/\.[a-z0-9]+$/i, "").replace(/</g, "&lt;")}</h2>
-    <p class="muted" style="margin:0 0 8px">${P.items.length.toLocaleString("ro-RO")} elemente, ${P.layers.length} layere. Am ghicit ce e fiecare layer după nume — schimbă unde nu e bine. <b>Trage cu degetul / mouse-ul pe desen</b> ca să alegi zona de lucru (galben).</p>
-    <canvas id="dwCv" style="width:100%;height:46vh;background:#fafafa;border-radius:12px;touch-action:none;cursor:crosshair"></canvas>
-    <div class="row" style="margin:6px 0"><button class="btn" id="dwAuto">Zona: clădirile + curtea</button><button class="btn" id="dwAll">Tot desenul</button><span class="muted" id="dwZ"></span></div>
-    <div style="max-height:24vh;overflow:auto;border:1px solid #e3e8ec;border-radius:10px;padding:4px 8px" id="dwL"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0"><label>Nume proiect<br><input id="dwN" value="${fname.replace(/\.[a-z0-9]+$/i, "").replace(/"/g, "")}" style="width:100%;font:inherit;padding:8px;border:1px solid #c9d1d9;border-radius:10px"></label>
-      <label>Nivel<br><select id="dwF" style="width:100%;font:inherit;padding:8px;border:1px solid #c9d1d9;border-radius:10px">${["parter", "etaj", "mansarda", "demisol"].map(k => `<option value="${k}">${NUME[k] || k}</option>`).join("")}</select></label></div>
-    <div class="row"><button class="btn pri" id="dwOk">✓ Creează proiectul și deschide-l în 3D</button><button class="btn" id="dwNo">✕ Renunță</button></div>`);
+  const nm0 = fname.replace(/\.[a-z0-9]+$/i, "").replace(/"/g, "");
+  const m = aiModal(`<h2 style="margin:0 0 2px">📐 Am citit desenul</h2><p class="muted" style="margin:0 0 8px">${nm0.replace(/</g, "&lt;")}</p>
+    <canvas id="dwCv" style="width:100%;height:38vh;background:#fafafa;border-radius:12px;touch-action:none"></canvas>
+    <div id="dwSum" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;font-size:14px"><span class="muted">Mă uit ce e în desen…</span></div>
+    <label style="display:block;margin:6px 0">Nume proiect<br><input id="dwN" value="${nm0}" style="width:100%;font:inherit;font-size:16px;padding:10px;border:1px solid #c9d1d9;border-radius:12px"></label>
+    <button class="btn pri" id="dwOk" style="width:100%;min-height:54px;font-size:17px;margin-top:4px">✓ Fă proiectul — se deschide în 3D</button>
+    <div class="row" style="justify-content:space-between;margin-top:6px"><button class="btn" id="dwNo">Renunță</button></div>
+    <details id="dwAdv" style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Ajustări (doar dacă ceva nu iese bine)</summary>
+      <p class="muted" style="margin:6px 0">Trage cu degetul pe desen ca să alegi altă zonă (galben). Atinge un layer ca să-l vezi cu roșu pe desen și alege ce e.</p>
+      <div class="row" style="margin:6px 0"><button class="btn" id="dwAuto">Zona propusă</button><button class="btn" id="dwAll">Tot desenul</button><span class="muted" id="dwZ"></span></div>
+      <label style="display:block;margin:6px 0">Nivel <select id="dwF" style="font:inherit;padding:6px;border:1px solid #c9d1d9;border-radius:10px">${["parter", "etaj", "mansarda", "demisol"].map(k => `<option value="${k}">${NUME[k] || k}</option>`).join("")}</select></label>
+      <label style="display:block;margin:6px 0"><input type="checkbox" id="dwAllL"> arată și layerele pe care nu le folosesc</label>
+      <div style="max-height:30vh;overflow:auto;border:1px solid #e3e8ec;border-radius:10px;padding:4px 8px" id="dwL"></div></details>`);
   m.firstElementChild.style.maxWidth = "980px";
   const cv = m.querySelector("#dwCv"), g = cv.getContext("2d");
   const fit = () => { const r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1); cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr); const k = Math.min(cv.width / (view.x1 - view.x0), cv.height / (view.y1 - view.y0)) * .96;
@@ -580,24 +585,30 @@ function dwgMap(P, fname){ const map = Object.fromEntries(P.layers.map(l => [l.n
     if (hl) { g.strokeStyle = "#ff1744"; g.lineWidth = 2.5; g.globalAlpha = 1; for (const it of P.items) { if (it.layer !== hl) continue; g.beginPath(); it.pts.forEach((p, i) => g[i ? "lineTo" : "moveTo"](sx(p[0]), sy(p[1]))); if (it.closed) g.closePath(); g.stroke(); } g.lineWidth = 1; }
     g.globalAlpha = 1; if (zone) { g.fillStyle = "rgba(242,182,50,.12)"; g.strokeStyle = "#f2b632"; g.lineWidth = 3; const x = sx(zone.x0), y = sy(zone.y1), w = sx(zone.x1) - x, h = sy(zone.y0) - y; g.fillRect(x, y, w, h); g.strokeRect(x, y, w, h); g.lineWidth = 1; }
     const z = zone || view; m.querySelector("#dwZ").textContent = `zona: ${((z.x1 - z.x0) / 1000).toFixed(1)} × ${((z.y1 - z.y0) / 1000).toFixed(1)} m${(z.x1 - z.x0) > 150000 || (z.y1 - z.y0) > 150000 ? " — mare; pentru 3D fluid alege ≤ 150 m" : ""}`; }
-  function list(){ m.querySelector("#dwL").innerHTML = P.layers.map(l => `<div style="display:flex;gap:6px;align-items:center;padding:3px 0;border-bottom:1px solid #f0f2f4"><span style="width:12px;height:12px;border-radius:3px;background:${DCOL[map[l.name]]};flex:none"></span>
+  function list(){ const all = m.querySelector("#dwAllL").checked; m.querySelector("#dwL").innerHTML = P.layers.filter(l => all || (map[l.name] !== "ignor" && map[l.name] !== "text")).map(l => `<div style="display:flex;gap:6px;align-items:center;padding:3px 0;border-bottom:1px solid #f0f2f4"><span style="width:12px;height:12px;border-radius:3px;background:${DCOL[map[l.name]]};flex:none"></span>
       <span data-hl="${encodeURIComponent(l.name)}" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;font-size:13px" title="Atinge ca să-l vezi pe desen">${l.name.replace(/^New_/, "").replace(/</g, "&lt;")} <span class="muted">· ${l.n}</span></span>
       <select data-ly="${encodeURIComponent(l.name)}" style="font:inherit;font-size:13px;padding:4px;border:1px solid #c9d1d9;border-radius:8px;max-width:48%">${KS.map(([k, n]) => `<option value="${k}" ${map[l.name] === k ? "selected" : ""}>${n}</option>`).join("")}</select></div>`).join("");
-    m.querySelectorAll("[data-ly]").forEach(s => s.onchange = () => { map[decodeURIComponent(s.dataset.ly)] = s.value; list(); draw(); });
+    m.querySelectorAll("[data-ly]").forEach(s => s.onchange = () => { map[decodeURIComponent(s.dataset.ly)] = s.value; list(); draw(); summary(); });
     m.querySelectorAll("[data-hl]").forEach(s => s.onclick = () => { const n = decodeURIComponent(s.dataset.hl); hl = hl === n ? null : n; draw(); }); }
   // zona de lucru: tras pe desen
   let dr = null; const toW = e => { const r = cv.getBoundingClientRect(), dpr = cv.width / r.width, X = (e.clientX - r.left) * dpr, Y = (e.clientY - r.top) * dpr; return [view.x0 + (X - T.ox) / T.k, view.y1 - (Y - T.oy) / T.k]; };
-  cv.addEventListener("pointerdown", e => { dr = toW(e); cv.setPointerCapture && cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener("pointerdown", e => { if (!m.querySelector("#dwAdv").open) return; dr = toW(e); cv.setPointerCapture && cv.setPointerCapture(e.pointerId); });
   cv.addEventListener("pointermove", e => { if (!dr) return; const q = toW(e); zone = {x0:Math.min(dr[0], q[0]), x1:Math.max(dr[0], q[0]), y0:Math.min(dr[1], q[1]), y1:Math.max(dr[1], q[1])}; draw(); });
-  cv.addEventListener("pointerup", () => { dr = null; if (zone && (zone.x1 - zone.x0 < 3000 || zone.y1 - zone.y0 < 3000)) zone = null; draw(); });
-  m.querySelector("#dwAuto").onclick = () => { zone = autoZone(); draw(); }; m.querySelector("#dwAll").onclick = () => { zone = null; draw(); };
+  cv.addEventListener("pointerup", () => { if (!dr) return; dr = null; if (zone && (zone.x1 - zone.x0 < 3000 || zone.y1 - zone.y0 < 3000)) zone = null; draw(); summary(); });
+  m.querySelector("#dwAuto").onclick = () => { zone = autoZone(); draw(); summary(); }; m.querySelector("#dwAll").onclick = () => { zone = null; draw(); summary(); }; m.querySelector("#dwAllL").onchange = list;
   m.querySelector("#dwNo").onclick = aiClose;
   m.querySelector("#dwOk").onclick = async () => { const b = m.querySelector("#dwOk"); b.disabled = true; b.textContent = "Construiesc…"; await new Promise(r => setTimeout(r, 30));
     try { const p = dwgProject(P, map, zone || view, m.querySelector("#dwN").value.trim() || "Proiect nou", m.querySelector("#dwF").value, fname); await put(p); aiClose(); await render(); toast("Proiect creat din desen: " + p.nume);
       const ob = document.querySelector(`[data-a="open"][data-id="${p.id}"]`); if (ob) ob.click();
       let k = 0; const iv = setInterval(() => { try { const w = document.getElementById("view").contentWindow; if (w && typeof w.show === "function" && w.document.readyState === "complete") { clearInterval(iv); w.show("plan3d"); } } catch (e) {} if (++k > 40) clearInterval(iv); }, 250);
     } catch (e) { b.disabled = false; b.textContent = "✓ Creează proiectul și deschide-l în 3D"; alert("Nu am putut construi proiectul: " + (e.message || e)); } };
-  list(); setTimeout(() => { zone = autoZone(); draw(); }, 30); }
+  let sumT = 0; function summary(){ clearTimeout(sumT); sumT = setTimeout(() => { try { const z = zone || view, B = DWGC.build(P, map, z), FP = DWGC.footprints(P.items, map, z), c = {};
+      B.land.forEach(o => c[o.k] = (c[o.k] || 0) + 1); const nr = FP.reduce((t, f) => t + Math.max(1, f.rooms.length), 0);
+      const L = [["🏠", FP.length ? (FP.length === 1 ? "Casa" : FP.length + " clădiri") + (nr > FP.length ? ` (${nr} camere)` : "") : ""], ["🟩", c.jardiniera && c.jardiniera + " jardiniere"], ["⬜", c.alee && c.alee + " dale / alei"], ["🟫", c.terasa && c.terasa + " terase / pardoseli"],
+        ["🌱", c.gazon && "gazon"], ["🌳", c.copac && c.copac + " copaci"], ["💧", c.apa && "piscină / apă"], ["🧱", (c.zid || c.gard) && [c.zid && "ziduri", c.gard && "garduri"].filter(Boolean).join(", ")], ["🪜", c.scara && c.scara + " scări"], ["⚡", c.electric && "firidă / electric existent"]].filter(x => x[1]);
+      m.querySelector("#dwSum").innerHTML = (L.length ? L.map(([i, t]) => `<span style="background:#f2f4f6;border-radius:999px;padding:5px 10px">${i} ${t}</span>`).join("") : '<span class="muted">Nu am găsit nimic de construit în zonă — deschide „Ajustări”.</span>') + `<span class="muted" style="padding:5px 4px">zona ${((z.x1 - z.x0) / 1000).toFixed(0)} × ${((z.y1 - z.y0) / 1000).toFixed(0)} m</span>`;
+    } catch (e) { m.querySelector("#dwSum").innerHTML = '<span class="muted">' + String(e.message || e).replace(/</g, "&lt;") + "</span>"; } }, 60); }
+  list(); setTimeout(() => { zone = autoZone(); draw(); summary(); }, 30); }
 // desenul → proiect: clădirile (cu camerele găsite) devin camere în 3D, curtea devine „land”
 function dwgProject(P, map, box, nume, fl, fname){ const B = DWGC.build(P, map, box), FP = DWGC.footprints(P.items, map, box), U = 6.35, X = B.X, Y = B.Y;
   const inside = (pt, pl) => { let c = false; for (let i = 0, j = pl.length - 1; i < pl.length; j = i++) { const a = pl[i], b = pl[j]; if ((a[1] > pt[1]) !== (b[1] > pt[1]) && pt[0] < (b[0] - a[0]) * (pt[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
