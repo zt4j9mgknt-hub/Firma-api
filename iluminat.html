@@ -816,7 +816,11 @@ function hit(sx,sy){const p=S.p,tol=14;const [wx,wy]=s2w(sx,sy);
  return null;}
 function hitVarf(sx,sy){for(const s of S.sel){if(s.k!=='o')continue;const o=S.p.obiecte.find(x=>x.id===s.id);if(!o||!o.pts)continue;for(let i=0;i<o.pts.length;i++){const a=w2s(o.pts[i][0],o.pts[i][1]);if(Math.hypot(a[0]-sx,a[1]-sy)<12)return {o,i};}}
  for(const s of S.sel){if(s.k!=='c')continue;const k=S.p.corpuri.find(x=>x.id===s.id);if(!k||!k.pts)continue;for(let i=0;i<k.pts.length;i++){const a=w2s(k.pts[i][0],k.pts[i][1]);if(Math.hypot(a[0]-sx,a[1]-sy)<12)return {o:k,i};}}return null;}
-function selecteaza(h,adaug){if(!h){if(!adaug)S.sel=[];}else if(adaug){const i=S.sel.findIndex(s=>s.k===h.k&&s.id===h.id);if(i>=0)S.sel.splice(i,1);else S.sel.push(h);}else S.sel=[h];
+function selecteaza(h,adaug){
+ /* modul „📋 Aplică — le aleg eu": fiecare corp atins primește proprietățile corpului-sursă */
+ if(S.aplicaDe&&h&&h.k==='c'&&h.id!==S.aplicaDe.id){const src=S.p.corpuri.find(c=>c.id===S.aplicaDe.id),t=S.p.corpuri.find(c=>c.id===h.id);if(src&&t){aplicaProprietati(src,[t],S.aplicaDe.ce);}return;}
+ if(S.aplicaDe&&!h){S.aplicaDe=null;toast('Gata cu aplicarea.','ok');}
+ if(!h){if(!adaug)S.sel=[];}else if(adaug){const i=S.sel.findIndex(s=>s.k===h.k&&s.id===h.id);if(i>=0)S.sel.splice(i,1);else S.sel.push(h);}else S.sel=[h];
  if(S.sel.length===1&&!['calcul','dimare'].includes(S.tab)){S.tab=S.sel[0].k==='c'?'corpuri':'obiecte';}randPanou();deseneaza();if(T3.ok&&typeof marcheazaSel3D==='function')marcheazaSel3D();}
 async function stergeSelectia(){if(!S.sel.length||S.ro)return;const n=S.sel.length;S.p.corpuri=S.p.corpuri.filter(k=>!S.sel.some(s=>s.k==='c'&&s.id===k.id));S.p.obiecte=S.p.obiecte.filter(o=>!S.sel.some(s=>s.k==='o'&&s.id===o.id));
  (S.p.grupuri||[]).forEach(g=>g.membri=g.membri.filter(id=>S.p.corpuri.some(k=>k.id===id)));S.sel=[];commit('șterge');randPanou();deseneaza();toast('Am șters '+n+(n===1?' element':' elemente')+'. (Anulează cu ↶)');}
@@ -1161,6 +1165,8 @@ function editorCorp(k){const inf=corpInfo(k);const lib=inf.lib;const V2=lib.vari
  <p class="small">Cod: <b>${esc(inf.cod)}</b><br>${fmt(inf.flux*nivelEf(k,inf),0)} lm livrați${inf.dimabil&&inf.nivel<100?' (la '+inf.nivel+'%)':''} · ${fmt(inf.P*(inf.dimabil?inf.nivel/100:1),1)} W${inf.dimabil&&inf.nivel<100?' <span class="aprox">putere aprox. proporțională</span>':''} · ${inf.K} K ${inf.aprox?'<span class="aprox">fotometrie aproximativă</span>':''}${inf.liniar?'<br>Lungime '+fmt(inf.len,2)+' m':''}</p>
  <div class="grid3"><label class="field"><span>Înălțime lumină (m)</span><input id="ce_z" inputmode="decimal" value="${fmt(k.z,2)}"${S.ro?' readonly':''}></label>
  ${inf.liniar?'':`<label class="field"><span>Rotire (°)</span><input id="ce_yaw" inputmode="decimal" value="${fmt(k.yaw||0,0)}"${S.ro?' readonly':''}></label><label class="field"><span>Înclinare (°)</span><input id="ce_tilt" inputmode="decimal" value="${fmt(k.tilt||0,0)}"${S.ro?' readonly':''}></label>`}</div>
+ ${S.ro?'':`<div class="row" style="gap:6px;flex-wrap:wrap;margin:2px 0 6px"><span class="small muted" style="align-self:center">Înălțime:</span><button class="btn big" id="ce_zm" style="min-width:64px">−10 cm</button><button class="btn big" id="ce_zp" style="min-width:64px">+10 cm</button><button class="btn big" id="ce_zm1">−1 cm</button><button class="btn big" id="ce_zp1">+1 cm</button></div>
+ <button class="btn big primary" id="ce_apl" style="width:100%;margin-bottom:6px">${S.aplicaDe?'✓ Gata — am terminat de atins corpurile':'📋 Aplică la alte corpuri (înălțime, rotire, model…)'}</button>`}
  ${inf.liniar?'':`<div class="grid2"><label class="field"><span>X (m)</span><input id="ce_x" inputmode="decimal" value="${fmt(k.x,2)}"${S.ro?' readonly':''}></label><label class="field"><span>Y (m)</span><input id="ce_y" inputmode="decimal" value="${fmt(k.y,2)}"${S.ro?' readonly':''}></label></div>`}
  <div class="box" style="background:var(--panel)"><label class="row"><input type="checkbox" id="ce_dim"${inf.dimabil?' checked':''}${S.ro?' disabled':''}> <b>Sursă dimabilă</b></label>
  ${inf.dimabil?`<div class="row"><select class="inp" id="ce_dt" style="width:auto"${S.ro?' disabled':''}>${DIMTIP.concat(DIMTIP.includes(inf.dimTip)?[]:[inf.dimTip]).map(t=>opt(t,t,inf.dimTip)).join('')}</select><b id="ce_nv">${inf.nivel}%</b></div><input type="range" id="ce_niv" min="0" max="100" step="5" value="${inf.nivel}"${S.ro?' disabled':''}>`:`<label class="row small"><input type="checkbox" id="ce_on"${inf.nivel>0?' checked':''}${S.ro?' disabled':''}> pornit</label><p class="muted small">Orice corp poate deveni dimabil dacă îi schimbi sursa — bifează mai sus.</p>`}</div>
@@ -1174,6 +1180,9 @@ function legaEditorCorp(el,k){const q=s=>el.querySelector(s);if(S.ro)return;cons
  el.querySelectorAll('[data-cv]').forEach(s=>s.onchange=()=>ch(()=>{k.var=k.var||{};k.var[s.dataset.cv]=s.value;}));
  if(q('#ce_fin'))q('#ce_fin').onchange=e=>ch(()=>{if(e.target.value)k.finisaj=e.target.value;else delete k.finisaj;});
  q('#ce_z').onchange=e=>ch(()=>{k.z=Math.max(0.01,numIn(e.target.value,k.z));});
+ /* butoane sigure pentru înălțime (tragerea în 3D e greu de nimerit pe telefon) */
+ [['#ce_zm',-0.1],['#ce_zp',0.1],['#ce_zm1',-0.01],['#ce_zp1',0.01]].forEach(([id,d])=>{if(q(id))q(id).onclick=()=>ch(()=>{k.z=r3(Math.max(0.01,(k.z||0)+d));});});
+ if(q('#ce_apl'))q('#ce_apl').onclick=()=>{if(S.aplicaDe){S.aplicaDe=null;toast('Gata cu aplicarea.','ok');randPanou();return;}dlgAplicaLaCorpuri(k);};
  if(q('#ce_yaw'))q('#ce_yaw').onchange=e=>ch(()=>{k.yaw=numIn(e.target.value,0)%360;});if(q('#ce_tilt'))q('#ce_tilt').onchange=e=>ch(()=>{k.tilt=clamp(numIn(e.target.value,0),-180,180);});
  if(q('#ce_x'))q('#ce_x').onchange=e=>ch(()=>{k.x=numIn(e.target.value,k.x);});if(q('#ce_y'))q('#ce_y').onchange=e=>ch(()=>{k.y=numIn(e.target.value,k.y);});
  q('#ce_dim').onchange=e=>ch(()=>{const inf=corpInfo(k);k.dim={on:e.target.checked,tip:inf.dimTip||'DALI'};if(!e.target.checked)k.nivel=100;});
@@ -1185,6 +1194,33 @@ function legaEditorCorp(el,k){const q=s=>el.querySelector(s);if(S.ro)return;cons
  if(q('#ce_pas'))q('#ce_pas').onchange=e=>setPasCote(e.target.value);
  el.querySelectorAll('[data-m3p]').forEach(b=>b.onclick=()=>{const m=b.dataset.m3p;if(m==='dup'){dubleazaSel();return;}if(m==='del'){stergeSelectia();return;}S.mod3DCorp=m;
   if(window.innerWidth<820){$('#panou').classList.add('ascuns');document.body.classList.add('panouAscuns');}const era=S.view==='3d'&&T3.ok;if(S.view!=='3d')setView('3d');setTimeout(()=>{if(T3.ok)rez3D();setMod3DCorp(m);},era?0:900);});}
+/* 📋 APLICĂ LA ALTE CORPURI (cerut de patron: „după ce mut unul la înălțimea care vreau, să-i pun pe toți la fel"):
+   alegi CE copiezi (înălțime, rotire, înclinare, model + variante, dimare) și LA CINE (același model, același grup,
+   toate corpurile, sau le atingi pe plan). Benzile LED nu primesc înălțime/rotire de la un corp punctual. */
+function dlgAplicaLaCorpuri(k){const inf=corpInfo(k);const gr=(S.p.grupuri||[]).find(g=>g.membri.includes(k.id));
+ const sh=modal(`<h2>📋 Aplică la alte corpuri</h2><p class="muted small">De la corpul #${S.p.corpuri.indexOf(k)+1} (${esc(inf.lib.denumire||'')}).</p>
+  <div class="h">Ce copiez</div>
+  <label class="row"><input type="checkbox" data-ce="z" checked> Înălțimea — <b>${fmt(k.z,2)} m</b></label>
+  ${inf.liniar?'':`<label class="row"><input type="checkbox" data-ce="yaw"> Rotirea — <b>${fmt(k.yaw||0,0)}°</b></label><label class="row"><input type="checkbox" data-ce="tilt"> Înclinarea — <b>${fmt(k.tilt||0,0)}°</b></label>`}
+  <label class="row"><input type="checkbox" data-ce="lib"> Modelul și variantele (finisaj, CCT, optică)</label>
+  <label class="row"><input type="checkbox" data-ce="dim"> Dimarea (sursa și nivelul ${inf.dimabil?inf.nivel+'%':'—'})</label>
+  <div class="h" style="margin-top:8px">La cine</div>
+  <label class="row"><input type="radio" name="ce_la" value="model" checked> Toate corpurile de același model</label>
+  ${gr?`<label class="row"><input type="radio" name="ce_la" value="grup"> Grupul „${esc(gr.nume)}"</label>`:''}
+  <label class="row"><input type="radio" name="ce_la" value="toate"> Toate corpurile din proiect</label>
+  <label class="row"><input type="radio" name="ce_la" value="alege"> Le aleg eu, atingându-le pe plan / în 3D</label>
+  <div class="foot"><button class="btn" id="ce_ax">Renunță</button><button class="btn primary" id="ce_aok">✓ Aplică</button></div>`);
+ sh.querySelector('#ce_ax').onclick=closeModal;
+ sh.querySelector('#ce_aok').onclick=()=>{const ce=[...sh.querySelectorAll('[data-ce]')].filter(x=>x.checked).map(x=>x.dataset.ce);const la=(sh.querySelector('input[name=ce_la]:checked')||{}).value;closeModal();if(!ce.length)return;
+  if(la==='alege'){S.aplicaDe={id:k.id,ce};toast('Atinge corpurile cărora le aplic (pe plan sau în 3D). Apasă din nou „📋 Aplică" ca să termini.','ok');S.sel=[{k:'c',id:k.id}];randPanou();return;}
+  const tinta=S.p.corpuri.filter(c=>c.id!==k.id&&(la==='toate'||(la==='model'&&c.lib===k.lib)||(la==='grup'&&gr&&gr.membri.includes(c.id))));aplicaProprietati(k,tinta,ce);};}
+function aplicaProprietati(k,tinta,ce){let n=0;for(const c of tinta){const lin=!!c.pts;
+  if(ce.includes('z')&&!(lin!==!!k.pts)){c.z=k.z;}
+  if(ce.includes('yaw')&&!lin)c.yaw=k.yaw||0;if(ce.includes('tilt')&&!lin)c.tilt=k.tilt||0;
+  if(ce.includes('lib')&&lin===!!k.pts){c.lib=k.lib;if(k.var)c.var=clone(k.var);else delete c.var;if(k.finisaj)c.finisaj=k.finisaj;}
+  if(ce.includes('dim')){if(k.dim)c.dim=clone(k.dim);else delete c.dim;c.nivel=k.nivel==null?100:k.nivel;}n++;}
+ if(!n){toast('N-am găsit alte corpuri pentru alegerea asta.','err');return;}
+ commit('aplica');randPanou();deseneaza();if(T3.ok&&typeof scena3DMurdara==='function')scena3DMurdara();cereCalcul(true);toast('Am aplicat la '+n+' corpuri. ↶ Anulează dacă nu e bine.','ok');}
 /* .ldt / .ies pe un corp din bibliotecă (pe optică, la familiile cu variante) */
 async function incarcaFotometrie(lib,optK){if(!lib)return;const f=await alegeFisier('.ldt,.ies,.LDT,.IES');if(!f)return;try{const t=await citesteFisier(f,'text');const ext=f.name.split('.').pop().toLowerCase();
   const fot=ext==='ies'?ENG.parseIES(t):ENG.parseLDT(t);fot.fisier=f.name;const l=clone(lib);
