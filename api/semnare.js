@@ -18,7 +18,9 @@
 
 import crypto from 'crypto';
 import Pusher from 'pusher';
-import portalClient from '../lib/client.js';
+import portalClient, { preaDes } from '../lib/client.js';
+import { put as blobPut, get as blobGet } from '@vercel/blob';
+import { buffer as streamToBuffer } from 'node:stream/consumers';
 import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal, ID_CEAS_MEMENTO, SCOP_BILET_INTERN } from '../lib/sesiune.js';
 
 /* Semnalul instant către telefoanele firmei (același ca în data.js). Fără el, semnătura
@@ -327,6 +329,131 @@ async function ofertaOnline(req, res, q) {
   }
 }
 
+/* ===================== LINK 3D PENTRU CLIENT (v04.40) =====================
+   Managerul trimite clientului un link spre proiecte.html?client=<bilet>: clientul se plimbă
+   prin casa lui (doar citire) și pune „pinuri de dorință" („aș vrea aici o priză"), care vin
+   înapoi la manager. Proiectul e un INSTANTANEU urcat în Blob privat (poate avea MB), nu în
+   bază; în bază stă doar fișa linkului și pinurile. Biletul = id + semnătură HMAC; valabil 30
+   de zile, revocabil. Rute (toate pe /api/semnare):
+     POST {actiune:'link3d', proiectId, titlu, proiect}      Bearer Manager → {url, bilet, id, expira}
+     GET  ?actiune=link3dDate&bilet=…                         public        → {titlu, proiect, pins, expira}
+     POST {actiune:'link3dPin', bilet, pin:{fl,x,y,z,text,nume}} public     → {ok, pin}
+     GET  ?actiune=link3dPins&proiectId=…                     Bearer Manager → {linkuri:[{id,titlu,creat,expira,revocat,pins}]}
+     POST {actiune:'link3dRevoca', proiectId | id}            Bearer Manager → {ok, revocate} */
+const ZILE_LINK3D = 30;
+const MAX_PROIECT3D = 4 * 1024 * 1024;   // Vercel taie cererea la 4,5 MB
+const MAX_PINI3D = 50;
+const semnatura3d = (id) => crypto.createHmac('sha256', SESSION_SECRET).update('link3d:' + String(id)).digest('base64url').slice(0, 32);
+function citesteBilet3d(bilet) {
+  const [id, sig] = String(bilet || '').split('.');
+  if (!id || !sig || !/^[A-Za-z0-9_-]{8,40}$/.test(id) || !egal(sig, semnatura3d(id))) return null;
+  return id;
+}
+const json3d = async (cheie, implicit) => { try { const b = await redis(['GET', cheie]); return b ? JSON.parse(b) : implicit; } catch (_) { return implicit; } };
+
+async function link3d(req, res, q, act) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex');
+  const body = req.method === 'POST' ? (typeof req.body === 'string' ? (() => { try { return JSON.parse(req.body || '{}'); } catch (_) { return {}; } })() : (req.body || {})) : {};
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'necunoscut';
+  const manager = async () => {
+    const auth = autentifica(req);
+    if (!auth) { res.status(401).json({ error: 'Sesiune invalidă sau expirată.' }); return null; }
+    let real;
+    try { real = await utilizatorulAdevarat(auth, async () => redis(['GET', 'firma:users'])); }
+    catch (e) { res.status(500).json({ error: 'Nu am putut verifica contul.' }); return null; }
+    if (!real) { raspunsContSters(res, auth); return null; }
+    if (real.rol !== 'Manager') { res.status(403).json({ error: 'Doar Managerul face linkuri 3D pentru clienți.' }); return null; }
+    return real;
+  };
+  try {
+    if (act === 'link3d') {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Doar POST.' });
+      const m = await manager(); if (!m) return;
+      const proiectId = String(body.proiectId || '').slice(0, 80);
+      if (!proiectId) return res.status(400).json({ error: 'Lipsește proiectul.' });
+      const text = JSON.stringify(body.proiect == null ? null : body.proiect);
+      if (!body.proiect || text.length < 2) return res.status(400).json({ error: 'Lipsesc datele proiectului.' });
+      if (text.length > MAX_PROIECT3D) return res.status(413).json({ error: 'Proiectul e prea mare pentru link (' + (text.length / 1048576).toFixed(1) + ' MB; maxim 4 MB). Scoate pozele de fundal.' });
+      const id = crypto.randomBytes(12).toString('base64url');
+      const pathname = 'link3d/' + id + '.json';
+      await blobPut(pathname, text, { access: 'private', contentType: 'application/json', addRandomSuffix: false, allowOverwrite: true });
+      const acum = Date.now();
+      const fisa = { id, proiectId, titlu: String(body.titlu || '').slice(0, 160), pathname, creat: new Date(acum).toISOString(), expira: new Date(acum + ZILE_LINK3D * 864e5).toISOString(), creatDe: m.nume || '', revocat: false };
+      await redis(['SET', 'link3d:' + id, JSON.stringify(fisa), 'EX', String(ZILE_LINK3D * 86400 + 7 * 86400)]);
+      const idx = await json3d('link3dIdx:' + proiectId, []);
+      await redis(['SET', 'link3dIdx:' + proiectId, JSON.stringify([id, ...(Array.isArray(idx) ? idx : []).filter((x) => x !== id)].slice(0, 20))]);
+      const bilet = id + '.' + semnatura3d(id);
+      const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
+      return res.status(200).json({ url: `https://${gazda}/proiecte.html?client=${encodeURIComponent(bilet)}`, bilet, id, expira: fisa.expira });
+    }
+
+    if (act === 'link3dPins' || act === 'link3dRevoca') {
+      const m = await manager(); if (!m) return;
+      const proiectId = String(q.proiectId || body.proiectId || '').slice(0, 80);
+      const unul = String(q.id || body.id || '');
+      let ids = proiectId ? await json3d('link3dIdx:' + proiectId, []) : [];
+      if (unul) ids = [unul];
+      if (!ids.length) return res.status(200).json(act === 'link3dPins' ? { linkuri: [] } : { ok: true, revocate: 0 });
+      if (act === 'link3dRevoca') {
+        let n = 0;
+        for (const id of ids) {
+          const f = await json3d('link3d:' + id, null);
+          if (f && !f.revocat && (!proiectId || f.proiectId === proiectId)) { f.revocat = true; f.revocatLa = new Date().toISOString(); await redis(['SET', 'link3d:' + id, JSON.stringify(f), 'KEEPTTL']); n++; }
+        }
+        return res.status(200).json({ ok: true, revocate: n });
+      }
+      const linkuri = [];
+      for (const id of ids) {
+        const f = await json3d('link3d:' + id, null);
+        if (!f || (proiectId && f.proiectId !== proiectId)) continue;
+        linkuri.push({ id: f.id, titlu: f.titlu, creat: f.creat, expira: f.expira, revocat: !!f.revocat, pins: await json3d('link3dpins:' + id, []) });
+      }
+      return res.status(200).json({ linkuri });
+    }
+
+    /* --- de aici în jos: CLIENTUL, fără cont --- */
+    const id = citesteBilet3d(q.bilet || body.bilet);
+    if (!id) return res.status(403).json({ error: 'Link invalid. Cereți firmei un link nou.', cod: 'invalid' });
+    if (preaDes(ip, act, act === 'link3dPin' ? 20 : 30)) return res.status(429).json({ error: 'Prea multe cereri. Încercați din nou peste un minut.', cod: 'prea_des' });
+    const fisa = await json3d('link3d:' + id, null);
+    if (!fisa) return res.status(410).json({ error: 'Linkul a expirat. Cereți firmei un link nou.', cod: 'expirat' });
+    if (fisa.revocat) return res.status(410).json({ error: 'Linkul a fost anulat de firmă.', cod: 'anulat' });
+    if (Date.now() > Date.parse(fisa.expira)) return res.status(410).json({ error: 'Linkul a expirat. Cereți firmei un link nou.', cod: 'expirat' });
+
+    if (act === 'link3dDate') {
+      let rez = null;
+      try { rez = await blobGet(fisa.pathname, { access: 'private' }); } catch (_) { rez = null; }
+      if (!rez || !rez.stream) return res.status(404).json({ error: 'Proiectul nu mai e disponibil.' });
+      const proiect = JSON.parse((await streamToBuffer(rez.stream)).toString('utf8'));
+      return res.status(200).json({ titlu: fisa.titlu, proiect, pins: await json3d('link3dpins:' + id, []), expira: fisa.expira });
+    }
+
+    if (act === 'link3dPin') {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Doar POST.' });
+      const p = body.pin || {};
+      const nr = (v, lim) => { const c = Number(v); return Number.isFinite(c) && Math.abs(c) <= lim ? Math.round(c * 1000) / 1000 : null; };
+      const pin = { id: crypto.randomBytes(6).toString('base64url'), fl: String(p.fl ?? '').slice(0, 20), x: nr(p.x, 1e4), y: nr(p.y, 1e4), z: nr(p.z, 1e4),
+        text: String(p.text || '').trim().slice(0, 300), nume: String(p.nume || '').trim().slice(0, 60), la: new Date().toISOString() };
+      if (pin.x == null || pin.y == null || pin.z == null) return res.status(400).json({ error: 'Poziția pinului nu e validă.' });
+      if (!pin.text) return res.status(400).json({ error: 'Scrieți ce ați dori aici.' });
+      const lacat = 'lock:link3d:' + id;
+      if (await redis(['SET', lacat, '1', 'NX', 'EX', '10']) !== 'OK') return res.status(409).json({ error: 'Încercați din nou peste o secundă.' });
+      try {
+        const pins = await json3d('link3dpins:' + id, []);
+        if (pins.length >= MAX_PINI3D) return res.status(409).json({ error: 'S-a atins numărul maxim de ' + MAX_PINI3D + ' dorințe pe acest link. Contactați firma.' });
+        const noi = [...pins, pin];
+        await redis(['SET', 'link3dpins:' + id, JSON.stringify(noi), 'EX', String(ZILE_LINK3D * 86400 + 30 * 86400)]);
+      } finally { try { await redis(['DEL', lacat]); } catch (_) {} }
+      await anuntaManagerii({ title: '📍 Dorință nouă în casa 3D', body: (pin.nume ? pin.nume + ': ' : '') + pin.text.slice(0, 140) + (fisa.titlu ? ' — ' + fisa.titlu : ''), url: '/proiecte.html', tag: 'link3d-' + id });
+      return res.status(200).json({ ok: true, pin });
+    }
+    return res.status(400).json({ error: 'Acțiune necunoscută.' });
+  } catch (e) {
+    return res.status(500).json({ error: 'Eroare la server. Încercați mai târziu.' });
+  }
+}
+
 export default async function handler(req, res) {
   /* Pagina lucrării pentru client trece pe aici: planul Vercel dă cel mult 12 funcții în
      /api, iar a 13-a (api/client.js) oprea toate publicările. Codul ei stă în lib/client.js;
@@ -360,6 +487,10 @@ export default async function handler(req, res) {
     const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
     return res.status(200).json({ link: `https://${gazda}/api/semnare?pv=${encodeURIComponent(pv)}&k=${semnaturaLink(pv)}` });
   }
+
+  /* --- v04.40: LINK 3D PENTRU CLIENT (proiecte.html?client=…) --- */
+  const act3d = String(q.actiune || (req.body && typeof req.body === 'object' && req.body.actiune) || '');
+  if (act3d.startsWith('link3d')) return link3d(req, res, q, act3d);
 
   /* --- v04.38: ACCEPTAREA OFERTEI ONLINE (linkul de ofertă, separat de procesul-verbal) --- */
   if (String(q.action || '') === 'linkOferta' || q.of || (req.body && typeof req.body === 'object' && req.body.of)) {
