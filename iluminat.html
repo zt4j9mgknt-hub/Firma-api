@@ -1696,9 +1696,13 @@ function editorPuncte(o){return new Promise(res=>{const max=o.max||4;const el=do
   if(g.t==='drag'){const sx=p[0]+g.ox,sy=p[1]+g.oy;pts[g.i]=pune(toC(sx,sy));lupa={i:g.i,sx,sy};draw();}
   else if(g.t==='pan'){V2.cx=g.cx-(p[0]-g.sx)/V2.z;V2.cy=g.cy-f*(p[1]-g.sy)/V2.z;draw();}};
  const ridica=id=>{P.delete(id);if(g&&g.t==='pinch'&&P.size>0)return;g=null;lupa=null;draw();};
- cv.addEventListener('pointerdown',e=>{if(e.pointerType==='touch'&&atins)return;e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}jos('p'+e.pointerId,pos(e),e.button);});
- cv.addEventListener('pointermove',e=>{if(e.pointerType==='touch'&&atins)return;misca('p'+e.pointerId,pos(e));});
- const sus=e=>{if(e.pointerType==='touch'&&atins)return;ridica('p'+e.pointerId);};cv.addEventListener('pointerup',sus);cv.addEventListener('pointercancel',sus);
+ /* DEGETUL VENEA DE DOUĂ ORI: pe iPhone (și pe laptopurile cu ecran tactil) o atingere trimite întâi
+    pointerdown, apoi touchstart — editorul vedea „două degete" = zoom și scotea punctul tocmai pus.
+    Acum: unde există TouchEvent, degetele merg DOAR pe touch*, iar pointer* rămâne pentru mouse/creion. */
+ const doarTouch=e=>e.pointerType==='touch'&&('ontouchstart' in window||atins);
+ cv.addEventListener('pointerdown',e=>{if(doarTouch(e))return;e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}jos('p'+e.pointerId,pos(e),e.button);});
+ cv.addEventListener('pointermove',e=>{if(doarTouch(e))return;misca('p'+e.pointerId,pos(e));});
+ const sus=e=>{if(doarTouch(e))return;ridica('p'+e.pointerId);};cv.addEventListener('pointerup',sus);cv.addEventListener('pointercancel',sus);
  const tp=t=>{const r=cv.getBoundingClientRect();return [t.clientX-r.left,t.clientY-r.top];};
  cv.addEventListener('touchstart',e=>{atins=true;e.preventDefault();for(const t of e.changedTouches)jos('t'+t.identifier,tp(t),0);},{passive:false});
  cv.addEventListener('touchmove',e=>{e.preventDefault();for(const t of e.changedTouches)misca('t'+t.identifier,tp(t));},{passive:false});
@@ -1707,12 +1711,13 @@ function editorPuncte(o){return new Promise(res=>{const max=o.max||4;const el=do
  cv.addEventListener('wheel',e=>{e.preventDefault();const p=pos(e);const w=toC(p[0],p[1]);V2.z=clamp(V2.z*Math.exp(-e.deltaY*0.0015),1e-3,1e4);V2.cx=w[0]-(p[0]-V2.W/2)/V2.z;V2.cy=w[1]-f*(p[1]-V2.H/2)/V2.z;draw();},{passive:false});
  const und=()=>{if(!Hs.length)return;Rs.push(JSON.stringify(pts));pts=JSON.parse(Hs.pop());draw();},red=()=>{if(!Rs.length)return;Hs.push(JSON.stringify(pts));pts=JSON.parse(Rs.pop());draw();};
  const kd=e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?red():und();}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();red();}else if(e.key==='Escape'){gata(null);}else if(e.key==='Enter'&&pts.length>=(o.min||max)){gata(pts);}e.stopPropagation();};
- document.addEventListener('keydown',kd,true);const ro=new ResizeObserver(()=>{rez();draw();});ro.observe(cv);
+ document.addEventListener('keydown',kd,true);/* încadrarea se face la prima mărime ADEVĂRATĂ a pânzei (la deschidere poate avea 0 px → poza ieșea cât un punct) */
+ let incadrat=false;const ro=new ResizeObserver(()=>{rez();const r=cv.getBoundingClientRect();if(!incadrat&&r.width>60&&r.height>60){incadrat=true;fit();}else draw();});ro.observe(cv);
  const gata=v=>{document.removeEventListener('keydown',kd,true);ro.disconnect();el.remove();res(v);};
  el.querySelector('#pe_x').onclick=()=>gata(null);el.querySelector('#pe_l').onclick=()=>{if(!pts.length)return;salv();pts.pop();draw();};el.querySelector('#pe_u').onclick=und;el.querySelector('#pe_r').onclick=red;el.querySelector('#pe_fit').onclick=fit;el.querySelector('#pe_ok').onclick=()=>{if(pts.length>=(o.min||max))gata(pts.map(q=>[Math.round(q[0]*1000)/1000,Math.round(q[1]*1000)/1000]));};
  if(el.querySelector('#pe_p'))el.querySelector('#pe_p').onclick=()=>{prev=!prev;draw();};
  el.__api={get pts(){return pts;},set pts(v){pts=v;draw();},draw,V:V2,toS:(x,y)=>toS(V2,x,y),gata};
- rez();fit();});}
+ rez();fit();{const r=cv.getBoundingClientRect();if(r.width>60&&r.height>60)incadrat=true;}});}
 const deseneazaImg=im=>(c,v,toS)=>{const a=toS(0,0);c.imageSmoothingEnabled=true;c.drawImage(im,a[0],a[1],latImg(im)*v.z,inaltImg(im)*v.z);};
 
 /* ---------- poza pe o fațadă ---------- */
