@@ -291,7 +291,12 @@ export default async function handler(req, res) {
     /* extrageFactura (v04.24): factura furnizorului → rânduri cu prețuri, pentru gestiune */
     const eFactura = body.actiune === 'extrageFactura';
     const eSimboluri = body.actiune === 'numaraSimboluri';
-    const extrage = body.actiune === 'extrageLista' || eFactura || eSimboluri;
+    /* v04.39: analiza generală a unei imagini (plan de arhitectură, poză de tablou existent) pentru
+       proiectare 3D / configuratorul de tablouri. Instrucțiunea și structura JSON le dă pagina. */
+    const eAnaliza = body.actiune === 'analizaImagine';
+    const extrage = body.actiune === 'extrageLista' || eFactura || eSimboluri || eAnaliza;
+    const instructiuneAnaliza = eAnaliza ? String(body.instructiune || '').slice(0, 6000).trim() : '';
+    if (eAnaliza && !instructiuneAnaliza) return res.status(400).json({ error: 'Lipsește instrucțiunea.' });
     const articoleSimb = eSimboluri ? (Array.isArray(body.articole) ? body.articole : []).slice(0, 60)
       .map((a) => ({ id: String((a && a.id) || '').slice(0, 40), nume: String((a && a.nume) || '').slice(0, 120) })).filter((a) => a.id && a.nume) : [];
     if (eSimboluri && !articoleSimb.length) return res.status(400).json({ error: 'Lipsesc articolele de căutat.' });
@@ -312,7 +317,9 @@ export default async function handler(req, res) {
       }
       fisier = { mime, base64: b64 };
     }
-    const intrebare = eSimboluri
+    const intrebare = eAnaliza
+      ? instructiuneAnaliza + '\n\nRăspunde doar cu JSON valid, în structura cerută.'
+      : eSimboluri
       ? ('Articolele firmei (id → denumire):\n' + articoleSimb.map((a) => a.id + ' → ' + a.nume).join('\n') +
          '\n\nGăsește pe planșa atașată fiecare simbol corespunzător și întoarce-l cu chenarul lui. Răspunde doar cu JSON-ul cerut.')
       : eFactura
@@ -341,7 +348,9 @@ export default async function handler(req, res) {
       '5. Fără exagerări și fără date inventate. Cifrele, denumirile și cantitățile rămân exact cele primite; ' +
       'doar formularea se schimbă. Ce nu s-a spus nu se completează.';
 
-    const sistem = eSimboluri ? SISTEM_SIMBOLURI : eFactura ? SISTEM_FACTURA : extrage ? SISTEM_EXTRAGERE : json
+    const sistem = eAnaliza
+      ? 'Ești inginer proiectant de instalații electrice și arhitect în România. Citești cu atenție imaginea primită (plan de arhitectură, schiță, poză de tablou electric sau de cameră) și răspunzi DOAR cu JSON valid, exact în structura cerută. Nu inventa ce nu se vede; ce e nesigur marchezi cu încredere mică sau în observații. Textele în română, cu diacritice.'
+      : eSimboluri ? SISTEM_SIMBOLURI : eFactura ? SISTEM_FACTURA : extrage ? SISTEM_EXTRAGERE : json
       ? 'Ești redactorul tehnic al unei firme de instalații electrice din România. Răspunzi DOAR cu JSON valid, ' +
         'exact în structura cerută de utilizator, fără text în afara lui.\n' + REGISTRU + '\n' +
         '6. Fiecare text din JSON (denumiri de lucrări, denumiri de materiale, rezumat) se rescrie în registrul de mai sus, ' +
@@ -396,6 +405,12 @@ export default async function handler(req, res) {
         // Îi spunem aplicației dacă răspunsul s-a oprit din lipsă de spațiu, ca să știe
         // că JSON-ul poate fi incomplet și să-l repare în loc să arunce totul.
         const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
+        if (eAnaliza) {
+          let rezultat = null;
+          try { rezultat = JSON.parse(String(raspuns).replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()); } catch (_) {}
+          if (rezultat == null) return res.status(502).json({ error: finish === 'MAX_TOKENS' ? 'Răspunsul AI s-a tăiat (imagine prea încărcată). Încearcă pe o zonă mai mică.' : 'AI a răspuns, dar nu într-un format citibil. Mai încearcă o dată.' });
+          return res.status(200).json({ rezultat, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
+        }
         if (eSimboluri) return trimiteSimboluri(res, raspuns, model, finish, articoleSimb.map((a) => a.id));
         if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
         return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
@@ -446,7 +461,13 @@ export default async function handler(req, res) {
           } catch (_) {}
           if (raspuns) {
             const finish = (d && d.candidates && d.candidates[0] && d.candidates[0].finishReason) || '';
-            if (eSimboluri) return trimiteSimboluri(res, raspuns, model, finish, articoleSimb.map((a) => a.id));
+            if (eAnaliza) {
+          let rezultat = null;
+          try { rezultat = JSON.parse(String(raspuns).replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()); } catch (_) {}
+          if (rezultat == null) return res.status(502).json({ error: finish === 'MAX_TOKENS' ? 'Răspunsul AI s-a tăiat (imagine prea încărcată). Încearcă pe o zonă mai mică.' : 'AI a răspuns, dar nu într-un format citibil. Mai încearcă o dată.' });
+          return res.status(200).json({ rezultat, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
+        }
+        if (eSimboluri) return trimiteSimboluri(res, raspuns, model, finish, articoleSimb.map((a) => a.id));
         if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
             return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', dupaAsteptare: true });
           }
