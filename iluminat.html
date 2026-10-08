@@ -317,9 +317,10 @@ function parseIES(txt){
 function approx(opt,unghi){const G=[];for(let g=0;g<=180;g+=2.5)G.push(g);let C=[0],fn;
  const ex=b=>{const h=Math.max(2,Math.min(80,(b||60)/2))*D;return Math.log(0.5)/Math.log(Math.cos(h));};
  if(opt==='spot'||opt==='proiector'||opt==='flood'){const e=ex(unghi||(opt==='flood'?90:30));fn=(c,g)=>g<90?Math.pow(Math.cos(g*D),e):0;}
- else if(opt==='asim360'){fn=(c,g)=>g<=90?Math.exp(-Math.pow((g-68)/14,2))*Math.max(0,Math.min(1,(90-g)/4)):0;}
+ /* stâlpișor (Buzzer RD 360°): emisie laterală-în jos din cap — maxim pe 55–75°, dar mult și pe 0–45° (pavajul de lângă bază e cel mai luminos), nimic în sus */
+ else if(opt==='asim360'){fn=(c,g)=>g<=90?(0.55+0.45*Math.exp(-Math.pow((g-65)/12,2)))*Math.max(0,Math.min(1,(90-g)/10)):0;}
  else if(opt==='asim180'){C=[];for(let c=0;c<360;c+=5)C.push(c);
-  fn=(c,g)=>{const cd=Math.abs(((c+180)%360)-180);const fc=cd<=70?1:cd>=100?0:0.5+0.5*Math.cos((cd-70)/30*Math.PI);return g<=90?fc*Math.exp(-Math.pow((g-62)/16,2))*Math.max(0,Math.min(1,(90-g)/4)):0;};}
+  fn=(c,g)=>{const cd=Math.abs(((c+180)%360)-180);const fc=cd<=70?1:cd>=100?0:0.5+0.5*Math.cos((cd-70)/30*Math.PI);return g<=90?fc*(0.55+0.45*Math.exp(-Math.pow((g-62)/14,2)))*Math.max(0,Math.min(1,(90-g)/10)):0;};}
  else if(opt==='larg'){fn=(c,g)=>g<88?(0.55*Math.cos(g*D)+0.6*Math.exp(-Math.pow((g-58)/16,2))):0;}
  else fn=(c,g)=>g<90?Math.cos(g*D):0; /* lambertian */
  const f={C,G,I:C.map(c=>G.map(g=>Math.max(0,fn(c,g)))),sursa:'aprox'};normalize(f);return f;}
@@ -585,9 +586,10 @@ function corpInfo(c){const lib=libGet(c.lib)||{denumire:'(corp lipsă din biblio
  const finK=(vv.fin&&vv.fin.k)||finG||'';
  return {lib,vv,cod,finK,denumire:lib.denumire+(vv.cct?' '+vv.cct.K+'K':'')+(vv.opt?' '+vv.opt.k:'')+(vv.fin?' '+(vv.fin.comanda?vv.fin.n:vv.fin.k):'')+(finG?' · finisaj '+finNume(finG):''),
   flux,K,optica,unghi:lib.unghi||(optica==='spot'?20:optica==='flood'?60:optica==='proiector'?30:null),P:Ptot,Pnom:P,fot,aprox:!fot,dimabil,dimTip,liniar,len,nivel,rgb:cctRGB(K)};}
-/* nivelul general (🎚 Dimare, în bara de sus) înmulțește nivelul fiecărui corp; corpurile nedimabile rămân 100 % sau se sting la 0 % */
+/* nivelul general (🎚 Dimare, în bara de sus) înmulțește nivelul fiecărui corp — la TOATE corpurile (patronul: orice corp se poate dima schimbând sursa;
+   la cele fără „Sursă dimabilă” bifată, sursa dimabilă intră automat în materiale cât timp nivelul general e sub 100 %) */
 const dimGen=()=>{const v=S.p&&S.p.setari&&S.p.setari.dimGen;return v==null?1:clamp(+v,0,100)/100;};
-const nivelEf=(c,inf)=>{const g=dimGen();return inf.dimabil?inf.nivel/100*g:(inf.nivel>0&&g>0?1:0);};
+const nivelEf=(c,inf)=>{const g=dimGen();return inf.dimabil?inf.nivel/100*g:(inf.nivel>0?g:0);};
 
 /* ===================== PROIECTE: LISTA, SALVARE, SINCRONIZARE ===================== */
 function proiectNou(nume,tip,client){const t=nowIso();return {id:uid('il'),nume:nume||'Proiect nou',tip:tip||'peisagistic',client:client||'',proprietarId:EU.id,proprietarNume:EU.nume||'',acces:[],creat:t,updatedAt:t,autor:EU.nume||'',
@@ -1517,10 +1519,10 @@ function orePas(pas){const p=S.p;const a0=oraH(pas.de),b0=oraH(pas.pana);if(p.ti
  let h=0;for(let N=1;N<=365;N++){const s=soare(N),s2=soare(N%365+1);const S0=s.apus,R1=s2.rasarit+24;const map=x=>x==='apus'?S0:x==='rasarit'?R1:(x<12?x+24:x);let a=map(a0),b=map(b0);if(b<a)b+=24;h+=Math.max(0,Math.min(b,R1)-Math.max(a,S0));}return h;}
 function oreAnScenariu(){const tr=(S.p.scenariu&&S.p.scenariu.trepte)||[];if(!tr.length)return S.p.tip==='interior'?2500:4100;let h=0;for(const t of tr)if((t.niv&&t.niv._)!==0)h+=orePas(t);return h||4100;}
 function energie(){const p=S.p;const tr=(p.scenariu&&p.scenariu.trepte)||[];const pret=p.setari.pretKwh||1.3;const rows=[];let tot=0;
- for(const t of tr){const ore=orePas(t);let W=0;const avert=[];for(const k of p.corpuri){const inf=corpInfo(k);const nv=nivelPas(t,k);const g=dimGen();if(inf.dimabil)W+=inf.P*nv/100*g;else{if(nv>0&&g>0)W+=inf.P;if(nv>0&&nv<100)avert.push(k);}}
+ for(const t of tr){const ore=orePas(t);let W=0;const avert=[];for(const k of p.corpuri){const inf=corpInfo(k);const nv=nivelPas(t,k);const g=dimGen();if(inf.dimabil)W+=inf.P*nv/100*g;else{if(nv>0)W+=inf.P*g;if(nv>0&&nv<100)avert.push(k);}}
   const kwh=W*ore/1000;tot+=kwh;rows.push({t,ore,W,kwh,lei:kwh*pret,avert});}return {rows,tot,lei:tot*pret,pret};}
 async function verificaScenariu(){const p=S.p;const tr=(p.scenariu&&p.scenariu.trepte)||[];const out=[];const obs=obstacole();
- for(const t of tr){const {lum,tabs}=lumPentruCalc((k,inf)=>{const nv=nivelPas(t,k);const g=dimGen();return inf.dimabil?nv/100*g:(nv>0&&g>0?1:0);},0.4);
+ for(const t of tr){const {lum,tabs}=lumPentruCalc((k,inf)=>{const nv=nivelPas(t,k);const g=dimGen();return inf.dimabil?nv/100*g:(nv>0?g:0);},0.4);
   const zone=p.obiecte.filter(o=>o.calc&&o.pts).map(o=>({id:o.id,pts:new Float64Array(puncteZona(o,false,400).pts),z:o.tip==='camera'?0.75:0,add:o.tip==='camera'?indirectCamera(o,lum):0}));
   const r=await ruleaza('calc',{tabs,lum,obs,umbre:p.setari.umbre!==false,zone});out.push(r.zone);}
  return out;}
@@ -1588,7 +1590,8 @@ async function init3D(){if(T3.ok)return;if(T3.loading)return T3.loading;T3.loadi
  const comp=new ec.EffectComposer(R);comp.addPass(new rp.RenderPass(scene,cam));const bloom=new ub.UnrealBloomPass(new THREE.Vector2(512,512),0.6,0.45,0.85);comp.addPass(bloom);comp.addPass(new op.OutputPass());
  const hemi=new THREE.HemisphereLight(0xbfd8ff,0x5a5040,1.2);scene.add(hemi);const sun=new THREE.DirectionalLight(0xfff3e0,2.6);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.bias=-0.0004;scene.add(sun);scene.add(sun.target);
  const gS=new THREE.Group(),gL=new THREE.Group(),gC=new THREE.Group(),gSel=new THREE.Group();scene.add(gS,gL,gC,gSel);
- const pl=[],sp=[];for(let i=0;i<12;i++){const l=new THREE.SpotLight(0xffffff,0,0,Math.PI/2*0.97,0.6,2);scene.add(l);scene.add(l.target);pl.push(l);}for(let i=0;i<6;i++){const l=new THREE.SpotLight(0xffffff,0,0,0.5,0.5,2);scene.add(l);scene.add(l.target);sp.push(l);}
+ /* lumini reale pentru corpurile cele mai apropiate de cameră (fără umbre, rază scurtă, decay 2): 30 pe calculator, 12 pe telefon; restul doar din harta calculată */
+ const NLR=matchMedia('(pointer:coarse)').matches?12:30;const pl=[],sp=[];for(let i=0;i<NLR;i++){const l=new THREE.SpotLight(0xffffff,0,0,Math.PI/2*0.97,0.6,2);scene.add(l);scene.add(l.target);pl.push(l);}for(let i=0;i<6;i++){const l=new THREE.SpotLight(0xffffff,0,0,0.5,0.5,2);scene.add(l);scene.add(l.target);sp.push(l);}
  const tc=document.createElement('canvas');const tex=new THREE.CanvasTexture(tc);tex.colorSpace=THREE.SRGBColorSpace;tex.anisotropy=8;
  const gmat=new THREE.MeshStandardMaterial({map:tex,roughness:0.95});const gbas=new THREE.MeshBasicMaterial({map:tex,toneMapped:false});
  const ground=new THREE.Mesh(new THREE.PlaneGeometry(1,1),gmat);ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
@@ -1596,7 +1599,7 @@ async function init3D(){if(T3.ok)return;if(T3.loading)return T3.loading;T3.loadi
  R.domElement.addEventListener('webglcontextrestored',()=>{/* placa video a resetat contextul: refac scena */T3.murdar=true;try{actualizeazaSol3D();mod3D();}catch(e){}});R.domElement.addEventListener('webglcontextlost',()=>toast('Placa video a resetat 3D-ul — îl refac singur în câteva secunde.','',4000));
  leagaEvenimente3D();if(typeof navLeaga3D==='function')navLeaga3D(R.domElement,()=>{const c=navCtx();return c&&c.tip==='3d'&&!c.d?c:null;});rez3D();})();return T3.loading;}
 function rez3D(){if(!T3.ok)return;const r=$('#vedere').getBoundingClientRect();if(r.width<2||r.height<2)return;/* fereastră ascunsă: altfel camera ar primi NaN */T3.R.setSize(r.width,r.height);T3.comp.setSize(r.width,r.height);T3.cam.aspect=r.width/Math.max(1,r.height);if(r.width<820&&!$('#panou').classList.contains('ascuns'))T3.cam.setViewOffset(r.width,r.height,0,r.height*0.23,r.width,r.height);else T3.cam.clearViewOffset();T3.cam.updateProjectionMatrix();}
-function porneste3D(){if(!T3.ok||T3.run)return;T3.run=true;const loop=()=>{if(!T3.run)return;requestAnimationFrame(loop);if(document.hidden)return;if(T3.murdar){T3.murdar=false;construieste3D();}if(T3.walk&&T3.walk.on&&typeof plimbareCadru==='function')plimbareCadru();else{if(typeof navPas==='function')navPas('p');T3.ctl.update();}
+function porneste3D(){if(!T3.ok||T3.run)return;T3.run=true;const loop=()=>{if(!T3.run)return;requestAnimationFrame(loop);if(document.hidden)return;if(T3.murdar){T3.murdar=false;construieste3D();}if(T3.walk&&T3.walk.on&&typeof plimbareCadru==='function')plimbareCadru();else{if(typeof navPas==='function')navPas('p');T3.ctl.update();/* noaptea: luminile reale trec la corpurile din jurul camerei când te miști */if(S.mod==='noapte'&&T3.lrPoz&&T3.cam.position.distanceTo(T3.lrPoz)>1.5&&performance.now()-(T3.lrT||0)>400){T3.lrT=performance.now();mod3D();}}
  /* plafonul casei din DWG: ascuns la cerere și cât te plimbi înăuntru */
  if(T3.d3Plafon&&T3.d3Plafon.length){const v=!S.faraPlafon&&!(T3.walk&&T3.walk.on);if(T3.d3Plafon[0].visible!==v)T3.d3Plafon.forEach(m=>m.visible=v);}
  if(S.mod==='noapte')T3.comp.render();else T3.R.render(T3.scene,T3.cam);if(typeof cote3DCadru==='function')cote3DCadru();
@@ -1671,36 +1674,45 @@ function actualizeazaSol3D(){if(!T3.ok||!S.p||!T3.sb)return;const sb=T3.sb,W=sb[
  if(typeof desenPozeSol==='function')desenPozeSol(x,v,true);
  const r=S.rez;
  if(mod!=='zi'&&r&&r.ras&&r.grid){const g=r.grid;const a=w2(g.x0-g.dx/2,g.y0+(g.ny-0.5)*g.dy);
-  if(mod==='noapte'){const li=imgLumina();x.globalCompositeOperation='multiply';x.imageSmoothingEnabled=true;{const A=typeof D3NOAPTE!=='undefined'?D3NOAPTE.amb:[0.05,0.06,0.11];x.fillStyle='rgb('+Math.round(A[0]*255)+','+Math.round(A[1]*255)+','+Math.round(A[2]*255)+')';}
+  if(mod==='noapte'){const li=imgLumina();x.globalCompositeOperation='multiply';x.imageSmoothingEnabled=true;{const A=typeof D3NOAPTE!=='undefined'?D3NOAPTE.amb:[0.02,0.025,0.05];x.fillStyle='rgb('+Math.round(A[0]*255)+','+Math.round(A[1]*255)+','+Math.round(A[2]*255)+')';}
    x.save();x.beginPath();x.rect(0,0,cw,ch);x.rect(a[0],a[1],g.nx*g.dx*sc,g.ny*g.dy*sc);x.fill('evenodd');x.restore();x.drawImage(li,a[0],a[1],g.nx*g.dx*sc,g.ny*g.dy*sc);x.globalCompositeOperation='source-over';}
   else{x.fillStyle='rgba(220,220,220,.6)';x.fillRect(0,0,cw,ch);x.drawImage(imgRaster('false'),a[0],a[1],g.nx*g.dx*sc,g.ny*g.dy*sc);const iz=izolux();x.strokeStyle='rgba(0,0,0,.6)';x.lineWidth=1.5;
    for(const L of iz){x.beginPath();const s=L.seg;for(let i=0;i<s.length;i+=4){const p1=w2(s[i],s[i+1]),p2=w2(s[i+2],s[i+3]);x.moveTo(p1[0],p1[1]);x.lineTo(p2[0],p2[1]);}x.stroke();}}}
- else if(mod==='noapte'){x.globalCompositeOperation='multiply';{const A=typeof D3NOAPTE!=='undefined'?D3NOAPTE.amb:[0.05,0.06,0.11];x.fillStyle='rgb('+Math.round(A[0]*255)+','+Math.round(A[1]*255)+','+Math.round(A[2]*255)+')';}x.fillRect(0,0,cw,ch);x.globalCompositeOperation='source-over';}
+ else if(mod==='noapte'){x.globalCompositeOperation='multiply';{const A=typeof D3NOAPTE!=='undefined'?D3NOAPTE.amb:[0.02,0.025,0.05];x.fillStyle='rgb('+Math.round(A[0]*255)+','+Math.round(A[1]*255)+','+Math.round(A[2]*255)+')';}x.fillRect(0,0,cw,ch);x.globalCompositeOperation='source-over';}
  T3.tex.needsUpdate=true;if(typeof luminaPoze3D==='function')luminaPoze3D();}
 /* noaptea pe sol: lumina calculată ÎNMULȚEȘTE culoarea suprafeței (gazonul rămâne verde, granitul maro) — nu se adună alb.
-   Mapare logaritmică, absolută (în lx, nu relativă la proiect): 0,05 lx ≈ negru-albastru · 1 lx slab · 5 lx bine luminat · 20+ lx luminos, fără să ajungă alb.
+   Mapare logaritmică, absolută (în lx, nu relativă la proiect): sub 0,3 lx negru · 1 lx ≈ 5 % · 2 lx ≈ 10 % · 5 lx ≈ 30 % · 20 lx ≈ 60 % · max. 90 % (nu ajunge alb).
    S.expunere (glisorul 🌙) doar deplasează scara, pentru prezentare. */
-function lumNoapte(E){if(!(E>0))return 0;const t=clamp(Math.log10(E*(S.expunere||1)/0.03)/Math.log10(80/0.03),0,1);return 0.9*Math.pow(t,1.8);}
-function imgLumina(){const r=S.rez;r.img=r.img||{};const key='lum3|'+S.expunere;const A=(typeof D3NOAPTE!=='undefined'?D3NOAPTE.amb:[0.05,0.06,0.11]);if(r.img[key])return r.img[key];const g=r.grid;const c=document.createElement('canvas');c.width=g.nx;c.height=g.ny;const x=c.getContext('2d');const id=x.createImageData(g.nx,g.ny),d=id.data;
+/* puncte (lx → fracție din culoarea suprafeței), interpolate pe log(E): petele se disting, între ele e întuneric real */
+const LUMN=[[0.3,0],[1,0.05],[2,0.10],[5,0.30],[20,0.60],[80,0.80],[300,0.90]].map(([e,f])=>[Math.log10(e),f]);
+function lumNoapte(E){E*=(S.expunere||1);if(!(E>0))return 0;const L=Math.log10(E);if(L<=LUMN[0][0])return 0;for(let i=1;i<LUMN.length;i++){if(L<=LUMN[i][0]){const [a0,f0]=LUMN[i-1],[a1,f1]=LUMN[i];return f0+(f1-f0)*(L-a0)/(a1-a0);}}return LUMN[LUMN.length-1][1];}
+function imgLumina(){const r=S.rez;r.img=r.img||{};const key='lum3|'+S.expunere;const A=(typeof D3NOAPTE!=='undefined'?D3NOAPTE.amb:[0.02,0.025,0.05]);if(r.img[key])return r.img[key];const g=r.grid;const c=document.createElement('canvas');c.width=g.nx;c.height=g.ny;const x=c.getContext('2d');const id=x.createImageData(g.nx,g.ny),d=id.data;
  for(let iy=0;iy<g.ny;iy++)for(let ix=0;ix<g.nx;ix++){const q=iy*g.nx+ix,o=((g.ny-1-iy)*g.nx+ix)*4;const E=r.ras.E[q];if(E<0){d[o]=A[0]*255;d[o+1]=A[1]*255;d[o+2]=A[2]*255;d[o+3]=255;continue;}
   /* culoarea luminii (CCT) din componentele R G B, normalizată; intensitatea din E */
   const R=r.ras.R[q],G2=r.ras.G[q],B=r.ras.B[q],m=Math.max(R,G2,B)||1,f=lumNoapte(E);
   d[o]=clamp((A[0]+f*R/m)*255,0,255);d[o+1]=clamp((A[1]+f*G2/m)*255,0,255);d[o+2]=clamp((A[2]+f*B/m)*255,0,255);d[o+3]=255;}x.putImageData(id,0,0);r.img[key]=c;return c;}
 /* zi / noapte: lumini reale three.js pentru cele mai apropiate corpuri, bloom, con de lumină */
+/* noaptea în 3D: tonemapping-ul (ACES, în OutputPass) se aplică pe TOT cadrul, inclusiv pe harta de lumină de pe sol —
+   expunerea ~1 lasă harta (deja mapată logaritmic) aproape neschimbată; luminile three.js (în candele → lux) se înmulțesc cu LK3D,
+   ca ~20 lx pe o față verticală să arate ca 20 lx pe sol (~65 % din culoare). S.expunere = glisorul 🌙 (prezentare) — le mută pe toate. */
+const EXPN3D=()=>clamp(1.0*(S.expunere||1),0.05,4);const LK3D=0.094;
 function mod3D(){if(!T3.ok||!S.p)return;const TH=T3.THREE,noapte=S.mod==='noapte';const eref=expRef()/S.expunere;
  T3.scene.background=new TH.Color(noapte?D3NOAPTE.cer:S.mod==='false'?0xdfe4ea:0xb9d3ea);T3.scene.fog=noapte?new TH.FogExp2(D3NOAPTE.cer,0.0035):null;
  T3.ground.material=noapte?T3.gbas:T3.gmat;if(typeof d3TopsMod==='function')d3TopsMod();/* luna: soarele devine lumină slabă albăstruie (~0,1 lx echivalent față de expunere); bolta, cer de noapte */
- T3.sun.visible=true;T3.sun.color.set(noapte?D3NOAPTE.luna:0xfff3e0);/* luna: slabă — fațadele și gardurile nu trebuie să pară ziua; lumina vine de la corpuri */T3.sun.intensity=noapte?0.05*eref:2.6;T3.hemi.intensity=noapte?0.04*eref:S.mod==='false'?1.6:1.2;T3.hemi.color.set(noapte?0x5068a8:0xbfd8ff);T3.hemi.groundColor.set(noapte?0x14141c:0x5a5040);
- T3.R.toneMappingExposure=noapte?clamp(Math.PI/eref*0.8*(typeof D3NOAPTE!=='undefined'?D3NOAPTE.spor:1),0.02,40):1;T3.R.shadowMap.enabled=!noapte;
- const tgt=T3.ctl.target;const list=S.p.corpuri.map(k=>({k,inf:corpInfo(k)})).filter(o=>nivelEf(o.k,o.inf)>0&&!o.inf.liniar).sort((a,b)=>Math.hypot(a.k.x-tgt.x,a.k.y+tgt.z)-Math.hypot(b.k.x-tgt.x,b.k.y+tgt.z));
+ T3.sun.visible=true;T3.sun.color.set(noapte?D3NOAPTE.luna:0xfff3e0);/* luna: slabă — fațadele și gardurile nu trebuie să pară ziua; lumina vine de la corpuri */T3.sun.intensity=noapte?0.25*LK3D:2.6;T3.hemi.intensity=noapte?0.5*LK3D:S.mod==='false'?1.6:1.2;T3.hemi.color.set(noapte?0x5068a8:0xbfd8ff);T3.hemi.groundColor.set(noapte?0x14141c:0x5a5040);
+ /* noaptea: expunere fixă, în lux (nu relativă la proiect) — ~20 lx pe o față verticală ≈ 65 % din culoarea ei, ca pe sol; 🌙 o înmulțește (prezentare) */
+ T3.R.toneMappingExposure=noapte?EXPN3D():1;T3.R.shadowMap.enabled=!noapte;
+ /* cele mai apropiate de cameră, întâi cele din cadru */const cp=T3.cam.position;T3.cam.updateMatrixWorld();const fr=new TH.Frustum().setFromProjectionMatrix(new TH.Matrix4().multiplyMatrices(T3.cam.projectionMatrix,T3.cam.matrixWorldInverse));T3.lrPoz=cp.clone();
+ const list=S.p.corpuri.map(k=>({k,inf:corpInfo(k)})).filter(o=>nivelEf(o.k,o.inf)>0&&!o.inf.liniar).map(o=>{const p=X3(o.k.x,o.k.y,o.k.z,TH);o.sc=p.distanceTo(cp)+(fr.containsPoint(p)?0:1000);return o;}).sort((a,b)=>a.sc-b.sc);
  const spots=list.filter(o=>['spot','proiector','flood'].includes(o.inf.optica)||Math.abs(o.k.tilt||0)>45),pts=list.filter(o=>!spots.includes(o));const mf=S.p.setari.mf||0.8;
- T3.pl.forEach((l,i)=>{const o=pts[i];if(!noapte||!o){l.intensity=0;return;}const ef=o.inf.flux*nivelEf(o.k,o.inf)*mf;l.color.setRGB(...o.inf.rgb);l.intensity=ef/(2*Math.PI);const dir=dirAx(o.k,TH);l.position.copy(X3(o.k.x,o.k.y,o.k.z,TH)).addScaledVector(dir,0.05);l.target.position.copy(l.position).addScaledVector(dir,2);l.target.updateMatrixWorld();});
+ T3.pl.forEach((l,i)=>{const o=pts[i];if(!noapte||!o){l.intensity=0;return;}const ef=o.inf.flux*nivelEf(o.k,o.inf)*mf;l.color.setRGB(...o.inf.rgb);l.intensity=ef/(2*Math.PI);l.distance=clamp(Math.sqrt(l.intensity/0.3),2,14);/* rază scurtă: unde ar mai da sub ~0,3 lx */const dir=dirAx(o.k,TH);l.position.copy(X3(o.k.x,o.k.y,o.k.z,TH)).addScaledVector(dir,0.05);l.target.position.copy(l.position).addScaledVector(dir,2);l.target.updateMatrixWorld();});
  T3.sp.forEach((l,i)=>{const o=spots[i];if(!noapte||!o){l.intensity=0;return;}const ef=o.inf.flux*nivelEf(o.k,o.inf)*mf;const beta=(o.inf.unghi||30)*Math.PI/180;l.angle=Math.min(1.25,beta/2*1.6);l.penumbra=1;l.color.setRGB(...o.inf.rgb);
   /* intensitatea de vârf din fotometria corpului (cd / 1000 lm) × fluxul efectiv */
   const tb=typeof tabPentru==='function'?tabPentru(o.inf):null;l.intensity=ef*((tb&&tb.p.max)||ENG.approx('spot',o.inf.unghi||30).I[0][0])/1000;const pos=X3(o.k.x,o.k.y,o.k.z,TH);l.position.copy(pos);l.target.position.copy(pos.clone().addScaledVector(dirAx(o.k,TH),5));l.target.updateMatrixWorld();});
  /* banda LED: câteva lumini punctuale de-a lungul ei */
- const liniare=S.p.corpuri.filter(k=>k.pts&&corpInfo(k).nivel>0);let li=pts.length;for(const k of liniare){const inf=corpInfo(k);const n=Math.min(3,T3.pl.length-li);if(n<=0)break;const tot=inf.len;for(let j=0;j<n;j++){const s=tot*(j+0.5)/n;let acc=0;for(let i=1;i<k.pts.length;i++){const a=k.pts[i-1],b=k.pts[i],L=Math.hypot(b[0]-a[0],b[1]-a[1]);if(acc+L>=s){const t=(s-acc)/L;const l=T3.pl[li++];if(!noapte)break;l.color.setRGB(...inf.rgb);l.intensity=inf.flux*nivelEf(k,inf)*mf/n/(2*Math.PI);/* banda LED stă la 2–3 cm sub buza de corten: o limitez ca să nu „ardă” muchia (podeaua primește lumina din calcul) */l.intensity=Math.min(l.intensity,0.3*Math.max(2,6*eref)*0.25);l.position.copy(X3(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,k.z-0.03,TH));l.target.position.copy(l.position).add(new TH.Vector3(0,-2,0));l.target.updateMatrixWorld();break;}acc+=L;}}}
- if(noapte&&typeof d3LimitLumini==='function')d3LimitLumini(T3.pl.map((l,i)=>pts[i]?{l,k:pts[i].k,spot:false}:null).filter(Boolean).concat(T3.sp.map((l,i)=>spots[i]?{l,k:spots[i].k,spot:true}:null).filter(Boolean)),eref);
+ const liniare=S.p.corpuri.filter(k=>k.pts&&corpInfo(k).nivel>0);let li=pts.length;for(const k of liniare){const inf=corpInfo(k);const n=Math.min(3,T3.pl.length-li);if(n<=0)break;const tot=inf.len;for(let j=0;j<n;j++){const s=tot*(j+0.5)/n;let acc=0;for(let i=1;i<k.pts.length;i++){const a=k.pts[i-1],b=k.pts[i],L=Math.hypot(b[0]-a[0],b[1]-a[1]);if(acc+L>=s){const t=(s-acc)/L;const l=T3.pl[li++];if(!noapte)break;l.color.setRGB(...inf.rgb);l.intensity=inf.flux*nivelEf(k,inf)*mf/n/(2*Math.PI);/* banda LED stă la 2–3 cm sub buza de corten: o limitez ca să nu „ardă” muchia (podeaua primește lumina din calcul) */l.intensity=Math.min(l.intensity,0.3*150*0.25);l.position.copy(X3(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,k.z-0.03,TH));l.target.position.copy(l.position).add(new TH.Vector3(0,-2,0));l.target.updateMatrixWorld();break;}acc+=L;}}}
+ if(noapte&&typeof d3LimitLumini==='function')d3LimitLumini(T3.pl.map((l,i)=>pts[i]?{l,k:pts[i].k,spot:false}:null).filter(Boolean).concat(T3.sp.map((l,i)=>spots[i]?{l,k:spots[i].k,spot:true}:null).filter(Boolean)),25);
+ if(noapte){T3.pl.forEach(l=>{l.intensity*=LK3D;});T3.sp.forEach(l=>{l.intensity*=LK3D;});}/* plafon absolut ~150 lx pe fața cea mai apropiată (gard viu, zid): luminos, nu „ars” */
  T3.gL.children.forEach(g=>{const k=S.p.corpuri.find(x=>x.id===g.userData.cid);const em=g.userData.em;if(!k||!em)return;const inf=corpInfo(k);const lv=nivelEf(k,inf);em.emissiveIntensity=noapte?(1.0/Math.max(0.05,T3.R.toneMappingExposure))*lv:(S.mod==='zi'?0.15*lv:0.6*lv);});
  T3.gC.visible=noapte;T3.gC.children.forEach(c=>{const k=S.p.corpuri.find(x=>x.id===c.userData.cid);if(k)c.material.uniforms.op.value=0.06*nivelEf(k,corpInfo(k));});
  /* strălucirea corpurilor: mică și caldă, fără halouri mari */
@@ -3597,7 +3609,7 @@ function d3LimitLumini(perechi,eref){if(!perechi.length)return;const seg=[];
    for(const s of seg){const ex=s[2]-s[0],ey=s[3]-s[1],den=dx*ey-dy*ex;if(Math.abs(den)<1e-9)continue;const t=((s[0]-x)*ey-(s[1]-y)*ex)/den,u=((s[0]-x)*dy-(s[1]-y)*dx)/den;if(t<=0.02||u<0||u>1)continue;const zz=z+dz*t;if(zz<s[4]-0.02||zz>s[5]+0.02)continue;const dd=Math.max(0.2,t-s[6]);if(dd<dl)dl=dd;}
    if(isFinite(dl)){const Ee=0.5*l.intensity/(dl*dl),c2=1.5*Ecap;if(Ee>c2)l.intensity*=Math.max(0.35,c2/Ee);}}}}
 /* noaptea: cer albastru-închis, lumină de lună slabă, ușor albastră (siluetele casei, gardului viu, jardinierelor se văd) */
-const D3NOAPTE={cer:0x0b1630,amb:[0.05,0.06,0.11],/* lumina lunii pe sol: aproape negru-albastru */luna:0x9fb4ff,spor:2};/* spor: expunerea implicită a nopții în 3D, potrivită pentru prezentare (glisorul 🌙 o ajustează) */
+const D3NOAPTE={cer:0x0b1630,amb:[0.02,0.025,0.05],/* lumina lunii pe sol: doar pentru siluete */luna:0x9fb4ff,spor:2};/* spor: expunerea implicită a nopții în 3D, potrivită pentru prezentare (glisorul 🌙 o ajustează) */
 </script>
 <script>
 /* ===================== 📸 RANDARE HD (path tracing) =====================
@@ -3973,8 +3985,8 @@ function legaFotomontaje(el){const q=el.querySelector('#fm_nou');if(q)q.onclick=
 function materiale(){const m=new Map();for(const k of S.p.corpuri){const inf=corpInfo(k);const cod=inf.cod||inf.lib.denumire;let r=m.get(cod);
   if(!r){r={cod,denumire:(inf.lib.producator&&inf.lib.producator!=='generic'?inf.lib.producator+' ':'')+inf.denumire,um:inf.liniar?'m':'buc',cantitate:0,P:inf.liniar?((inf.lib.liniar&&inf.lib.liniar.wPerM)||inf.Pnom):inf.Pnom,aprox:inf.aprox,libCod:inf.lib.cod||'',codDeConfirmat:!!inf.lib.codDeConfirmat,libId:inf.lib.id};m.set(cod,r);}
   r.cantitate+=inf.liniar?inf.len:1;
-  const sursaInclusa=!!(inf.lib.dimabil||(inf.vv.alim&&inf.vv.alim.dim));if(inf.dimabil&&!sursaInclusa){const kk='SURSA|'+inf.dimTip+'|'+cod;let s=m.get(kk);
-   if(!s){s={cod:'SURSA-'+String(inf.dimTip).replace(/[^A-Za-z0-9]/g,'').toUpperCase(),denumire:'Sursă de alimentare dimabilă '+inf.dimTip+' pentru '+cod+(inf.liniar?' (bandă LED, '+fmt((inf.lib.liniar&&inf.lib.liniar.wPerM)||0,1)+' W/m)':''),um:'buc',cantitate:0,P:0,sursa:true};m.set(kk,s);}s.cantitate+=1;}}
+  const sursaInclusa=!!(inf.lib.dimabil||(inf.vv.alim&&inf.vv.alim.dim));const nec=!inf.dimabil&&inf.nivel>0&&dimGen()<1;/* dimare generală sub 100 %: și corpurile fără sursă dimabilă bifată au nevoie de una */if((inf.dimabil||nec)&&!sursaInclusa){const kk='SURSA|'+inf.dimTip+'|'+cod;let s=m.get(kk);
+   if(!s){s={cod:'SURSA-'+String(inf.dimTip).replace(/[^A-Za-z0-9]/g,'').toUpperCase(),denumire:'Sursă de alimentare dimabilă '+inf.dimTip+' pentru '+cod+(nec?' — sursă dimabilă necesară (dimare generală '+Math.round(dimGen()*100)+'%)':'')+(inf.liniar?' (bandă LED, '+fmt((inf.lib.liniar&&inf.lib.liniar.wPerM)||0,1)+' W/m)':''),um:'buc',cantitate:0,P:0,sursa:true};m.set(kk,s);}s.cantitate+=1;}}
  const E=S.p.electric;const ext=E&&E.materiale?E.materiale.map(r=>Object.assign({P:0},r)):[];
  /* plantele din DWG (gard viu): metri liniari, cu denumirea botanică */
  for(const o of S.p.obiecte){if(!o.planta||!o.pts)continue;let L=0;for(let i=1;i<o.pts.length;i++)L+=Math.hypot(o.pts[i][0]-o.pts[i-1][0],o.pts[i][1]-o.pts[i-1][1]);const kk='PLANTA|'+o.planta+'|'+(o.h||0)+'|'+(o.grosime||0);let r=m.get(kk);
@@ -4228,7 +4240,7 @@ function leagaRect3D(dom){if(dom.__msr)return;dom.__msr=true;let R=null;
 /* ===================== 🎚 DIMARE GENERALĂ =====================
    Un nivel peste toată instalația (S.p.setari.dimGen, %): nivelul efectiv = nivelul corpului × nivelul general (și peste treptele scenariului). */
 function dimGenEticheta(){const b=$('#btDimV');if(!b)return;const v=S.p?Math.round(dimGen()*100):100;b.textContent=v?v+'%':'Stins';const bt=$('#btDim');if(bt)bt.classList.toggle('primary',v<100);}
-function dimGenRezumat(){const p=S.p;if(!p)return '';const g=dimGen();let W=0,nd=0,n=0;for(const k of p.corpuri){const inf=corpInfo(k);if(!(inf.nivel>0))continue;n++;if(inf.dimabil)W+=inf.P*inf.nivel/100*g;else{nd++;if(g>0)W+=inf.P;}}
+function dimGenRezumat(){const p=S.p;if(!p)return '';const g=dimGen();let W=0,nd=0,n=0;for(const k of p.corpuri){const inf=corpInfo(k);if(!(inf.nivel>0))continue;n++;if(inf.dimabil)W+=inf.P*inf.nivel/100*g;else{nd++;W+=inf.P*g;}}
  const tr=(p.scenariu&&p.scenariu.trepte)||[];const kwh=tr.length?energie().tot:W*oreAnScenariu()/1000;
  const z=(S.rez&&S.rez.zone)||[];const zc=z.filter(x=>isFinite(x.Em));const Em=zc.length?zc.reduce((a,x)=>a+x.Em,0)/zc.length:null;
  return {W,kwh,Em,nd,n,scen:tr.length};}
@@ -4237,7 +4249,7 @@ function dimGenRand(){const el=$('#dimGenPop');if(!el||!S.p)return;const v=Math.
  const q=s=>el.querySelector(s);q('#dg_v').textContent=v?v+'%':'Stins';if(document.activeElement!==q('#dg_r'))q('#dg_r').value=v;
  el.querySelectorAll('[data-dg]').forEach(b=>b.classList.toggle('primary',+b.dataset.dg===v));
  const H1=`Em ${r.Em==null?'—':fmt(r.Em,1)+' lx'} <small class="muted">(media zonelor de calcul${S.rez&&!S.rez.fin?', se calculează…':''})</small><br>Consum ${fmt(r.W,0)} W · ≈ ${fmt(r.kwh,0)} kWh/an${r.scen?' <small class="muted">(după scenariu × '+v+'%)</small>':' <small class="muted">('+fmt(oreAnScenariu(),0)+' h/an)</small>'}`;if(q('#dg_rez').innerHTML!==H1)q('#dg_rez').innerHTML=H1;
- const H2=r.nd&&!S.ro?`<span>${r.nd} ${r.nd===1?'corp nu e dimabil — rămâne':'corpuri nu sunt dimabile — rămân'} la 100% (sau stinse la 0%).</span> <button class="btn sm" id="dg_fa">fă-le dimabile</button>`:'';if(q('#dg_nd').dataset.h===H2)return;q('#dg_nd').dataset.h=H2;q('#dg_nd').innerHTML=H2;
+ const H2=r.nd&&!S.ro?`<span>ℹ ${r.nd} ${r.nd===1?'corp nu are':'corpuri nu au'} sursă dimabilă bifată — ${r.nd===1?'se dimează':'se dimează'} și ${r.nd===1?'el':'ele'}; sursa dimabilă intră automat în materiale (${v<100?'acum: da':'doar sub 100%'}).</span> <button class="btn sm" id="dg_fa">fă-le dimabile</button>`:'';if(q('#dg_nd').dataset.h===H2)return;q('#dg_nd').dataset.h=H2;q('#dg_nd').innerHTML=H2;
  if(q('#dg_fa'))q('#dg_fa').onclick=()=>{let n=0;for(const k of S.p.corpuri){const inf=corpInfo(k);if(!inf.dimabil){k.dim={on:true,tip:inf.dimTip||'DALI'};n++;}}commit('fă dimabile '+n);cereCalcul(true);if(T3.ok)mod3D();deseneaza();randPanou();dimGenRand();toast('Am marcat '+n+' corpuri cu sursă dimabilă (DALI) — sursa intră separat în materiale.','ok');};}
 function dimGenDeschide(){let el=$('#dimGenPop');if(el){el.remove();clearInterval(dimGenDeschide.t);return;}if(!S.p)return;
  el=document.createElement('div');el.id='dimGenPop';el.className='box';const bt=$('#btDim').getBoundingClientRect();
