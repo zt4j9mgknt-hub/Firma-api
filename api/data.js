@@ -64,6 +64,8 @@ const CHEI_DOAR_MANAGER = new Set([
   'notite',          // notițele Managerului (în aplicație le vede doar el)
   'catalogProduse',  // catalogul de ofertare: prețurile de dealer ale furnizorilor (v04.31)
   'iluminatPreturi', // prețurile corpurilor din modulul de iluminat (v04.41) — doar Managerul
+  'contracte',       // contractele făcute de agent (v04.46)
+  'agentPropuneri',  // facturile/încasările pregătite de agent, în așteptarea confirmării
 ]);
 
 /* ===== PROIECTELE DE ILUMINAT (v04.41): fiecare om își vede proiectele LUI și pe cele date de

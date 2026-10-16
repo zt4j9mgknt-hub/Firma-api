@@ -12,6 +12,7 @@
 
 import crypto from 'crypto';
 import { lipsaSecret, utilizatorulAdevarat, raspunsContSters, egal } from '../lib/sesiune.js';
+import { mesajAgent, istoricAgent, decideAgent, contracteAgent, stergeContract } from '../lib/agent.js';
 
 // --- Token de sesiune (cod duplicat in fiecare fisier, intentionat) ---
 // Fara SESSION_SECRET ruta nu porneste (lipsaSecret) — nu mai exista text de rezerva in cod.
@@ -63,6 +64,24 @@ export default async function handler(req, res) {
   catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul: ' + ((e && e.message) || '') }); }
   if (!real) return raspunsContSters(res, auth);
   if (real.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul poate trimite facturi in SmartBill.' });
+
+  /* AGENTUL (lib/agent.js): acelasi lacat — doar Managerul. Nu are ruta lui fiindca /api e plin. */
+  const corp = req.body || {};
+  if (corp.agent) {
+    try {
+      if (corp.agent === 'mesaj') return res.status(200).json(await mesajAgent({ eu: real, text: corp.text, conversatieNoua: !!corp.nou }));
+      if (corp.agent === 'istoric') return res.status(200).json(await istoricAgent(real));
+      if (corp.agent === 'confirma' || corp.agent === 'respinge') {
+        return res.status(200).json({ propunere: await decideAgent({ eu: real, id: String(corp.id || ''), confirma: corp.agent === 'confirma' }) });
+      }
+      if (corp.agent === 'contracte') return res.status(200).json({ contracte: await contracteAgent() });
+      if (corp.agent === 'stergeContract') return res.status(200).json({ ok: await stergeContract(String(corp.id || '')) });
+      return res.status(400).json({ error: 'Cerere necunoscuta pentru agent.' });
+    } catch (e) {
+      const status = (e && e.status) || 500;
+      return res.status(status >= 400 && status < 600 ? status : 500).json({ error: (e && e.message) || 'Eroare la agent.', propunere: e && e.propunere });
+    }
+  }
 
   const email = process.env.SMARTBILL_EMAIL;
   const token = process.env.SMARTBILL_TOKEN;

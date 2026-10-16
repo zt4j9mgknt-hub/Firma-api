@@ -23295,6 +23295,155 @@ function ExtrasContabil({ santier, santiere, rapoarte, materials, company, deviz
                 setTab('santiere');
             } }, className: "w-full text-center text-[11px] font-semibold mt-3 px-3 py-2.5 rounded-lg", style: { color: 'var(--acc1)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, "\uD83C\uDFD7 Deschide \u0219antierul (rapoarte, echip\u0103, devize) \u2192")));
 }
+/* ===== AGENTUL SMARTBILL (v04.46) =====
+   Chat cu agentul (lib/agent.js prin /api/smartbill). Agentul citește singur stocul din Gestiunea
+   SmartBill, facturile, încasările și datele aplicației; facturile / proformele / încasările / anulările
+   le PREGĂTEȘTE, iar aici apar cu „Confirmă" și „Respinge". Nimic nu pleacă în SmartBill fără butonul ăsta.
+   Contractele le salvează ca ciornă — le vezi, le tipărești, le dai la semnat. Doar Managerul. */
+function AgentTab() {
+    const [afisare, setAfisare] = useState([]);
+    const [propuneri, setPropuneri] = useState([]);
+    const [contracte, setContracte] = useState([]);
+    const [text, setText] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [decid, setDecid] = useState(null);
+    const [err, setErr] = useState('');
+    const [vedere, setVedere] = useState('chat');
+    const [contractDeschis, setContractDeschis] = useState(null);
+    const [conversatieNoua, setConversatieNoua] = useState(false);
+    const capat = useRef(null);
+    const cere = async (corp, timeoutMs) => {
+        const r = await authFetch('/api/smartbill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, timeoutMs: timeoutMs || 30000, body: JSON.stringify(corp) });
+        let d = {};
+        try { d = await r.json(); } catch (_) { }
+        if (!r.ok) throw new Error((d && d.error) || ('Eroare ' + r.status));
+        return d;
+    };
+    const incarca = async () => {
+        try {
+            const [i, c] = await Promise.all([cere({ agent: 'istoric' }), cere({ agent: 'contracte' })]);
+            setAfisare(i.afisare || []);
+            setPropuneri(i.propuneri || []);
+            setContracte(c.contracte || []);
+        }
+        catch (e) { setErr(e.message || 'Nu am putut încărca agentul.'); }
+    };
+    useEffect(() => { incarca(); }, []);
+    useEffect(() => { try { capat.current && capat.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); } catch (_) { } }, [afisare.length, busy]);
+    const trimite = async (deTrimis) => {
+        const t = String(deTrimis == null ? text : deTrimis).trim();
+        if (!t || busy) return;
+        setErr('');
+        setText('');
+        setBusy(true);
+        setAfisare((a) => [...(conversatieNoua ? [] : a), { rol: 'eu', text: t }]);
+        try {
+            await cere({ agent: 'mesaj', text: t, nou: conversatieNoua }, 295000);
+            setConversatieNoua(false);
+        }
+        catch (e) {
+            setErr(e && e.name === 'AbortError' ? 'A durat prea mult. Încearcă o întrebare mai mică.' : (e.message || 'Eroare la agent.'));
+        }
+        await incarca();
+        setBusy(false);
+    };
+    const decide = async (p, confirma) => {
+        if (decid) return;
+        if (confirma && !window.confirm('Sigur? Se trimite acum în SmartBill:\n\n' + p.rezumat)) return;
+        setDecid(p.id);
+        setErr('');
+        try { await cere({ agent: confirma ? 'confirma' : 'respinge', id: p.id }, 60000); }
+        catch (e) { setErr(e.message || 'Nu s-a putut executa.'); }
+        await incarca();
+        setDecid(null);
+    };
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const tiparesteContract = (c) => {
+        const corp = String(c.text || '').split(/\r?\n/).map((r) => {
+            const h = r.match(/^(#{1,3})\s+(.*)$/);
+            const linie = esc(h ? h[2] : r).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+            if (h) return `<h${h[1].length}>${linie}</h${h[1].length}>`;
+            return linie.trim() ? `<p>${linie}</p>` : '';
+        }).join('\n');
+        const w = window.open('', '_blank');
+        if (!w) { setErr('Browserul a blocat fereastra de tipărire. Permite ferestrele noi pentru aplicație.'); return; }
+        w.document.write(`<!doctype html><html lang="ro"><head><meta charset="utf-8"><title>${esc(c.titlu)}</title>` +
+            '<style>body{font-family:Georgia,serif;max-width:780px;margin:32px auto;padding:0 24px;line-height:1.55;color:#111;font-size:14px}' +
+            'h1{font-size:20px;text-align:center}h2{font-size:16px;margin-top:22px}h3{font-size:14px}p{margin:6px 0;text-align:justify}' +
+            '@media print{body{margin:0 auto}}</style></head><body>' + corp + '</body></html>');
+        w.document.close();
+        setTimeout(() => { try { w.focus(); w.print(); } catch (_) { } }, 300);
+    };
+    const stergeC = async (c) => {
+        if (!window.confirm('Ștergi contractul „' + c.titlu + '"?')) return;
+        try { await cere({ agent: 'stergeContract', id: c.id }); setContractDeschis(null); }
+        catch (e) { setErr(e.message); }
+        incarca();
+    };
+    const SUGESTII = [
+        'Ce produse am sub 5 bucăți în stocul din SmartBill?',
+        'Cine nu mi-a plătit facturile și de câte zile?',
+        'Fă-mi raportul pe luna trecută: facturat, încasat, cheltuieli.',
+        'Compară stocul din SmartBill cu gestiunea din aplicație.',
+        'Fă un contract de execuție lucrări pentru ultimul deviz.',
+    ];
+    const buton = (eticheta, onClick, culoare, dezactivat) => React.createElement("button", { onClick, disabled: !!dezactivat, className: "text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50", style: { color: culoare ? '#14181C' : 'var(--muted)', background: culoare || 'var(--panel2)', border: culoare ? 'none' : '1px solid var(--border)' } }, eticheta);
+    const bula = (m, i) => {
+        const eu = m.rol === 'eu';
+        const sistem = m.rol === 'sistem';
+        return React.createElement("div", { key: i, className: "flex " + (eu ? 'justify-end' : 'justify-start') },
+            React.createElement("div", { className: "rounded-xl px-3 py-2 text-sm max-w-[88%]", style: { whiteSpace: 'pre-wrap', lineHeight: 1.55, color: sistem ? 'var(--muted)' : 'var(--text)', background: eu ? '#5B9BD522' : (sistem ? 'transparent' : 'var(--panel)'), border: '1px solid ' + (eu ? '#5B9BD555' : 'var(--border)'), fontSize: sistem ? 12 : undefined } },
+                sistem ? '⚙ ' + m.text : String(m.text || '').replace(/\*\*(.+?)\*\*/g, '$1'),
+                m.pasi && m.pasi.length > 0 && React.createElement("div", { className: "text-[10px] mt-1.5", style: { color: 'var(--muted2)' } }, 'Am folosit: ' + [...new Set(m.pasi)].join(', '))));
+    };
+    const cardPropunere = (p) => React.createElement("div", { key: p.id, className: "rounded-xl p-3", style: { background: '#F2B13314', border: '1px solid #F2B13366' } },
+        React.createElement("div", { className: "text-[10px] uppercase tracking-wide mb-1", style: { color: '#F2B133' } }, '⏳ Așteaptă confirmarea ta · ' + p.tip),
+        React.createElement("div", { className: "text-sm font-semibold mb-2", style: { color: 'var(--text)' } }, p.rezumat),
+        p.date && Array.isArray(p.date.produse) && p.date.produse.length > 0 && React.createElement("div", { className: "text-xs mb-2 space-y-0.5", style: { color: 'var(--muted)' } },
+            p.date.produse.map((x, j) => React.createElement("div", { key: j, className: "flex justify-between gap-2" },
+                React.createElement("span", { className: "min-w-0" }, x.denumire + (x.serviciu ? ' (serviciu)' : '')),
+                React.createElement("span", { className: "shrink-0", style: { fontFamily: "'JetBrains Mono', monospace" } }, `${x.cantitate} ${x.um} × ${Number(x.pret).toFixed(2)} · TVA ${x.cotaTva}%`)))),
+        React.createElement("div", { className: "flex gap-2" },
+            buton(decid === p.id ? 'Se trimite…' : '✅ Confirmă', () => decide(p, true), '#4CAF7D', !!decid),
+            buton('Respinge', () => decide(p, false), null, !!decid)));
+    const titlu = React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1 flex-wrap" },
+        React.createElement("h2", { className: "titluPagina text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "🤖 Agent SmartBill"),
+        React.createElement("div", { className: "flex gap-1" },
+            buton('💬 Discuție', () => setVedere('chat'), vedere === 'chat' ? 'var(--acc1)' : null),
+            buton(`📄 Contracte (${contracte.length})`, () => setVedere('contracte'), vedere === 'contracte' ? 'var(--acc1)' : null)));
+    const eroare = err && React.createElement("div", { className: "rounded-lg px-3 py-2 mb-3 text-xs", style: { background: '#E0525214', border: '1px solid #E0525266', color: 'var(--acc4)' } }, err);
+    if (vedere === 'contracte') {
+        const c = contractDeschis && contracte.find((x) => x.id === contractDeschis);
+        return React.createElement("div", null, titlu, eroare,
+            c ? React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" },
+                    buton('← Înapoi', () => setContractDeschis(null)),
+                    buton('🖨 Tipărește / PDF', () => tiparesteContract(c), 'var(--acc1)'),
+                    buton('✏ Cere modificări', () => { setVedere('chat'); setText(`Modifică contractul „${c.titlu}" (id ${c.id}): `); }),
+                    buton('🗑 Șterge', () => stergeC(c))),
+                React.createElement("div", { className: "text-sm", style: { whiteSpace: 'pre-wrap', color: 'var(--text)', lineHeight: 1.6 } }, String(c.text || '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/^#+\s*/gm, '')))
+                : React.createElement("div", { className: "space-y-2" },
+                    contracte.length === 0 && React.createElement("p", { className: "text-sm", style: { color: 'var(--muted)' } }, 'Nu ai încă niciun contract. Cere-i agentului: „Fă un contract de execuție pentru clientul X, după devizul Y".'),
+                    contracte.map((x) => React.createElement("button", { key: x.id, onClick: () => setContractDeschis(x.id), className: "w-full text-left rounded-xl px-3 py-2.5", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                        React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, x.titlu),
+                        React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, [x.client && x.client.nume, x.data, x.valoareFaraTva != null ? Number(x.valoareFaraTva).toLocaleString('ro-RO') + ' lei + TVA' : '', 'v' + (x.versiune || 1)].filter(Boolean).join(' · '))))));
+    }
+    return React.createElement("div", null, titlu,
+        React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, 'Îi scrii ce ai de făcut. Se uită singur în SmartBill (stocuri, facturi, încasări) și în aplicație. Facturile, proformele și încasările le pregătește — pleacă în SmartBill doar când apeși „Confirmă".'),
+        eroare,
+        propuneri.length > 0 && React.createElement("div", { className: "space-y-2 mb-3" }, propuneri.map(cardPropunere)),
+        React.createElement("div", { className: "space-y-2 mb-3" },
+            afisare.length === 0 && !busy && React.createElement("div", { className: "flex flex-wrap gap-1.5" }, SUGESTII.map((s) => React.createElement("button", { key: s, onClick: () => trimite(s), className: "text-xs px-2.5 py-1.5 rounded-lg text-left", style: { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, s))),
+            afisare.map(bula),
+            busy && React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, '⏳ Agentul lucrează (caută în SmartBill și în aplicație)… poate dura un minut.'),
+            React.createElement("div", { ref: capat })),
+        React.createElement("div", { className: "rounded-xl p-2 flex gap-2 items-end", style: { background: 'var(--panel)', border: '1px solid var(--border)', position: 'sticky', bottom: 8 } },
+            React.createElement("textarea", { value: text, onChange: (e) => setText(e.target.value), rows: 2, placeholder: 'Ex.: Fă factură lui Ionescu SRL pentru devizul 14, cu materialele scoase din stoc', className: "flex-1 bg-transparent outline-none text-sm resize-none", style: { color: 'var(--text)' },
+                onKeyDown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); trimite(); } } }),
+            React.createElement("div", { className: "flex flex-col gap-1" },
+                buton(busy ? '…' : 'Trimite', () => trimite(), 'var(--acc1)', busy || !text.trim()),
+                buton(conversatieNoua ? 'Nouă ✓' : 'Nouă', () => { setConversatieNoua(true); setAfisare([]); }, null, busy))));
+}
 function ConsilierTab({ company, santiere, rapoarte, devize, invoices, offers, materials, achizitii, concedii, pozitiiSantier, materialeListaSantier, setTab }) {
     const [luni, setLuni] = useState(1);
     const [parere, setParere] = useState('');
@@ -34197,6 +34346,7 @@ function App() {
         { id: 'santiere', label: '🏗 Șantiere', grup: '', sin: 'lucrari puncte de lucru rapoarte proces verbal timpi morti' },
         ...(eManagerMeniu ? [{ id: 'instiintari', label: '🔔 Înștiințări', grup: '', sin: 'anunturi alerte notificari' }] : []),
         ...(eManagerMeniu ? [{ id: 'consilier', label: '🧭 Consilier', grup: '', sin: 'sfaturi analiza recomandari' }] : []),
+        ...(eManagerMeniu ? [{ id: 'agent', label: '🤖 Agent SmartBill', grup: '', sin: 'smartbill factura stoc gestiune intrari iesiri incasare contract raport ai' }] : []),
     ];
     const RANDURI_MENIU = GRUPE_MENIU.flatMap(([, , etichetaGrup, , doarMgr, copii]) => (doarMgr && !eManagerMeniu) ? [] :
         copii.filter(([, , numaiMgr]) => vedeRandMeniu(numaiMgr))
@@ -34474,6 +34624,7 @@ function App() {
                             (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab, achizitii: achizitii, setAchizitii: setAchizitii, onReceptie: receptioneazaAchizitie }),
                             tab === 'santiere' && React.createElement(SantiereTab, { offers: offers, invoices: invoices, stockMoves: stockMoves, inapoiGlobal: mergiInapoi, inainteGlobal: mergiInainte, inapoiLaListaSantiere: pozitie > 0 && !!istoric[pozitie - 1] && istoric[pozitie - 1].tab === 'santiere' && !istoric[pozitie - 1].sant, potInapoiGlobal: potInapoiOriunde, potInainteGlobal: potInainteOriunde, onOrigine: (o) => { setDashCmd({ pagina: o && o.pagina != null ? o.pagina : null, cheie: Date.now() + Math.random() }); sarPeste.current = true; setTab(o && o.tab !== undefined ? o.tab : null); }, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                             tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
+                            tab === 'agent' && effectiveUser.rol === 'Manager' && React.createElement(AgentTab, null),
                             tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
                             tab === 'fisaom' && effectiveUser.rol === 'Manager' && React.createElement(FisaOmTab, { allUsers: totiOamenii, rapoarte: rapoarte, santiere: santiere, concedii: concedii, cereriSantier: cereriSantier, restanteSantier: restanteSantier, company: company, currentUser: effectiveUser, pontajCorectii: pontajCorectii, salarii: salarii, setSalarii: setSalarii, persist: persist,
                                 onAdeverinta: (u) => { setPendingAdeverinta({ userId: u.id, nume: u.nume }); setTab('adeverinte'); },
