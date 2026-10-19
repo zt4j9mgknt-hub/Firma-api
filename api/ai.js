@@ -216,7 +216,83 @@ function trimiteLista(res, raspuns, model, finish) {
   }
 }
 
-async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandire, fisier }) {
+/* ═══ BRONTES (v04.48): electricianul-șef, întrebat din aplicație de toată echipa ═══
+   Limită de întrebări pe om și pe zi (cota Google e a firmei): implicit 30, Managerul o schimbă
+   în aplicație (cheia „brontesSetari"); Managerul nu are limită. Poze: doar JPG / PNG / WEBP. */
+const BRONTES_LIMITA_IMPLICITA = 30;
+const TIPURI_POZA_BRONTES = ['image/jpeg', 'image/png', 'image/webp'];
+const SISTEM_BRONTES =
+  'Ești Brontes, electricianul-șef și inginerul de automatizări al SMART ELECTROCONECT SRL (Florești, Cluj; atestat ANRE tip B). ' +
+  'Răspunzi colegilor din firmă (electricieni pe șantier și managerul) în limba română, cu diacritice, practic și la obiect.\n' +
+  'Domenii: instalații de joasă tensiune (I7/2011, SR HD 60364, NTE, PE 116, NP 061); dimensionarea cablurilor (curent admisibil, ' +
+  'cădere de tensiune, mod de pozare, factori de corecție); protecții (MCB curbe B/C/D, RCD/RCBO tip AC/A/F/B, selectivitate, SPD tip 1/2/3); ' +
+  'bilanț de puteri și simultaneitate; împământare și paratrăsnet; tablouri (schemă monofilară, echipare Hager/Schneider/ABB/Eaton, SR EN 61439, ' +
+  'încălzire internă, etichetare); PLC (Siemens LOGO! și S7-1200, ladder/FBD/ST, Modbus) și scheme de comandă (stea-triunghi, VFD, pompe, ' +
+  'ventilație, porți, iluminat temporizat); smart home (KNX/ETS, Loxone, Shelly, Zigbee, Home Assistant); fotovoltaic și stocare; ' +
+  'încărcătoare EV; depanare (declanșări, scurgeri la pământ, căderi de tensiune); măsurători PRAM.\n' +
+  'CUM RĂSPUNZI:\n' +
+  '1. Întâi răspunsul practic: valoarea, schema sau pașii. Apoi calculul: formula, ipotezele și cifrele.\n' +
+  '2. Când citezi un normativ sau un articol, scrii „(din memorie)": nu ai textul la zi; când contează, spui să fie verificat în ediția în vigoare.\n' +
+  '3. Dacă lipsesc date, spui ce îți trebuie și propui valori tipice, marcate „ipoteză".\n' +
+  '4. Codul PLC (ST, AWL), listele de adrese KNX și configurațiile le pui în blocuri de cod cu trei apostrofuri inverse. Tabele markdown simple sunt permise. Fără HTML.\n' +
+  '5. La o poză (tablou, etichete, schemă): spui ce se vede, ce pare greșit sau periculos și ce trebuie verificat pe loc. Nu inventezi ce nu se vede.\n' +
+  'SIGURANȚA E PE PRIMUL LOC, mereu:\n' +
+  '- Orice intervenție se face numai fără tensiune: separare, blocare și etichetare, verificarea lipsei tensiunii cu aparatul, punere la pământ unde e cazul; echipamentul de protecție e obligatoriu.\n' +
+  '- Lucrările în tablouri, la branșamente și în instalații se fac doar de personal autorizat ANRE, cu gradul potrivit. Nu dai instrucțiuni de lucru sub tensiune ' +
+  'și nu explici cum se ocolesc protecțiile (șuntarea diferențialului, siguranță mai mare decât permite cablul, scoaterea împământării); dacă ți se cere, refuzi și explici riscul.\n' +
+  '- Dacă întrebarea descrie un pericol imediat (miros de ars, cablu încins, scântei, apă în tablou, om electrocutat), începi cu: oprește, deconectează în siguranță de la ' +
+  'protecția din amonte, nu atinge victima cât e sub tensiune, sună la 112.\n' +
+  '- Dimensionările finale, tablourile noi și buletinele PRAM se verifică și se semnează de electricianul autorizat responsabil; amintești asta când e cazul.\n' +
+  'Nu ai acces la datele firmei (prețuri, clienți, facturi) și nu le inventezi.';
+/* Câte întrebări mai are omul azi. Contorul stă în Redis pe zi (ora României) și expiră singur.
+   Dacă baza nu răspunde, nu oprim omul (ramase: null). */
+async function pazaBrontes(sesiune, rol) {
+  const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!base || !token) return { ramase: null };
+  const cmd = async (c) => {
+    const r = await fetch(base, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(c) });
+    const d = await r.json();
+    if (d && d.error) throw new Error('Redis: ' + d.error);
+    return d.result;
+  };
+  try {
+    let limita = BRONTES_LIMITA_IMPLICITA;
+    try {
+      const brut = await cmd(['GET', 'firma:brontesSetari']);
+      const o = brut ? JSON.parse(brut) : null;
+      if (o && o.limitaZi != null && isFinite(Number(o.limitaZi)) && Number(o.limitaZi) >= 0) limita = Math.min(500, Math.floor(Number(o.limitaZi)));
+    } catch (_) {}
+    if (rol === 'Manager') return { ramase: null, limita };
+    const zi = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Bucharest' });
+    const cine = String(sesiune.userId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'anonim';
+    const k = 'brontes:zi:' + zi + ':' + cine;
+    const n = Number(await cmd(['INCR', k]));
+    if (n === 1) await cmd(['EXPIRE', k, 172800]);
+    if (n > limita) {
+      return { cod: 429, eroare: limita === 0
+        ? 'Brontes e oprit pentru conturile echipei. Întreabă-l pe Sebastian.'
+        : 'Ai folosit toate cele ' + limita + ' întrebări de azi pentru Brontes. Mâine se reia; dacă e urgent, sună-l pe Sebastian.' };
+    }
+    return { ramase: limita - n, limita };
+  } catch (_) { return { ramase: null }; }
+}
+/* Istoricul conversației → rânduri alternante user / model, începând cu user (cum cere Gemini). */
+function istoricGemini(lista) {
+  const out = [];
+  for (const m of (Array.isArray(lista) ? lista : []).slice(-12)) {
+    const text = String((m && m.text) || '').slice(0, 4000).trim();
+    if (!text) continue;
+    const role = m && m.rol === 'brontes' ? 'model' : 'user';
+    if (!out.length && role === 'model') continue;
+    if (out.length && out[out.length - 1].role === role) out[out.length - 1].text += '\n\n' + text;
+    else out.push({ role, text });
+  }
+  if (out.length && out[out.length - 1].role === 'user') out.pop();
+  return out;
+}
+
+async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandire, fisier, istoric }) {
   const baza = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent';
   const url = inAdresa ? (baza + '?key=' + encodeURIComponent(key)) : baza;
   const generationConfig = {
@@ -241,7 +317,7 @@ async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandir
     body: JSON.stringify({
       system_instruction: { parts: [{ text: sistem }] },
       /* Cu fișier: documentul merge ca inline_data înaintea textului. */
-      contents: [{ role: 'user', parts: fisier
+      contents: [...(Array.isArray(istoric) ? istoric.map((m) => ({ role: m.role, parts: [{ text: m.text }] })) : []), { role: 'user', parts: fisier
         ? [{ inline_data: { mime_type: fisier.mime, data: fisier.base64 } }, { text }]
         : [{ text }] }],
       generationConfig,
@@ -317,6 +393,24 @@ export default async function handler(req, res) {
       }
       fisier = { mime, base64: b64 };
     }
+    /* Brontes: oricine din firmă, cu limită pe zi; poză opțională (tablou, etichetă, schemă). */
+    const eBrontes = body.actiune === 'brontes';
+    let istoricBrontes = null, extraBrontes = {};
+    if (eBrontes) {
+      const f = body.fisier || null;
+      if (f && f.base64) {
+        const mime = String(f.mime || '').toLowerCase().trim();
+        const b64 = String(f.base64 || '').replace(/^data:[^,]*,/, '');
+        if (!TIPURI_POZA_BRONTES.includes(mime)) return res.status(400).json({ error: 'Brontes primește doar poze (JPG, PNG, WEBP).' });
+        if (b64.length > LIMITA_FISIER_B64) return res.status(413).json({ error: 'Poza e prea mare (maxim 3,5 MB). Fă una mai mică.', preaMare: true });
+        fisier = { mime, base64: b64 };
+      }
+      if (!String(body.intrebare || '').trim()) return res.status(400).json({ error: 'Scrie întrebarea.' });
+      const paza = await pazaBrontes(sesiune, rolReal);
+      if (paza.eroare) return res.status(paza.cod || 429).json({ error: paza.eroare, limita: true });
+      extraBrontes = { ramase: paza.ramase, limita: paza.limita == null ? null : paza.limita };
+      istoricBrontes = istoricGemini(body.istoric);
+    }
     const intrebare = eAnaliza
       ? instructiuneAnaliza + '\n\nRăspunde doar cu JSON valid, în structura cerută.'
       : eSimboluri
@@ -327,8 +421,8 @@ export default async function handler(req, res) {
       : extrage
       ? ('Extrage lista de materiale și lucrări electrice din documentul atașat' + (body.nume ? (' („' + String(body.nume).slice(0, 120) + '")') : '') + '. Răspunde doar cu JSON-ul cerut.')
       : String(body.intrebare || '').slice(0, 8000).trim();
-    const context = (!extrage && Array.isArray(body.context)) ? body.context.slice(0, 20).map((x) => String(x).slice(0, 1500)) : [];
-    const json = extrage || body.json === true;
+    const context = (!extrage && !eBrontes && Array.isArray(body.context)) ? body.context.slice(0, 20).map((x) => String(x).slice(0, 1500)) : [];
+    const json = extrage || (!eBrontes && body.json === true);
     if (!intrebare) return res.status(400).json({ error: 'Fără întrebare.' });
 
     // Regulile de exprimare, aceleași peste tot: textul care iese din aplicație ajunge la
@@ -348,7 +442,9 @@ export default async function handler(req, res) {
       '5. Fără exagerări și fără date inventate. Cifrele, denumirile și cantitățile rămân exact cele primite; ' +
       'doar formularea se schimbă. Ce nu s-a spus nu se completează.';
 
-    const sistem = eAnaliza
+    const sistem = eBrontes
+      ? SISTEM_BRONTES + '\nCine întreabă acum: ' + (rolReal === 'Manager' ? 'managerul firmei (Sebastian).' : 'un electrician din echipa firmei.') + (fisier ? ' A atașat o poză.' : '')
+      : eAnaliza
       ? 'Ești inginer proiectant de instalații electrice și arhitect în România. Citești cu atenție imaginea primită (plan de arhitectură, schiță, poză de tablou electric sau de cameră) și răspunzi DOAR cu JSON valid, exact în structura cerută. Nu inventa ce nu se vede; ce e nesigur marchezi cu încredere mică sau în observații. Textele în română, cu diacritice.'
       : eSimboluri ? SISTEM_SIMBOLURI : eFactura ? SISTEM_FACTURA : extrage ? SISTEM_EXTRAGERE : json
       ? 'Ești redactorul tehnic al unei firme de instalații electrice din România. Răspunzi DOAR cu JSON valid, ' +
@@ -376,15 +472,15 @@ export default async function handler(req, res) {
     let ultimaEroare = 'AI a răspuns cu eroare.';
     let supraincarcat = false, eraSupraincarcat = false;
     for (const model of deIncercat) {
-      let { r, d } = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: false });
+      let { r, d } = await cereGemini({ key, model, sistem, text, json, fisier, istoric: istoricBrontes, inAdresa: false });
       // Vreun model mai vechi care nu știe de „thinkingConfig"? Reîncercăm fără el.
       if (!r.ok && r.status === 400 && /thinking/i.test((d && d.error && d.error.message) || '')) {
-        const dinNou = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: false, faraGandire: true });
+        const dinNou = await cereGemini({ key, model, sistem, text, json, fisier, istoric: istoricBrontes, inAdresa: false, faraGandire: true });
         r = dinNou.r; d = dinNou.d;
       }
       // Cheie refuzată în antet? Mai încercăm o dată cu ea pusă în adresă (formatul vechi).
       if (!r.ok && (r.status === 401 || r.status === 403)) {
-        const dinNou = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: true });
+        const dinNou = await cereGemini({ key, model, sistem, text, json, fisier, istoric: istoricBrontes, inAdresa: true });
         r = dinNou.r; d = dinNou.d;
       }
       if (r.ok) {
@@ -413,7 +509,7 @@ export default async function handler(req, res) {
         }
         if (eSimboluri) return trimiteSimboluri(res, raspuns, model, finish, articoleSimb.map((a) => a.id));
         if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
-        return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS' });
+        return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', ...extraBrontes });
       }
       const msg = (d && d.error && d.error.message) ? d.error.message : '';
       const stare = (d && d.error && d.error.status) ? d.error.status : '';
@@ -452,7 +548,7 @@ export default async function handler(req, res) {
     if (eraSupraincarcat) {
       await new Promise((r2) => setTimeout(r2, 1500));
       for (const model of deIncercat.slice(0, 2)) {
-        const { r, d } = await cereGemini({ key, model, sistem, text, json, fisier, inAdresa: false });
+        const { r, d } = await cereGemini({ key, model, sistem, text, json, fisier, istoric: istoricBrontes, inAdresa: false });
         if (r.ok) {
           let raspuns = '';
           try {
@@ -469,7 +565,7 @@ export default async function handler(req, res) {
         }
         if (eSimboluri) return trimiteSimboluri(res, raspuns, model, finish, articoleSimb.map((a) => a.id));
         if (extrage) return eFactura ? trimiteFactura(res, raspuns, model, finish) : trimiteLista(res, raspuns, model, finish);
-            return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', dupaAsteptare: true });
+            return res.status(200).json({ raspuns, model, finishReason: finish, taiat: finish === 'MAX_TOKENS', dupaAsteptare: true, ...extraBrontes });
           }
         }
       }

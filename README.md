@@ -40,3 +40,7 @@ await window.olimpImportaPlan([{ cod: 'D1', titlu: '...', problema: '...', solut
 ```
 
 Dacă funcțiile lipsesc (`typeof window.olimpSalveazaRaport !== 'function'`), tab-ul nu e logat ca Manager sau sesiunea a expirat: zeul se oprește și raportează lui Zeus. Un punct aprobat (DA) devine treabă doar în limitele sigure ale zeului; orice e ireversibil (trimiteri, facturi, plăți, ștergeri) cere în continuare confirmarea explicită în chat.
+
+## Brontes – electricianul-șef
+
+Meniu → Unelte → **🔌 Întreabă-l pe Brontes** (toată echipa; și din ⚡ Olimp). Merge prin ruta existentă `/api/ai` cu `actiune: 'brontes'` (Gemini): istoricul ultimelor mesaje, poză opțională (JPG/PNG/WEBP, micșorată pe telefon), răspuns în markdown desenat fără HTML (codul PLC în blocuri). Limita de întrebări pe om și pe zi stă în `brontesSetari.limitaZi` (implicit 30; Managerul o schimbă din ecran și nu are limită); contorul e în Redis pe zi. Conversația stă pe telefon; „Salvează” o pune în `brontesConv-<id>`, pe care o citește și o scrie doar proprietarul.

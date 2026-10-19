@@ -3123,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.48-olimp-intrebari';
+const APP_VERSION = 'v04.49-brontes';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -11383,387 +11383,526 @@ function printDocumentSemnat(doc) {
     if (!w) { window.alert('Browserul a blocat fereastra nouă. Permite pop-up-urile și încearcă din nou.'); return; }
     w.document.open(); w.document.write(html); w.document.close(); w.focus();
 }
-/* ═══ OLIMP (v04.47): Sebastian vede și cârmuiește „zeii" (agenții AI) din aplicație ═══
-   - olimpPlan: punctele planului de implementare (D/E/A/M/T/Z/Z-C), cu decizia DA / NU / MOD,
-     data, ora și cine a decis (plus istoricul deciziilor).
-   - olimpRapoarte-AAAA-LL: lista rapoartelor zilnice ale zeilor pe o lună (fără text);
-     olimpRaport-<id>: textul unui raport. Totul doar pentru Manager (și pe server).
-   - Rulările automate (care lucrează în tab-ul logat) scriu prin window.olimpSalveazaRaport(...)
-     și citesc deciziile prin window.olimpCitestePlan(...) — vezi README, „Olimp – integrare zei".
-   Textul vine de la AI: NU se pune niciodată ca HTML; React îl escapează, markdown-ul e desenat de mână. */
-const OLIMP_ZEI = { zeus: '⚡', plutos: '💰', themis: '⚖️', hefaistos: '🔨', hestia: '🏠', athena: '🦉', hermes: '📨', kronos: '⏳',
-    artemis: '🏹', argus: '👁', tyche: '🍀', metis: '🧠', dike: '⚖️', eunomia: '📜', astreea: '🧮', iris: '🌈', peitho: '💬', hebe: '🌱',
-    asklepios: '⚕️', dionysos: '🍇', afrodita: '🌹', atlas: '🗺', apollo: '☀️', hera: '👑', prometheus: '🔥', angelia: '📣', nike: '🏆', sfatul: '🏛' };
-const olimpSlug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-function olimpEmoji(zeu, emoji) {
-    if (emoji)
-        return Array.from(String(emoji)).slice(0, 3).join('');
-    return OLIMP_ZEI[olimpSlug(zeu).split('-')[0]] || '🏛';
-}
-const olimpGrupa = (cod) => /^Z-C/i.test(String(cod || '')) ? 'Z-C' : String(cod || '').replace(/\d.*$/, '');
-const OLIMP_GRUPE = [['D', '⚖️ Juridic'], ['E', '📜 Conformitate'], ['A', '🧮 Contabilitate'], ['M', '🧠 Economic'], ['T', '🍀 Creștere'], ['Z', '⚡ Zeii la lucru'], ['Z-C', '👁 Controlul calității']];
-/* termenul scris liber („13.11 / 04.12", „S1–S4", „noiembrie", „imediat") → un număr pentru sortare */
-const OLIMP_REPER = new Date(2026, 9, 19).getTime();
-const OLIMP_LUNI = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'];
-function olimpTermenCheie(t) {
-    const s = String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-    if (!s.trim())
-        return Infinity;
-    if (/imediat|\bacum\b|\bazi\b/.test(s))
-        return 0;
-    const an0 = new Date(OLIMP_REPER).getFullYear();
-    const potrivit = (an, luna, zi) => { let d = new Date(an, luna, zi).getTime(); return d; };
-    let m = s.match(/(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?/);
-    if (m) {
-        let d = potrivit(m[3] ? +m[3] : an0, +m[2] - 1, +m[1]);
-        if (!m[3] && d < OLIMP_REPER - 60 * 864e5)
-            d = potrivit(an0 + 1, +m[2] - 1, +m[1]);
-        return d;
-    }
-    m = s.match(/\bs(\d)\b/);
-    if (m)
-        return OLIMP_REPER + (+m[1]) * 7 * 864e5;
-    m = s.match(/\bt([1-4])\s*(\d{4})/);
-    if (m)
-        return potrivit(+m[2], (+m[1] - 1) * 3, 1) + 1;
-    let prima = null;
-    OLIMP_LUNI.forEach((l, i) => {
-        const r = s.search(new RegExp('\\b(' + l + '|' + l.slice(0, 3) + '\\.)'));
-        if (r >= 0 && (!prima || r < prima.poz))
-            prima = { poz: r, luna: i };
-    });
-    if (prima) {
-        const an = (s.match(/(\d{4})/) || [])[1];
-        let d = potrivit(an ? +an : an0, prima.luna, 1);
-        if (!an && d < OLIMP_REPER - 60 * 864e5)
-            d = potrivit(an0 + 1, prima.luna, 1);
-        return d + 2;
-    }
-    m = s.match(/(\d{4})/);
-    if (m)
-        return potrivit(+m[1], 0, 1);
-    return 9e15;
-}
-const olimpCompara = (a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0) || olimpTermenCheie(a.termen) - olimpTermenCheie(b.termen) || (a.ordine || 0) - (b.ordine || 0);
-const olimpCand = (iso) => { try { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
-const OLIMP_DECIZII = { DA: { t: '✅ DA', c: 'var(--acc2)' }, NU: { t: '❌ NU', c: 'var(--acc4)' }, MOD: { t: '✏ MODIFIC', c: 'var(--acc3)' } };
-/* markdown simplu → elemente React (fără HTML: tot textul e escapat de React) */
-function olimpInline(s, k) {
-    const out = [];
-    const re = /\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g;
-    let last = 0, m, i = 0;
-    while ((m = re.exec(s))) {
-        if (m.index > last)
-            out.push(s.slice(last, m.index));
-        if (m[1] != null)
-            out.push(React.createElement("b", { key: k + 'b' + i++, style: { color: 'var(--text)' } }, m[1]));
-        else if (m[2] != null)
-            out.push(React.createElement("code", { key: k + 'c' + i++, style: { background: 'var(--panel2)', padding: '0 4px', borderRadius: 4, fontSize: '0.92em' } }, m[2]));
-        else
-            out.push(React.createElement("i", { key: k + 'i' + i++ }, m[3]));
-        last = re.lastIndex;
-    }
-    if (last < s.length)
-        out.push(s.slice(last));
-    return out;
-}
-function OlimpMarkdown({ text }) {
-    const linii = String(text || '').replace(/\r/g, '').split('\n');
-    const bl = [];
-    let lista = null, tabel = null, par = null;
-    const k = () => 'm' + bl.length;
-    const gol = () => {
-        if (par) { bl.push(React.createElement("p", { key: k(), style: { margin: '6px 0' } }, olimpInline(par.join(' '), k()))); par = null; }
-        if (lista) {
-            bl.push(React.createElement(lista.ord ? 'ol' : 'ul', { key: k(), style: { paddingLeft: 20, margin: '4px 0', listStyle: lista.ord ? 'decimal' : 'disc' } }, lista.it.map((t, i) => React.createElement("li", { key: i, style: { margin: '2px 0' } }, olimpInline(t, 'li' + i)))));
-            lista = null;
-        }
-        if (tabel) {
-            const [cap, ...rest] = tabel;
-            const cel = (t, i, th) => React.createElement(th ? 'th' : 'td', { key: i, style: { border: '1px solid var(--border)', padding: '4px 6px', textAlign: 'left', verticalAlign: 'top', fontWeight: th ? 700 : 400 } }, olimpInline(t, 'c' + i));
-            bl.push(React.createElement("div", { key: k(), style: { overflowX: 'auto', margin: '6px 0' } },
-                React.createElement("table", { style: { borderCollapse: 'collapse', fontSize: 12, minWidth: '100%' } },
-                    React.createElement("thead", null, React.createElement("tr", null, cap.map((t, i) => cel(t, i, true)))),
-                    React.createElement("tbody", null, rest.map((r, j) => React.createElement("tr", { key: j }, r.map((t, i) => cel(t, i, false))))))));
-            tabel = null;
-        }
-    };
-    for (const l of linii) {
-        if (/^\s*\|.*\|\s*$/.test(l)) {
-            if (par || lista) { const t = tabel; tabel = null; gol(); tabel = t; }
-            if (/^\s*\|?\s*:?-{2,}/.test(l))
-                continue;
-            (tabel = tabel || []).push(l.trim().replace(/^\||\|$/g, '').split('|').map((x) => x.trim()));
-            continue;
-        }
-        if (tabel) { const p = par, li = lista; par = null; lista = null; gol(); par = p; lista = li; }
-        let m;
-        if ((m = l.match(/^(#{1,6})\s+(.*)$/))) {
-            gol();
-            const n = m[1].length;
-            bl.push(React.createElement("div", { key: k(), style: { fontWeight: 700, color: 'var(--text)', fontSize: n <= 1 ? 17 : n === 2 ? 15 : 13.5, margin: '12px 0 4px' } }, olimpInline(m[2], k())));
-        }
-        else if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { gol(); bl.push(React.createElement("hr", { key: k(), style: { border: 0, borderTop: '1px solid var(--border)', margin: '10px 0' } })); }
-        else if ((m = l.match(/^\s*[-*•]\s+(.*)$/))) { if (par || (lista && lista.ord)) gol(); (lista = lista || { ord: false, it: [] }).it.push(m[1]); }
-        else if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) { if (par || (lista && !lista.ord)) gol(); (lista = lista || { ord: true, it: [] }).it.push(m[1]); }
-        else if ((m = l.match(/^\s*>\s?(.*)$/))) { gol(); bl.push(React.createElement("div", { key: k(), style: { borderLeft: '3px solid var(--acc1)', paddingLeft: 8, margin: '6px 0', color: 'var(--muted)' } }, olimpInline(m[1], k()))); }
-        else if (!l.trim()) gol();
-        else { if (lista) gol(); (par = par || []).push(l.trim()); }
-    }
-    gol();
-    return React.createElement("div", { style: { fontSize: 13, lineHeight: 1.55, color: 'var(--muted1)', overflowWrap: 'anywhere' } }, bl);
-}
-const olimpBtn = (txt, onClick, fel, extra) => React.createElement("button", { onClick, disabled: extra && extra.disabled, className: "text-xs px-3 py-2 rounded-lg font-semibold",
-    style: fel === 'DA' ? { color: '#14181C', background: 'var(--acc2)' } : fel === 'NU' ? { color: '#fff', background: 'var(--acc4)' } : fel === 'MOD' ? { color: '#14181C', background: 'var(--acc3)' }
-        : fel === 'prim' ? { color: '#14181C', background: 'var(--acc1)' } : { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, txt);
-const olimpChip = (txt, culoare, key) => React.createElement("span", { key, className: "text-[11px] px-2 py-0.5 rounded-full font-semibold", style: { color: culoare || 'var(--muted)', border: '1px solid ' + (culoare || 'var(--border)'), whiteSpace: 'nowrap' } }, txt);
-function OlimpAprobari({ plan, setPlan, persist, currentUser }) {
-    const [filtru, setFiltru] = useState('decis');
-    const [grupa, setGrupa] = useState('');
-    const [deschis, setDeschis] = useState(null);
-    const [scrie, setScrie] = useState(null); // { id, fel: 'DA'|'NU'|'MOD'|null, text }
-    const [schimba, setSchimba] = useState(null);
-    const [stare, setStare] = useState('');
-    const lista = (plan || []).filter((x) => x && x.id && x.cod);
-    const nr = { DA: 0, NU: 0, MOD: 0 };
-    lista.forEach((x) => { if (nr[x.decizie] != null) nr[x.decizie]++; });
-    const decise = nr.DA + nr.NU + nr.MOD;
-    const FILTRE = [['toate', 'Toate', lista.length], ['decis', 'De decis', lista.length - decise], ['DA', 'Aprobate', nr.DA], ['NU', 'Respinse', nr.NU], ['MOD', 'De modificat', nr.MOD]];
-    const vizibile = lista.filter((x) => (filtru === 'toate' || (filtru === 'decis' ? !x.decizie : x.decizie === filtru)) && (!grupa || olimpGrupa(x.cod) === grupa)).sort(olimpCompara);
-    const decide = async (x, dec, comentariu) => {
-        const com = String(comentariu || '').trim().slice(0, 2000);
-        if (dec === 'MOD' && !com) { setScrie({ id: x.id, fel: 'MOD', text: '' }); setStare('✏ Scrie ce vrei să se schimbe la ' + x.cod + ', apoi apasă „Salvează”.'); return; }
-        const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
-        const next = lista.map((y) => y.id === x.id ? { ...y, decizie: dec, comentariu: com, deciziaLa: la, deciziaDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { decizie: dec, comentariu: com, la, de }].slice(-20) } : y);
-        setPlan(next); setScrie(null); setSchimba(null);
-        setStare((OLIMP_DECIZII[dec] || {}).t + ' la ' + x.cod + ' — salvez…');
-        await persist('olimpPlan', next);
-        setStare('✅ ' + x.cod + ': ' + (OLIMP_DECIZII[dec] || {}).t + ' salvat.');
-    };
-    const daLaUrgente = async () => {
-        const urg = lista.filter((x) => x.urgent && !x.decizie);
-        if (!urg.length) return;
-        if (!window.confirm('Aprob (DA) toate cele ' + urg.length + ' puncte urgente nedecise: ' + urg.map((x) => x.cod).join(', ') + '?')) return;
-        const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
-        const ids = new Set(urg.map((x) => x.id));
-        const next = lista.map((y) => ids.has(y.id) ? { ...y, decizie: 'DA', comentariu: '', deciziaLa: la, deciziaDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { decizie: 'DA', comentariu: '', la, de, toateUrgentele: true }].slice(-20) } : y);
-        setPlan(next);
-        await persist('olimpPlan', next);
-        setStare('✅ DA la ' + urg.length + ' puncte urgente.');
-    };
-    if (!lista.length)
-        return React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Planul nu e încă în aplicație. Zeus îl importă din „Plan de implementare Olimp”.");
-    const urgNedecise = lista.filter((x) => x.urgent && !x.decizie).length;
-    return React.createElement("div", null,
-        React.createElement("div", { className: "rounded-xl p-3 mb-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-            React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" },
-                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "Decise: ", decise, " din ", lista.length),
-                React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, "✅ ", nr.DA, " · ❌ ", nr.NU, " · ✏ ", nr.MOD)),
-            React.createElement("div", { style: { height: 8, borderRadius: 6, background: 'var(--panel2)', overflow: 'hidden', display: 'flex' } },
-                [['DA', 'var(--acc2)'], ['NU', 'var(--acc4)'], ['MOD', 'var(--acc3)']].map(([d, c]) => React.createElement("div", { key: d, style: { width: (lista.length ? nr[d] / lista.length * 100 : 0) + '%', background: c } }))),
-            urgNedecise > 0 && React.createElement("div", { className: "mt-2" }, olimpBtn('✅ DA la toate urgentele nedecise (' + urgNedecise + ')', daLaUrgente, 'DA'))),
-        React.createElement("div", { className: "flex gap-1.5 mb-2", style: { overflowX: 'auto', paddingBottom: 2 } }, FILTRE.map(([id, t, n]) => React.createElement("button", { key: id, onClick: () => setFiltru(id), className: "text-xs px-3 py-1.5 rounded-full font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: filtru === id ? '#14181C' : 'var(--muted1)', background: filtru === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t, " ", n))),
-        React.createElement("select", { value: grupa, onChange: (e) => setGrupa(e.target.value), className: "w-full text-sm rounded-lg px-3 py-2 mb-3 outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } },
-            React.createElement("option", { value: "" }, "Toate secțiunile"),
-            OLIMP_GRUPE.map(([g, t]) => React.createElement("option", { key: g, value: g }, g + ' · ' + t))),
-        stare && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, stare),
-        vizibile.length === 0 && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, filtru === 'decis' ? '🎉 Nimic de decis aici.' : 'Nimic aici.'),
-        vizibile.map((x) => {
-            const dec = OLIMP_DECIZII[x.decizie];
-            const eDeschis = deschis === x.id;
-            const scriu = scrie && scrie.id === x.id;
-            const arataButoane = !dec || schimba === x.id;
-            const rezumat = x.problema || x.solutie || '';
-            return React.createElement("div", { key: x.id, className: "rounded-xl p-3 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (dec ? dec.c : (x.urgent ? 'var(--acc4)' : 'var(--border)')) } },
-                React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mb-1" },
-                    olimpChip(x.cod, 'var(--acc1)', 'c'),
-                    x.urgent && olimpChip('⏰ urgent', 'var(--acc4)', 'u'),
-                    x.termen && olimpChip('📅 ' + x.termen, null, 't')),
-                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, x.titlu),
-                React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted)' } },
-                    x.cine ? '👤 ' + x.cine : '', x.efort ? ' · ⏱ ' + x.efort : '', x.ceAprobi ? ' · Aprobi: ' + x.ceAprobi : ''),
-                !eDeschis && rezumat && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted1)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } }, rezumat),
-                eDeschis && React.createElement("div", { className: "text-xs mt-2", style: { color: 'var(--muted1)', lineHeight: 1.55, whiteSpace: 'pre-wrap' } },
-                    x.problema && React.createElement("div", { className: "mb-1.5" }, React.createElement("b", { style: { color: 'var(--text)' } }, "Problema: "), x.problema),
-                    x.solutie && React.createElement("div", { className: "mb-1.5" }, React.createElement("b", { style: { color: 'var(--text)' } }, x.problema ? "Soluția: " : "Ce face: "), x.solutie),
-                    x.impact && React.createElement("div", { className: "mb-1.5" }, React.createElement("b", { style: { color: 'var(--text)' } }, "Impact: "), x.impact),
-                    x.sectiune && React.createElement("div", { style: { color: 'var(--muted2)' } }, x.sectiune),
-                    Array.isArray(x.istoric) && x.istoric.length > 1 && React.createElement("div", { className: "mt-1.5", style: { color: 'var(--muted2)' } }, "Istoric: ", x.istoric.map((h) => (OLIMP_DECIZII[h.decizie] || {}).t + ' ' + olimpCand(h.la) + (h.comentariu ? ' („' + h.comentariu + '”)' : '')).join(' → '))),
-                React.createElement("button", { onClick: () => setDeschis(eDeschis ? null : x.id), className: "text-xs mt-1", style: { color: 'var(--acc1)' } }, eDeschis ? 'Ascunde detaliile ▴' : 'Detalii ▾'),
-                dec && React.createElement("div", { className: "text-xs mt-2 rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', color: 'var(--muted1)' } },
-                    React.createElement("b", { style: { color: dec.c } }, dec.t), ' · ', olimpCand(x.deciziaLa), x.deciziaDe ? ' · ' + x.deciziaDe : '',
-                    x.comentariu && React.createElement("div", { className: "mt-1", style: { whiteSpace: 'pre-wrap' } }, '💬 ', x.comentariu),
-                    schimba !== x.id && React.createElement("button", { onClick: () => { setSchimba(x.id); setScrie(null); }, className: "block mt-1.5", style: { color: 'var(--acc1)' } }, 'Schimbă decizia')),
-                arataButoane && React.createElement("div", { className: "mt-2" },
-                    scriu && React.createElement("textarea", { value: scrie.text, autoFocus: true, onChange: (e) => setScrie({ ...scrie, text: e.target.value }), rows: 3, maxLength: 2000,
-                        placeholder: scrie.fel === 'MOD' ? 'Ce se schimbă? (ex. „90 lei/h, nu 95”)' : 'Comentariu (opțional)',
-                        className: "w-full text-sm px-3 py-2 rounded-lg mb-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--text)' } }),
-                    React.createElement("div", { className: "flex flex-wrap gap-2" },
-                        scriu && scrie.fel === 'MOD'
-                            ? olimpBtn('💾 Salvează MODIFIC', () => decide(x, 'MOD', scrie.text), 'MOD')
-                            : React.createElement(React.Fragment, null,
-                                olimpBtn('✅ DA', () => decide(x, 'DA', scriu ? scrie.text : ''), 'DA'),
-                                olimpBtn('❌ NU', () => decide(x, 'NU', scriu ? scrie.text : ''), 'NU'),
-                                olimpBtn('✏ MODIFIC', () => scriu && String(scrie.text || '').trim() ? decide(x, 'MOD', scrie.text) : setScrie({ id: x.id, fel: 'MOD', text: scriu ? scrie.text : '' }), 'MOD')),
-                        !scriu && olimpBtn('💬', () => setScrie({ id: x.id, fel: null, text: '' })),
-                        (scriu || schimba === x.id) && olimpBtn('Renunță', () => { setScrie(null); setSchimba(null); }))));
-        }));
-}
-function olimpLuni(n) {
-    const d = new Date(), out = [];
-    for (let i = 0; i < n; i++) {
-        const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
-        out.push(x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0'));
-    }
-    return out;
-}
-const olimpVerdictCuloare = (v) => /RESPINS/i.test(v || '') ? 'var(--acc4)' : /OBSERV/i.test(v || '') ? 'var(--acc3)' : /APROBAT|OK|TRECUT/i.test(v || '') ? 'var(--acc2)' : null;
-async function olimpCitesteCheie(key, implicit) {
-    const r = await authFetch('/api/data?key=' + encodeURIComponent(key));
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok)
-        throw new Error(d.error || ('Citirea a eșuat (server ' + r.status + ').'));
-    return d.value == null ? implicit : d.value;
-}
-function OlimpRapoarte() {
-    const LUNI = olimpLuni(6);
-    const [luna, setLuna] = useState(LUNI[0]);
-    const [lista, setLista] = useState(null);
-    const [eroare, setEroare] = useState('');
-    const [deschis, setDeschis] = useState(null);
-    const [texte, setTexte] = useState({});
-    const [zeu, setZeu] = useState('');
-    const [tic, setTic] = useState(0);
-    useEffect(() => {
-        let viu = true;
-        setLista(null); setEroare('');
-        olimpCitesteCheie('olimpRapoarte-' + luna, []).then((v) => { if (viu) setLista(Array.isArray(v) ? v : []); })
-            .catch((e) => { if (viu) { setLista([]); setEroare('⚠ ' + ((e && e.message) || 'Nu am putut citi rapoartele.')); } });
-        return () => { viu = false; };
-    }, [luna, tic]);
-    useEffect(() => {
-        const f = () => setTic((t) => t + 1);
-        window.addEventListener('olimp-raport', f);
-        return () => window.removeEventListener('olimp-raport', f);
-    }, []);
-    const deschide = async (r) => {
-        if (deschis === r.id) { setDeschis(null); return; }
-        setDeschis(r.id);
-        if (texte[r.id] != null) return;
-        try {
-            const v = await olimpCitesteCheie('olimpRaport-' + r.id, null);
-            setTexte((t) => ({ ...t, [r.id]: v && typeof v.text === 'string' ? v.text : '(raportul nu are text)' }));
-        }
-        catch (e) { setTexte((t) => ({ ...t, [r.id]: '⚠ ' + ((e && e.message) || 'Nu am putut citi raportul.') })); }
-    };
-    const toti = (lista || []).filter((r) => r && r.id);
-    const zei = [...new Set(toti.map((r) => r.zeu).filter(Boolean))].sort();
-    const vizibile = toti.filter((r) => !zeu || r.zeu === zeu).sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')) || String(b.la || '').localeCompare(String(a.la || '')));
-    const sel = { className: "text-sm rounded-lg px-3 py-2 outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)', minWidth: 0, flex: 1 } };
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex gap-2 mb-3" },
-            React.createElement("select", { ...sel, value: luna, onChange: (e) => { setLuna(e.target.value); setDeschis(null); } }, LUNI.map((l) => {
-                const [a, m] = l.split('-');
-                return React.createElement("option", { key: l, value: l }, OLIMP_LUNI[+m - 1].replace(/^./, (c) => c.toUpperCase()) + ' ' + a);
-            })),
-            React.createElement("select", { ...sel, value: zeu, onChange: (e) => setZeu(e.target.value) },
-                React.createElement("option", { value: "" }, "Toți zeii"),
-                zei.map((z) => React.createElement("option", { key: z, value: z }, z))),
-            olimpBtn('↻', () => setTic((t) => t + 1))),
-        eroare && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--acc4)' } }, eroare),
-        lista === null && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Se încarcă…"),
-        lista !== null && !vizibile.length && !eroare && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Niciun raport în luna asta. Zeii își trimit aici rapoartele după fiecare rulare."),
-        vizibile.map((r) => {
-            const vc = olimpVerdictCuloare(r.verdict);
-            return React.createElement("div", { key: r.id, className: "rounded-xl mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-                React.createElement("button", { onClick: () => deschide(r), className: "w-full text-left p-3 flex gap-2.5 items-start" },
-                    React.createElement("span", { style: { fontSize: 22, lineHeight: 1.1 } }, olimpEmoji(r.zeu, r.emoji)),
-                    React.createElement("span", { className: "min-w-0 flex-1" },
-                        React.createElement("span", { className: "block text-sm font-semibold", style: { color: 'var(--text)' } }, r.titlu || 'Raport'),
-                        React.createElement("span", { className: "block text-xs mt-0.5", style: { color: 'var(--muted)' } }, (r.zeu || '') + ' · ' + (r.data ? r.data.split('-').reverse().join('.') : '')),
-                        r.verdict && React.createElement("span", { className: "inline-block mt-1" }, olimpChip('👁 Argus: ' + r.verdict, vc, 'v'))),
-                    React.createElement("span", { style: { color: 'var(--acc1)' } }, deschis === r.id ? '▴' : '▾')),
-                deschis === r.id && React.createElement("div", { className: "px-3 pb-3", style: { borderTop: '1px solid var(--border)' } },
-                    texte[r.id] == null ? React.createElement("div", { className: "text-xs mt-2", style: { color: 'var(--muted2)' } }, "Se încarcă…") : React.createElement(OlimpMarkdown, { text: texte[r.id] })));
-        }));
-}
-/* ═══ ÎNTREBĂRI (v04.48): ce așteaptă zeii de la Sebastian, adunate de Ananke ═══
-   olimpIntrebari: [{ id, cod:'Q1', zeu, emoji, intrebare, deCe, termen, urgent, variante:[{ text, recomandat }],
-   status:'deschisa'|'inchisa', deschisaLa, raspuns, raspunsLa, raspunsDe, istoric }]
-   Ananke le scrie prin window.olimpSalveazaIntrebari(lista) și citește prin window.olimpCitesteRaspunsuri(). */
-const olimpIntrebareDeschisa = (q) => !!(q && q.cod && !q.raspuns && q.status !== 'inchisa');
-const olimpComparaIntrebari = (a, b) => (olimpIntrebareDeschisa(b) ? 1 : 0) - (olimpIntrebareDeschisa(a) ? 1 : 0) || (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0)
-    || olimpTermenCheie(a.termen) - olimpTermenCheie(b.termen) || (parseInt(String(a.cod).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.cod).replace(/\D/g, ''), 10) || 0);
-function OlimpIntrebari({ intrebari, setIntrebari, persist, currentUser }) {
-    const [filtru, setFiltru] = useState('deschise');
-    const [scrie, setScrie] = useState({});
-    const [schimba, setSchimba] = useState(null);
-    const [stare, setStare] = useState('');
-    const lista = (intrebari || []).filter((q) => q && q.id && q.cod);
-    const deschise = lista.filter(olimpIntrebareDeschisa);
-    const raspunse = lista.filter((q) => q.raspuns);
-    const FILTRE = [['deschise', 'De răspuns', deschise.length], ['raspunse', 'Răspunse', raspunse.length], ['toate', 'Toate', lista.length]];
-    const vizibile = (filtru === 'deschise' ? deschise : filtru === 'raspunse' ? raspunse : lista).slice().sort(olimpComparaIntrebari);
-    const raspunde = async (q, text) => {
-        const r = String(text || '').trim().slice(0, 2000);
-        if (!r) { setStare('✏ Scrie răspunsul sau alege o variantă.'); return; }
-        const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
-        const next = lista.map((y) => y.id === q.id ? { ...y, raspuns: r, raspunsLa: la, raspunsDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { raspuns: r, la, de }].slice(-20) } : y);
-        setIntrebari(next); setSchimba(null); setScrie((s) => ({ ...s, [q.id]: '' }));
-        setStare('Salvez răspunsul la ' + q.cod + '…');
-        await persist('olimpIntrebari', next);
-        setStare('✅ Am răspuns la ' + q.cod + '. Ananke îi transmite zeului.');
-    };
-    return React.createElement("div", null,
-        React.createElement("div", { className: "flex gap-1.5 mb-3", style: { overflowX: 'auto', paddingBottom: 2 } }, FILTRE.map(([id, t, n]) => React.createElement("button", { key: id, onClick: () => setFiltru(id), className: "text-xs px-3 py-1.5 rounded-full font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: filtru === id ? '#14181C' : 'var(--muted1)', background: filtru === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t, " ", n))),
-        stare && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, stare),
-        !lista.length && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Nicio întrebare încă. Ananke le aduce aici de la zei, cele mai urgente primele."),
-        lista.length > 0 && !vizibile.length && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, filtru === 'deschise' ? '🎉 Zeii nu mai așteaptă nimic de la tine.' : 'Nimic aici.'),
-        vizibile.map((q) => {
-            const deschisa = olimpIntrebareDeschisa(q);
-            const arata = deschisa || schimba === q.id;
-            const variante = (Array.isArray(q.variante) ? q.variante : []).map((v) => typeof v === 'string' ? { text: v } : v).filter((v) => v && v.text);
-            return React.createElement("div", { key: q.id, className: "rounded-xl p-3 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (q.raspuns ? 'var(--acc2)' : q.status === 'inchisa' ? 'var(--border)' : q.urgent ? 'var(--acc4)' : 'var(--acc3)') } },
-                React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mb-1" },
-                    olimpChip(q.cod, 'var(--acc1)', 'c'),
-                    olimpChip(olimpEmoji(q.zeu, q.emoji) + ' ' + (q.zeu || ''), null, 'z'),
-                    q.urgent && olimpChip('⏰ urgent', 'var(--acc4)', 'u'),
-                    q.termen && olimpChip('📅 ' + q.termen, null, 't'),
-                    q.status === 'inchisa' && olimpChip('închisă', null, 'i')),
-                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)', whiteSpace: 'pre-wrap' } }, q.intrebare),
-                q.deCe && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted1)', whiteSpace: 'pre-wrap' } }, React.createElement("b", { style: { color: 'var(--muted)' } }, "De ce contează: "), q.deCe),
-                q.raspuns && React.createElement("div", { className: "text-xs mt-2 rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', color: 'var(--muted1)' } },
-                    React.createElement("b", { style: { color: 'var(--acc2)' } }, "✅ Am răspuns"), ' · ', olimpCand(q.raspunsLa), q.raspunsDe ? ' · ' + q.raspunsDe : '',
-                    React.createElement("div", { className: "mt-1", style: { whiteSpace: 'pre-wrap', color: 'var(--text)' } }, q.raspuns),
-                    schimba !== q.id && React.createElement("button", { onClick: () => setSchimba(q.id), className: "block mt-1.5", style: { color: 'var(--acc1)' } }, 'Schimbă răspunsul')),
-                arata && React.createElement("div", { className: "mt-2" },
-                    variante.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-2 mb-2" }, variante.map((v, i) => React.createElement("button", { key: i, onClick: () => raspunde(q, v.text), className: "text-xs px-3 py-2 rounded-lg font-semibold text-left",
-                        style: v.recomandat ? { color: '#14181C', background: 'var(--acc2)' } : { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, (v.recomandat ? '⭐ ' : '') + v.text))),
-                    React.createElement("textarea", { value: scrie[q.id] || '', onChange: (e) => { const t = e.target.value; setScrie((s) => ({ ...s, [q.id]: t })); }, rows: 2, maxLength: 2000, placeholder: 'Sau scrie răspunsul tău…',
-                        className: "w-full text-sm px-3 py-2 rounded-lg mb-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--text)' } }),
-                    React.createElement("div", { className: "flex flex-wrap gap-2" },
-                        olimpBtn('💬 Trimite răspunsul', () => raspunde(q, scrie[q.id]), 'prim'),
-                        schimba === q.id && olimpBtn('Renunță', () => setSchimba(null)))));
-        }));
-}
-function OlimpTab({ olimpPlan, setOlimpPlan, olimpIntrebari, setOlimpIntrebari, persist, currentUser }) {
-    const [fila, setFilaS] = useState(() => { try { return localStorage.getItem('olimpFila') || 'aprobat'; } catch (_) { return 'aprobat'; } });
-    const setFila = (f) => { setFilaS(f); try { localStorage.setItem('olimpFila', f); } catch (_) { } };
-    const deDecis = (olimpPlan || []).filter((x) => x && x.cod && !x.decizie).length;
+/* ═══ OLIMP (v04.47): Sebastian vede și cârmuiește „zeii" (agenții AI) din aplicație ═══
+   - olimpPlan: punctele planului de implementare (D/E/A/M/T/Z/Z-C), cu decizia DA / NU / MOD,
+     data, ora și cine a decis (plus istoricul deciziilor).
+   - olimpRapoarte-AAAA-LL: lista rapoartelor zilnice ale zeilor pe o lună (fără text);
+     olimpRaport-<id>: textul unui raport. Totul doar pentru Manager (și pe server).
+   - Rulările automate (care lucrează în tab-ul logat) scriu prin window.olimpSalveazaRaport(...)
+     și citesc deciziile prin window.olimpCitestePlan(...) — vezi README, „Olimp – integrare zei".
+   Textul vine de la AI: NU se pune niciodată ca HTML; React îl escapează, markdown-ul e desenat de mână. */
+const OLIMP_ZEI = { zeus: '⚡', plutos: '💰', themis: '⚖️', hefaistos: '🔨', hestia: '🏠', athena: '🦉', hermes: '📨', kronos: '⏳',
+    artemis: '🏹', argus: '👁', tyche: '🍀', metis: '🧠', dike: '⚖️', eunomia: '📜', astreea: '🧮', iris: '🌈', peitho: '💬', hebe: '🌱',
+    asklepios: '⚕️', dionysos: '🍇', afrodita: '🌹', atlas: '🗺', apollo: '☀️', hera: '👑', prometheus: '🔥', angelia: '📣', nike: '🏆', sfatul: '🏛' };
+const olimpSlug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+function olimpEmoji(zeu, emoji) {
+    if (emoji)
+        return Array.from(String(emoji)).slice(0, 3).join('');
+    return OLIMP_ZEI[olimpSlug(zeu).split('-')[0]] || '🏛';
+}
+const olimpGrupa = (cod) => /^Z-C/i.test(String(cod || '')) ? 'Z-C' : String(cod || '').replace(/\d.*$/, '');
+const OLIMP_GRUPE = [['D', '⚖️ Juridic'], ['E', '📜 Conformitate'], ['A', '🧮 Contabilitate'], ['M', '🧠 Economic'], ['T', '🍀 Creștere'], ['Z', '⚡ Zeii la lucru'], ['Z-C', '👁 Controlul calității']];
+/* termenul scris liber („13.11 / 04.12", „S1–S4", „noiembrie", „imediat") → un număr pentru sortare */
+const OLIMP_REPER = new Date(2026, 9, 19).getTime();
+const OLIMP_LUNI = ['ianuarie', 'februarie', 'martie', 'aprilie', 'mai', 'iunie', 'iulie', 'august', 'septembrie', 'octombrie', 'noiembrie', 'decembrie'];
+function olimpTermenCheie(t) {
+    const s = String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    if (!s.trim())
+        return Infinity;
+    if (/imediat|\bacum\b|\bazi\b/.test(s))
+        return 0;
+    const an0 = new Date(OLIMP_REPER).getFullYear();
+    const potrivit = (an, luna, zi) => { let d = new Date(an, luna, zi).getTime(); return d; };
+    let m = s.match(/(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?/);
+    if (m) {
+        let d = potrivit(m[3] ? +m[3] : an0, +m[2] - 1, +m[1]);
+        if (!m[3] && d < OLIMP_REPER - 60 * 864e5)
+            d = potrivit(an0 + 1, +m[2] - 1, +m[1]);
+        return d;
+    }
+    m = s.match(/\bs(\d)\b/);
+    if (m)
+        return OLIMP_REPER + (+m[1]) * 7 * 864e5;
+    m = s.match(/\bt([1-4])\s*(\d{4})/);
+    if (m)
+        return potrivit(+m[2], (+m[1] - 1) * 3, 1) + 1;
+    let prima = null;
+    OLIMP_LUNI.forEach((l, i) => {
+        const r = s.search(new RegExp('\\b(' + l + '|' + l.slice(0, 3) + '\\.)'));
+        if (r >= 0 && (!prima || r < prima.poz))
+            prima = { poz: r, luna: i };
+    });
+    if (prima) {
+        const an = (s.match(/(\d{4})/) || [])[1];
+        let d = potrivit(an ? +an : an0, prima.luna, 1);
+        if (!an && d < OLIMP_REPER - 60 * 864e5)
+            d = potrivit(an0 + 1, prima.luna, 1);
+        return d + 2;
+    }
+    m = s.match(/(\d{4})/);
+    if (m)
+        return potrivit(+m[1], 0, 1);
+    return 9e15;
+}
+const olimpCompara = (a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0) || olimpTermenCheie(a.termen) - olimpTermenCheie(b.termen) || (a.ordine || 0) - (b.ordine || 0);
+const olimpCand = (iso) => { try { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
+const OLIMP_DECIZII = { DA: { t: '✅ DA', c: 'var(--acc2)' }, NU: { t: '❌ NU', c: 'var(--acc4)' }, MOD: { t: '✏ MODIFIC', c: 'var(--acc3)' } };
+/* markdown simplu → elemente React (fără HTML: tot textul e escapat de React) */
+function olimpInline(s, k) {
+    const out = [];
+    const re = /\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g;
+    let last = 0, m, i = 0;
+    while ((m = re.exec(s))) {
+        if (m.index > last)
+            out.push(s.slice(last, m.index));
+        if (m[1] != null)
+            out.push(React.createElement("b", { key: k + 'b' + i++, style: { color: 'var(--text)' } }, m[1]));
+        else if (m[2] != null)
+            out.push(React.createElement("code", { key: k + 'c' + i++, style: { background: 'var(--panel2)', padding: '0 4px', borderRadius: 4, fontSize: '0.92em' } }, m[2]));
+        else
+            out.push(React.createElement("i", { key: k + 'i' + i++ }, m[3]));
+        last = re.lastIndex;
+    }
+    if (last < s.length)
+        out.push(s.slice(last));
+    return out;
+}
+function OlimpMarkdown({ text }) {
+    const linii = String(text || '').replace(/\r/g, '').split('\n');
+    const bl = [];
+    let lista = null, tabel = null, par = null, cod = null;
+    const k = () => 'm' + bl.length;
+    const gol = () => {
+        if (par) { bl.push(React.createElement("p", { key: k(), style: { margin: '6px 0' } }, olimpInline(par.join(' '), k()))); par = null; }
+        if (lista) {
+            bl.push(React.createElement(lista.ord ? 'ol' : 'ul', { key: k(), style: { paddingLeft: 20, margin: '4px 0', listStyle: lista.ord ? 'decimal' : 'disc' } }, lista.it.map((t, i) => React.createElement("li", { key: i, style: { margin: '2px 0' } }, olimpInline(t, 'li' + i)))));
+            lista = null;
+        }
+        if (tabel) {
+            const [cap, ...rest] = tabel;
+            const cel = (t, i, th) => React.createElement(th ? 'th' : 'td', { key: i, style: { border: '1px solid var(--border)', padding: '4px 6px', textAlign: 'left', verticalAlign: 'top', fontWeight: th ? 700 : 400 } }, olimpInline(t, 'c' + i));
+            bl.push(React.createElement("div", { key: k(), style: { overflowX: 'auto', margin: '6px 0' } },
+                React.createElement("table", { style: { borderCollapse: 'collapse', fontSize: 12, minWidth: '100%' } },
+                    React.createElement("thead", null, React.createElement("tr", null, cap.map((t, i) => cel(t, i, true)))),
+                    React.createElement("tbody", null, rest.map((r, j) => React.createElement("tr", { key: j }, r.map((t, i) => cel(t, i, false))))))));
+            tabel = null;
+        }
+    };
+    const puneCod = () => { bl.push(React.createElement("pre", { key: 'm' + bl.length, style: { background: 'var(--panel2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', margin: '6px 0', overflowX: 'auto', fontSize: 12, lineHeight: 1.45, whiteSpace: 'pre', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', color: 'var(--text)' } }, cod.join('\n'))); cod = null; };
+    for (const l of linii) {
+        if (cod) { if (/^\s*```/.test(l)) puneCod(); else cod.push(l); continue; }
+        if (/^\s*```/.test(l)) { gol(); cod = []; continue; }
+        if (/^\s*\|.*\|\s*$/.test(l)) {
+            if (par || lista) { const t = tabel; tabel = null; gol(); tabel = t; }
+            if (/^\s*\|?\s*:?-{2,}/.test(l))
+                continue;
+            (tabel = tabel || []).push(l.trim().replace(/^\||\|$/g, '').split('|').map((x) => x.trim()));
+            continue;
+        }
+        if (tabel) { const p = par, li = lista; par = null; lista = null; gol(); par = p; lista = li; }
+        let m;
+        if ((m = l.match(/^(#{1,6})\s+(.*)$/))) {
+            gol();
+            const n = m[1].length;
+            bl.push(React.createElement("div", { key: k(), style: { fontWeight: 700, color: 'var(--text)', fontSize: n <= 1 ? 17 : n === 2 ? 15 : 13.5, margin: '12px 0 4px' } }, olimpInline(m[2], k())));
+        }
+        else if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { gol(); bl.push(React.createElement("hr", { key: k(), style: { border: 0, borderTop: '1px solid var(--border)', margin: '10px 0' } })); }
+        else if ((m = l.match(/^\s*[-*•]\s+(.*)$/))) { if (par || (lista && lista.ord)) gol(); (lista = lista || { ord: false, it: [] }).it.push(m[1]); }
+        else if ((m = l.match(/^\s*\d+[.)]\s+(.*)$/))) { if (par || (lista && !lista.ord)) gol(); (lista = lista || { ord: true, it: [] }).it.push(m[1]); }
+        else if ((m = l.match(/^\s*>\s?(.*)$/))) { gol(); bl.push(React.createElement("div", { key: k(), style: { borderLeft: '3px solid var(--acc1)', paddingLeft: 8, margin: '6px 0', color: 'var(--muted)' } }, olimpInline(m[1], k()))); }
+        else if (!l.trim()) gol();
+        else { if (lista) gol(); (par = par || []).push(l.trim()); }
+    }
+    gol();
+    if (cod) puneCod();
+    return React.createElement("div", { style: { fontSize: 13, lineHeight: 1.55, color: 'var(--muted1)', overflowWrap: 'anywhere' } }, bl);
+}
+const olimpBtn = (txt, onClick, fel, extra) => React.createElement("button", { onClick, disabled: extra && extra.disabled, className: "text-xs px-3 py-2 rounded-lg font-semibold",
+    style: fel === 'DA' ? { color: '#14181C', background: 'var(--acc2)' } : fel === 'NU' ? { color: '#fff', background: 'var(--acc4)' } : fel === 'MOD' ? { color: '#14181C', background: 'var(--acc3)' }
+        : fel === 'prim' ? { color: '#14181C', background: 'var(--acc1)' } : { color: 'var(--acc1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, txt);
+const olimpChip = (txt, culoare, key) => React.createElement("span", { key, className: "text-[11px] px-2 py-0.5 rounded-full font-semibold", style: { color: culoare || 'var(--muted)', border: '1px solid ' + (culoare || 'var(--border)'), whiteSpace: 'nowrap' } }, txt);
+function OlimpAprobari({ plan, setPlan, persist, currentUser }) {
+    const [filtru, setFiltru] = useState('decis');
+    const [grupa, setGrupa] = useState('');
+    const [deschis, setDeschis] = useState(null);
+    const [scrie, setScrie] = useState(null); // { id, fel: 'DA'|'NU'|'MOD'|null, text }
+    const [schimba, setSchimba] = useState(null);
+    const [stare, setStare] = useState('');
+    const lista = (plan || []).filter((x) => x && x.id && x.cod);
+    const nr = { DA: 0, NU: 0, MOD: 0 };
+    lista.forEach((x) => { if (nr[x.decizie] != null) nr[x.decizie]++; });
+    const decise = nr.DA + nr.NU + nr.MOD;
+    const FILTRE = [['toate', 'Toate', lista.length], ['decis', 'De decis', lista.length - decise], ['DA', 'Aprobate', nr.DA], ['NU', 'Respinse', nr.NU], ['MOD', 'De modificat', nr.MOD]];
+    const vizibile = lista.filter((x) => (filtru === 'toate' || (filtru === 'decis' ? !x.decizie : x.decizie === filtru)) && (!grupa || olimpGrupa(x.cod) === grupa)).sort(olimpCompara);
+    const decide = async (x, dec, comentariu) => {
+        const com = String(comentariu || '').trim().slice(0, 2000);
+        if (dec === 'MOD' && !com) { setScrie({ id: x.id, fel: 'MOD', text: '' }); setStare('✏ Scrie ce vrei să se schimbe la ' + x.cod + ', apoi apasă „Salvează”.'); return; }
+        const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
+        const next = lista.map((y) => y.id === x.id ? { ...y, decizie: dec, comentariu: com, deciziaLa: la, deciziaDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { decizie: dec, comentariu: com, la, de }].slice(-20) } : y);
+        setPlan(next); setScrie(null); setSchimba(null);
+        setStare((OLIMP_DECIZII[dec] || {}).t + ' la ' + x.cod + ' — salvez…');
+        await persist('olimpPlan', next);
+        setStare('✅ ' + x.cod + ': ' + (OLIMP_DECIZII[dec] || {}).t + ' salvat.');
+    };
+    const daLaUrgente = async () => {
+        const urg = lista.filter((x) => x.urgent && !x.decizie);
+        if (!urg.length) return;
+        if (!window.confirm('Aprob (DA) toate cele ' + urg.length + ' puncte urgente nedecise: ' + urg.map((x) => x.cod).join(', ') + '?')) return;
+        const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
+        const ids = new Set(urg.map((x) => x.id));
+        const next = lista.map((y) => ids.has(y.id) ? { ...y, decizie: 'DA', comentariu: '', deciziaLa: la, deciziaDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { decizie: 'DA', comentariu: '', la, de, toateUrgentele: true }].slice(-20) } : y);
+        setPlan(next);
+        await persist('olimpPlan', next);
+        setStare('✅ DA la ' + urg.length + ' puncte urgente.');
+    };
+    if (!lista.length)
+        return React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Planul nu e încă în aplicație. Zeus îl importă din „Plan de implementare Olimp”.");
+    const urgNedecise = lista.filter((x) => x.urgent && !x.decizie).length;
+    return React.createElement("div", null,
+        React.createElement("div", { className: "rounded-xl p-3 mb-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" },
+                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, "Decise: ", decise, " din ", lista.length),
+                React.createElement("div", { className: "text-xs", style: { color: 'var(--muted)' } }, "✅ ", nr.DA, " · ❌ ", nr.NU, " · ✏ ", nr.MOD)),
+            React.createElement("div", { style: { height: 8, borderRadius: 6, background: 'var(--panel2)', overflow: 'hidden', display: 'flex' } },
+                [['DA', 'var(--acc2)'], ['NU', 'var(--acc4)'], ['MOD', 'var(--acc3)']].map(([d, c]) => React.createElement("div", { key: d, style: { width: (lista.length ? nr[d] / lista.length * 100 : 0) + '%', background: c } }))),
+            urgNedecise > 0 && React.createElement("div", { className: "mt-2" }, olimpBtn('✅ DA la toate urgentele nedecise (' + urgNedecise + ')', daLaUrgente, 'DA'))),
+        React.createElement("div", { className: "flex gap-1.5 mb-2", style: { overflowX: 'auto', paddingBottom: 2 } }, FILTRE.map(([id, t, n]) => React.createElement("button", { key: id, onClick: () => setFiltru(id), className: "text-xs px-3 py-1.5 rounded-full font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: filtru === id ? '#14181C' : 'var(--muted1)', background: filtru === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t, " ", n))),
+        React.createElement("select", { value: grupa, onChange: (e) => setGrupa(e.target.value), className: "w-full text-sm rounded-lg px-3 py-2 mb-3 outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } },
+            React.createElement("option", { value: "" }, "Toate secțiunile"),
+            OLIMP_GRUPE.map(([g, t]) => React.createElement("option", { key: g, value: g }, g + ' · ' + t))),
+        stare && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, stare),
+        vizibile.length === 0 && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, filtru === 'decis' ? '🎉 Nimic de decis aici.' : 'Nimic aici.'),
+        vizibile.map((x) => {
+            const dec = OLIMP_DECIZII[x.decizie];
+            const eDeschis = deschis === x.id;
+            const scriu = scrie && scrie.id === x.id;
+            const arataButoane = !dec || schimba === x.id;
+            const rezumat = x.problema || x.solutie || '';
+            return React.createElement("div", { key: x.id, className: "rounded-xl p-3 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (dec ? dec.c : (x.urgent ? 'var(--acc4)' : 'var(--border)')) } },
+                React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mb-1" },
+                    olimpChip(x.cod, 'var(--acc1)', 'c'),
+                    x.urgent && olimpChip('⏰ urgent', 'var(--acc4)', 'u'),
+                    x.termen && olimpChip('📅 ' + x.termen, null, 't')),
+                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)' } }, x.titlu),
+                React.createElement("div", { className: "text-xs mt-0.5", style: { color: 'var(--muted)' } },
+                    x.cine ? '👤 ' + x.cine : '', x.efort ? ' · ⏱ ' + x.efort : '', x.ceAprobi ? ' · Aprobi: ' + x.ceAprobi : ''),
+                !eDeschis && rezumat && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted1)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' } }, rezumat),
+                eDeschis && React.createElement("div", { className: "text-xs mt-2", style: { color: 'var(--muted1)', lineHeight: 1.55, whiteSpace: 'pre-wrap' } },
+                    x.problema && React.createElement("div", { className: "mb-1.5" }, React.createElement("b", { style: { color: 'var(--text)' } }, "Problema: "), x.problema),
+                    x.solutie && React.createElement("div", { className: "mb-1.5" }, React.createElement("b", { style: { color: 'var(--text)' } }, x.problema ? "Soluția: " : "Ce face: "), x.solutie),
+                    x.impact && React.createElement("div", { className: "mb-1.5" }, React.createElement("b", { style: { color: 'var(--text)' } }, "Impact: "), x.impact),
+                    x.sectiune && React.createElement("div", { style: { color: 'var(--muted2)' } }, x.sectiune),
+                    Array.isArray(x.istoric) && x.istoric.length > 1 && React.createElement("div", { className: "mt-1.5", style: { color: 'var(--muted2)' } }, "Istoric: ", x.istoric.map((h) => (OLIMP_DECIZII[h.decizie] || {}).t + ' ' + olimpCand(h.la) + (h.comentariu ? ' („' + h.comentariu + '”)' : '')).join(' → '))),
+                React.createElement("button", { onClick: () => setDeschis(eDeschis ? null : x.id), className: "text-xs mt-1", style: { color: 'var(--acc1)' } }, eDeschis ? 'Ascunde detaliile ▴' : 'Detalii ▾'),
+                dec && React.createElement("div", { className: "text-xs mt-2 rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', color: 'var(--muted1)' } },
+                    React.createElement("b", { style: { color: dec.c } }, dec.t), ' · ', olimpCand(x.deciziaLa), x.deciziaDe ? ' · ' + x.deciziaDe : '',
+                    x.comentariu && React.createElement("div", { className: "mt-1", style: { whiteSpace: 'pre-wrap' } }, '💬 ', x.comentariu),
+                    schimba !== x.id && React.createElement("button", { onClick: () => { setSchimba(x.id); setScrie(null); }, className: "block mt-1.5", style: { color: 'var(--acc1)' } }, 'Schimbă decizia')),
+                arataButoane && React.createElement("div", { className: "mt-2" },
+                    scriu && React.createElement("textarea", { value: scrie.text, autoFocus: true, onChange: (e) => setScrie({ ...scrie, text: e.target.value }), rows: 3, maxLength: 2000,
+                        placeholder: scrie.fel === 'MOD' ? 'Ce se schimbă? (ex. „90 lei/h, nu 95”)' : 'Comentariu (opțional)',
+                        className: "w-full text-sm px-3 py-2 rounded-lg mb-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--text)' } }),
+                    React.createElement("div", { className: "flex flex-wrap gap-2" },
+                        scriu && scrie.fel === 'MOD'
+                            ? olimpBtn('💾 Salvează MODIFIC', () => decide(x, 'MOD', scrie.text), 'MOD')
+                            : React.createElement(React.Fragment, null,
+                                olimpBtn('✅ DA', () => decide(x, 'DA', scriu ? scrie.text : ''), 'DA'),
+                                olimpBtn('❌ NU', () => decide(x, 'NU', scriu ? scrie.text : ''), 'NU'),
+                                olimpBtn('✏ MODIFIC', () => scriu && String(scrie.text || '').trim() ? decide(x, 'MOD', scrie.text) : setScrie({ id: x.id, fel: 'MOD', text: scriu ? scrie.text : '' }), 'MOD')),
+                        !scriu && olimpBtn('💬', () => setScrie({ id: x.id, fel: null, text: '' })),
+                        (scriu || schimba === x.id) && olimpBtn('Renunță', () => { setScrie(null); setSchimba(null); }))));
+        }));
+}
+function olimpLuni(n) {
+    const d = new Date(), out = [];
+    for (let i = 0; i < n; i++) {
+        const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+        out.push(x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0'));
+    }
+    return out;
+}
+const olimpVerdictCuloare = (v) => /RESPINS/i.test(v || '') ? 'var(--acc4)' : /OBSERV/i.test(v || '') ? 'var(--acc3)' : /APROBAT|OK|TRECUT/i.test(v || '') ? 'var(--acc2)' : null;
+async function olimpCitesteCheie(key, implicit) {
+    const r = await authFetch('/api/data?key=' + encodeURIComponent(key));
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok)
+        throw new Error(d.error || ('Citirea a eșuat (server ' + r.status + ').'));
+    return d.value == null ? implicit : d.value;
+}
+function OlimpRapoarte() {
+    const LUNI = olimpLuni(6);
+    const [luna, setLuna] = useState(LUNI[0]);
+    const [lista, setLista] = useState(null);
+    const [eroare, setEroare] = useState('');
+    const [deschis, setDeschis] = useState(null);
+    const [texte, setTexte] = useState({});
+    const [zeu, setZeu] = useState('');
+    const [tic, setTic] = useState(0);
+    useEffect(() => {
+        let viu = true;
+        setLista(null); setEroare('');
+        olimpCitesteCheie('olimpRapoarte-' + luna, []).then((v) => { if (viu) setLista(Array.isArray(v) ? v : []); })
+            .catch((e) => { if (viu) { setLista([]); setEroare('⚠ ' + ((e && e.message) || 'Nu am putut citi rapoartele.')); } });
+        return () => { viu = false; };
+    }, [luna, tic]);
+    useEffect(() => {
+        const f = () => setTic((t) => t + 1);
+        window.addEventListener('olimp-raport', f);
+        return () => window.removeEventListener('olimp-raport', f);
+    }, []);
+    const deschide = async (r) => {
+        if (deschis === r.id) { setDeschis(null); return; }
+        setDeschis(r.id);
+        if (texte[r.id] != null) return;
+        try {
+            const v = await olimpCitesteCheie('olimpRaport-' + r.id, null);
+            setTexte((t) => ({ ...t, [r.id]: v && typeof v.text === 'string' ? v.text : '(raportul nu are text)' }));
+        }
+        catch (e) { setTexte((t) => ({ ...t, [r.id]: '⚠ ' + ((e && e.message) || 'Nu am putut citi raportul.') })); }
+    };
+    const toti = (lista || []).filter((r) => r && r.id);
+    const zei = [...new Set(toti.map((r) => r.zeu).filter(Boolean))].sort();
+    const vizibile = toti.filter((r) => !zeu || r.zeu === zeu).sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')) || String(b.la || '').localeCompare(String(a.la || '')));
+    const sel = { className: "text-sm rounded-lg px-3 py-2 outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)', minWidth: 0, flex: 1 } };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex gap-2 mb-3" },
+            React.createElement("select", { ...sel, value: luna, onChange: (e) => { setLuna(e.target.value); setDeschis(null); } }, LUNI.map((l) => {
+                const [a, m] = l.split('-');
+                return React.createElement("option", { key: l, value: l }, OLIMP_LUNI[+m - 1].replace(/^./, (c) => c.toUpperCase()) + ' ' + a);
+            })),
+            React.createElement("select", { ...sel, value: zeu, onChange: (e) => setZeu(e.target.value) },
+                React.createElement("option", { value: "" }, "Toți zeii"),
+                zei.map((z) => React.createElement("option", { key: z, value: z }, z))),
+            olimpBtn('↻', () => setTic((t) => t + 1))),
+        eroare && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--acc4)' } }, eroare),
+        lista === null && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Se încarcă…"),
+        lista !== null && !vizibile.length && !eroare && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Niciun raport în luna asta. Zeii își trimit aici rapoartele după fiecare rulare."),
+        vizibile.map((r) => {
+            const vc = olimpVerdictCuloare(r.verdict);
+            return React.createElement("div", { key: r.id, className: "rounded-xl mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+                React.createElement("button", { onClick: () => deschide(r), className: "w-full text-left p-3 flex gap-2.5 items-start" },
+                    React.createElement("span", { style: { fontSize: 22, lineHeight: 1.1 } }, olimpEmoji(r.zeu, r.emoji)),
+                    React.createElement("span", { className: "min-w-0 flex-1" },
+                        React.createElement("span", { className: "block text-sm font-semibold", style: { color: 'var(--text)' } }, r.titlu || 'Raport'),
+                        React.createElement("span", { className: "block text-xs mt-0.5", style: { color: 'var(--muted)' } }, (r.zeu || '') + ' · ' + (r.data ? r.data.split('-').reverse().join('.') : '')),
+                        r.verdict && React.createElement("span", { className: "inline-block mt-1" }, olimpChip('👁 Argus: ' + r.verdict, vc, 'v'))),
+                    React.createElement("span", { style: { color: 'var(--acc1)' } }, deschis === r.id ? '▴' : '▾')),
+                deschis === r.id && React.createElement("div", { className: "px-3 pb-3", style: { borderTop: '1px solid var(--border)' } },
+                    texte[r.id] == null ? React.createElement("div", { className: "text-xs mt-2", style: { color: 'var(--muted2)' } }, "Se încarcă…") : React.createElement(OlimpMarkdown, { text: texte[r.id] })));
+        }));
+}
+/* ═══ ÎNTREBĂRI (v04.48): ce așteaptă zeii de la Sebastian, adunate de Ananke ═══
+   olimpIntrebari: [{ id, cod:'Q1', zeu, emoji, intrebare, deCe, termen, urgent, variante:[{ text, recomandat }],
+   status:'deschisa'|'inchisa', deschisaLa, raspuns, raspunsLa, raspunsDe, istoric }]
+   Ananke le scrie prin window.olimpSalveazaIntrebari(lista) și citește prin window.olimpCitesteRaspunsuri(). */
+const olimpIntrebareDeschisa = (q) => !!(q && q.cod && !q.raspuns && q.status !== 'inchisa');
+const olimpComparaIntrebari = (a, b) => (olimpIntrebareDeschisa(b) ? 1 : 0) - (olimpIntrebareDeschisa(a) ? 1 : 0) || (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0)
+    || olimpTermenCheie(a.termen) - olimpTermenCheie(b.termen) || (parseInt(String(a.cod).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.cod).replace(/\D/g, ''), 10) || 0);
+function OlimpIntrebari({ intrebari, setIntrebari, persist, currentUser }) {
+    const [filtru, setFiltru] = useState('deschise');
+    const [scrie, setScrie] = useState({});
+    const [schimba, setSchimba] = useState(null);
+    const [stare, setStare] = useState('');
+    const lista = (intrebari || []).filter((q) => q && q.id && q.cod);
+    const deschise = lista.filter(olimpIntrebareDeschisa);
+    const raspunse = lista.filter((q) => q.raspuns);
+    const FILTRE = [['deschise', 'De răspuns', deschise.length], ['raspunse', 'Răspunse', raspunse.length], ['toate', 'Toate', lista.length]];
+    const vizibile = (filtru === 'deschise' ? deschise : filtru === 'raspunse' ? raspunse : lista).slice().sort(olimpComparaIntrebari);
+    const raspunde = async (q, text) => {
+        const r = String(text || '').trim().slice(0, 2000);
+        if (!r) { setStare('✏ Scrie răspunsul sau alege o variantă.'); return; }
+        const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
+        const next = lista.map((y) => y.id === q.id ? { ...y, raspuns: r, raspunsLa: la, raspunsDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { raspuns: r, la, de }].slice(-20) } : y);
+        setIntrebari(next); setSchimba(null); setScrie((s) => ({ ...s, [q.id]: '' }));
+        setStare('Salvez răspunsul la ' + q.cod + '…');
+        await persist('olimpIntrebari', next);
+        setStare('✅ Am răspuns la ' + q.cod + '. Ananke îi transmite zeului.');
+    };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex gap-1.5 mb-3", style: { overflowX: 'auto', paddingBottom: 2 } }, FILTRE.map(([id, t, n]) => React.createElement("button", { key: id, onClick: () => setFiltru(id), className: "text-xs px-3 py-1.5 rounded-full font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: filtru === id ? '#14181C' : 'var(--muted1)', background: filtru === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t, " ", n))),
+        stare && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, stare),
+        !lista.length && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Nicio întrebare încă. Ananke le aduce aici de la zei, cele mai urgente primele."),
+        lista.length > 0 && !vizibile.length && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, filtru === 'deschise' ? '🎉 Zeii nu mai așteaptă nimic de la tine.' : 'Nimic aici.'),
+        vizibile.map((q) => {
+            const deschisa = olimpIntrebareDeschisa(q);
+            const arata = deschisa || schimba === q.id;
+            const variante = (Array.isArray(q.variante) ? q.variante : []).map((v) => typeof v === 'string' ? { text: v } : v).filter((v) => v && v.text);
+            return React.createElement("div", { key: q.id, className: "rounded-xl p-3 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (q.raspuns ? 'var(--acc2)' : q.status === 'inchisa' ? 'var(--border)' : q.urgent ? 'var(--acc4)' : 'var(--acc3)') } },
+                React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mb-1" },
+                    olimpChip(q.cod, 'var(--acc1)', 'c'),
+                    olimpChip(olimpEmoji(q.zeu, q.emoji) + ' ' + (q.zeu || ''), null, 'z'),
+                    q.urgent && olimpChip('⏰ urgent', 'var(--acc4)', 'u'),
+                    q.termen && olimpChip('📅 ' + q.termen, null, 't'),
+                    q.status === 'inchisa' && olimpChip('închisă', null, 'i')),
+                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)', whiteSpace: 'pre-wrap' } }, q.intrebare),
+                q.deCe && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted1)', whiteSpace: 'pre-wrap' } }, React.createElement("b", { style: { color: 'var(--muted)' } }, "De ce contează: "), q.deCe),
+                q.raspuns && React.createElement("div", { className: "text-xs mt-2 rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', color: 'var(--muted1)' } },
+                    React.createElement("b", { style: { color: 'var(--acc2)' } }, "✅ Am răspuns"), ' · ', olimpCand(q.raspunsLa), q.raspunsDe ? ' · ' + q.raspunsDe : '',
+                    React.createElement("div", { className: "mt-1", style: { whiteSpace: 'pre-wrap', color: 'var(--text)' } }, q.raspuns),
+                    schimba !== q.id && React.createElement("button", { onClick: () => setSchimba(q.id), className: "block mt-1.5", style: { color: 'var(--acc1)' } }, 'Schimbă răspunsul')),
+                arata && React.createElement("div", { className: "mt-2" },
+                    variante.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-2 mb-2" }, variante.map((v, i) => React.createElement("button", { key: i, onClick: () => raspunde(q, v.text), className: "text-xs px-3 py-2 rounded-lg font-semibold text-left",
+                        style: v.recomandat ? { color: '#14181C', background: 'var(--acc2)' } : { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, (v.recomandat ? '⭐ ' : '') + v.text))),
+                    React.createElement("textarea", { value: scrie[q.id] || '', onChange: (e) => { const t = e.target.value; setScrie((s) => ({ ...s, [q.id]: t })); }, rows: 2, maxLength: 2000, placeholder: 'Sau scrie răspunsul tău…',
+                        className: "w-full text-sm px-3 py-2 rounded-lg mb-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--text)' } }),
+                    React.createElement("div", { className: "flex flex-wrap gap-2" },
+                        olimpBtn('💬 Trimite răspunsul', () => raspunde(q, scrie[q.id]), 'prim'),
+                        schimba === q.id && olimpBtn('Renunță', () => setSchimba(null)))));
+        }));
+}
+function OlimpTab({ setTab, olimpPlan, setOlimpPlan, olimpIntrebari, setOlimpIntrebari, persist, currentUser }) {
+    const [fila, setFilaS] = useState(() => { try { return localStorage.getItem('olimpFila') || 'aprobat'; } catch (_) { return 'aprobat'; } });
+    const setFila = (f) => { setFilaS(f); try { localStorage.setItem('olimpFila', f); } catch (_) { } };
+    const deDecis = (olimpPlan || []).filter((x) => x && x.cod && !x.decizie).length;
     const deRaspuns = (olimpIntrebari || []).filter(olimpIntrebareDeschisa).length;
-    const FILE = [['aprobat', '✅ De aprobat' + (deDecis ? ' (' + deDecis + ')' : '')], ['intrebari', '❓ Întrebări' + (deRaspuns ? ' (' + deRaspuns + ')' : '')], ['rapoarte', '📜 Rapoarte'], ['harta', '🗺 Harta']];
-    return React.createElement("div", null,
-        React.createElement("div", { className: "antetPagina" },
-            React.createElement("h2", { className: "titluPagina text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "⚡ Olimp")),
-        React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Ce fac zeii (agenții AI) și ce așteaptă decizia ta. Ce aprobi aici devine treabă pentru ei, doar în limitele lor sigure; orice e ireversibil (trimiteri, facturi, plăți) îți cere tot confirmarea în chat."),
-        React.createElement("div", { className: "flex gap-1.5 mb-3", style: { overflowX: 'auto' } }, FILE.map(([id, t]) => React.createElement("button", { key: id, onClick: () => setFila(id), className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: fila === id ? '#14181C' : 'var(--muted1)', background: fila === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t))),
-        fila === 'aprobat' && React.createElement(OlimpAprobari, { plan: olimpPlan, setPlan: setOlimpPlan, persist, currentUser }),
+    const FILE = [['aprobat', '✅ De aprobat' + (deDecis ? ' (' + deDecis + ')' : '')], ['intrebari', '❓ Întrebări' + (deRaspuns ? ' (' + deRaspuns + ')' : '')], ['rapoarte', '📜 Rapoarte'], ['harta', '🗺 Harta']];
+    return React.createElement("div", null,
+        React.createElement("div", { className: "antetPagina" },
+            React.createElement("h2", { className: "titluPagina text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "⚡ Olimp"),
+            setTab && React.createElement("div", { className: "grupBtn" }, olimpBtn('🔌 Întreabă-l pe Brontes', () => setTab('brontes')))),
+        React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Ce fac zeii (agenții AI) și ce așteaptă decizia ta. Ce aprobi aici devine treabă pentru ei, doar în limitele lor sigure; orice e ireversibil (trimiteri, facturi, plăți) îți cere tot confirmarea în chat."),
+        React.createElement("div", { className: "flex gap-1.5 mb-3", style: { overflowX: 'auto' } }, FILE.map(([id, t]) => React.createElement("button", { key: id, onClick: () => setFila(id), className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: fila === id ? '#14181C' : 'var(--muted1)', background: fila === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t))),
+        fila === 'aprobat' && React.createElement(OlimpAprobari, { plan: olimpPlan, setPlan: setOlimpPlan, persist, currentUser }),
         fila === 'intrebari' && React.createElement(OlimpIntrebari, { intrebari: olimpIntrebari, setIntrebari: setOlimpIntrebari, persist, currentUser }),
-        fila === 'rapoarte' && React.createElement(OlimpRapoarte, null),
-        fila === 'harta' && React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-            React.createElement("div", { className: "text-sm mb-3", style: { color: 'var(--muted1)' } }, "Harta Olimpului: fiecare zeu, ce face acum și cine îi raportează."),
-            React.createElement("a", { href: "/olimp/", target: "_blank", rel: "noopener noreferrer", className: "inline-block text-sm px-4 py-2.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)', textDecoration: 'none' } }, "🗺 Deschide harta")));
-}
+        fila === 'rapoarte' && React.createElement(OlimpRapoarte, null),
+        fila === 'harta' && React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "text-sm mb-3", style: { color: 'var(--muted1)' } }, "Harta Olimpului: fiecare zeu, ce face acum și cine îi raportează."),
+            React.createElement("a", { href: "/olimp/", target: "_blank", rel: "noopener noreferrer", className: "inline-block text-sm px-4 py-2.5 rounded-lg font-semibold", style: { color: '#14181C', background: 'var(--acc1)', textDecoration: 'none' } }, "🗺 Deschide harta")));
+}
+/* ═══ BRONTES (v04.49): „Întreabă-l pe Brontes", electricianul-șef, pentru toată echipa ═══
+   Merge prin /api/ai (actiune: 'brontes'), cu limită de întrebări pe zi pentru fiecare om (Managerul o
+   schimbă aici). Conversația stă pe telefon; „Salvează" o pune pe server, în „brontesConv-<id>" (doar a lui).
+   Răspunsul e text de la AI: e desenat cu OlimpMarkdown (fără HTML), codul PLC în blocuri separate. */
+const BRONTES_RAPIDE = [
+    ['📏 Dimensionează cablu', 'Dimensionează cablul pentru: consumator ... kW, monofazat/trifazat, lungime ... m, pozare ... (tub în perete / aparent / îngropat). Vreau secțiunea, căderea de tensiune și protecția.'],
+    ['🛡 Alege protecții', 'Ce protecții pun pentru circuitul: ... (prize / iluminat / plită / boiler / pompă), cablu ... mm², lungime ... m? MCB (curba), RCD/RCBO (tip, sensibilitate), SPD.'],
+    ['🗄 Schemă tablou', 'Fă-mi echiparea și schema monofilară pentru un tablou de apartament/casă cu: ... circuite (enumeră), alimentare ... kW, mono/trifazat.'],
+    ['🔁 Program LOGO!', 'Scrie un program Siemens LOGO! (FBD sau ladder) pentru: ... (ex. pompă cu plutitor și protecție la mers în gol). Intrări: ..., ieșiri: ....'],
+    ['🏠 Scenariu KNX', 'Propune un scenariu KNX pentru: ... (ex. „plec de acasă": stinge tot, jaluzele jos, termostat pe eco). Ce adrese de grup și ce module trebuie?'],
+    ['⚡ Depanare RCD', 'Diferențialul de ... mA declanșează ... (la pornirea X / aleator / la ploaie). Cum caut defectul, pas cu pas, în siguranță?'],
+];
+const BRONTES_MAX_LOCAL = 40;
+const brontesCheieLocala = (u) => 'brontes:' + String((u && u.id) || 'eu');
+function brontesCitesteLocal(u) { try { const v = JSON.parse(localStorage.getItem(brontesCheieLocala(u)) || '[]'); return Array.isArray(v) ? v : []; } catch (_) { return []; } }
+function brontesScrieLocal(u, m) { try { localStorage.setItem(brontesCheieLocala(u), JSON.stringify(m.slice(-BRONTES_MAX_LOCAL).map((x) => ({ rol: x.rol, text: x.text, la: x.la, poza: !!x.poza, eroare: !!x.eroare })))); } catch (_) { } }
+function BrontesTab({ currentUser, persist }) {
+    const eMgr = currentUser && currentUser.rol === 'Manager';
+    const cheieConv = 'brontesConv-' + String((currentUser && currentUser.id) || '');
+    const [mesaje, setMesaje] = useState(() => brontesCitesteLocal(currentUser));
+    const [text, setText] = useState('');
+    const [poza, setPoza] = useState(null); // { base64, mime, nume, prev }
+    const [lucrez, setLucrez] = useState(false);
+    const [stare, setStare] = useState('');
+    const [ramase, setRamase] = useState(null);
+    const [salvate, setSalvate] = useState(null);
+    const [limita, setLimita] = useState('');
+    const fisierRef = useRef(null);
+    const josRef = useRef(null);
+    useEffect(() => { brontesScrieLocal(currentUser, mesaje); try { josRef.current && josRef.current.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { } }, [mesaje]);
+    useEffect(() => {
+        if (!eMgr) return;
+        olimpCitesteCheie('brontesSetari', null).then((v) => setLimita(v && v.limitaZi != null ? String(v.limitaZi) : '30')).catch(() => setLimita('30'));
+    }, [eMgr]);
+    const alegePoza = async (e) => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        if (!/^image\//i.test(f.type || '')) { setStare('⚠ Doar poze.'); return; }
+        try {
+            setStare('Micșorez poza…');
+            const b64 = await micsoreazaPozaListei(f, 1600, 0.82);
+            setPoza({ base64: b64, mime: 'image/jpeg', nume: f.name || 'poza.jpg', prev: 'data:image/jpeg;base64,' + b64 });
+            setStare('');
+        } catch (_) { setStare('⚠ Nu am putut citi poza.'); }
+    };
+    const trimite = async () => {
+        const q = text.trim();
+        if (!q || lucrez) return;
+        const eu = { rol: 'eu', text: q, la: new Date().toISOString(), poza: !!poza };
+        const istoric = mesaje.filter((m) => !m.eroare).slice(-12).map((m) => ({ rol: m.rol, text: m.text }));
+        setMesaje((m) => [...m, eu]); setText(''); setLucrez(true); setStare('');
+        const p = poza; setPoza(null);
+        try {
+            const r = await authFetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, timeoutMs: 120000,
+                body: JSON.stringify({ actiune: 'brontes', intrebare: q, istoric, fisier: p ? { mime: p.mime, base64: p.base64 } : undefined }) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || !d.raspuns) throw new Error(d.error || ('Brontes nu a răspuns (server ' + r.status + ').'));
+            if (d.ramase != null) setRamase(d.ramase);
+            setMesaje((m) => [...m, { rol: 'brontes', text: d.raspuns + (d.taiat ? '\n\n_(răspunsul s-a tăiat — cere „continuă”)_' : ''), la: new Date().toISOString() }]);
+        }
+        catch (e) {
+            setMesaje((m) => [...m, { rol: 'brontes', eroare: true, text: '⚠ ' + ((e && e.message) || 'Nu am putut lua răspunsul.'), la: new Date().toISOString() }]);
+        }
+        finally { setLucrez(false); }
+    };
+    const copiaza = (t) => { try { navigator.clipboard.writeText(t); setStare('📋 Copiat.'); } catch (_) { setStare('⚠ Nu am putut copia.'); } };
+    const salveaza = async () => {
+        const ok = mesaje.filter((m) => !m.eroare);
+        if (!ok.length) return;
+        try {
+            const v = await olimpCitesteCheie(cheieConv, []);
+            const lista = Array.isArray(v) ? v : [];
+            const prima = ok.find((m) => m.rol === 'eu');
+            const conv = { id: 'c' + Date.now().toString(36), titlu: ((prima && prima.text) || 'Conversație').slice(0, 80), la: new Date().toISOString(), mesaje: ok.slice(-BRONTES_MAX_LOCAL).map((m) => ({ rol: m.rol, text: String(m.text).slice(0, 20000), la: m.la })) };
+            await persist(cheieConv, [...lista, conv].slice(-30));
+            setStare('💾 Conversația e salvată.'); setSalvate(null);
+        } catch (e) { setStare('⚠ ' + ((e && e.message) || 'Nu am putut salva.')); }
+    };
+    const arataSalvate = async () => {
+        if (salvate) { setSalvate(null); return; }
+        try { const v = await olimpCitesteCheie(cheieConv, []); setSalvate(Array.isArray(v) ? v.slice().reverse() : []); } catch (e) { setStare('⚠ ' + ((e && e.message) || 'Nu am putut citi.')); }
+    };
+    const salveazaLimita = async () => {
+        const n = Math.max(0, Math.min(500, Math.floor(Number(limita))));
+        if (!isFinite(n)) return;
+        await persist('brontesSetari', { limitaZi: n });
+        setLimita(String(n)); setStare('✅ Limita: ' + n + ' întrebări pe zi pentru fiecare om (tu nu ai limită).');
+    };
+    const bula = (m, i) => {
+        const eu = m.rol === 'eu';
+        return React.createElement("div", { key: i, className: "mb-2", style: { display: 'flex', justifyContent: eu ? 'flex-end' : 'flex-start' } },
+            React.createElement("div", { className: "rounded-xl px-3 py-2", style: { maxWidth: eu ? '85%' : '100%', minWidth: 0, background: eu ? 'rgba(46,139,209,.18)' : 'var(--panel)', border: '1px solid ' + (m.eroare ? 'var(--acc4)' : 'var(--border)') } },
+                eu ? React.createElement("div", { className: "text-sm", style: { color: 'var(--text)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } }, m.poza ? '📷 ' : '', m.text)
+                    : React.createElement(React.Fragment, null,
+                        React.createElement("div", { className: "text-[11px] font-semibold mb-1", style: { color: 'var(--acc3)' } }, "🔌 Brontes"),
+                        m.eroare ? React.createElement("div", { className: "text-sm", style: { color: 'var(--acc4)' } }, m.text) : React.createElement(OlimpMarkdown, { text: m.text }),
+                        !m.eroare && React.createElement("button", { onClick: () => copiaza(m.text), className: "text-[11px] mt-1", style: { color: 'var(--acc1)' } }, "📋 Copiază"))));
+    };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "antetPagina" },
+            React.createElement("h2", { className: "titluPagina text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "🔌 Întreabă-l pe Brontes")),
+        React.createElement("p", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "Electricianul-șef: calcule de cabluri și protecții, tablouri, PLC (LOGO!, S7), KNX, Loxone, fotovoltaic, depanare. Poți trimite și o poză de tablou."),
+        React.createElement("div", { className: "rounded-lg px-3 py-2 mb-3 text-xs", style: { background: 'rgba(224,82,82,.10)', border: '1px solid var(--acc4)', color: 'var(--text)' } },
+            "⚠ Lucrezi numai fără tensiune, după verificarea lipsei tensiunii, cu echipament de protecție. În tablouri și la branșamente lucrează doar personal autorizat ANRE. Răspunsul e un ajutor, nu înlocuiește verificarea electricianului responsabil."),
+        eMgr && React.createElement("div", { className: "flex items-center gap-2 mb-3 text-xs", style: { color: 'var(--muted)' } },
+            "Întrebări pe zi / om:",
+            React.createElement("input", { type: "number", min: 0, max: 500, value: limita, onChange: (e) => setLimita(e.target.value), className: "rounded-lg px-2 py-1 text-sm", style: { width: 70, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+            olimpBtn('Salvează', salveazaLimita)),
+        React.createElement("div", { className: "flex gap-1.5 mb-3", style: { overflowX: 'auto', paddingBottom: 2 } }, BRONTES_RAPIDE.map(([et, sablon]) => React.createElement("button", { key: et, onClick: () => setText(sablon), className: "text-xs px-3 py-1.5 rounded-full", style: { whiteSpace: 'nowrap', flexShrink: 0, color: 'var(--muted1)', background: 'var(--panel)', border: '1px solid var(--border)' } }, et))),
+        salvate && React.createElement("div", { className: "rounded-xl p-2 mb-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+            !salvate.length && React.createElement("div", { className: "text-xs p-1", style: { color: 'var(--muted2)' } }, "Nicio conversație salvată."),
+            salvate.map((c) => React.createElement("button", { key: c.id, onClick: () => { setMesaje(Array.isArray(c.mesaje) ? c.mesaje : []); setSalvate(null); }, className: "block w-full text-left text-xs px-2 py-1.5 rounded-lg", style: { color: 'var(--text)' } }, '📂 ', c.titlu, React.createElement("span", { style: { color: 'var(--muted2)' } }, ' · ', olimpCand(c.la))))),
+        mesaje.length === 0 && React.createElement("div", { className: "text-sm mb-3", style: { color: 'var(--muted2)' } }, "Alege o întrebare rapidă de mai sus sau scrie-ți întrebarea. Dă cifre (kW, metri, mod de pozare) și răspunsul e mai bun."),
+        mesaje.map(bula),
+        lucrez && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, "🔌 Brontes calculează…"),
+        React.createElement("div", { ref: josRef }),
+        React.createElement("div", { className: "rounded-xl p-2 mt-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            poza && React.createElement("div", { className: "flex items-center gap-2 mb-2" },
+                React.createElement("img", { src: poza.prev, alt: "", style: { width: 48, height: 48, objectFit: 'cover', borderRadius: 8 } }),
+                React.createElement("span", { className: "text-xs flex-1 truncate", style: { color: 'var(--muted)' } }, poza.nume),
+                olimpBtn('✕', () => setPoza(null))),
+            React.createElement("textarea", { value: text, onChange: (e) => setText(e.target.value), rows: 3, maxLength: 8000, placeholder: 'Întrebarea ta…',
+                className: "w-full text-sm px-3 py-2 rounded-lg mb-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--text)' } }),
+            React.createElement("input", { ref: fisierRef, type: "file", accept: "image/*", onChange: alegePoza, style: { display: 'none' } }),
+            React.createElement("div", { className: "flex flex-wrap items-center gap-2" },
+                olimpBtn(lucrez ? '⏳ …' : '⚡ Întreabă', trimite, 'prim', { disabled: lucrez || !text.trim() }),
+                olimpBtn('📷 Poză', () => fisierRef.current && fisierRef.current.click()),
+                olimpBtn('💾 Salvează', salveaza),
+                olimpBtn('📂 Salvate', arataSalvate),
+                mesaje.length > 0 && olimpBtn('🧹 Nouă', () => { if (window.confirm('Începi o conversație nouă? Cea de acum dispare de pe telefon (dacă n-ai salvat-o).')) setMesaje([]); }),
+                ramase != null && React.createElement("span", { className: "text-[11px]", style: { color: 'var(--muted2)' } }, 'Mai ai ' + ramase + ' întrebări azi')),
+            stare && React.createElement("div", { className: "text-xs mt-2", style: { color: 'var(--muted)' } }, stare)));
+}
 function DocumenteSemnatTab({ documenteSemnat, setDocumenteSemnat, persist }) {
     const [form, setForm] = useState(null);
     const [stare, setStare] = useState('');
@@ -32264,7 +32403,7 @@ function App() {
     const MAGAZIE_TABS = ['gestiune', 'stocuri', 'masini', 'achizitii', 'scule-global'];
     const INCASARE_TABS = ['facturi', 'scadentar', 'cashflow30', 'raportlunar', 'devizrealizat', 'cheltuieli'];
     const OAMENI_TABS = ['pontaj', 'prezenta', 'concedii', 'adeverinte', 'utilizatori', 'calendar', 'fisaom'];
-    const UNELTE_TABS = ['asistent', 'memento', 'calculator', 'normativ', 'notite', 'ghid'];
+    const UNELTE_TABS = ['brontes', 'asistent', 'memento', 'calculator', 'normativ', 'notite', 'ghid'];
     const SETARI_TABS = ['firma', 'profil'];
     const [grupDeschis, setGrupDeschis] = useState(null);
     useEffect(() => {
@@ -34844,6 +34983,7 @@ function App() {
                 ['utilizatori', '🔑 Utilizatori', true, 'conturi parole acces roluri drepturi', 'Conturile din firmă: cine intră și cu ce drepturi.'],
             ]],
         ['unelte', '🧰', 'Unelte', UNELTE_TABS, false, [
+                ['brontes', '🔌 Întreabă-l pe Brontes', false, 'electrician brontes calcul cablu sectiune protectie siguranta diferential tablou plc logo knx loxone shelly fotovoltaic depanare', 'Electricianul-șef: cabluri, protecții, tablouri, PLC, KNX, fotovoltaic, depanare.'],
                 ['asistent', '🤖 Asistent', false, 'intrebari ajutor chat', 'Întrebări și răspunsuri strânse din toate șantierele.'],
                 ['memento', '🔔 Memento', false, 'alarma reminder aducere aminte calendar', 'Îți sună telefonul când vine termenul.'],
                 ['calculator', '🧮 Calculator', false, 'socoteli cablu sectiune amperaj', 'Socoteli de electrician: secțiune de cablu, amperaj, cădere de tensiune.'],
@@ -35142,7 +35282,8 @@ function App() {
                             (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab, achizitii: achizitii, setAchizitii: setAchizitii, onReceptie: receptioneazaAchizitie }),
                             tab === 'santiere' && React.createElement(SantiereTab, { offers: offers, invoices: invoices, stockMoves: stockMoves, inapoiGlobal: mergiInapoi, inainteGlobal: mergiInainte, inapoiLaListaSantiere: pozitie > 0 && !!istoric[pozitie - 1] && istoric[pozitie - 1].tab === 'santiere' && !istoric[pozitie - 1].sant, potInapoiGlobal: potInapoiOriunde, potInainteGlobal: potInainteOriunde, onOrigine: (o) => { setDashCmd({ pagina: o && o.pagina != null ? o.pagina : null, cheie: Date.now() + Math.random() }); sarPeste.current = true; setTab(o && o.tab !== undefined ? o.tab : null); }, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                             tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
-                            tab === 'olimp' && effectiveUser.rol === 'Manager' && React.createElement(OlimpTab, { olimpPlan: olimpPlan, setOlimpPlan: setOlimpPlan, olimpIntrebari: olimpIntrebari, setOlimpIntrebari: setOlimpIntrebari, persist: persist, currentUser: currentUser }),
+                            tab === 'brontes' && React.createElement(BrontesTab, { currentUser: currentUser, persist: persist }),
+                            tab === 'olimp' && effectiveUser.rol === 'Manager' && React.createElement(OlimpTab, { setTab: setTab, olimpPlan: olimpPlan, setOlimpPlan: setOlimpPlan, olimpIntrebari: olimpIntrebari, setOlimpIntrebari: setOlimpIntrebari, persist: persist, currentUser: currentUser }),
                             tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
                             tab === 'fisaom' && effectiveUser.rol === 'Manager' && React.createElement(FisaOmTab, { allUsers: totiOamenii, rapoarte: rapoarte, santiere: santiere, concedii: concedii, cereriSantier: cereriSantier, restanteSantier: restanteSantier, company: company, currentUser: effectiveUser, pontajCorectii: pontajCorectii, salarii: salarii, setSalarii: setSalarii, persist: persist,
                                 onAdeverinta: (u) => { setPendingAdeverinta({ userId: u.id, nume: u.nume }); setTab('adeverinte'); },

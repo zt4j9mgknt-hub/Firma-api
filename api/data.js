@@ -65,7 +65,11 @@ const CHEI_DOAR_MANAGER = new Set([
   'catalogProduse',  // catalogul de ofertare: prețurile de dealer ale furnizorilor (v04.31)
   'iluminatPreturi', // prețurile corpurilor din modulul de iluminat (v04.41) — doar Managerul
   'documenteSemnat', // contractele / documentele de semnat la distanță (v04.46) — date personale ale semnatarilor
+  'brontesSetari',   // limita de întrebări pe zi pentru Brontes (v04.49) — o citește serverul, o schimbă Managerul
 ]);
+/* BRONTES (v04.49): conversațiile salvate ale fiecărui om stau în „brontesConv-<id-ul lui>".
+   Le citește și le scrie DOAR proprietarul (nici colegii, nici Managerul prin aplicație). */
+const eConvAltuia = (k, uid) => /^brontesConv-/.test(String(k || '')) && String(k) !== 'brontesConv-' + String(uid == null ? '' : uid);
 /* OLIMP (v04.47): planul de aprobat al „zeilor" (olimpPlan) și rapoartele lor zilnice
    (olimpRapoarte-AAAA-LL = lista lunii, olimpRaport-<id> = textul) au cifre financiare,
    deci TOATE cheile care încep cu „olimp" sunt doar ale Managerului, la citit și la scris. */
@@ -600,6 +604,7 @@ export default async function handler(req, res) {
       if (eDoarManager(key) && !eManager) {
         return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
       }
+      if (eConvAltuia(key, auth.userId)) return res.status(403).json({ error: 'Conversațiile sunt ale fiecăruia.', interzis: true });
 
       const value = await redisGet(base, token, `firma:${key}`);
       /* PREZENȚA are poziția GPS a fiecărui om. Angajatul își primește doar rândurile LUI;
@@ -627,6 +632,7 @@ export default async function handler(req, res) {
       if (!key) return res.status(400).json({ error: 'Lipseste key in body.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
       if (eDoarManager(key) && !eManager) return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
+      if (eConvAltuia(key, auth.userId)) return res.status(403).json({ error: 'Conversațiile sunt ale fiecăruia.', interzis: true });
       if (CHEI_DOAR_MANAGER_SCRIE.has(key) && !eManager) return res.status(403).json({ error: 'Doar Managerul poate modifica asta.', interzis: true });
 
       // Concediile: omul își depune și își modifică DOAR cererea lui, și nu și-o aprobă singur.
