@@ -2648,6 +2648,10 @@ function mergeById(serverVal, clientVal, key) {
             map.set(x.id, { ...x, decizie: s.decizie, comentariu: s.comentariu, deciziaLa: s.deciziaLa, deciziaDe: s.deciziaDe, istoric: s.istoric });
             return;
         }
+        if (key === 'olimpIntrebari' && s && x && String(s.raspunsLa || '') > String(x.raspunsLa || '')) {
+            map.set(x.id, { ...x, raspuns: s.raspuns, raspunsLa: s.raspunsLa, raspunsDe: s.raspunsDe, istoric: s.istoric });
+            return;
+        }
         /* invers: pe server semnătura a fost scoasă, telefonul ăsta mai are copia veche semnată → câștigă serverul */
         if (key === 'proceseVerbale' && s && s.semnaturaStearsaLa && !s.semnatura && x.semnatura && !x.semnaturaStearsaLa
             && s.semnaturaStearsaPeste != null && amprentaSemnaturaPv(x) === String(s.semnaturaStearsaPeste))
@@ -3119,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.47-olimp';
+const APP_VERSION = 'v04.48-olimp-intrebari';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -11683,17 +11687,78 @@ function OlimpRapoarte() {
                     texte[r.id] == null ? React.createElement("div", { className: "text-xs mt-2", style: { color: 'var(--muted2)' } }, "Se încarcă…") : React.createElement(OlimpMarkdown, { text: texte[r.id] })));
         }));
 }
-function OlimpTab({ olimpPlan, setOlimpPlan, persist, currentUser }) {
+/* ═══ ÎNTREBĂRI (v04.48): ce așteaptă zeii de la Sebastian, adunate de Ananke ═══
+   olimpIntrebari: [{ id, cod:'Q1', zeu, emoji, intrebare, deCe, termen, urgent, variante:[{ text, recomandat }],
+   status:'deschisa'|'inchisa', deschisaLa, raspuns, raspunsLa, raspunsDe, istoric }]
+   Ananke le scrie prin window.olimpSalveazaIntrebari(lista) și citește prin window.olimpCitesteRaspunsuri(). */
+const olimpIntrebareDeschisa = (q) => !!(q && q.cod && !q.raspuns && q.status !== 'inchisa');
+const olimpComparaIntrebari = (a, b) => (olimpIntrebareDeschisa(b) ? 1 : 0) - (olimpIntrebareDeschisa(a) ? 1 : 0) || (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0)
+    || olimpTermenCheie(a.termen) - olimpTermenCheie(b.termen) || (parseInt(String(a.cod).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.cod).replace(/\D/g, ''), 10) || 0);
+function OlimpIntrebari({ intrebari, setIntrebari, persist, currentUser }) {
+    const [filtru, setFiltru] = useState('deschise');
+    const [scrie, setScrie] = useState({});
+    const [schimba, setSchimba] = useState(null);
+    const [stare, setStare] = useState('');
+    const lista = (intrebari || []).filter((q) => q && q.id && q.cod);
+    const deschise = lista.filter(olimpIntrebareDeschisa);
+    const raspunse = lista.filter((q) => q.raspuns);
+    const FILTRE = [['deschise', 'De răspuns', deschise.length], ['raspunse', 'Răspunse', raspunse.length], ['toate', 'Toate', lista.length]];
+    const vizibile = (filtru === 'deschise' ? deschise : filtru === 'raspunse' ? raspunse : lista).slice().sort(olimpComparaIntrebari);
+    const raspunde = async (q, text) => {
+        const r = String(text || '').trim().slice(0, 2000);
+        if (!r) { setStare('✏ Scrie răspunsul sau alege o variantă.'); return; }
+        const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
+        const next = lista.map((y) => y.id === q.id ? { ...y, raspuns: r, raspunsLa: la, raspunsDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { raspuns: r, la, de }].slice(-20) } : y);
+        setIntrebari(next); setSchimba(null); setScrie((s) => ({ ...s, [q.id]: '' }));
+        setStare('Salvez răspunsul la ' + q.cod + '…');
+        await persist('olimpIntrebari', next);
+        setStare('✅ Am răspuns la ' + q.cod + '. Ananke îi transmite zeului.');
+    };
+    return React.createElement("div", null,
+        React.createElement("div", { className: "flex gap-1.5 mb-3", style: { overflowX: 'auto', paddingBottom: 2 } }, FILTRE.map(([id, t, n]) => React.createElement("button", { key: id, onClick: () => setFiltru(id), className: "text-xs px-3 py-1.5 rounded-full font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: filtru === id ? '#14181C' : 'var(--muted1)', background: filtru === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t, " ", n))),
+        stare && React.createElement("div", { className: "text-xs mb-2", style: { color: 'var(--muted)' } }, stare),
+        !lista.length && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Nicio întrebare încă. Ananke le aduce aici de la zei, cele mai urgente primele."),
+        lista.length > 0 && !vizibile.length && React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, filtru === 'deschise' ? '🎉 Zeii nu mai așteaptă nimic de la tine.' : 'Nimic aici.'),
+        vizibile.map((q) => {
+            const deschisa = olimpIntrebareDeschisa(q);
+            const arata = deschisa || schimba === q.id;
+            const variante = (Array.isArray(q.variante) ? q.variante : []).map((v) => typeof v === 'string' ? { text: v } : v).filter((v) => v && v.text);
+            return React.createElement("div", { key: q.id, className: "rounded-xl p-3 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (q.raspuns ? 'var(--acc2)' : q.status === 'inchisa' ? 'var(--border)' : q.urgent ? 'var(--acc4)' : 'var(--acc3)') } },
+                React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mb-1" },
+                    olimpChip(q.cod, 'var(--acc1)', 'c'),
+                    olimpChip(olimpEmoji(q.zeu, q.emoji) + ' ' + (q.zeu || ''), null, 'z'),
+                    q.urgent && olimpChip('⏰ urgent', 'var(--acc4)', 'u'),
+                    q.termen && olimpChip('📅 ' + q.termen, null, 't'),
+                    q.status === 'inchisa' && olimpChip('închisă', null, 'i')),
+                React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)', whiteSpace: 'pre-wrap' } }, q.intrebare),
+                q.deCe && React.createElement("div", { className: "text-xs mt-1", style: { color: 'var(--muted1)', whiteSpace: 'pre-wrap' } }, React.createElement("b", { style: { color: 'var(--muted)' } }, "De ce contează: "), q.deCe),
+                q.raspuns && React.createElement("div", { className: "text-xs mt-2 rounded-lg px-2.5 py-2", style: { background: 'var(--panel2)', color: 'var(--muted1)' } },
+                    React.createElement("b", { style: { color: 'var(--acc2)' } }, "✅ Am răspuns"), ' · ', olimpCand(q.raspunsLa), q.raspunsDe ? ' · ' + q.raspunsDe : '',
+                    React.createElement("div", { className: "mt-1", style: { whiteSpace: 'pre-wrap', color: 'var(--text)' } }, q.raspuns),
+                    schimba !== q.id && React.createElement("button", { onClick: () => setSchimba(q.id), className: "block mt-1.5", style: { color: 'var(--acc1)' } }, 'Schimbă răspunsul')),
+                arata && React.createElement("div", { className: "mt-2" },
+                    variante.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-2 mb-2" }, variante.map((v, i) => React.createElement("button", { key: i, onClick: () => raspunde(q, v.text), className: "text-xs px-3 py-2 rounded-lg font-semibold text-left",
+                        style: v.recomandat ? { color: '#14181C', background: 'var(--acc2)' } : { color: 'var(--text)', background: 'var(--panel2)', border: '1px solid var(--border)' } }, (v.recomandat ? '⭐ ' : '') + v.text))),
+                    React.createElement("textarea", { value: scrie[q.id] || '', onChange: (e) => { const t = e.target.value; setScrie((s) => ({ ...s, [q.id]: t })); }, rows: 2, maxLength: 2000, placeholder: 'Sau scrie răspunsul tău…',
+                        className: "w-full text-sm px-3 py-2 rounded-lg mb-2", style: { background: 'var(--panel2)', border: '1px solid var(--border)', color: 'var(--text)' } }),
+                    React.createElement("div", { className: "flex flex-wrap gap-2" },
+                        olimpBtn('💬 Trimite răspunsul', () => raspunde(q, scrie[q.id]), 'prim'),
+                        schimba === q.id && olimpBtn('Renunță', () => setSchimba(null)))));
+        }));
+}
+function OlimpTab({ olimpPlan, setOlimpPlan, olimpIntrebari, setOlimpIntrebari, persist, currentUser }) {
     const [fila, setFilaS] = useState(() => { try { return localStorage.getItem('olimpFila') || 'aprobat'; } catch (_) { return 'aprobat'; } });
     const setFila = (f) => { setFilaS(f); try { localStorage.setItem('olimpFila', f); } catch (_) { } };
     const deDecis = (olimpPlan || []).filter((x) => x && x.cod && !x.decizie).length;
-    const FILE = [['aprobat', '✅ De aprobat' + (deDecis ? ' (' + deDecis + ')' : '')], ['rapoarte', '📜 Rapoarte'], ['harta', '🗺 Harta']];
+    const deRaspuns = (olimpIntrebari || []).filter(olimpIntrebareDeschisa).length;
+    const FILE = [['aprobat', '✅ De aprobat' + (deDecis ? ' (' + deDecis + ')' : '')], ['intrebari', '❓ Întrebări' + (deRaspuns ? ' (' + deRaspuns + ')' : '')], ['rapoarte', '📜 Rapoarte'], ['harta', '🗺 Harta']];
     return React.createElement("div", null,
         React.createElement("div", { className: "antetPagina" },
             React.createElement("h2", { className: "titluPagina text-lg", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "⚡ Olimp")),
         React.createElement("p", { className: "text-xs mb-3", style: { color: 'var(--muted)' } }, "Ce fac zeii (agenții AI) și ce așteaptă decizia ta. Ce aprobi aici devine treabă pentru ei, doar în limitele lor sigure; orice e ireversibil (trimiteri, facturi, plăți) îți cere tot confirmarea în chat."),
         React.createElement("div", { className: "flex gap-1.5 mb-3", style: { overflowX: 'auto' } }, FILE.map(([id, t]) => React.createElement("button", { key: id, onClick: () => setFila(id), className: "text-sm px-3 py-2 rounded-lg font-semibold", style: { whiteSpace: 'nowrap', flexShrink: 0, color: fila === id ? '#14181C' : 'var(--muted1)', background: fila === id ? 'var(--acc1)' : 'var(--panel)', border: '1px solid var(--border)' } }, t))),
         fila === 'aprobat' && React.createElement(OlimpAprobari, { plan: olimpPlan, setPlan: setOlimpPlan, persist, currentUser }),
+        fila === 'intrebari' && React.createElement(OlimpIntrebari, { intrebari: olimpIntrebari, setIntrebari: setOlimpIntrebari, persist, currentUser }),
         fila === 'rapoarte' && React.createElement(OlimpRapoarte, null),
         fila === 'harta' && React.createElement("div", { className: "rounded-xl p-4", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
             React.createElement("div", { className: "text-sm mb-3", style: { color: 'var(--muted1)' } }, "Harta Olimpului: fiecare zeu, ce face acum și cine îi raportează."),
@@ -32554,6 +32619,7 @@ function App() {
     const [proceseVerbale, setProceseVerbale] = useState([]);
     const [documenteSemnat, setDocumenteSemnat] = useState([]);
     const [olimpPlan, setOlimpPlan] = useState([]);
+    const [olimpIntrebari, setOlimpIntrebari] = useState([]);
     const [materialeListaSantier, setMaterialeListaSantier] = useState([]);
     const [checklistSantier, setChecklistSantier] = useState([]);
     const [checklistConfirmari, setChecklistConfirmari] = useState([]);
@@ -32701,7 +32767,7 @@ function App() {
                 ...(eMgrDate ? [['antemasuratori', [], setAntemasuratori], ['catalogProduse', [], setCatalogProduse]] : []),
                 ['normativPdf', null, setNormativPdf],
                 ['normativIndexFile', null, setNormativIndexFile],
-                ...(eMgrDate ? [['cheltuieliFirma', [], setCheltuieliFirma], ['salarii', [], setSalarii], ['documenteSemnat', [], setDocumenteSemnat], ['olimpPlan', [], setOlimpPlan]] : []),
+                ...(eMgrDate ? [['cheltuieliFirma', [], setCheltuieliFirma], ['salarii', [], setSalarii], ['documenteSemnat', [], setDocumenteSemnat], ['olimpPlan', [], setOlimpPlan], ['olimpIntrebari', [], setOlimpIntrebari]] : []),
                 ['proceseVerbale', [], setProceseVerbale],
                 ['planificareSantier', [], setPlanificareSantier],
             ];
@@ -33140,6 +33206,7 @@ function App() {
                 antemasuratori: (v) => setAntemasuratori(v ?? []),
                 documenteSemnat: (v) => setDocumenteSemnat(v ?? []),
                 olimpPlan: (v) => setOlimpPlan(v ?? []),
+                olimpIntrebari: (v) => setOlimpIntrebari(v ?? []),
             } : {}),
             /* PV semnat la distanță ajunge imediat și pe celelalte telefoane */
             proceseVerbale: (v) => setProceseVerbale(v ?? []),
@@ -33253,7 +33320,7 @@ function App() {
        window.olimpImportaPlan(puncte) → adaugă/actualizează punctele, fără să atingă deciziile deja luate
        Totul trece prin /api/data cu biletul omului logat; serverul refuză oricui nu e Manager. */
     useEffect(() => {
-        const NUME = ['olimpSalveazaRaport', 'olimpCitestePlan', 'olimpImportaPlan'];
+        const NUME = ['olimpSalveazaRaport', 'olimpCitestePlan', 'olimpImportaPlan', 'olimpSalveazaIntrebari', 'olimpCitesteRaspunsuri'];
         const curata = () => NUME.forEach((n) => { try { delete window[n]; } catch (_) { } });
         if (!currentUser || currentUser.rol !== 'Manager') { curata(); return; }
         const scrieCheie = async (key, value) => {
@@ -33315,6 +33382,38 @@ function App() {
                 return { ok: true, noi, actualizate, totalPeServer: Array.isArray(verif) ? verif.length : 0 };
             }
             catch (e) { return { ok: false, eroare: (e && e.message) || String(e) }; }
+        };
+        /* Ananke: adaugă / actualizează întrebările (după cod). Răspunsurile date de Sebastian rămân neatinse;
+           o întrebare se poate închide (status:'inchisa'), dar nu se șterge. */
+        window.olimpSalveazaIntrebari = async (lista) => {
+            try {
+                if (!Array.isArray(lista) || !lista.length) throw new Error('Trimite o listă de întrebări.');
+                const t = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
+                const server = await olimpCitesteCheie('olimpIntrebari', []);
+                const harta = new Map((Array.isArray(server) ? server : []).filter((x) => x && x.id).map((x) => [x.id, x]));
+                let noi = 0, actualizate = 0;
+                for (const q of lista) {
+                    const cod = t(q && q.cod, 20);
+                    if (!cod || !t(q.intrebare, 10)) continue;
+                    const id = 'q_' + cod.replace(/[^A-Za-z0-9]/g, '');
+                    const vechi = harta.get(id);
+                    const curat = { cod, zeu: t(q.zeu, 40), emoji: olimpEmoji(q.zeu, q.emoji), intrebare: t(q.intrebare, 1500), deCe: t(q.deCe, 1500), termen: t(q.termen, 80), urgent: !!q.urgent,
+                        variante: (Array.isArray(q.variante) ? q.variante : []).slice(0, 6).map((v) => typeof v === 'string' ? { text: t(v, 300) } : { text: t(v && v.text, 300), recomandat: !!(v && v.recomandat) }).filter((v) => v.text) };
+                    if (q.status === 'inchisa' || q.status === 'deschisa') curat.status = q.status;
+                    if (vechi) actualizate++; else noi++;
+                    harta.set(id, { ...(vechi || { deschisaLa: new Date().toISOString(), status: 'deschisa' }), ...curat, id });
+                }
+                const next = [...harta.values()];
+                setOlimpIntrebari(next);
+                await saveKey('olimpIntrebari', next);
+                return { ok: true, noi, actualizate, deschise: next.filter(olimpIntrebareDeschisa).length };
+            }
+            catch (e) { return { ok: false, eroare: (e && e.message) || String(e) }; }
+        };
+        window.olimpCitesteRaspunsuri = async (toate) => {
+            const v = await olimpCitesteCheie('olimpIntrebari', []);
+            const l = (Array.isArray(v) ? v : []).filter((q) => q && q.cod);
+            return toate ? l : l.filter((q) => q.raspuns && q.status !== 'inchisa');
         };
         return curata;
     }, [currentUser && currentUser.id, currentUser && currentUser.rol]);
@@ -34702,7 +34801,7 @@ function App() {
     };
     const NavItem = ({ id, label }) => (React.createElement("button", { onClick: () => { setTab(id); setSidebarOpen(false); setCautaMeniu(''); }, className: "flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left", style: { color: tab === id ? '#14181C' : 'var(--muted1)', background: tab === id ? 'var(--acc1)' : 'transparent', fontWeight: tab === id ? 600 : 400 } }, label));
     const eManagerMeniu = effectiveUser?.rol === 'Manager';
-    const olimpDeDecis = eManagerMeniu ? (olimpPlan || []).filter((x) => x && x.cod && !x.decizie).length : 0;
+    const olimpDeDecis = eManagerMeniu ? (olimpPlan || []).filter((x) => x && x.cod && !x.decizie).length + (olimpIntrebari || []).filter(olimpIntrebareDeschisa).length : 0;
     // true = doar managerul; 'doarElectrician' = rândul pe care managerul îl are deja în altă intrare (Stocuri e o filă din Materiale)
     const vedeRandMeniu = (numaiMgr) => numaiMgr === 'doarElectrician' ? !eManagerMeniu : (!numaiMgr || eManagerMeniu);
     const GRUPE_MENIU = [
@@ -34882,7 +34981,7 @@ function App() {
                         React.createElement(NavItem, { id: "santiere", label: "\uD83C\uDFD7 \u0218antiere" }),
                         effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "instiintari", label: "\uD83D\uDD14 \u00CEn\u0219tiin\u021B\u0103ri" }),
                         effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "consilier", label: "\uD83E\uDDED Consilier" }),
-                        effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "olimp", label: React.createElement("span", { className: "flex items-center justify-between w-full gap-2" }, React.createElement("span", null, "⚡ Olimp"), olimpDeDecis > 0 && React.createElement("span", { title: "Puncte de decis", style: { minWidth: 20, textAlign: 'center', fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 10, color: '#fff', background: 'var(--acc4)' } }, olimpDeDecis)) }),
+                        effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "olimp", label: React.createElement("span", { className: "flex items-center justify-between w-full gap-2" }, React.createElement("span", null, "⚡ Olimp"), olimpDeDecis > 0 && React.createElement("span", { title: "De decis + întrebări de răspuns", style: { minWidth: 20, textAlign: 'center', fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 10, color: '#fff', background: 'var(--acc4)' } }, olimpDeDecis)) }),
                         React.createElement("div", { style: { height: 1, background: 'var(--border)', margin: '8px 4px 4px' } }),
                         GRUPE_MENIU.map(([cheie, icon, eticheta, taburi, doarManager, copii]) => {
                             if (doarManager && !eManagerMeniu)
@@ -35043,7 +35142,7 @@ function App() {
                             (tab === 'gestiune' || tab === 'stocuri') && React.createElement(MaterialsTab, { currentUser: effectiveUser, materials: materials, setMaterials: setMaterials, stockMoves: stockMoves, setStockMoves: setStockMoves, persist: persist, company: company, subTab: tab, achizitii: achizitii, setAchizitii: setAchizitii, onReceptie: receptioneazaAchizitie }),
                             tab === 'santiere' && React.createElement(SantiereTab, { offers: offers, invoices: invoices, stockMoves: stockMoves, inapoiGlobal: mergiInapoi, inainteGlobal: mergiInainte, inapoiLaListaSantiere: pozitie > 0 && !!istoric[pozitie - 1] && istoric[pozitie - 1].tab === 'santiere' && !istoric[pozitie - 1].sant, potInapoiGlobal: potInapoiOriunde, potInainteGlobal: potInainteOriunde, onOrigine: (o) => { setDashCmd({ pagina: o && o.pagina != null ? o.pagina : null, cheie: Date.now() + Math.random() }); sarPeste.current = true; setTab(o && o.tab !== undefined ? o.tab : null); }, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, etape: etape, setEtape: setEtape, persist: persist, company: company, materials: materials, devize: devize, setDevize: setDevize, sculeSantier: sculeSantier, setSculeSantier: setSculeSantier, cereriSantier: cereriSantier, setCereriSantier: setCereriSantier, miscariSantier: miscariSantier, setMiscariSantier: setMiscariSantier, problemeSantier: problemeSantier, setProblemeSantier: setProblemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, planseSantier: planseSantier, setPlanseSantier: setPlanseSantier, mediaSantier: mediaSantier, setMediaSantier: setMediaSantier, structuraSantier: structuraSantier, setStructuraSantier: setStructuraSantier, pozitiiSantier: pozitiiSantier, setPozitiiSantier: setPozitiiSantier, materialeListaSantier: materialeListaSantier, setMaterialeListaSantier: setMaterialeListaSantier, proceseVerbale: proceseVerbale, setProceseVerbale: setProceseVerbale, checklistSantier: checklistSantier, setChecklistSantier: setChecklistSantier, checklistConfirmari: checklistConfirmari, setChecklistConfirmari: setChecklistConfirmari, checklistSablon: checklistSablon, setChecklistSablon: setChecklistSablon, clients: clients, concedii: concedii, cereriAlocare: cereriAlocare, setCereriAlocare: setCereriAlocare, onExportToDeviz: exportConsumToDeviz, onExportMaterialeFolosite: exportMaterialeFolositeToDeviz, onCerereMaterial: proceseazaCerereMaterial, currentUser: effectiveUser, pendingSiteNav: pendingSiteNav, setPendingSiteNav: setPendingSiteNav, onSiteView: setSiteSectiune, onNav: setNavSantier, onIesire: iesiInMeniu, setTab: setTab }),
                             tab === 'instiintari' && effectiveUser.rol === 'Manager' && React.createElement(InstiintariTab, { rapoarte: rapoarte, cereriSantier: cereriSantier, problemeSantier: problemeSantier, restanteSantier: restanteSantier, sculeSantier: sculeSantier, santiere: santiere, goToSectiune: (id, view, raportId) => { setPendingSiteNav({ santierId: id, siteView: view, ...(raportId ? { deschideRaportId: raportId } : {}) }); setTab('santiere'); } }),
-                            tab === 'olimp' && effectiveUser.rol === 'Manager' && React.createElement(OlimpTab, { olimpPlan: olimpPlan, setOlimpPlan: setOlimpPlan, persist: persist, currentUser: currentUser }),
+                            tab === 'olimp' && effectiveUser.rol === 'Manager' && React.createElement(OlimpTab, { olimpPlan: olimpPlan, setOlimpPlan: setOlimpPlan, olimpIntrebari: olimpIntrebari, setOlimpIntrebari: setOlimpIntrebari, persist: persist, currentUser: currentUser }),
                             tab === 'consilier' && effectiveUser.rol === 'Manager' && React.createElement(ConsilierTab, { company: company, santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, materials: materials, achizitii: achizitii, concedii: concedii, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab }),
                             tab === 'fisaom' && effectiveUser.rol === 'Manager' && React.createElement(FisaOmTab, { allUsers: totiOamenii, rapoarte: rapoarte, santiere: santiere, concedii: concedii, cereriSantier: cereriSantier, restanteSantier: restanteSantier, company: company, currentUser: effectiveUser, pontajCorectii: pontajCorectii, salarii: salarii, setSalarii: setSalarii, persist: persist,
                                 onAdeverinta: (u) => { setPendingAdeverinta({ userId: u.id, nume: u.nume }); setTab('adeverinte'); },

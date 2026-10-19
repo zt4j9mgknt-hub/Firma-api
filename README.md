@@ -1,11 +1,12 @@
 # Firma-api
 ## Olimp – integrare zei
 
-Secțiunea **⚡ Olimp** din meniu (doar Manager): *De aprobat* (planul de implementare, DA / NU / MODIFIC cu comentariu, data, ora și cine a decis), *Rapoarte* (rapoartele zilnice ale zeilor, cu verdictul Argus) și *Harta* (`/olimp/`). Insigna roșie din meniu arată câte puncte sunt încă de decis.
+Secțiunea **⚡ Olimp** din meniu (doar Manager): *De aprobat* (planul de implementare, DA / NU / MODIFIC cu comentariu, data, ora și cine a decis), *Întrebări* (ce așteaptă zeii de la Sebastian, adunate de Ananke: variante cu una recomandată, răspuns liber, ora răspunsului), *Rapoarte* (rapoartele zilnice ale zeilor, cu verdictul Argus) și *Harta* (`/olimp/`). Insigna roșie din meniu arată câte puncte sunt încă de decis plus câte întrebări așteaptă răspuns.
 
 Datele stau în magazinul general `/api/data`. Toate cheile care încep cu `olimp` sunt **doar pentru Manager** (citire și scriere, verificat pe server):
 
 - `olimpPlan` – punctele planului (`cod`, `titlu`, `problema`, `solutie`, `cine`, `efort`, `termen`, `urgent`) și decizia (`decizie`: `DA` | `NU` | `MOD`, `comentariu`, `deciziaLa`, `deciziaDe`, `istoric`).
+- `olimpIntrebari` – întrebările (`cod` Q#, `zeu`, `intrebare`, `deCe`, `termen`, `urgent`, `variante`, `status`) și răspunsul (`raspuns`, `raspunsLa`, `raspunsDe`, `istoric`).
 - `olimpRapoarte-AAAA-LL` – lista rapoartelor lunii, fără text (`id`, `zeu`, `emoji`, `data`, `titlu`, `verdict`, `la`).
 - `olimpRaport-<id>` – textul unui raport (`{ id, text }`, markdown simplu, max. 60.000 caractere).
 
@@ -24,6 +25,15 @@ await window.olimpSalveazaRaport({
 
 // citește deciziile lui Sebastian
 await window.olimpCitestePlan('DA');        // 'DA' | 'NU' | 'MOD' | 'nedecise' | fără filtru = toate
+
+// Ananke: întrebările pentru Sebastian (fila „❓ Întrebări”), după cod; răspunsurile lui rămân neatinse
+await window.olimpSalveazaIntrebari([{
+  cod: 'Q1', zeu: 'Athena', intrebare: 'Ce preț punem la UTCN?', deCe: 'Fără el nu se facturează',
+  termen: '25.10', urgent: true,
+  variante: [{ text: 'A: 95 lei/buc', recomandat: true }, { text: 'B: 110 lei/buc' }],
+  // status: 'inchisa'  // după ce răspunsul a ajuns la zeu (nu se șterge nimic)
+}]); // → { ok, noi, actualizate, deschise }
+await window.olimpCitesteRaspunsuri();      // întrebările cu răspuns, încă neînchise (true = toate)
 
 // importă / actualizează punctele planului (deciziile deja luate rămân neatinse)
 await window.olimpImportaPlan([{ cod: 'D1', titlu: '...', problema: '...', solutie: '...', cine: '...', efort: '...', termen: '...', urgent: true }]);
