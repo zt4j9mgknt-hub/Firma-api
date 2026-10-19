@@ -2346,7 +2346,25 @@ async function bioDeblocheaza() {
     const raw = localStorage.getItem('bioSession');
     if (!raw)
         throw new Error('Nu există o sesiune salvată. Intră o dată cu parola.');
-    return JSON.parse(raw);
+    const sesiune = JSON.parse(raw);
+    /* BILETUL SALVAT POATE FI EXPIRAT. Amprenta doar scoate din dispozitiv biletul de la
+       ultima logare cu parola, iar biletul ține 30 de zile. Înainte îl foloseam orbește:
+       aplicația părea deschisă, dar serverul răspundea 401 la tot („sesiunea a expirat"),
+       iar „Intră din nou în cont" ducea iar la amprentă, adică în același bilet mort.
+       Acum verificăm termenul din bilet; dacă a trecut, îl aruncăm și cerem parola o dată. */
+    try {
+        const corp = String(sesiune.token || '').split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+        const exp = JSON.parse(atob(corp)).exp;
+        if (!exp || Date.now() > exp) {
+            localStorage.removeItem('bioSession');
+            throw new Error('Sesiune salvată expirată. Intră o dată cu parola.');
+        }
+    }
+    catch (e) {
+        if (/expirat/i.test(e && e.message))
+            throw e;
+    }
+    return sesiune;
 }
 const CACHE_PREFIX = 'cache_';
 function cacheGet(key) { try {
@@ -31610,6 +31628,24 @@ function App() {
     }, [currentUser && currentUser.id]);
     const handleBioUnlock = async () => {
         const { user, token } = await bioDeblocheaza();
+        /* Biletul poate fi și respins de server înainte de termen (parolă schimbată, cheie de
+           sesiune înlocuită pe Vercel). Îl încercăm o dată; dacă serverul zice 401, aruncăm
+           biletul salvat și cerem parola, în loc să deschidem o aplicație care nu primește date. */
+        try {
+            /* Limită de 6 s: pe semnal slab cererea poate atârna; la depășire mergem pe ramura offline. */
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 6000);
+            const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ action: 'list' }), signal: ctrl.signal }).finally(() => clearTimeout(timer));
+            if (r.status === 401) {
+                try { localStorage.removeItem('bioSession'); } catch { }
+                throw new Error('Sesiune salvată respinsă de server. Intră o dată cu parola.');
+            }
+        }
+        catch (e) {
+            if (/sesiune salvată/i.test(e && e.message))
+                throw e;
+            /* fără rețea: lăsăm aplicația să pornească offline, ca înainte */
+        }
         setAuthToken(token);
         setCurrentUser(user);
         try {
