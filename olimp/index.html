@@ -64,6 +64,7 @@ header>*{pointer-events:auto}
 /* fișa zeului selectat */
 .card{position:absolute;left:16px;bottom:16px;width:min(340px,calc(100% - 32px));background:var(--glass);border:1px solid var(--edge);border-radius:16px;
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:14px 16px;display:flex;flex-direction:column;gap:10px;z-index:3}
+.card[hidden]{display:none}
 .card .hd{display:flex;align-items:center;gap:12px}
 .card .orb{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;font-size:25px;flex:none;border:1.5px solid currentColor;
   background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.18),rgba(255,255,255,.02) 60%)}
@@ -82,7 +83,7 @@ header>*{pointer-events:auto}
 .drawer .top{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid var(--edge)}
 .drawer .top h2{margin:0;font-family:var(--f-display);font-size:15px;letter-spacing:.22em;color:var(--gold)}
 .drawer .top button{background:none;border:0;color:var(--mist);font-size:22px;cursor:pointer}
-.drawer .body{overflow:auto;padding:12px 12px 20px;display:flex;flex-direction:column;gap:16px}
+.drawer .body{overflow:auto;flex:1;min-height:0;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:12px 12px 20px;display:flex;flex-direction:column;gap:16px}
 .sec h4{margin:0 4px 8px;font-family:var(--f-mono);font-size:11px;letter-spacing:.16em;color:var(--mist);text-transform:uppercase;display:flex;justify-content:space-between}
 .item{padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.035);border-left:3px solid var(--off);display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
 .item .t{display:flex;justify-content:space-between;gap:8px;font-family:var(--f-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
@@ -99,10 +100,11 @@ header>*{pointer-events:auto}
 .tip b{font-family:var(--f-display);letter-spacing:.1em;display:block;font-size:14px}
 .tip span{color:var(--mist)}
 @media (max-width:700px){ .brand h1{font-size:19px} .legend{order:3;width:100%} }
-/* ---- telefon: listă clară în loc de hartă înghesuită ---- */
+/* ---- telefon (portret sau culcat): harta + listă, pagina se derulează ---- */
 .mob{display:none}.mobhint{display:none}
-@media (max-width:700px){
-  body{overflow:auto}
+@media (max-width:700px), (orientation:landscape) and (max-height:500px){
+  body{overflow:auto;overflow-x:hidden}
+  .drawer{position:fixed;z-index:7;padding-top:env(safe-area-inset-top,0px);padding-right:env(safe-area-inset-right,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
   .stage{height:auto;min-height:100%}
   .tip,.legend{display:none}
   canvas#cosmos{position:relative;display:block;width:100%;height:calc(100svh - 70px);min-height:560px}
@@ -133,6 +135,18 @@ header>*{pointer-events:auto}
   .gc .r{font-size:12.5px;color:var(--mist)}
   .gc .a{font-size:13px;margin-top:4px;line-height:1.35}
   .gc.wait{box-shadow:0 0 0 1px rgba(255,173,59,.35),0 0 18px -6px rgba(255,173,59,.7)}
+}
+/* telefon culcat: ecran scund -> harta are înălțime minimă și pagina se derulează; respectă decupajul (notch) din stânga/dreapta */
+@media (orientation:landscape) and (max-height:500px){
+  /* bara de jos rămâne mereu vizibilă (lipită jos cât derulezi harta, sus când ajungi la listă) */
+  header{top:0;bottom:0;padding:8px calc(16px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px))}
+  .brand h1{font-size:19px}
+  canvas#cosmos,#glyphs{height:max(640px,calc(100svh - 56px));min-height:0}
+  .card{left:calc(10px + env(safe-area-inset-left,0px));right:auto;bottom:calc(64px + env(safe-area-inset-bottom,0px));
+    width:min(380px,calc(100% - 20px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px)));
+    max-height:calc(100svh - 74px - env(safe-area-inset-bottom,0px));overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .mob{padding:8px calc(16px + env(safe-area-inset-right,0px)) calc(32px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px))}
+  .gl{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 }</style>
 
 <div class="stage">
@@ -218,21 +232,24 @@ EXT.forEach((z,i)=>UNGHI[z.id]=-Math.PI/2+(i+.5)*2*Math.PI/EXT.length);
 const cv=$("#cosmos"), ctx=cv.getContext("2d");
 let W=0,H=0,CX=0,CY=0,RX1=0,RY1=0,RX2=0,RY2=0,NODE=24,stars=[],nebula=null,bolts=[],hits=[],mx=-1,my=-1;
 function rnd(seed){let s=seed;return()=>(s=(s*16807)%2147483647)/2147483647;}
+const SA=document.createElement("div");SA.style.cssText="position:fixed;visibility:hidden;pointer-events:none;padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)";document.body.appendChild(SA);
+const SCUND=matchMedia("(orientation:landscape) and (max-height:500px)");
 function resize(){
   const r=cv.getBoundingClientRect(),DPR=Math.min(2,devicePixelRatio||1);
   W=r.width;H=r.height;cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);
-  const mob=W<700, top=mob?36:80, bottom=mob?20:40;
-  CX=W/2; CY=top+(H-top-bottom)/2;
-  const halfW=W/2-70, halfH=(H-top-bottom)/2-46;
+  const cs=getComputedStyle(SA),SL=parseFloat(cs.paddingLeft)||0,SR=parseFloat(cs.paddingRight)||0,UW=W-SL-SR;
+  const mob=W<700, scund=!mob&&SCUND.matches, top=mob?36:scund?24:80, bottom=mob?20:scund?48:40;
+  CX=SL+UW/2; CY=top+(H-top-bottom)/2;
+  const halfW=UW/2-70, halfH=(H-top-bottom)/2-46;
   RX2=Math.max(140,halfW); RY2=Math.max(150,halfH);
-  if(mob){RX2=W/2-46;RY2=Math.max(220,(H-top-bottom)/2-40)}RX1=RX2*(mob?.55:.52); RY1=RY2*(mob?.62:.52);
+  if(mob){RX2=UW/2-46;RY2=Math.max(220,(H-top-bottom)/2-40)}RX1=RX2*(mob?.55:.52); RY1=RY2*(mob?.62:.52);
   NODE=mob?Math.max(15,Math.min(20,W*.045)):Math.max(17,Math.min(30,Math.min(RX2,RY2)*.085));
   const r1=rnd(11);stars=[];for(let i=0;i<Math.round(W*H/2400);i++)stars.push({x:r1()*W,y:r1()*H,z:r1()*.9+.1,tw:r1()*6.28});
   nebula=document.createElement("canvas");nebula.width=Math.max(1,W);nebula.height=Math.max(1,H);const n=nebula.getContext("2d");
   for(const[bx,by,c] of [[.2,.3,"rgba(80,70,200,.15)"],[.8,.3,"rgba(30,140,170,.12)"],[.6,.85,"rgba(200,140,60,.09)"],[.15,.85,"rgba(150,60,170,.11)"]]){
     const g=n.createRadialGradient(bx*W,by*H,0,bx*W,by*H,Math.max(W,H)*.45);g.addColorStop(0,c);g.addColorStop(1,"rgba(0,0,0,0)");n.fillStyle=g;n.fillRect(0,0,W,H);}
 }
-addEventListener("resize",resize);if(window.ResizeObserver)new ResizeObserver(()=>resize()).observe(cv);
+addEventListener("resize",resize);addEventListener("orientationchange",()=>{resize();setTimeout(resize,300);});if(window.ResizeObserver)new ResizeObserver(()=>resize()).observe(cv);
 function poz(z,t){
   if(z.id==="zeus")return{x:CX,y:CY};
   const ext=GRUPURI[z.grup]&&GRUPURI[z.grup].inel===1,a=UNGHI[z.id];
