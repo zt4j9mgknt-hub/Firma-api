@@ -13,6 +13,7 @@
 //   GET  /api/semnare?pv=<id>&k=<semnătură>   -> pagina de semnat (clientul, fără cont)
 //   POST /api/semnare  {pv,k,semnatura,nume,calitate}  -> salvează semnătura
 //   GET  /api/semnare?action=link&pv=<id>     -> (logat) îți dă linkul de trimis
+//   ?doc=<id>&p=L|B&k=…                       -> documente de semnat (contracte), vezi documentSemnat
 //
 // Cere pe Vercel: KV_REST_API_URL, KV_REST_API_TOKEN, SESSION_SECRET. Toate există deja.
 
@@ -91,7 +92,22 @@ const esc = (x) => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 const jsonInScript = (v) => JSON.stringify(v).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 const fmtData = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).split('-'); return `${d}/${m}/${y}`; };
 
-function pagina({ titlu, corp }) {
+/* INFORMAREA GDPR (art. 13 GDPR) de pe paginile publice de semnat / acceptat. Omul își lasă
+   aici numele, semnătura, iar serverul îi notează ora, IP-ul și telefonul — trebuie să știe
+   cine le ține, de ce, cât timp și ce drepturi are. „op" = cine i-a trimis linkul. */
+function informareGdpr(op) {
+  if (!op) return '';
+  const contact = [op.email, op.telefon].filter(Boolean).map(esc).join(', ');
+  return `<div class="gdpr"><b>Informare privind datele personale.</b> Datele pe care le introduceți aici (numele, semnătura,
+    eventualele mențiuni) și datele tehnice ale semnării (data și ora, adresa IP, tipul dispozitivului) sunt prelucrate de
+    <b>${esc(op.nume || 'partea care v-a trimis linkul')}</b>, în calitate de operator, pentru încheierea documentului și ca dovadă
+    a semnării lui (art. 6 alin. (1) lit. b), c) și f) din Regulamentul (UE) 2016/679 — GDPR). Datele se păstrează pe durata
+    raportului juridic și apoi pe durata termenelor legale de prescripție și arhivare, sunt găzduite la furnizori de
+    infrastructură cloud (Vercel, Upstash) și nu se folosesc în alte scopuri. Aveți dreptul de acces, rectificare, ștergere,
+    restricționare, opoziție și portabilitate, precum și dreptul de a depune plângere la ANSPDCP (www.dataprotection.ro).${contact ? ' Contact: ' + contact + '.' : ''}</div>`;
+}
+
+function pagina({ titlu, corp, gdpr }) {
   return `<!doctype html><html lang="ro"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>${esc(titlu)}</title>
@@ -129,7 +145,14 @@ function pagina({ titlu, corp }) {
   .avertisment{background:#FFF6E3;border:1px solid #E8D9A8;color:#6B5410;border-radius:10px;padding:12px;font-size:14px}
   .bun{background:#EFF9F2;border:1px solid #BFE0C9;color:#1D5B31;border-radius:10px;padding:14px}
   .rau{background:#FDF0F0;border:1px solid #F0C4C4;color:#8B1E1E;border-radius:10px;padding:14px}
-</style></head><body><div class="wrap">${corp}</div></body></html>`;
+  .gdpr{font-size:12px;line-height:1.5;color:#5F6E80;padding:12px 6px 24px}
+  .doc h2{font-size:15px;margin:16px 0 6px;color:#123049}
+  .doc p{margin:0 0 8px;font-size:15px;text-align:justify}
+  .camp{background:#FFF1B8;border-radius:4px;padding:0 4px;font-weight:700}
+  .bifa{display:flex;gap:10px;align-items:flex-start;font-size:15px;margin:12px 0}
+  .bifa input{width:22px;height:22px;flex:none;margin-top:2px}
+  @media print{ .gdpr,.sters,.primar,canvas{display:none} }
+</style></head><body><div class="wrap">${corp}${informareGdpr(gdpr)}</div></body></html>`;
 }
 
 /* ===================== OFERTA ACCEPTATĂ ONLINE (v04.38) =====================
@@ -273,7 +296,7 @@ async function ofertaOnline(req, res, q) {
           ${a && a.semnatura ? `<div class="eticheta">Semnătura beneficiarului</div><img src="${esc(a.semnatura)}" alt="semnătură" style="max-width:100%;background:#fff;border:1px solid #d8dee4;border-radius:10px"><div class="mic">${esc(a.nume)}</div>` : ''}
           <button class="tipar" onclick="window.print()">🖨 Tipărește / salvează ca PDF</button>`
         : '<div class="rau"><b>Oferta a fost refuzată.</b> Dacă v-ați răzgândit, contactați-ne și vă trimitem o ofertă nouă.</div>'}
-        </div>` + incheiere }));
+        </div>` + incheiere, gdpr: company }));
     }
 
     const deschise = toate.filter((x) => !INCHISE.includes(x.status));
@@ -323,7 +346,7 @@ async function ofertaOnline(req, res, q) {
             .catch(function(e){ b.disabled=false;b.textContent=t0; m.style.color='#B03030'; m.textContent=e.message; });
         }
       <\/script>`;
-    return res.status(200).send(pagina({ titlu: 'Ofertă' + (baza.numar ? ' ' + baza.numar : ''), corp }));
+    return res.status(200).send(pagina({ titlu: 'Ofertă' + (baza.numar ? ' ' + baza.numar : ''), corp, gdpr: company }));
   } catch (e) {
     return res.status(500).send(pagina({ titlu: 'Eroare', corp: '<div class="card"><div class="rau">Pagina nu poate fi încărcată acum. Încercați mai târziu.</div></div>' }));
   }
@@ -454,6 +477,205 @@ async function link3d(req, res, q, act) {
   }
 }
 
+/* ===================== DOCUMENT DE SEMNAT — CONTRACTE (v04.46) =====================
+   Un document cu text liber (de exemplu un contract de licență), semnat la distanță de DOUĂ
+   părți, fiecare pe linkul ei, la fel ca procesul-verbal: nume scris + semnătură cu degetul,
+   iar serverul notează data, ora, IP-ul, dispozitivul și amprenta SHA-256 a textului semnat.
+   Datele se țin în cheia „documenteSemnat" (doar Managerul, vezi data.js).
+   Partea L = cine propune documentul (licențiator, prestator — poate fi și o persoană fizică,
+   nu neapărat firma); partea B = cealaltă parte (clientul).
+   Câmpuri de completat chiar de semnatar, pe pagina lui: în text se scrie [[L:CNP]] sau
+   [[B:Numele reprezentantului]]. Fiecare parte își completează DOAR câmpurile ei, înainte să
+   semneze; după semnare nu se mai schimbă.
+   Ordinea: întâi semnează L, apoi B — clientul semnează textul complet, cu datele lui L.
+     GET  /api/semnare?action=linkDoc&doc=<id>&p=L|B   (Manager) -> {link}
+     GET  /api/semnare?doc=<id>&p=L|B&k=<semnătură>     public    -> pagina
+     POST /api/semnare {doc,p,k,nume,calitate,valori,semnatura,accept} -> {ok} */
+const PARTI_DOC = ['L', 'B'];
+const semnaturaDoc = (id, p) => crypto.createHmac('sha256', SESSION_SECRET).update('document-semnat:' + String(id) + ':' + p).digest('base64url').slice(0, 32);
+const CAMP_RE = /\[\[(L|B):([^\]\n]{1,60})\]\]/g;
+function campuriDoc(text) {
+  const out = []; const vazut = new Set(); let m;
+  CAMP_RE.lastIndex = 0;
+  while ((m = CAMP_RE.exec(String(text || '')))) {
+    const cheie = m[1] + ':' + m[2].trim();
+    if (!vazut.has(cheie)) { vazut.add(cheie); out.push({ parte: m[1], eticheta: m[2].trim(), cheie }); }
+  }
+  return out;
+}
+/* textul cu câmpurile completate; ce lipsește rămâne „__________" (sau marcat, pentru partea care completează) */
+function textCompletat(doc, marcheazaParte) {
+  const v = (doc && doc.valori) || {};
+  return String((doc && doc.text) || '').replace(CAMP_RE, (_, p, e) => {
+    const val = v[p + ':' + e.trim()];
+    if (val) return val;
+    return marcheazaParte === p ? '\u0000' + e.trim() + '\u0001' : '__________';
+  });
+}
+const amprentaDoc = (doc) => crypto.createHash('sha256').update(String(doc.titlu || '') + '\n' + String(doc.numar || '') + '\n' + textCompletat(doc), 'utf8').digest('hex');
+function htmlDoc(text) {
+  return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+    const e = esc(l).replace(/\u0000([^\u0001]*)\u0001/g, '<span class="camp">[$1]</span>');
+    if (l.startsWith('# ')) return '<h1 style="text-align:center;font-size:18px">' + e.slice(2) + '</h1>';
+    if (l.startsWith('## ')) return '<h2>' + e.slice(3) + '</h2>';
+    return '<p>' + e + '</p>';
+  }).join('');
+}
+const momentRo = (iso) => { try { return new Date(iso).toLocaleString('ro-RO', { timeZone: 'Europe/Bucharest' }); } catch (_) { return String(iso || ''); } };
+
+async function documentSemnat(req, res, q) {
+  res.setHeader('X-Robots-Tag', 'noindex');
+  if (String(q.action || '') === 'linkDoc') {
+    const auth = autentifica(req);
+    if (!auth) return res.status(401).json({ error: 'Sesiune invalidă sau expirată.' });
+    let real;
+    try { real = await utilizatorulAdevarat(auth, async () => redis(['GET', 'firma:users'])); }
+    catch (e) { return res.status(500).json({ error: 'Nu am putut verifica contul.' }); }
+    if (!real) return raspunsContSters(res, auth);
+    if (real.rol !== 'Manager') return res.status(403).json({ error: 'Doar Managerul trimite documente la semnat.' });
+    const id = String(q.doc || ''), p = String(q.p || '');
+    if (!id || !PARTI_DOC.includes(p)) return res.status(400).json({ error: 'Lipsește documentul sau partea.' });
+    const toate = await citeste('documenteSemnat', []);
+    if (!(Array.isArray(toate) ? toate : []).some((x) => x && x.id === id)) return res.status(404).json({ error: 'Documentul nu e încă salvat pe server. Salvează-l și încearcă din nou.' });
+    const gazda = req.headers['x-forwarded-host'] || req.headers.host || '';
+    return res.status(200).json({ link: `https://${gazda}/api/semnare?doc=${encodeURIComponent(id)}&p=${p}&k=${semnaturaDoc(id, p)}` });
+  }
+
+  let body = {};
+  if (req.method === 'POST') { try { body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {}); } catch (_) { body = {}; } }
+  const id = String(q.doc || body.doc || ''), p = String(q.p || body.p || ''), k = String(q.k || body.k || '');
+  if (!id || !PARTI_DOC.includes(p) || !egal(k, semnaturaDoc(id, p))) {
+    return res.status(403).send(pagina({ titlu: 'Link invalid', corp: '<div class="card"><div class="rau"><b>Link invalid sau expirat.</b><br>Cereți un link nou.</div></div>' }));
+  }
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  if (preaDes(ip || 'necunoscut', 'doc-' + req.method, req.method === 'POST' ? 10 : 60)) return res.status(429).send(pagina({ titlu: 'Prea des', corp: '<div class="card"><div class="rau">Prea multe cereri. Încercați din nou peste un minut.</div></div>' }));
+
+  try {
+    const toate = await citeste('documenteSemnat', []);
+    const doc = (Array.isArray(toate) ? toate : []).find((x) => x && x.id === id);
+    if (!doc) return res.status(404).send(pagina({ titlu: 'Document inexistent', corp: '<div class="card"><div class="rau"><b>Documentul nu mai există.</b></div></div>' }));
+    const parti = doc.parti || {};
+    const eu = parti[p] || {}, celalalt = parti[p === 'L' ? 'B' : 'L'] || {};
+    const semn = doc.semnaturi || {};
+    const operator = { nume: (parti.L && parti.L.nume) || '', email: (parti.L && parti.L.email) || '', telefon: (parti.L && parti.L.telefon) || '' };
+    const campuriMele = campuriDoc(doc.text).filter((c) => c.parte === p);
+
+    /* ---------- SALVAREA SEMNĂTURII ---------- */
+    if (req.method === 'POST') {
+      const semnatura = typeof body.semnatura === 'string' ? body.semnatura : '';
+      if (semnatura.length < 200) return res.status(400).json({ error: 'Semnați în căsuță.' });
+      if (semnatura.length > SEMNATURA_MAX || !SEMNATURA_OK.test(semnatura)) return res.status(400).json({ error: 'Semnătura nu e validă. Reîncărcați pagina și semnați din nou.' });
+      const numeCurat = String(body.nume || '').trim().slice(0, 120);
+      if (!numeCurat) return res.status(400).json({ error: 'Scrieți numele și prenumele.' });
+      if (body.accept !== true) return res.status(400).json({ error: 'Bifați că ați citit și acceptați documentul.' });
+      const valoriPrimite = (body.valori && typeof body.valori === 'object') ? body.valori : {};
+      const valoriNoi = {};
+      for (const c of campuriMele) {
+        const v = String(valoriPrimite[c.cheie] ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 200);
+        if (!v) return res.status(400).json({ error: 'Completați câmpul „' + c.eticheta + '".' });
+        valoriNoi[c.cheie] = v;
+      }
+      const lacat = 'lock:document:' + id;
+      if (await redis(['SET', lacat, '1', 'NX', 'EX', '30']) !== 'OK') return res.status(409).json({ error: 'Documentul se semnează chiar acum. Reîncărcați pagina peste câteva secunde.' });
+      try {
+        const proaspete = await citeste('documenteSemnat', []);
+        const tinta = (Array.isArray(proaspete) ? proaspete : []).find((x) => x && x.id === id);
+        if (!tinta) return res.status(404).json({ error: 'Documentul nu mai există.' });
+        if (tinta.anulat) return res.status(409).json({ error: 'Documentul a fost anulat.' });
+        const sg = tinta.semnaturi || {};
+        if (sg[p]) return res.status(409).json({ error: 'Ați semnat deja acest document.' });
+        if (p === 'B' && !sg.L) return res.status(409).json({ error: 'Documentul nu e încă gata de semnat. Reveniți puțin mai târziu.' });
+        const acum = new Date().toISOString();
+        const cuValori = { ...tinta, valori: { ...(tinta.valori || {}), ...valoriNoi } };
+        const urma = { imagine: semnatura, nume: numeCurat, calitate: String(body.calitate || eu.calitate || '').trim().slice(0, 120),
+          la: acum, ip, dispozitiv: String(req.headers['user-agent'] || '').slice(0, 160), sha256: amprentaDoc(cuValori) };
+        const semnaturiNoi = { ...sg, [p]: urma };
+        const gata = !!(semnaturiNoi.L && semnaturiNoi.B);
+        const noi = proaspete.map((x) => (x && x.id === id ? { ...cuValori, semnaturi: semnaturiNoi, status: gata ? 'Semnat' : 'Semnat parțial', semnatComplet: gata ? acum : (x.semnatComplet || '') } : x));
+        await scrie('documenteSemnat', noi);
+        const pu = getPusher();
+        if (pu) { try { await pu.trigger('firma-updates', 'data-changed', { key: 'documenteSemnat' }); } catch (_) {} }
+        await anuntaManagerii({ title: '✍ Document semnat', url: '/', tag: 'doc-' + id,
+          body: numeCurat + ' a semnat „' + String(tinta.titlu || 'documentul').slice(0, 80) + '"' + (gata ? ' — semnat de ambele părți.' : '.') });
+        return res.status(200).json({ ok: true, gata });
+      } finally {
+        try { await redis(['DEL', lacat]); } catch (_) {}
+      }
+    }
+
+    /* ---------- PAGINA ---------- */
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    const antet = `<div class="card"><h1>${esc(doc.titlu || 'Document de semnat')}</h1>
+      <div class="mic">${doc.numar ? 'Nr. ' + esc(doc.numar) : ''}${doc.data ? ' din ' + esc(fmtData(doc.data)) : ''}</div>
+      <table style="margin-top:10px"><tr><th style="width:38%">${esc((parti.L && parti.L.rol) || 'Partea 1')}</th><td>${esc((parti.L && parti.L.nume) || '')}</td></tr>
+      <tr><th>${esc((parti.B && parti.B.rol) || 'Partea 2')}</th><td>${esc((parti.B && parti.B.nume) || '')}</td></tr></table></div>`;
+    const blocSemnatura = (x, rol) => x ? `<div style="margin-top:12px"><div class="eticheta">${esc(rol)}</div>
+      <img src="${esc(x.imagine)}" alt="semnătură" style="max-width:100%;max-height:140px;background:#fff;border:1px solid #d8dee4;border-radius:10px">
+      <div class="mic">${esc(x.nume)}${x.calitate ? ' — ' + esc(x.calitate) : ''}<br>Semnat electronic la ${esc(momentRo(x.la))}${x.ip ? ', IP ' + esc(x.ip) : ''}<br>Amprenta textului (SHA-256): <span style="word-break:break-all">${esc(x.sha256 || '')}</span></div></div>` : '';
+    const semnaturiHtml = blocSemnatura(semn.L, (parti.L && parti.L.rol) || 'Partea 1') + blocSemnatura(semn.B, (parti.B && parti.B.rol) || 'Partea 2');
+
+    if (doc.anulat) return res.status(200).send(pagina({ titlu: 'Document anulat', corp: antet + '<div class="card"><div class="rau"><b>Documentul a fost anulat.</b></div></div>', gdpr: operator }));
+
+    if (semn[p]) {
+      return res.status(200).send(pagina({ titlu: 'Document semnat', gdpr: operator, corp: antet + `<div class="card">
+        <div class="bun"><b>✅ Ați semnat documentul</b> la ${esc(momentRo(semn[p].la))}.${semn.L && semn.B ? ' Documentul este semnat de ambele părți.' : ' Se așteaptă semnătura celeilalte părți.'}<br>Îl puteți tipări sau salva ca PDF.</div></div>
+        <div class="card doc">${htmlDoc(textCompletat(doc))}${semnaturiHtml}
+        <button class="tipar" onclick="window.print()">🖨 Tipărește / salvează ca PDF</button></div>` }));
+    }
+    if (p === 'B' && !semn.L) {
+      return res.status(200).send(pagina({ titlu: 'Document în pregătire', gdpr: operator, corp: antet + '<div class="card"><div class="avertisment"><b>Documentul nu e încă gata de semnat.</b><br>Se așteaptă semnătura celeilalte părți. Reveniți pe acest link puțin mai târziu.</div></div>' }));
+    }
+
+    const inputuri = campuriMele.map((c) => `<div style="margin-top:8px"><div class="mic"><b>${esc(c.eticheta)}</b></div><input data-camp="${esc(c.cheie)}" maxlength="200" value="${esc((doc.valori || {})[c.cheie] || '')}"></div>`).join('');
+    const corp = antet + `<div class="card"><div class="salut"><b>Bună ziua!</b><br>Mai jos regăsiți documentul <b>${esc(doc.titlu || '')}</b>${celalalt.nume ? ', propus de <b>' + esc(celalalt.nume) + '</b>' : ''}.
+      Vă rugăm să îl citiți integral${campuriMele.length ? ', să completați datele cerute (marcate cu galben)' : ''} și, dacă sunteți de acord, să semnați la final.</div></div>
+      <div class="card doc">${htmlDoc(textCompletat(doc, p))}${semnaturiHtml}</div>
+      <div class="card">
+        ${campuriMele.length ? '<div class="eticheta" style="margin-top:0">Datele dumneavoastră din document</div>' + inputuri : ''}
+        <div class="eticheta">Semnătura dumneavoastră</div>
+        <div class="avertisment" style="margin-bottom:10px">Semnătura aplicată aici este o semnătură electronică simplă. Odată cu ea se înregistrează numele, data și ora, adresa IP, dispozitivul și amprenta digitală a textului semnat. Documentul semnat vă rămâne disponibil pe acest link.</div>
+        <canvas id="pad"></canvas>
+        <button class="sters" onclick="sterge()">↺ Șterge semnătura</button>
+        <div style="margin-top:12px"><input id="nume" placeholder="Numele și prenumele" maxlength="120" value="${esc(eu.semnatar || '')}"></div>
+        <div style="margin-top:8px"><input id="calitate" placeholder="În calitate de" maxlength="120" value="${esc(eu.calitate || '')}"></div>
+        <label class="bifa"><input type="checkbox" id="accept"><span>Am citit integral documentul și sunt de acord cu el. Recunosc semnătura de mai sus ca fiind a mea.</span></label>
+        <div id="mesaj" class="mic" style="margin:10px 0;min-height:20px"></div>
+        <button class="primar" id="btn" onclick="trimite()">✓ Semnez documentul</button>
+      </div>
+      <script>
+        var c=document.getElementById('pad'),ctx,desen=false,gol=true;
+        function initPad(){var dpr=window.devicePixelRatio||1;var w=c.clientWidth||300;c.width=w*dpr;c.height=170*dpr;ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.lineJoin='round';ctx.lineCap='round';ctx.strokeStyle='#111';ctx.lineWidth=2.4;}
+        initPad();
+        function poz(e){var r=c.getBoundingClientRect();var t=e.touches?e.touches[0]:e;return {x:t.clientX-r.left,y:t.clientY-r.top};}
+        function start(e){e.preventDefault();desen=true;var p=poz(e);ctx.beginPath();ctx.moveTo(p.x,p.y);}
+        function misca(e){if(!desen)return;e.preventDefault();var p=poz(e);ctx.lineTo(p.x,p.y);ctx.stroke();gol=false;}
+        function gata(){desen=false;}
+        c.addEventListener('mousedown',start);c.addEventListener('mousemove',misca);window.addEventListener('mouseup',gata);
+        c.addEventListener('touchstart',start,{passive:false});c.addEventListener('touchmove',misca,{passive:false});c.addEventListener('touchend',gata);
+        function sterge(){ctx.clearRect(0,0,c.width,c.height);gol=true;}
+        function trimite(){
+          var m=document.getElementById('mesaj'),b=document.getElementById('btn');
+          var valori={},lipsa='';
+          document.querySelectorAll('input[data-camp]').forEach(function(i){var v=i.value.trim();valori[i.getAttribute('data-camp')]=v;if(!v&&!lipsa)lipsa=i.getAttribute('data-camp').slice(2);});
+          if(lipsa){m.style.color='#B03030';m.textContent='Completați câmpul „'+lipsa+'".';return;}
+          var nume=document.getElementById('nume').value.trim();
+          if(gol){m.style.color='#B03030';m.textContent='Semnați întâi în căsuță.';return;}
+          if(!nume){m.style.color='#B03030';m.textContent='Scrieți numele și prenumele.';return;}
+          if(!document.getElementById('accept').checked){m.style.color='#B03030';m.textContent='Bifați că ați citit și acceptați documentul.';return;}
+          b.disabled=true;b.textContent='Se trimite…';m.textContent='';
+          fetch(location.pathname+location.search,{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({doc:${jsonInScript(id)},p:${jsonInScript(p)},k:${jsonInScript(k)},nume:nume,calitate:document.getElementById('calitate').value,valori:valori,accept:true,semnatura:c.toDataURL('image/png')})})
+            .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+            .then(function(x){ if(!x.ok) throw new Error(x.d.error||'Nu s-a putut trimite.'); location.reload(); })
+            .catch(function(e){ b.disabled=false;b.textContent='✓ Semnez documentul'; m.style.color='#B03030'; m.textContent=e.message; });
+        }
+      <\/script>`;
+    return res.status(200).send(pagina({ titlu: doc.titlu || 'Document de semnat', corp, gdpr: operator }));
+  } catch (e) {
+    return res.status(500).send(pagina({ titlu: 'Eroare', corp: '<div class="card"><div class="rau">Pagina nu poate fi încărcată acum. Încercați mai târziu.</div></div>' }));
+  }
+}
+
 export default async function handler(req, res) {
   /* Pagina lucrării pentru client trece pe aici: planul Vercel dă cel mult 12 funcții în
      /api, iar a 13-a (api/client.js) oprea toate publicările. Codul ei stă în lib/client.js;
@@ -491,6 +713,11 @@ export default async function handler(req, res) {
   /* --- v04.40: LINK 3D PENTRU CLIENT (proiecte.html?client=…) --- */
   const act3d = String(q.actiune || (req.body && typeof req.body === 'object' && req.body.actiune) || '');
   if (act3d.startsWith('link3d')) return link3d(req, res, q, act3d);
+
+  /* --- v04.46: DOCUMENT DE SEMNAT (contracte), două părți, fiecare pe linkul ei --- */
+  if (String(q.action || '') === 'linkDoc' || q.doc || (req.body && typeof req.body === 'object' && req.body.doc)) {
+    return documentSemnat(req, res, q);
+  }
 
   /* --- v04.38: ACCEPTAREA OFERTEI ONLINE (linkul de ofertă, separat de procesul-verbal) --- */
   if (String(q.action || '') === 'linkOferta' || q.of || (req.body && typeof req.body === 'object' && req.body.of)) {
@@ -623,6 +850,7 @@ export default async function handler(req, res) {
           <button class="tipar" onclick="window.print()">🖨 Tipărește / salvează ca PDF</button>
           <div class="incheiere">Vă mulțumim pentru colaborare!<br><span class="respect">Cu respect,</span><br><b>${esc(company?.nume || '')}</b>${company?.telefon ? '<br>Tel: ' + esc(company.telefon) : ''}</div>
         </div>`,
+        gdpr: company,
       }));
     }
 
@@ -704,7 +932,7 @@ export default async function handler(req, res) {
         }
       <\/script>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).send(pagina({ titlu: 'Semnare proces-verbal', corp }));
+    return res.status(200).send(pagina({ titlu: 'Semnare proces-verbal', corp, gdpr: company }));
   } catch (e) {
     return res.status(500).send(pagina({ titlu: 'Eroare', corp: '<div class="card"><div class="rau">' + esc((e && e.message) || 'Eroare') + '</div></div>' }));
   }
