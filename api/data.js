@@ -66,6 +66,11 @@ const CHEI_DOAR_MANAGER = new Set([
   'iluminatPreturi', // prețurile corpurilor din modulul de iluminat (v04.41) — doar Managerul
   'documenteSemnat', // contractele / documentele de semnat la distanță (v04.46) — date personale ale semnatarilor
 ]);
+/* OLIMP (v04.47): planul de aprobat al „zeilor" (olimpPlan) și rapoartele lor zilnice
+   (olimpRapoarte-AAAA-LL = lista lunii, olimpRaport-<id> = textul) au cifre financiare,
+   deci TOATE cheile care încep cu „olimp" sunt doar ale Managerului, la citit și la scris. */
+const ePrefixOlimp = (k) => /^olimp/i.test(String(k || ''));
+const eDoarManager = (k) => CHEI_DOAR_MANAGER.has(k) || ePrefixOlimp(k);
 
 /* ===== PROIECTELE DE ILUMINAT (v04.41): fiecare om își vede proiectele LUI și pe cele date de
    Manager; Managerul le vede pe toate. Proiectul are proprietarId și acces:[{userId, nivel:
@@ -592,7 +597,7 @@ export default async function handler(req, res) {
       const key = normalizeazaCheia(req.query.key);
       if (!key) return res.status(400).json({ error: 'Lipseste parametrul key.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
-      if (CHEI_DOAR_MANAGER.has(key) && !eManager) {
+      if (eDoarManager(key) && !eManager) {
         return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
       }
 
@@ -621,7 +626,7 @@ export default async function handler(req, res) {
       const key = normalizeazaCheia(cheieBruta);
       if (!key) return res.status(400).json({ error: 'Lipseste key in body.' });
       if (CHEI_INTERZISE.has(key)) return res.status(403).json({ error: 'Cheie protejata - se administreaza doar prin contul de utilizatori.' });
-      if (CHEI_DOAR_MANAGER.has(key) && !eManager) return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
+      if (eDoarManager(key) && !eManager) return res.status(403).json({ error: 'Nu ai acces la datele astea.', interzis: true });
       if (CHEI_DOAR_MANAGER_SCRIE.has(key) && !eManager) return res.status(403).json({ error: 'Doar Managerul poate modifica asta.', interzis: true });
 
       // Concediile: omul își depune și își modifică DOAR cererea lui, și nu și-o aprobă singur.
@@ -664,7 +669,7 @@ export default async function handler(req, res) {
           deScris = rez.lista;
         } else if (key === 'sterse') {
           const oprite = (k) => k === 'proceseVerbale' || k === 'prezenta' || k === 'users' || k === 'sterse' || k === CHEIE_ILUMINAT
-            || CHEI_DOAR_MANAGER.has(k) || CHEI_DOAR_MANAGER_SCRIE.has(k);
+            || eDoarManager(k) || CHEI_DOAR_MANAGER_SCRIE.has(k);
           const rez = pazaSterse(inainte, value, oprite);
           if (rez.motiv) return res.status(rez.cod || 400).json({ error: rez.motiv, stergereMasiva: rez.cod === 409 });
           deScris = rez.lista;
