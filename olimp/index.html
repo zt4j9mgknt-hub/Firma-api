@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: cosmos pe tot ecranul. Zeus în centru, 9 zei de birou/lucru/comunicare pe inelul interior, 7 aplicații pe inelul exterior, distanțe egale.
+/* Layout: cosmos pe tot ecranul. Zeus în centru, 15 zei (Argus-control sus, birou, lucru, comunicare, creștere) pe inelul interior, 12 (aplicații + sfat) pe inelul exterior, distanțe egale.
    Panoul e un sertar închis implicit; fișa zeului apare jos-stânga doar când alegi pe cineva. */
 :root{
   color-scheme:dark;
@@ -70,6 +70,7 @@ header>*{pointer-events:auto}
   background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.18),rgba(255,255,255,.02) 60%)}
 .card h3{margin:0;font-family:var(--f-display);font-size:21px;letter-spacing:.12em}
 .card .role{font-size:13px;color:var(--mist)}
+.card .mit{margin:-2px 0 0;font-size:12.5px;font-style:italic;line-height:1.45;color:#c9d3ea}
 .card .x{margin-left:auto;align-self:flex-start;background:none;border:0;color:var(--mist);font-size:20px;cursor:pointer;line-height:1}
 .pill{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;padding:4px 9px;border-radius:999px;border:1px solid currentColor;align-self:flex-start}
 .card ul{margin:0;padding-left:18px;font-size:13.5px;line-height:1.55}
@@ -90,8 +91,11 @@ header>*{pointer-events:auto}
 .item .t time{color:var(--mist);text-transform:none;letter-spacing:0}
 .item p{margin:0;font-size:13px;line-height:1.4}
 .empty{padding:4px;color:var(--mist);font-size:12.5px}
-.roster{display:grid;grid-template-columns:1fr 1fr;gap:4px}
-.roster button{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:9px;min-width:0}
+.roster{display:grid;grid-template-columns:1fr;gap:2px}
+.roster button{all:unset;cursor:pointer;display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:9px;min-width:0}
+.roster button>span{font-size:18px;flex:none;width:24px;text-align:center}
+.roster button>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.roster small{font-size:11.5px;line-height:1.35;color:var(--mist)}
 .roster button:hover{background:rgba(243,197,107,.08)}
 .roster b{font-family:var(--f-display);font-size:12.5px;letter-spacing:.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .roster i{width:7px;height:7px;border-radius:50%;margin-left:auto;flex:none}
@@ -136,12 +140,14 @@ header>*{pointer-events:auto}
   .gc .a{font-size:13px;margin-top:4px;line-height:1.35}
   .gc.wait{box-shadow:0 0 0 1px rgba(255,173,59,.35),0 0 18px -6px rgba(255,173,59,.7)}
 }
+/* telefon în picioare: 28 de zei pe 375px -> harta e mai înaltă decât ecranul (se derulează), ca etichetele să nu se suprapună */
+@media (max-width:700px){ canvas#cosmos,#glyphs{height:max(calc(100svh - 70px),980px)} }
 /* telefon culcat: ecran scund -> harta are înălțime minimă și pagina se derulează; respectă decupajul (notch) din stânga/dreapta */
 @media (orientation:landscape) and (max-height:500px){
   /* bara de jos rămâne mereu vizibilă (lipită jos cât derulezi harta, sus când ajungi la listă) */
   header{top:0;bottom:0;padding:8px calc(16px + env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) calc(16px + env(safe-area-inset-left,0px))}
   .brand h1{font-size:19px}
-  canvas#cosmos,#glyphs{height:max(640px,calc(100svh - 56px));min-height:0}
+  canvas#cosmos,#glyphs{height:max(760px,calc(100svh - 56px));min-height:0}
   .card{left:calc(10px + env(safe-area-inset-left,0px));right:auto;bottom:calc(64px + env(safe-area-inset-bottom,0px));
     width:min(380px,calc(100% - 20px - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px)));
     max-height:calc(100svh - 74px - env(safe-area-inset-bottom,0px));overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
@@ -171,40 +177,48 @@ header>*{pointer-events:auto}
     <div class="body">
       <div class="sec"><h4>Atenție <span id="attCount">0</span></h4><div id="attention"></div></div>
       <div class="sec"><h4>Coada lui Zeus <span id="qCount">0</span></h4><div id="queue"></div></div>
-      <div class="sec"><h4>Panteonul <span>22 zei</span></h4><div class="roster" id="roster"></div></div>
+      <div class="sec"><h4>Panteonul <span id="nZei">28 zei</span></h4><div class="roster" id="roster"></div></div>
     </div>
   </aside>
 </div>
 
 <script>
 const ZEI = [
-  {id:"zeus",nume:"Zeus",g:"⚡",grup:"centru",rol:"Coordonatorul Olimpului",face:["Primește cererile tale și le împarte zeilor","Cere aprobarea ta pentru orice pas ireversibil","Adună rapoartele și îți răspunde"]},
-  {id:"themis",nume:"Themis",g:"⚖️",grup:"birou",rol:"Contracte",face:["Contracte FIRME, PERSOANE FIZICE, la sediu","Acte adiționale și anexe","Verifică clauzele după lege"]},
-  {id:"hefaistos",nume:"Hefaistos",g:"🔨",grup:"birou",rol:"Oferte și devize",face:["Oferte de preț în Excel + PDF","Devize lunare (situații de lucrări)","Anexe la contracte"]},
-  {id:"athena",nume:"Athena",g:"🦉",grup:"birou",rol:"Control facturare",face:["Contractat vs facturat vs executat","Spune ce mai e de facturat","Doar analiză, nu emite nimic"]},
-  {id:"apollo",nume:"Apollo",g:"☀️",grup:"birou",rol:"Proiectare instalații",face:["Planuri electrice interactive","Calcule de circuite și iluminat (I7/2011)","Proiecte pentru clienți noi"]},
-  {id:"plutos",nume:"Plutos",g:"💰",grup:"lucru",rol:"SmartBill",face:["Facturi furnizori, NIR pe gestiuni","Cheltuieli și stocuri","Listă facturi emise"]},
-  {id:"mnemosyne",nume:"Mnemosyne",g:"📚",grup:"lucru",rol:"Excel și Word",face:["Registre, documente, formule","Export PDF din Office","Verifică erori de calcul"]},
-  {id:"hermes",nume:"Hermes",g:"🪽",grup:"lucru",rol:"Fișiere",face:["Arhivare, redenumiri, conversii","Rapoarte de stoc PDF/Excel","Pachete în „de trimis”"]},
-  {id:"iris",nume:"Iris",g:"🌈",grup:"comunicare",rol:"WhatsApp",face:["Deschide conversații, pregătește fișiere","Copiază documentele în clipboard","Trimiterea o confirmi tu"]},
-  {id:"angelia",nume:"Angelia",g:"✉️",grup:"comunicare",rol:"E-mail",face:["Caută mesaje și atașamente","Facturi și oferte din inbox","Răspunsuri doar ca ciornă"]},
-  {id:"hestia",nume:"Hestia",g:"🏛️",grup:"aplicatii",rol:"Aplicația firmei",face:["Rapoarte zilnice, șantiere, clienți, dosare","Continuarea aplicației","firma-api.vercel.app"]},
-  {id:"afrodita",nume:"Afrodita",g:"🌹",grup:"aplicatii",rol:"Style by VAJ",face:["Aplicația salonului","Programări, fișe, stoc, mirese","GitHub style-by-vaj"]},
-  {id:"dionysos",nume:"Dionysos",g:"🍇",grup:"aplicatii",rol:"Barber App",face:["Barber Station","barber-station-rho.vercel.app","Cod pe laptop + GitHub"]},
-  {id:"demeter",nume:"Demeter",g:"🌾",grup:"aplicatii",rol:"Rețete",face:["Ce mâncăm azi? — rețete după ingrediente","ce-mancam-azi.vercel.app","Rețete din ce ai în casă"]},
-  {id:"prometheus",nume:"Prometheus",g:"🔥",grup:"aplicatii",rol:"Configurator tablouri",face:["Configurator tablouri electrice și media","Prețuri și liste de echipamente","Aplicație claude.ai"]},
-  {id:"hera",nume:"Hera",g:"👑",grup:"aplicatii",rol:"Casa Tuduce",face:["Plan electric interactiv","Plan 3D și dosarul proiectului","Documente pentru client"]},
-  {id:"atlas",nume:"Atlas",g:"🌍",grup:"aplicatii",rol:"GitHub + Vercel",face:["Starea deploy-urilor","Erori de build, pull request-uri","Nimic publicat fără aprobare"]},
-  {id:"dike",nume:"Dike",g:"🏛",grup:"sfat",rol:"Avocat",face:["Toată legislația din România: civil, penal, firme, PF","Verifică toate actele","Spețe, termene, riscuri"]},
-  {id:"eunomia",nume:"Eunomia",g:"📜",grup:"sfat",rol:"Jurist",face:["Conformitate: ONRC, ANAF, ITM, ANRE, GDPR","Acte administrative, notificări","Termene și autorizații"]},
-  {id:"astreea",nume:"Astreea",g:"🧮",grup:"sfat",rol:"Contabil",face:["TVA, impozite, salarii","Calendarul declarațiilor ANAF","Verifică cifrele"]},
-  {id:"metis",nume:"Metis",g:"📈",grup:"sfat",rol:"Economist",face:["Profit pe lucrări și clienți","Prețuri, tarife, cash-flow","Prognoze și investiții"]},
-  {id:"tyche",nume:"Tyche",g:"🍀",grup:"sfat",rol:"Coach de business",face:["Strategie și creștere","Clienți noi, echipă, delegare","Planuri concrete pe săptămâni"]},
+  {id:"zeus",nume:"Zeus",g:"⚡",grup:"centru",rol:"Coordonatorul Olimpului",mit:"Regele zeilor, stăpânul Olimpului și al fulgerului.",face:["Primește cererile tale și le împarte zeilor","Cere aprobarea ta pentru orice pas ireversibil","Adună rapoartele și îți răspunde"]},
+  {id:"argus",nume:"Argus",g:"👁️",grup:"control",rol:"Controlorul zeilor",mit:"Uriașul cu o sută de ochi (Argus Panoptes), paznicul pus de Hera, căruia nu-i scapă nimic.",face:["Verifică munca zeilor înainte să ajungă la tine","Cifre, surse, reguli, date personale","Registrul de greșeli"]},
+  {id:"themis",nume:"Themis",g:"⚖️",grup:"birou",rol:"Contracte",mit:"Titanida dreptății, a legilor și a ordinii; ține balanța.",face:["Contracte FIRME, PERSOANE FIZICE, la sediu","Acte adiționale și anexe","Verifică clauzele după lege"]},
+  {id:"hefaistos",nume:"Hefaistos",g:"🔨",grup:"birou",rol:"Oferte și devize",mit:"Zeul fierarilor și al meșteșugurilor, care făurea totul în forja lui.",face:["Oferte de preț în Excel + PDF","Devize lunare (situații de lucrări)","Anexe la contracte"]},
+  {id:"athena",nume:"Athena",g:"🦉",grup:"birou",rol:"Control facturare",mit:"Zeița înțelepciunii și a strategiei; bufnița e simbolul ei.",face:["Contractat vs facturat vs executat","Spune ce mai e de facturat","Doar analiză, nu emite nimic"]},
+  {id:"apollo",nume:"Apollo",g:"☀️",grup:"birou",rol:"Proiectare instalații",mit:"Zeul luminii și al soarelui, al artelor și al ordinii.",face:["Planuri electrice interactive","Calcule de circuite și iluminat (I7/2011)","Proiecte pentru clienți noi"]},
+  {id:"plutos",nume:"Plutos",g:"💰",grup:"lucru",rol:"SmartBill",mit:"Zeul bogăției și al belșugului.",face:["Facturi furnizori, NIR pe gestiuni","Cheltuieli și stocuri","Listă facturi emise"]},
+  {id:"mnemosyne",nume:"Mnemosyne",g:"📚",grup:"lucru",rol:"Excel și Word",mit:"Titanida memoriei, mama celor nouă muze.",face:["Registre, documente, formule","Export PDF din Office","Verifică erori de calcul"]},
+  {id:"hermes",nume:"Hermes",g:"🪽",grup:"lucru",rol:"Fișiere",mit:"Mesagerul zeilor, cu sandale înaripate, zeul drumurilor și al comerțului.",face:["Arhivare, redenumiri, conversii","Rapoarte de stoc PDF/Excel","Pachete în „de trimis”"]},
+  {id:"iris",nume:"Iris",g:"🌈",grup:"comunicare",rol:"WhatsApp",mit:"Zeița curcubeului și mesagera zeilor între cer și pământ.",face:["Deschide conversații, pregătește fișiere","Copiază documentele în clipboard","Trimiterea o confirmi tu"]},
+  {id:"angelia",nume:"Angelia",g:"✉️",grup:"comunicare",rol:"E-mail",mit:"Zeița mesajelor și a veștilor, fiica lui Hermes.",face:["Caută mesaje și atașamente","Facturi și oferte din inbox","Răspunsuri doar ca ciornă"]},
+  {id:"artemis",nume:"Artemis",g:"🏹",grup:"crestere",rol:"Lucrări noi",mit:"Zeița vânătorii, care nu-și ratează niciodată ținta.",face:["Licitații SEAP și autorizații de construire","Dezvoltatori, arhitecți, constructori","Lista săptămânală de oportunități"]},
+  {id:"peitho",nume:"Peitho",g:"📣",grup:"crestere",rol:"Marketing și vânzări",mit:"Zeița convingerii și a cuvintelor frumoase.",face:["Google Business, recenzii, portofoliu","Oferte cu 3 variante și pachete","Postări și parteneri (ciorne)"]},
+  {id:"hebe",nume:"Hebe",g:"🧑‍🔧",grup:"crestere",rol:"Recrutare și echipă",mit:"Zeița tinereții, care le turna zeilor nectarul.",face:["Șef de echipă, electricieni ANRE","Anunțuri, interviuri, onboarding","Bonusuri pe productivitate"]},
+  {id:"kronos",nume:"Kronos",g:"⏳",grup:"crestere",rol:"Proiecte și termene",mit:"Titanul timpului, tatăl lui Zeus.",face:["Tablou de bord luni (KPI)","Facturat în 48h după PV","Verifică rapoartele zilnice"]},
+  {id:"asklepios",nume:"Asklepios",g:"🩺",grup:"crestere",rol:"Calitate și service",mit:"Zeul medicinei și al vindecării.",face:["Checklist de predare, PRAM, garanții","Abonamente de mentenanță","Satisfacție și recenzii"]},
+  {id:"hestia",nume:"Hestia",g:"🏛️",grup:"aplicatii",rol:"Aplicația firmei",mit:"Zeița vetrei și a casei, focul care ține familia unită.",face:["Rapoarte zilnice, șantiere, clienți, dosare","Continuarea aplicației","firma-api.vercel.app"]},
+  {id:"afrodita",nume:"Afrodita",g:"🌹",grup:"aplicatii",rol:"Style by VAJ",mit:"Zeița iubirii și a frumuseții.",face:["Aplicația salonului","Programări, fișe, stoc, mirese","GitHub style-by-vaj"]},
+  {id:"dionysos",nume:"Dionysos",g:"🍇",grup:"aplicatii",rol:"Barber App",mit:"Zeul petrecerilor, al vinului și al bucuriei.",face:["Barber Station","barber-station-rho.vercel.app","Cod pe laptop + GitHub"]},
+  {id:"demeter",nume:"Demeter",g:"🌾",grup:"aplicatii",rol:"Rețete",mit:"Zeița recoltei, a grânelor și a hranei.",face:["Ce mâncăm azi? — rețete după ingrediente","ce-mancam-azi.vercel.app","Rețete din ce ai în casă"]},
+  {id:"prometheus",nume:"Prometheus",g:"🔥",grup:"aplicatii",rol:"Configurator tablouri",mit:"Titanul care a furat focul de la zei și l-a dat oamenilor.",face:["Configurator tablouri electrice și media","Prețuri și liste de echipamente","Aplicație claude.ai"]},
+  {id:"hera",nume:"Hera",g:"👑",grup:"aplicatii",rol:"Casa Tuduce",mit:"Regina zeilor, ocrotitoarea familiei și a căminului.",face:["Plan electric interactiv","Plan 3D și dosarul proiectului","Documente pentru client"]},
+  {id:"atlas",nume:"Atlas",g:"🌍",grup:"aplicatii",rol:"GitHub + Vercel",mit:"Titanul care ține cerul pe umeri.",face:["Starea deploy-urilor","Erori de build, pull request-uri","Nimic publicat fără aprobare"]},
+  {id:"dike",nume:"Dike",g:"🏛",grup:"sfat",rol:"Avocat",mit:"Zeița justiției, fiica Themisei; veghează să se facă dreptate.",face:["Toată legislația din România: civil, penal, firme, PF","Verifică toate actele","Spețe, termene, riscuri"]},
+  {id:"eunomia",nume:"Eunomia",g:"📜",grup:"sfat",rol:"Jurist",mit:"Zeița ordinii bune și a legilor bine făcute.",face:["Conformitate: ONRC, ANAF, ITM, ANRE, GDPR","Acte administrative, notificări","Termene și autorizații"]},
+  {id:"astreea",nume:"Astreea",g:"🧮",grup:"sfat",rol:"Contabil",mit:"Fecioara stelelor cu balanța în mână, simbolul dreptății și al echilibrului.",face:["TVA, impozite, salarii","Calendarul declarațiilor ANAF","Verifică cifrele"]},
+  {id:"metis",nume:"Metis",g:"📈",grup:"sfat",rol:"Economist",mit:"Titanida înțelepciunii practice și a sfatului bun, prima soție a lui Zeus.",face:["Profit pe lucrări și clienți","Prețuri, tarife, cash-flow","Prognoze și investiții"]},
+  {id:"tyche",nume:"Tyche",g:"🍀",grup:"sfat",rol:"Coach de business",mit:"Zeița norocului și a prosperității cetăților.",face:["Strategie și creștere","Clienți noi, echipă, delegare","Planuri concrete pe săptămâni"]},
 ];
 const GRUPURI = {
+  control:{label:"CONTROL",hue:"#e8ecf5",inel:0},
   birou:{label:"BIROU",hue:"#8fb3ff",inel:0},
   lucru:{label:"APLICAȚII DE LUCRU",hue:"#7fe3d0",inel:0},
   comunicare:{label:"COMUNICARE",hue:"#d9a6ff",inel:0},
+  crestere:{label:"CREȘTERE",hue:"#a6f56e",inel:0},
   aplicatii:{label:"APLICAȚIILE TALE",hue:"#f3c56b",inel:1},
   sfat:{label:"SFATUL ÎNȚELEPȚILOR",hue:"#ff8fa3",inel:1},
 };
@@ -223,14 +237,20 @@ const cand=iso=>{if(!iso)return"";const d=new Date(iso);if(isNaN(d))return"";con
 const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* ---------- geometrie: unghiuri fixe, distanțe egale ---------- */
-const INT=ZEI.filter(z=>GRUPURI[z.grup]&&GRUPURI[z.grup].inel===0);   // 9
+const INT=ZEI.filter(z=>GRUPURI[z.grup]&&GRUPURI[z.grup].inel===0);   // 15: control, birou, lucru, comunicare, creștere
 const EXT=ZEI.filter(z=>GRUPURI[z.grup]&&GRUPURI[z.grup].inel===1);   // 7 aplicații + 5 sfătuitori
 const UNGHI={};
 INT.forEach((z,i)=>UNGHI[z.id]=-Math.PI/2+i*2*Math.PI/INT.length);
+/* zeii unui inel la distanțe egale după spațiul ocupat de etichetă (lățime lw × înălțime lh), nu după unghi -> nu se suprapun în lateral.
+   Întoarce câte „etichete” încap pe inel per zeu (>=1 = încap). */
+function inel(lista,rx,ry,lw,lh,dec){const N=720,a0=-Math.PI/2,L=[0];let px=0,py=-ry;
+  for(let i=1;i<=N;i++){const a=a0+i*2*Math.PI/N,x=Math.cos(a)*rx,y=Math.sin(a)*ry;L.push(L[i-1]+Math.max(Math.abs(x-px)/lw,Math.abs(y-py)/lh));px=x;py=y;}
+  let j=0;lista.forEach((z,i)=>{const tg=L[N]*(i+dec)/lista.length;while(j<N&&L[j+1]<tg)j++;const f=L[j+1]>L[j]?(tg-L[j])/(L[j+1]-L[j]):0;UNGHI[z.id]=a0+(j+f)*2*Math.PI/N;});
+  return L[N]/lista.length;}
 EXT.forEach((z,i)=>UNGHI[z.id]=-Math.PI/2+(i+.5)*2*Math.PI/EXT.length);
 
 const cv=$("#cosmos"), ctx=cv.getContext("2d");
-let W=0,H=0,CX=0,CY=0,RX1=0,RY1=0,RX2=0,RY2=0,NODE=24,stars=[],nebula=null,bolts=[],hits=[],mx=-1,my=-1;
+let COMPACT=false,W=0,H=0,CX=0,CY=0,RX1=0,RY1=0,RX2=0,RY2=0,NODE=24,stars=[],nebula=null,bolts=[],hits=[],mx=-1,my=-1;
 function rnd(seed){let s=seed;return()=>(s=(s*16807)%2147483647)/2147483647;}
 const SA=document.createElement("div");SA.style.cssText="position:fixed;visibility:hidden;pointer-events:none;padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)";document.body.appendChild(SA);
 const SCUND=matchMedia("(orientation:landscape) and (max-height:500px)");
@@ -242,8 +262,13 @@ function resize(){
   CX=SL+UW/2; CY=top+(H-top-bottom)/2;
   const halfW=UW/2-70, halfH=(H-top-bottom)/2-46;
   RX2=Math.max(140,halfW); RY2=Math.max(150,halfH);
-  if(mob){RX2=UW/2-46;RY2=Math.max(220,(H-top-bottom)/2-40)}RX1=RX2*(mob?.55:.52); RY1=RY2*(mob?.62:.52);
-  NODE=mob?Math.max(15,Math.min(20,W*.045)):Math.max(17,Math.min(30,Math.min(RX2,RY2)*.085));
+  if(mob){RX2=UW/2-46;RY2=Math.max(220,(H-top-bottom)/2-40)}RX1=RX2*(mob?.5:.56); RY1=RY2*(mob&&!SCUND.matches?.62:.70);
+  NODE=mob?(W<370?13:W<400?14:15):Math.max(17,Math.min(scund?18:28,Math.min(RX2,RY2)*.075));
+  const fs0=mob?11:Math.max(11.5,NODE*.5);
+  // ecran mic/scund: dacă etichetele complete nu încap pe inelul interior, rămâne doar numele (rolul și starea apar în fișă, listă și la hover)
+  EXT.forEach((z,i)=>UNGHI[z.id]=-Math.PI/2+(i+.5)*2*Math.PI/EXT.length);
+  COMPACT=mob||inel(INT,RX1,RY1,130,2*NODE+fs0+28,0)<1;
+  if(COMPACT){if(!mob)RX1=RX2*.66;const lw=mob?85:100,lh=2*NODE+fs0+14;inel(INT,RX1,RY1,lw,lh,0);inel(EXT,RX2,RY2,lw,lh,.5);}
   const r1=rnd(11);stars=[];for(let i=0;i<Math.round(W*H/2400);i++)stars.push({x:r1()*W,y:r1()*H,z:r1()*.9+.1,tw:r1()*6.28});
   nebula=document.createElement("canvas");nebula.width=Math.max(1,W);nebula.height=Math.max(1,H);const n=nebula.getContext("2d");
   for(const[bx,by,c] of [[.2,.3,"rgba(80,70,200,.15)"],[.8,.3,"rgba(30,140,170,.12)"],[.6,.85,"rgba(200,140,60,.09)"],[.15,.85,"rgba(150,60,170,.11)"]]){
@@ -281,7 +306,7 @@ function glyphs(P){
   ctx.beginPath();ctx.ellipse(CX,CY,RX1,RY1,0,0,6.283);ctx.stroke();ctx.beginPath();ctx.ellipse(CX,CY,RX2,RY2,0,0,6.283);ctx.stroke();ctx.restore();
   // arcele grupurilor de pe inelul interior + etichete
   const pas=2*Math.PI/INT.length;
-  for(const k of ["birou","lucru","comunicare"]){const zs=INT.filter(z=>z.grup===k);const a0=UNGHI[zs[0].id]-pas*.42,a1=UNGHI[zs[zs.length-1].id]+pas*.42;
+  for(const k of ["control","birou","lucru","comunicare","crestere"]){const zs=INT.filter(z=>z.grup===k);const a0=UNGHI[zs[0].id]-pas*.42,a1=UNGHI[zs[zs.length-1].id]+pas*.42;
     ctx.save();ctx.strokeStyle=GRUPURI[k].hue;ctx.globalAlpha=.35;ctx.lineWidth=3;ctx.lineCap="round";
     ctx.beginPath();ctx.ellipse(CX,CY,RX1,RY1,0,a0,a1);ctx.stroke();ctx.restore();
     const am=(a0+a1)/2,lx=CX+Math.cos(am)*RX1*.62,ly=CY+Math.sin(am)*RY1*.62;
@@ -332,11 +357,11 @@ function drawGod(z,p,t){
   // nume + rol, cu fundal ca să se citească peste linii
   const nm=z.nume.toUpperCase(),fs=W<700?11:Math.round(Math.max(11.5,NODE*.5));
   ctx.font=`700 ${fs}px Cinzel, serif`;const w1=ctx.measureText(nm).width;
-  const sub=W<700?STARI[s].label:z.rol;ctx.font="500 11px 'IBM Plex Sans',sans-serif";const w2=ctx.measureText(sub).width;
-  const bw=Math.max(w1,w2)+14,by=p.y+r+6;
-  ctx.fillStyle="rgba(4,7,15,.62)";ctx.beginPath();ctx.roundRect?ctx.roundRect(p.x-bw/2,by,bw,fs+20,7):ctx.rect(p.x-bw/2,by,bw,fs+20);ctx.fill();
+  const sub=COMPACT?"":W<700?STARI[s].label:z.rol;ctx.font="500 11px 'IBM Plex Sans',sans-serif";const w2=ctx.measureText(sub).width;
+  const bw=Math.max(w1,w2)+14,by=p.y+r+6,bh=COMPACT?fs+8:fs+20;
+  ctx.fillStyle="rgba(4,7,15,.62)";ctx.beginPath();ctx.roundRect?ctx.roundRect(p.x-bw/2,by,bw,bh,7):ctx.rect(p.x-bw/2,by,bw,bh);ctx.fill();
   ctx.font=`700 ${fs}px Cinzel, serif`;ctx.fillStyle="#eef2fb";ctx.fillText(nm,p.x,by+fs+1);
-  ctx.font="500 11px 'IBM Plex Sans',sans-serif";ctx.fillStyle=col==="#4a5677"?"#9aa8c9":col;ctx.fillText(sub,p.x,by+fs+15);
+  ctx.font="500 11px 'IBM Plex Sans',sans-serif";ctx.fillStyle=col==="#4a5677"?"#9aa8c9":col;if(sub)ctx.fillText(sub,p.x,by+fs+15);
   ctx.globalAlpha=1;hits.push({id:z.id,x:p.x,y:p.y,r:r*1.35});
 }
 function hitAt(x,y){for(let i=hits.length-1;i>=0;i--){const h=hits[i];if((x-h.x)**2+(y-h.y)**2<=h.r*h.r)return h.id;}return null;}
@@ -354,6 +379,7 @@ function legenda(){const L=$("#legend");L.textContent="";
 function fisa(){const C=$("#card");if(!selectat){C.hidden=true;return;}
   const z=zeu(selectat),s=st(z.id),info=stare[z.id]||{},col=z.id==="zeus"?"#f3c56b":STARI[s].col;C.hidden=false;C.textContent="";
   const hd=document.createElement("div");hd.className="hd";hd.innerHTML='<div class="orb"></div><div><h3></h3><div class="role"></div></div><button class="x" type="button" aria-label="Închide">×</button>';
+  const mit=document.createElement("p");mit.className="mit";mit.textContent="În mitologie: "+z.mit;
   hd.querySelector(".orb").textContent=z.g;hd.querySelector(".orb").style.color=col;hd.querySelector("h3").textContent=z.nume;hd.querySelector(".role").textContent=z.rol;
   hd.querySelector(".x").onclick=()=>{selectat=null;fisa();};
   const pill=document.createElement("span");pill.className="pill";pill.style.color=STARI[s].col;pill.textContent=STARI[s].label+(info.actualizat?" · "+cand(info.actualizat):"");
@@ -361,7 +387,7 @@ function fisa(){const C=$("#card");if(!selectat){C.hidden=true;return;}
   const now=document.createElement("div");now.className="now";
   if(info.sarcina){now.innerHTML="<b>Acum:</b> <span></span>";now.querySelector("span").textContent=info.sarcina;}
   else now.textContent=z.id==="zeus"?"Tu vorbești doar cu Zeus. Toți ceilalți zei raportează doar lui.":"Nicio sarcină în lucru. Raportează doar lui Zeus.";
-  C.append(hd,pill,ul,now);}
+  C.append(hd,mit,pill,ul,now);}
 function item(col,titlu,timp,text){const d=document.createElement("div");d.className="item";d.style.borderLeftColor=col;
   d.innerHTML='<div class="t"><b></b><time></time></div><p></p>';const b=d.querySelector("b");b.style.color=col;b.textContent=titlu;d.querySelector("time").textContent=timp;d.querySelector("p").textContent=text;return d;}
 function sertar(){
@@ -371,9 +397,10 @@ function sertar(){
   const Q=$("#queue");Q.textContent="";$("#qCount").textContent=coada.length;
   if(!coada.length)Q.innerHTML='<div class="empty">Coada e goală.</div>';
   coada.forEach(q=>{const z=zeu(q.zeu)||{nume:q.zeu||"?",g:"·"};const col=q.tip==="APROBARE"?"#f3c56b":q.tip==="ÎNTREBARE"?"#ffad3b":"#6f8ae0";Q.appendChild(item(col,`${z.g} ${z.nume} · ${q.tip||"NOTĂ"}`,cand(q.creat),q.text||""));});
-  const R2=$("#roster");R2.textContent="";ZEI.forEach(z=>{const b=document.createElement("button");b.type="button";b.title=z.rol;b.innerHTML='<span></span><b></b><i></i>';
-    b.querySelector("span").textContent=z.g;b.querySelector("b").textContent=z.nume;b.querySelector("i").style.background=STARI[st(z.id)].col;
+  const R2=$("#roster");R2.textContent="";ZEI.forEach(z=>{const b=document.createElement("button");b.type="button";b.title=z.rol;b.innerHTML='<span></span><div><b></b><small></small></div><i></i>';
+    b.querySelector("span").textContent=z.g;b.querySelector("b").textContent=z.nume;b.querySelector("small").textContent=z.mit;b.querySelector("i").style.background=STARI[st(z.id)].col;
     b.onclick=()=>{selectat=z.id;fisa();inchide();};R2.appendChild(b);});
+  const nz=$("#nZei");if(nz)nz.textContent=ZEI.length+" zei";
   const n=att.length+coada.length,bd=$("#badge");bd.textContent=n;bd.hidden=!n;
 }
 const dr=$("#drawer"),ob=$("#openDrawer");
@@ -394,7 +421,7 @@ function mobil(){
     d.innerHTML="<b></b><small></small>";d.querySelector("b").textContent=n;d.querySelector("b").style.color=STARI[k].col;d.querySelector("small").textContent=STARI[k].label;st4.appendChild(d);}
   M.appendChild(st4);
   const ordine={asteapta:0,lucreaza:1,standby:2,offline:3};
-  for(const k of ["birou","lucru","comunicare","sfat","aplicatii"]){
+  for(const k of ["control","birou","lucru","comunicare","crestere","sfat","aplicatii"]){
     const g=document.createElement("div");g.className="grp";
     const h=document.createElement("h4");h.textContent=GRUPURI[k].label;h.style.color=GRUPURI[k].hue;g.appendChild(h);
     const l=document.createElement("div");l.className="gl";
