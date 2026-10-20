@@ -3123,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.56-rapoarte-bune';
+const APP_VERSION = 'v04.57-meniu-simplu';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -13199,7 +13199,8 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
     const [luniDeschise, setLuniDeschise] = useState({});
     const [devizNr, setDevizNr] = useState('');
     const [devizNrAtins, setDevizNrAtins] = useState(false);
-    const urmatorulDevizSantier = (sx) => String((Number(sx && sx.ultimNrDeviz) || 0) + 1);
+    /* etapa 6: devizele NOI de pe șantier primesc același șir ca în Ofertare → Devize (DEV-AN-NNN); cele vechi rămân cum sunt */
+    const urmatorulDevizSantier = (sx) => urmatorulNumar('DEV', devize);
     const ETICHETA_DEVIZ = { orar: 'tarif orar', pozitie: 'manoperă la poziție', materiale: 'materiale' };
     const [salvatInProiecte, setSalvatInProiecte] = useState(null);
     const salveazaDevizSantier = (sx, nr, dataDev, t) => {
@@ -19681,7 +19682,7 @@ function FiligranIzo({ id }) {
                 React.createElement("path", { d: "M13 0 L26 6.5 L13 13 L0 6.5 Z", fill: "none", stroke: "#00E5FF", strokeOpacity: ".06", strokeWidth: ".7" }))),
         React.createElement("rect", { width: "100%", height: "100%", fill: 'url(#' + id + ')' })));
 }
-function PaginaGrup({ icon, titlu, randuri, setTab }) {
+function PaginaGrup({ icon, titlu, randuri, setTab, mutate, onMeniuClasic }) {
     return (React.createElement("div", null,
         React.createElement("div", { className: "flex items-center gap-2.5 mb-1" },
             React.createElement("span", { style: { fontSize: 24 } }, icon),
@@ -19701,7 +19702,11 @@ function PaginaGrup({ icon, titlu, randuri, setTab }) {
                     React.createElement("span", { className: "block text-sm font-semibold", style: { color: 'var(--text)' } }, nume),
                     r.descriere && React.createElement("span", { className: "block text-[11px] mt-0.5", style: { color: 'var(--muted2)' } }, r.descriere)),
                 React.createElement("span", { className: "shrink-0 text-sm", style: { color: 'var(--muted2)' } }, "\u203A")));
-        }))));
+        })),
+        (mutate || []).length > 0 && React.createElement("div", { "data-mutate": mutate.length, className: "mt-4 rounded-xl p-3 text-[12.5px]", style: { background: 'var(--panel)', border: '1px dashed var(--border)', color: 'var(--muted1)', lineHeight: 1.6 } },
+            React.createElement("div", { className: "font-semibold mb-1", style: { color: 'var(--text)' } }, "Mutate în locuri noi (meniul simplificat)"),
+            mutate.map((m) => React.createElement("div", { key: m.id }, React.createElement("button", { type: "button", onClick: () => setTab(m.id), style: { color: 'var(--acc1)', fontWeight: 600 } }, m.label), " → acum în ", m.unde)),
+            onMeniuClasic && React.createElement("button", { type: "button", onClick: onMeniuClasic, className: "btnSec text-xs mt-2" }, "Arată-le aici (meniul clasic)"))));
 }
 function CardBord({ titlu, lat, ord, onClick, copii, atribut }) {
     const Inv = onClick ? 'button' : 'div';
@@ -35893,9 +35898,23 @@ function App() {
     };
     const NavItem = ({ id, label }) => (React.createElement("button", { onClick: () => { setTab(id); setSidebarOpen(false); setCautaMeniu(''); }, className: "flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm w-full text-left", style: { color: tab === id ? '#14181C' : 'var(--muted1)', background: tab === id ? 'var(--acc1)' : 'transparent', fontWeight: tab === id ? 600 : 400 } }, label));
     const eManagerMeniu = effectiveUser?.rol === 'Manager';
+    const [meniuClasic, setMeniuClasicSt] = useState(() => { try {
+        return localStorage.getItem('meniuClasic') === '1';
+    }
+    catch (_) {
+        return false;
+    } });
+    const setMeniuClasic = (v) => { setMeniuClasicSt(v); try {
+        localStorage.setItem('meniuClasic', v ? '1' : '0');
+    }
+    catch (_) { } };
     const olimpDeDecis = eManagerMeniu ? olimpDeDecisNr(olimpPlan) + (olimpIntrebari || []).filter(olimpIntrebareDeschisa).length : 0;
     // true = doar managerul; 'doarElectrician' = rândul pe care managerul îl are deja în altă intrare (Stocuri e o filă din Materiale)
     const vedeRandMeniu = (numaiMgr) => numaiMgr === 'doarElectrician' ? !eManagerMeniu : (!numaiMgr || eManagerMeniu);
+    /* ETAPA 6 — meniul simplificat: rubricile care au intrat în „💰 Clienți & bani” și în fișa lucrării
+       nu mai apar în grupe. NU dispar: le găsești cu căutarea din meniu și le aduci înapoi cu „Meniu clasic”. */
+    const MENIU_MUTATE = { scadentar: 'Clienți & bani → De încasat', cashflow30: 'căutarea din meniu (scrie „30 de zile”)', devizrealizat: 'căutarea din meniu; contractat vs. executat e și în fișa lucrării → Bani', clienti: 'fișa lucrării (clientul ei) și căutarea din meniu', proiecte: 'fișa lucrării → Documente' };
+    const ascunsInMeniu = (id) => eManagerMeniu && !meniuClasic && Object.prototype.hasOwnProperty.call(MENIU_MUTATE, id);
     const GRUPE_MENIU = [
         ['proiectare', '📐', 'Proiectare', PROIECTARE_TABS, false, [
                 ['instalatii', '📐 Proiecte instalații', false, 'proiect instalatie plan 3d plimbare tur casa film executie planse a3 materiale receptie', 'Planuri, 3D, plimbare prin casă, planșe A3 și materiale, pe șantiere.'],
@@ -36081,7 +36100,7 @@ function App() {
                         GRUPE_MENIU.map(([cheie, icon, eticheta, taburi, doarManager, copii]) => {
                             if (doarManager && !eManagerMeniu)
                                 return null;
-                            const vizibili = copii.filter(([, , numaiMgr]) => vedeRandMeniu(numaiMgr));
+                            const vizibili = copii.filter(([idv, , numaiMgr]) => vedeRandMeniu(numaiMgr) && !ascunsInMeniu(idv));
                             if (!vizibili.length)
                                 return null;
                             const inGrup = taburi.includes(tab) || tab === 'grup-' + cheie;
@@ -36092,6 +36111,9 @@ function App() {
                                     eticheta)));
                         }))),
                     React.createElement("div", { className: "mt-auto pt-3", style: { borderTop: '1px solid var(--border)' } },
+                        eManagerMeniu && React.createElement("label", { "data-meniu-clasic": "1", className: "px-3 mb-2 flex items-center gap-2 text-xs", style: { color: 'var(--muted1)', cursor: 'pointer' } },
+                            React.createElement("input", { type: "checkbox", checked: meniuClasic, onChange: (e) => setMeniuClasic(e.target.checked) }),
+                            "Meniu clasic (toate rubricile)"),
                         currentUser.rol === 'Manager' && (React.createElement("div", { className: "px-3 mb-2" },
                             React.createElement("div", { className: "text-[10px] uppercase tracking-wider mb-1", style: { color: 'var(--muted2)' } }, "\uD83E\uDDEA Vezi ca (test)"),
                             React.createElement("select", { value: viewAsUserId || '', onChange: (e) => { setViewAsUserId(e.target.value || null); setTab(null); }, className: "w-full text-xs rounded-lg px-2 py-1.5 outline-none", style: { background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } },
@@ -36178,9 +36200,10 @@ function App() {
                             const g = GRUPE_MENIU.find(([cheie]) => cheie === tab.slice(5));
                             if (!g || (g[4] && !eManagerMeniu))
                                 return React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Grupul \u0103sta nu-\u021Bi este disponibil.");
-                            const randuri = g[5].filter(([, , numaiMgr]) => vedeRandMeniu(numaiMgr))
+                            const randuri = g[5].filter(([idc, , numaiMgr]) => vedeRandMeniu(numaiMgr) && !ascunsInMeniu(idc))
                                 .map(([idc, labelc, , , descr]) => ({ id: idc, label: labelc, descriere: descr || '' }));
-                            return React.createElement(PaginaGrup, { icon: g[1], titlu: g[2], randuri: randuri, setTab: setTab });
+                            const mutate = g[5].filter(([idc, , numaiMgr]) => vedeRandMeniu(numaiMgr) && ascunsInMeniu(idc)).map(([idc, labelc]) => ({ id: idc, label: labelc, unde: MENIU_MUTATE[idc] }));
+                            return React.createElement(PaginaGrup, { icon: g[1], titlu: g[2], randuri: randuri, setTab: setTab, mutate, onMeniuClasic: () => setMeniuClasic(true) });
                         })()) : tabBlocatTest ? (React.createElement("div", { className: "max-w-md mx-auto mt-16 text-center rounded-xl p-6", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
                             React.createElement("div", { style: { fontSize: 34 } }, "\uD83D\uDD12"),
                             React.createElement("div", { className: "text-base mt-2", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600 } }, "Sec\u021Biune \u00EEn preg\u0103tire"),
