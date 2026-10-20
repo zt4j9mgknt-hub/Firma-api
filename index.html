@@ -11525,7 +11525,10 @@ const olimpChip = (txt, culoare, key) => React.createElement("span", { key, clas
    Pe fiecare punct, Ananke pune (prin window.olimpImportaPlan, deciziile rămân neatinse):
      grup: 'A' = sigur (se aprobă în bloc) | 'B' = cere decizia lui Sebastian | 'C' = pentru contabilă/avocat (doar citire)
      recomandare: 'DA' | 'NU' | 'MOD' — răspunsul recomandat; e doar evidențiat (⭐), NU se salvează nimic până nu apasă el
-     notaGrup: o frază scurtă (de ce e în grupa asta / cui îi duci punctul)
+     notaGrup: o frază scurtă (ce se face / întrebarea pentru contabilă sau avocat)
+     pentru: 'contabilă' | 'avocat' (doar grupa C; după el se împarte „Copiază lista")
+     pachet + pachetTitlu: punctele B care țin de aceeași întrebare (ex. 'B4', „Numești un șef de echipă…?")
+       apar ca UN singur card; DA / NU / MODIFIC se salvează pe fiecare punct din pachet.
    Fără clasificare, punctele nedecise stau la „Neclasificate" (pliat), nu toate pe ecran. */
 const olimpGrup = (x) => { const g = String((x && x.grup) || '').trim().toUpperCase().charAt(0); return g === 'A' || g === 'B' || g === 'C' ? g : ''; };
 const olimpRecomandare = (x) => { const r = String((x && x.recomandare) || '').trim().toUpperCase(); return r.indexOf('MOD') === 0 ? 'MOD' : (r === 'DA' || r === 'NU') ? r : ''; };
@@ -11537,8 +11540,23 @@ function olimpPeZone(l) {
     if (rest.length) z.push(['?', '📌 Altele', rest.sort(olimpCompara)]);
     return z.filter((r) => r[2].length);
 }
-/* ce îi cere cu adevărat decizia: B nedecise + cele încă neclasificate (insigna din meniu și din filă) */
-const olimpDeDecisNr = (plan) => (plan || []).filter((x) => x && x.cod && !x.decizie && olimpGrup(x) !== 'A' && olimpGrup(x) !== 'C').length;
+/* punctele B nedecise → pachete (o întrebare = un card), în ordinea lui Ananke (B1, B2, …) */
+function olimpPachete(l) {
+    const m = new Map();
+    l.forEach((x) => { const k = String(x.pachet || '').trim() || ('#' + x.id); if (!m.has(k)) m.set(k, []); m.get(k).push(x); });
+    const nrP = (k) => { const n = parseInt(String(k).replace(/^\D+/, ''), 10); return isNaN(n) ? 999 : n; };
+    return [...m.entries()].map(([k, xs]) => {
+        xs.sort(olimpCompara);
+        const recs = [...new Set(xs.map(olimpRecomandare).filter(Boolean))];
+        const termen = xs.map((x) => x.termen).filter(Boolean).sort((a, b) => olimpTermenCheie(a) - olimpTermenCheie(b))[0] || '';
+        return { k, xs, titlu: (xs.find((x) => x.pachetTitlu) || {}).pachetTitlu || xs[0].titlu, rec: recs.length === 1 ? recs[0] : '', urgent: xs.some((x) => x.urgent), termen };
+    }).sort((a, b) => nrP(a.k) - nrP(b.k) || olimpCompara(a.xs[0], b.xs[0]));
+}
+/* ce îi cere cu adevărat decizia: întrebările B nedecise (pe pachete) + punctele încă neclasificate (insigna din meniu și din filă) */
+const olimpDeDecisNr = (plan) => {
+    const l = (plan || []).filter((x) => x && x.cod && !x.decizie);
+    return olimpPachete(l.filter((x) => olimpGrup(x) === 'B')).length + l.filter((x) => !olimpGrup(x)).length;
+};
 function olimpCopiaza(text) {
     const vechi = () => { const t = document.createElement('textarea'); t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (_) { } document.body.removeChild(t); return ok; };
     try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(() => true, () => vechi()); } catch (_) { }
@@ -11576,7 +11594,8 @@ function OlimpAprobari({ plan, setPlan, persist, currentUser }) {
     lista.forEach((x) => { if (nr[x.decizie] != null) nr[x.decizie]++; });
     const decise = lista.filter((x) => !!OLIMP_DECIZII[x.decizie]);
     const nedecise = lista.filter((x) => !OLIMP_DECIZII[x.decizie]);
-    const deDecis = nedecise.filter((x) => olimpGrup(x) === 'B').sort(olimpCompara);
+    const deDecis = olimpPachete(nedecise.filter((x) => olimpGrup(x) === 'B'));
+    const nrB = deDecis.reduce((n, p) => n + p.xs.length, 0);
     const sigure = nedecise.filter((x) => olimpGrup(x) === 'A');
     const pentruAltii = nedecise.filter((x) => olimpGrup(x) === 'C');
     const neclasificate = nedecise.filter((x) => !olimpGrup(x));
@@ -11585,14 +11604,18 @@ function OlimpAprobari({ plan, setPlan, persist, currentUser }) {
         try { await persist('olimpPlan', next); setStare(mesaj); }
         catch (e) { setStare('⚠ Nu s-a salvat: ' + ((e && e.message) || 'eroare') + '. Încearcă din nou.'); }
     };
-    const decide = async (x, dec, comentariu) => {
+    /* ținta unei decizii: un punct sau un pachet B (aceeași decizie pe fiecare punct din el) */
+    const tPunct = (x) => ({ id: x.id, et: x.cod, ids: [x.id] });
+    const tPachet = (p) => ({ id: 'p:' + p.k, et: (p.k.charAt(0) === '#' ? '' : p.k + ' ') + '(' + p.xs.map((x) => x.cod).join(', ') + ')', ids: p.xs.map((x) => x.id) });
+    const decide = async (t, dec, comentariu) => {
         const com = String(comentariu || '').trim().slice(0, 2000);
-        if (dec === 'MOD' && !com) { setScrie({ id: x.id, fel: 'MOD', text: '' }); setDeschis(x.id); setStare('✏ Scrie ce vrei să se schimbe la ' + x.cod + ', apoi apasă „Salvează”.'); return; }
+        if (dec === 'MOD' && !com) { setScrie({ id: t.id, fel: 'MOD', text: '' }); setDeschis(t.id); setStare('✏ Scrie ce vrei să se schimbe la ' + t.et + ', apoi apasă „Salvează”.'); return; }
         const la = new Date().toISOString(), de = (currentUser && currentUser.nume) || '';
-        const next = lista.map((y) => y.id === x.id ? { ...y, decizie: dec, comentariu: com, deciziaLa: la, deciziaDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { decizie: dec, comentariu: com, la, de }].slice(-20) } : y);
+        const ids = new Set(t.ids);
+        const next = lista.map((y) => ids.has(y.id) ? { ...y, decizie: dec, comentariu: com, deciziaLa: la, deciziaDe: de, istoric: [...(Array.isArray(y.istoric) ? y.istoric : []), { decizie: dec, comentariu: com, la, de }].slice(-20) } : y);
         setScrie(null); setSchimba(null); setDeschis(null);
-        setStare((OLIMP_DECIZII[dec] || {}).t + ' la ' + x.cod + ' — salvez…');
-        await salveaza(next, '✅ ' + x.cod + ': ' + (OLIMP_DECIZII[dec] || {}).t + ' salvat.');
+        setStare((OLIMP_DECIZII[dec] || {}).t + ' la ' + t.et + ' — salvez…');
+        await salveaza(next, '✅ ' + t.et + ': ' + (OLIMP_DECIZII[dec] || {}).t + ' salvat.');
     };
     const aprobaSigurele = async () => {
         const ids = new Set(sigure.map((x) => x.id));
@@ -11604,15 +11627,19 @@ function OlimpAprobari({ plan, setPlan, persist, currentUser }) {
         await salveaza(next, '✅ DA la ' + ids.size + ' puncte sigure („aprobat în bloc”).');
     };
     const copiazaListaC = () => {
-        const corp = olimpPeZone(pentruAltii).map(([, t, l]) => t + '\n' + l.map((x) => '• ' + x.cod + ' – ' + x.titlu + (x.termen ? ' (termen: ' + x.termen + ')' : '') + (x.notaGrup ? ' — ' + x.notaGrup : '')).join('\n')).join('\n\n');
+        const linie = (x) => '• ' + x.cod + ' – ' + x.titlu + (x.termen ? ' (termen: ' + x.termen + ')' : '') + (x.notaGrup ? '\n  ' + String(x.notaGrup).replace(/\n/g, '\n  ') : '');
+        const cui = (x) => String(x.pentru || '').trim().toLowerCase();
+        const grupe = [['contabilă', '🧮 Pentru contabilă'], ['avocat', '⚖️ Pentru avocat']];
+        const rest = pentruAltii.filter((x) => !grupe.some(([k]) => cui(x) === k));
+        const corp = [...grupe.map(([k, t]) => [t, pentruAltii.filter((x) => cui(x) === k)]), ['📌 Altele', rest]].filter(([, l]) => l.length)
+            .map(([t, l]) => t + ' (' + l.length + ')\n' + l.slice().sort(olimpCompara).map(linie).join('\n')).join('\n\n');
         olimpCopiaza('De discutat cu contabila / avocatul (' + new Date().toLocaleDateString('ro-RO') + '):\n\n' + corp)
             .then((ok) => setStare(ok ? '📋 Lista (' + pentruAltii.length + ' puncte) e copiată.' : '⚠ Nu am putut copia lista.'));
     };
     if (!lista.length)
         return React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Planul nu e încă în aplicație. Zeus îl importă din „Plan de implementare Olimp”.");
     /* butoanele DA / NU / MODIFIC; cel recomandat e plin și cu ⭐, celelalte doar conturate (nimic salvat până la apăsare) */
-    const butoane = (x) => {
-        const rec = olimpRecomandare(x);
+    const butoane = (x, rec) => {
         const scriu = scrie && scrie.id === x.id;
         const btn = (dec, txt) => {
             const plin = !rec || rec === dec;
@@ -11655,18 +11682,25 @@ function OlimpAprobari({ plan, setPlan, persist, currentUser }) {
             eD && React.createElement("div", { className: "px-1.5 pb-2" }, olimpDetaliiPunct(x), coada && coada(x)));
     };
     const peArii = (l, coada, extra) => olimpPeZone(l).map(([k, t, xs]) => React.createElement(OlimpSectiune, { key: k, titlu: t, nr: xs.length, mic: true }, xs.map((x) => rand(x, coada, extra && extra(x)))));
-    const coadaDecizie = (x) => butoane(x);
-    const coadaDecisa = (x) => schimba === x.id ? butoane(x) : infoDecizie(x);
-    const card = (x) => {
-        const eD = deschis === x.id;
-        return React.createElement("div", { key: x.id, className: "rounded-xl px-3 py-2.5 mb-1.5", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (x.urgent ? 'var(--acc4)' : 'var(--acc3)') } },
-            React.createElement("button", { onClick: () => setDeschis(eD ? null : x.id), "aria-expanded": eD, className: "w-full flex items-center gap-2 text-left" },
-                React.createElement("span", { className: "text-[10px] font-semibold", style: { color: 'var(--acc1)', flexShrink: 0 } }, x.cod),
-                React.createElement("span", { className: "text-sm font-semibold flex-1", style: { color: 'var(--text)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: eD ? 'normal' : 'nowrap' } }, x.titlu),
-                x.urgent && React.createElement("span", { title: 'urgent', style: { flexShrink: 0 } }, '⏰'),
-                x.termen && olimpChipMic(x.termen, x.urgent ? 'var(--acc4)' : null, 't')),
-            eD && olimpDetaliiPunct(x),
-            butoane(x));
+    const coadaDecizie = (x) => butoane(tPunct(x), olimpRecomandare(x));
+    const coadaDecisa = (x) => schimba === x.id ? butoane(tPunct(x), '') : infoDecizie(x);
+    const card = (p) => {
+        const t = tPachet(p);
+        const eD = deschis === t.id;
+        const unul = p.xs.length === 1;
+        return React.createElement("div", { key: t.id, className: "rounded-xl px-3 py-2.5 mb-1.5", style: { background: 'var(--panel)', border: '1px solid var(--border)', borderLeft: '4px solid ' + (p.urgent ? 'var(--acc4)' : 'var(--acc3)') } },
+            React.createElement("button", { onClick: () => setDeschis(eD ? null : t.id), "aria-expanded": eD, className: "w-full flex items-center gap-2 text-left" },
+                React.createElement("span", { className: "text-[10px] font-semibold", style: { color: 'var(--acc1)', flexShrink: 0 } }, p.k.charAt(0) === '#' ? p.xs[0].cod : p.k),
+                React.createElement("span", { className: "text-sm font-semibold flex-1", style: eD ? { color: 'var(--text)', minWidth: 0 } : { color: 'var(--text)', minWidth: 0, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', lineHeight: 1.3 } }, p.titlu),
+                p.urgent && React.createElement("span", { title: 'urgent', style: { flexShrink: 0 } }, '⏰'),
+                p.termen && olimpChipMic(p.termen, p.urgent ? 'var(--acc4)' : null, 't')),
+            eD && (unul ? olimpDetaliiPunct(p.xs[0]) : React.createElement("div", { className: "mt-1" },
+                React.createElement("div", { className: "text-[11px] mb-1", style: { color: 'var(--muted)' } }, 'Decizia se salvează pe toate cele ' + p.xs.length + ' puncte:'),
+                p.xs.map((x) => React.createElement("div", { key: x.id, className: "mb-1.5 pl-2", style: { borderLeft: '2px solid var(--border)' } },
+                    React.createElement("div", { className: "text-xs font-semibold", style: { color: 'var(--text)' } }, React.createElement("span", { style: { color: 'var(--acc1)' } }, x.cod + ' '), x.titlu),
+                    olimpDetaliiPunct(x))))),
+            !eD && !unul && React.createElement("div", { className: "text-[11px] mt-0.5", style: { color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, p.xs.map((x) => x.cod).join(' · ')),
+            butoane(t, p.rec));
     };
     const cipDecizie = (x) => { const d = OLIMP_DECIZII[x.decizie]; return d ? React.createElement("span", { key: 'd', style: { flexShrink: 0, fontSize: 11, color: d.c, fontWeight: 700 } }, d.t.split(' ')[0]) : null; };
     const clasificat = lista.some((x) => olimpGrup(x));
@@ -11677,7 +11711,7 @@ function OlimpAprobari({ plan, setPlan, persist, currentUser }) {
                 [['DA', 'var(--acc2)'], ['NU', 'var(--acc4)'], ['MOD', 'var(--acc3)']].map(([d, c]) => React.createElement("div", { key: d, style: { width: (nr[d] / lista.length * 100) + '%', background: c } }))),
             React.createElement("span", { style: { whiteSpace: 'nowrap' } }, "✅", nr.DA, " ❌", nr.NU, " ✏", nr.MOD)),
         stare && React.createElement("div", { className: "text-xs mb-2", role: 'status', style: { color: 'var(--muted)' } }, stare),
-        React.createElement("div", { className: "text-sm font-semibold mb-1.5", style: { color: 'var(--text)' } }, "🎯 Decizia ta", deDecis.length ? ' (' + deDecis.length + ')' : ''),
+        React.createElement("div", { className: "text-sm font-semibold mb-1.5", style: { color: 'var(--text)' } }, "🎯 Decizia ta", deDecis.length ? ' (' + deDecis.length + ')' : '', nrB > deDecis.length && React.createElement("span", { className: "text-[11px] font-normal", style: { color: 'var(--muted)' } }, ' · ' + nrB + ' puncte din plan')),
         clasificat && deDecis.length > 0 && React.createElement("div", { className: "text-[11px] mb-1.5", style: { color: 'var(--muted)' } }, "⭐ = răspunsul recomandat (nu se salvează până nu apeși). Atinge titlul pentru detalii."),
         deDecis.length ? deDecis.map(card) : React.createElement("div", { className: "text-sm mb-2 rounded-xl px-3 py-2.5", style: { color: 'var(--muted2)', background: 'var(--panel)', border: '1px solid var(--border)' } },
             clasificat ? '🎉 Nimic nu așteaptă decizia ta acum.' : 'Clasificarea (sigure / decizia ta / pentru contabilă-avocat) n-a ajuns încă de la Ananke. Punctele nedecise sunt la „Neclasificate”.'),
@@ -11832,7 +11866,7 @@ function OlimpIntrebari({ intrebari, setIntrebari, persist, currentUser }) {
                 q.termen && olimpChipMic(q.termen, q.urgent ? 'var(--acc4)' : null, 't')),
             React.createElement("div", { className: "text-sm font-semibold", style: { color: 'var(--text)', whiteSpace: 'pre-wrap' } }, q.intrebare),
             q.deCe && React.createElement("button", { onClick: () => setDeschis(eD ? null : q.id), "aria-expanded": eD, className: "block w-full text-left text-xs mt-1",
-                style: eD ? { color: 'var(--muted1)', whiteSpace: 'pre-wrap' } : { color: 'var(--muted1)', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' } },
+                style: eD ? { color: 'var(--muted1)', whiteSpace: 'pre-wrap' } : { color: 'var(--muted1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
                 React.createElement("b", { style: { color: 'var(--muted)' } }, "De ce: "), q.deCe),
             zonaRaspuns(q));
     };
@@ -33611,7 +33645,7 @@ function App() {
         window.olimpImportaPlan = async (puncte) => {
             try {
                 if (!Array.isArray(puncte) || !puncte.length) throw new Error('Trimite o listă de puncte.');
-                const TEXT = ['cod', 'sectiune', 'titlu', 'problema', 'solutie', 'cine', 'efort', 'termen', 'urgent', 'ordine', 'sursa', 'ceAprobi', 'impact', 'grup', 'recomandare', 'notaGrup'];
+                const TEXT = ['cod', 'sectiune', 'titlu', 'problema', 'solutie', 'cine', 'efort', 'termen', 'urgent', 'ordine', 'sursa', 'ceAprobi', 'impact', 'grup', 'recomandare', 'notaGrup', 'pentru', 'pachet', 'pachetTitlu'];
                 const server = await olimpCitesteCheie('olimpPlan', []);
                 const harta = new Map((Array.isArray(server) ? server : []).filter((x) => x && x.id).map((x) => [x.id, x]));
                 let noi = 0, actualizate = 0;
