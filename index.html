@@ -31110,7 +31110,7 @@ function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, docume
     const gol = (text) => React.createElement("div", { className: "text-sm py-3", style: { color: 'var(--muted2)' } }, text);
     const linie = (key, stanga, dreapta, sub, extra) => React.createElement("div", { key, className: "rounded-xl px-3 py-2.5 mb-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
         React.createElement("div", { className: "flex items-start justify-between gap-2" },
-            React.createElement("div", { className: "min-w-0 text-[14px] font-semibold", style: { color: 'var(--text)' } }, stanga),
+            React.createElement("div", { className: "min-w-0 text-[14px] font-semibold", style: { color: 'var(--text)', overflowWrap: 'anywhere' } }, stanga),
             React.createElement("div", { className: "cifre shrink-0 text-[14px] font-bold", style: { color: 'var(--text)' } }, dreapta)),
         sub ? React.createElement("div", { className: "text-[12px] mt-0.5", style: { color: 'var(--muted2)', lineHeight: 1.45 } }, sub) : null,
         extra || null);
@@ -31123,13 +31123,19 @@ function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, docume
     const acceptate = oferte.filter((o) => o.status === 'Acceptată' && !baniInEur(o));
     const contractat = emise.length ? faraTva(emise) : (acceptate.length ? faraTva(acceptate) : null);
     const facturatFara = fac.length ? faraTva(fac) : 0;
-    const incasat = rotunjLei(fac.reduce((a, i) => a + incasatFactura(i), 0) + (s ? incasariSantier(s).filter((x) => !x.facturaId).reduce((a, x) => a + (Number(x.suma) || 0), 0) : 0));
+    const incasat = rotunjLei(fac.reduce((a, i) => a + sumaPlati(incasariFactura(i)), 0) + (s ? incasariSantier(s).filter((x) => !x.facturaId).reduce((a, x) => a + (Number(x.suma) || 0), 0) : 0));
+    const neconfirmat = rotunjLei(fac.filter((i) => eIncasata(i) && !incasariFactura(i).length).reduce((a, i) => a + totalFactura(i), 0));
     const rest = rotunjLei(fac.reduce((a, i) => a + restFactura(i), 0));
     const rapS = s ? unificaRapoarte(rapoarte || []).filter((x) => x.santierId === s.id).sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))) : [];
     const oreRaport = (x) => (x.persoane || []).reduce((a, p) => a + (String(p && p.nume || '').trim() ? minuteLucrate(p) : 0), 0) / 60;
     const oreTotal = rapS.reduce((a, x) => a + oreRaport(x), 0);
-    const cheiCautare = [s && s.nume, s && s.obiectiv, s && s.benefNume, client && client.nume].map(fisaNorm).filter((x) => x.length >= 4);
-    const contracte = (documenteSemnat || []).filter((d) => d && d.id && cheiCautare.some((k) => fisaNorm((d.titlu || '') + ' ' + JSON.stringify(d.parti || '')).includes(k)));
+    /* potrivire pe CUVINTE ÎNTREGI, doar după numele clientului / beneficiarului (nu după numele șantierului,
+       care poate fi generic: „Casa”, „Bloc”) — și se scrie în fișă că e potrivire după nume */
+    const GENERICE = new Set(['srl', 's r l', 'sa', 'pfa', 'ii', 'casa', 'bloc', 'cluj', 'napoca', 'firma', 'societate', 'profesionala']);
+    const cheiCautare = [s && s.benefNume, client && client.nume].map(fisaNorm).filter((x) => x.length >= 4 && !GENERICE.has(x));
+    const areCuvinte = (text, cheie) => (' ' + fisaNorm(text) + ' ').includes(' ' + cheie + ' ');
+    const textParti = (d) => (Array.isArray(d.parti) ? d.parti : []).map((p) => (p && typeof p === 'object') ? [p.nume, p.denumire, p.firma, p.reprezentant].filter(Boolean).join(' ') : String(p || '')).join(' ');
+    const contracte = (documenteSemnat || []).filter((d) => d && d.id && cheiCautare.some((k) => areCuvinte((d.titlu || '') + ' ' + textParti(d), k)));
     const idsDoc = new Set([...(s ? [s.id] : []), ...(client ? [client.id] : []), ...dev.map((d) => d.id), ...fac.map((i) => i.id)]);
     const fisiere = (proiecteFisiere || []).filter((f) => f && idsDoc.has(f.scopeId));
     const planse = s ? (planseSantier || []).filter((p) => p && p.santierId === s.id) : [];
@@ -31139,17 +31145,17 @@ function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, docume
         if (fila === 'bani') {
             const m = r.munca;
             const ofertaAvans = acceptate[0] || oferte.find((o) => o.status === 'Trimisă' && !baniInEur(o)) || null;
-            const valAvans = ofertaAvans ? rotunjLei(calcSubtotal(ofertaAvans.items || [])) : null;
+            const valAvans = acceptate.length ? faraTva(acceptate) : (ofertaAvans ? rotunjLei(calcSubtotal(ofertaAvans.items || [])) : null);
             return React.createElement(React.Fragment, null,
                 React.createElement("div", { className: "grid grid-cols-2 gap-1.5" },
                     cifraMica('Contractat (fără TVA)', contractat == null ? '—' : baniLei(contractat)),
                     cifraMica('Executat nefacturat', r.asteapta ? 'așteaptă prețuri' : (r.cash ? 'cash' : (r.faraValoare && !r.deFacturat ? '—' : baniLei(r.deFacturat))), r.deFacturat > 0 ? 'var(--acc4)' : null),
                     cifraMica('Facturat (fără TVA)', fac.length ? baniLei(facturatFara) : '—'),
-                    cifraMica('Încasat (cu TVA)', fac.length || incasat ? baniLei(incasat) : '—', 'var(--acc2)'),
+                    cifraMica('Încasat (plăți scrise, cu TVA)', React.createElement(React.Fragment, null, fac.length || incasat ? baniLei(incasat) : '—', neconfirmat > 0 ? React.createElement("div", { className: "text-[11.5px] font-normal", style: { color: '#E9A23B' } }, '+ ' + baniLei(neconfirmat) + ' neconfirmat') : null), 'var(--acc2)'),
                     cifraMica('Rest de încasat', fac.some((i) => eIncasata(i) && !incasariFactura(i).length) ? '— (neconfirmat)' : baniLei(rest), rest > 0 ? 'var(--acc4)' : null),
                     cifraMica('Ore din rapoarte', s ? oreRo(oreTotal) + ' h' : '—')),
                 m ? linie('munca', 'Muncă după ultimul deviz', baniLei(r.muncaVal || 0), oreRo(m.ore) + ' h din ' + fmtData(m.deLa) + ' până ' + fmtData(m.ultimaZi) + (s && Number(s.tarifOrar) ? ' · tarif ' + s.tarifOrar + ' lei/h' : '') + (m.sigur ? '' : ' · fără preț pe poziții')) : null,
-                valAvans != null && valAvans > 600 ? linie('avans', 'Avans 40% (lucrare peste 600 lei)', baniLei(valAvans * 0.4) + ' + TVA', 'din oferta ' + (ofertaAvans.numar || '') + ' · ' + baniLei(valAvans) + ' fără TVA') : null,
+                valAvans != null && valAvans > 600 ? linie('avans', 'Avans 40% (lucrare peste 600 lei)', baniLei(valAvans * 0.4) + ' + TVA', (acceptate.length > 1 ? 'din ' + acceptate.length + ' oferte acceptate' : 'din oferta ' + (ofertaAvans.numar || '')) + ' · ' + baniLei(valAvans) + ' fără TVA (pragul de 600 lei e socotit fără TVA)') : null,
                 valAvans != null && valAvans <= 600 ? linie('avans', 'Sub 600 lei: plata la predare', '', 'fără avans') : null,
                 (r.semne || []).length ? React.createElement("div", { className: "mt-2" },
                     React.createElement("div", { className: "text-[12px] font-semibold mb-1", style: { color: '#E9A23B' } }, '⚠ De verificat cu SmartBill'),
@@ -31195,7 +31201,7 @@ function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, docume
                     const semnat = !!(p.semnatura || p.semnatLa);
                     const zile = semnat ? zileDeLa(String(typeof p.semnatLa === 'number' ? dataLocala(new Date(p.semnatLa)) : (p.semnatLa || p.data || '')).slice(0, 10), azi) : null;
                     return linie(p.id, 'PV ' + (p.numar || '') + ' · ' + fmtData(p.data), semnat ? '✓ semnat' : 'nesemnat',
-                        (p.devizNumar ? 'deviz ' + p.devizNumar + ' · ' : '') + (semnat && r.deFacturat > 0 ? 'de facturat în 48 h — au trecut ' + zile + (zile === 1 ? ' zi' : ' zile') : (p.perioada ? String(p.perioada) : '')));
+                        (p.devizNumar ? 'deviz ' + p.devizNumar + ' · ' : '') + (semnat && r.deFacturat > 0 && p === pvs[0] && r.etapa === 'defacturat' ? 'de facturat în 48 h — au trecut ' + zile + (zile === 1 ? ' zi' : ' zile') : (p.perioada ? String(p.perioada) : '')));
                 }),
                 buton('✍ Deschide Procesul-verbal', () => mergiSantier('pv')));
         }
@@ -31237,7 +31243,7 @@ function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, docume
     return React.createElement("div", { "data-fisa-lucrare": r.cheie, style: { maxWidth: 760, margin: '0 auto' } },
         React.createElement("button", { type: "button", onClick: onInapoi, className: "btn3d text-xs font-semibold px-3 py-2 mb-2", style: { color: 'var(--acc1)' } }, '← Clienți & bani'),
         React.createElement("div", { className: "rounded-2xl p-4 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
-            React.createElement("div", { className: "text-[19px] font-bold", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif", lineHeight: 1.25 } }, r.lucrare),
+            React.createElement("div", { className: "text-[19px] font-bold", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif", lineHeight: 1.25, overflowWrap: 'anywhere' } }, r.lucrare),
             React.createElement("div", { className: "text-[13px] mt-0.5", style: { color: 'var(--muted2)' } }, r.client || '—', s && s.adresa ? ' · ' + s.adresa : '', s && s.status ? ' · ' + s.status : ''),
             React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mt-2" }, chip(r),
                 React.createElement("span", { className: "text-[12px]", style: { color: 'var(--muted1)' } }, r.zile == null ? '' : (r.zile === 0 ? 'azi' : 'de ' + r.zile + (r.zile === 1 ? ' zi' : ' zile'))),
@@ -31277,20 +31283,6 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
         return pr(a) - pr(b) || ordine(a.etapa) - ordine(b.etapa) || (b.zile || 0) - (a.zile || 0);
     });
     const ascunseIncasate = filtru === 'toate' && !q ? B.randuri.filter((r) => r.etapa === 'incasat' && (r.zile == null || r.zile > 60)).length : 0;
-    const deschide = (r) => {
-        if (r.santierId) {
-            setPendingSiteNav({ santierId: r.santierId, origine: { tab: 'bani', pagina: null, eticheta: 'Clienți & bani' } });
-            setTab('santiere');
-        }
-        else if (r.ofertaId)
-            setTab('oferte');
-        else {
-            if (onFiltruClient && r.clientId)
-                onFiltruClient(r.clientId);
-            else
-                setTab('facturi');
-        }
-    };
     const insigna = (text, titlu) => React.createElement("span", { title: titlu || '', className: "inline-block text-[11px] font-semibold px-2 py-0.5 rounded-md", style: { color: '#E9A23B', background: 'rgba(233,162,59,.14)', border: '1px solid rgba(233,162,59,.4)' } }, text);
     const cifra = (titlu, valoare, sub, culoare, onClick, extra) => React.createElement("button", { type: "button", onClick, className: "text-left rounded-2xl p-4 w-full", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement("div", { className: "text-[13px] font-semibold", style: { color: 'var(--muted)' } }, titlu),
