@@ -31299,15 +31299,16 @@ function propuneriCorectare({ randuri, facturi, devize, santiere }) {
         if (!isNaN(cota) && !COTE_TVA_CUNOSCUTE.includes(cota))
             adauga('f-tva-' + i.id, 'mica', nr + ': cotă TVA ' + cota + '%', 'cotă neobișnuită', 'Confirmă cota cu contabila.', { tab: 'facturi', clientId: i.clientId });
         else if (cota === 19 && String(i.data || '') >= '2025-08-01')
-            adauga('f-tva19-' + i.id, 'mica', nr + ': TVA 19% după 01.08.2025', fmtData(i.data), 'Cota standard e 21% de la 01.08.2025 — confirmă cu contabila de ce s-a pus 19%.', { tab: 'facturi', clientId: i.clientId });
+            adauga('f-tva19-' + i.id, 'mica', nr + ': TVA 19% după 01.08.2025', fmtData(i.data), 'Cota standard e 21% de la 01.08.2025 (Legea 141/2025). 19% poate fi corect (ex. avans sau lucrare începută înainte) — confirmă cu contabila.', { tab: 'facturi', clientId: i.clientId });
         if (i.scadenta && String(i.scadenta) === String(i.data) && restFactura(i) > 0)
-            adauga('f-scad-' + i.id, 'mica', nr + ': scadența = data facturii', fmtData(i.data), 'Pune scadența reală din contract (de obicei 7–30 de zile), ca restanțele să se socotească bine.', { tab: 'facturi', clientId: i.clientId });
+            adauga('f-scad-' + i.id, 'mica', nr + ': scadența = data facturii', fmtData(i.data), 'Pune scadența din contract, ca restanțele să se socotească bine.', { tab: 'facturi', clientId: i.clientId });
     });
     (santiere || []).forEach((s) => {
-        const p = perioadeDevizate(devize, s.id).filter((x) => { const d = (devize || []).find((y) => y.id === x.id); return d && d.status !== 'Ciornă'; });
+        /* doar devizele de MANOPERĂ cu perioadă scrisă (cele fără perioadă ar lua data devizului și ar da alarme false) */
+        const p = perioadeDevizate(devize, s.id).filter((x) => { const d = (devize || []).find((y) => y.id === x.id); return d && d.status !== 'Ciornă' && d.perioada && d.perioada.de && d.perioada.la && !(d.items || []).every((it) => String(it.sectiune || '') === 'materiale'); });
         for (let a = 0; a < p.length; a++)
             for (let b = a + 1; b < p.length; b++)
-                if (p[a].de <= p[b].la && p[b].de <= p[a].la)
+                if (p[a].de < p[b].la && p[b].de < p[a].la)
                     adauga('d-supr-' + p[a].id + p[b].id, 'mare', (s.nume || '').trim() + ': devizele ' + (p[a].numar || '') + ' și ' + (p[b].numar || '') + ' se suprapun',
                         fmtData(p[a].de) + '–' + fmtData(p[a].la) + ' și ' + fmtData(p[b].de) + '–' + fmtData(p[b].la),
                         'Aceleași zile pot fi facturate de două ori. Verifică și, dacă e dublură, anulează devizul în plus (nu îl șterge).', { santierId: s.id, siteView: 'deviz' });
@@ -31316,7 +31317,7 @@ function propuneriCorectare({ randuri, facturi, devize, santiere }) {
         if (r.santierId && r.status === 'Finalizat' && r.deFacturat > 0 && !r.asteapta)
             adauga('s-fin-' + r.santierId, 'mare', r.lucrare + ': finalizat, nefacturat', baniLei(r.deFacturat) + ' fără TVA' + (r.zile != null ? ' · de ' + r.zile + ' zile' : ''),
                 'Fă devizul și factura (regula: în 48 h după PV). Dacă s-a facturat pe alt nume, leagă factura de șantier.', { santierId: r.santierId, siteView: 'deviz' });
-        if ((r.semne || []).some((x) => /deviz fără factură|devize fără factură/.test(x)))
+        if (!r.asteapta && (r.semne || []).some((x) => /deviz fără factură|devize fără factură/.test(x)))
             adauga('r-dev-' + r.cheie, 'medie', r.lucrare + ': deviz emis fără factură în aplicație', r.client || '',
                 'Verifică în SmartBill. Dacă e facturat acolo, adaugă factura cu numărul SBK în aplicație și leag-o de deviz; altfel facturează.', r.santierId ? { santierId: r.santierId, siteView: 'deviz' } : { tab: 'devize' });
     });
