@@ -3123,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.51-olimp-info';
+const APP_VERSION = 'v04.52-clienti-bani';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -30768,6 +30768,390 @@ const facturatDinDeviz = (d, invoices, devize) => rotunjLei(facturiDinDeviz(d, i
     const totalDev = ids.reduce((t, id) => t + valDev(id), 0);
     return s + (totalDev > 0 ? sub * valDev(d.id) / totalDev : sub / ids.length);
 }, 0));
+/* ═══ 💰 CLIENȚI & BANI — etapa 1 (doar citire) ═══
+   Un singur ecran pentru manager: 3 cifre mari + un rând pe lucrare cu etapa ei.
+   NU scrie nimic: totul e socotit din datele care există deja în aplicație.
+   Regulile banilor (aprobate de Sebastian, 20.10.2026): avans 40% la lucrări peste 600 lei
+   (sub 600 lei și urgențe: plata la predare); factură în 48 h după PV; tarif PF 100 lei/h
+   de la 01.11.2026 (firme 90–95), cost 76 lei/h. Pragul lunar ≈ 64.000 lei fără TVA (estimare Metis). */
+const BANI_PRAG_LUNAR = 64000;
+const BANI_ETAPE = [
+    { id: 'cerere', label: 'Cerere', culoare: 'var(--muted)' },
+    { id: 'oferta', label: 'Ofertă', culoare: 'var(--acc1)' },
+    { id: 'avans', label: 'Avans', culoare: 'var(--acc3)' },
+    { id: 'lucru', label: 'În lucru', culoare: 'var(--acc1)' },
+    { id: 'pv', label: 'PV', culoare: 'var(--acc3)' },
+    { id: 'defacturat', label: 'De facturat (48h)', culoare: 'var(--acc4)' },
+    { id: 'facturat', label: 'Facturat', culoare: 'var(--acc3)' },
+    { id: 'incasat', label: 'Încasat', culoare: 'var(--acc2)' },
+];
+/* Lucrările Skyline cu devizul „în așteptare prețuri” (UTCN, ANL Jucu) nu se facturează până nu dă
+   Sebastian prețurile. În aplicație nu există încă un câmp pentru asta (vine în etapa 2), așa că le
+   recunoaștem după nume; `s.asteaptaPreturi === true` are întâietate dacă va exista. */
+const BANI_ASTEAPTA_PRETURI = [/\butcn\b/i, /\bjucu\b/i];
+const baniAsteaptaPreturi = (s) => s && (s.asteaptaPreturi === true || BANI_ASTEAPTA_PRETURI.some((re) => re.test(String(s.nume || '') + ' ' + String(s.obiectiv || ''))));
+const baniInEur = (d) => /\[EUR\]|\bEUR\b|€/.test(String((d && d.lucrare) || '')) || String((d && d.moneda) || '').toUpperCase() === 'EUR';
+const baniLei = (n) => (n == null || isNaN(n)) ? '—' : Math.round(Number(n)).toLocaleString('ro-RO') + ' lei';
+/* ce nu se potrivește sigur cu SmartBill, din datele aplicației: factura fără număr SBK
+   (nu e în SmartBill) sau factura bifată „Încasată” de mână, fără nicio plată scrisă */
+function baniSemneSmartBill(i) {
+    const s = [];
+    if (!i)
+        return s;
+    if (!(i.sbNumarComplet || (i.sbSerie && i.sbNumar != null && i.sbNumar !== '')) && !/^SBK/i.test(String(i.numar || '')))
+        s.push('fără număr SmartBill');
+    if (eIncasata(i) && !incasariFactura(i).length)
+        s.push('„Încasată” bifat de mână');
+    return s;
+}
+function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company, azi }) {
+    const A = azi || dataLocala(new Date());
+    const facturi = (invoices || []).filter((i) => i && normStatusFactura(i.status) !== 'Anulată');
+    const dv = (devize || []).filter((d) => d && !d.sters);
+    const S = (santiere || []).filter((s) => s && !s.sters);
+    const numeClient = (id) => ((clients || []).find((c) => c.id === id) || {}).nume || '';
+    const santierePeClient = (cid) => S.filter((s) => s.benefClientId && s.benefClientId === cid);
+    /* devizele și facturile fără șantier se leagă de șantier doar dacă clientul are UN singur șantier */
+    const santierulUnic = (cid) => { const l = cid ? santierePeClient(cid) : []; return l.length === 1 ? l[0] : null; };
+    const santierDeviz = (d) => d.santierId || (santierulUnic(d.clientId) || {}).id || null;
+    const devizDupaId = new Map(dv.map((d) => [d.id, d]));
+    const santierFactura = (i) => {
+        if (i.santierId)
+            return i.santierId;
+        const legat = (Array.isArray(i.devizeIds) ? i.devizeIds : []).map((id) => devizDupaId.get(id)).find((d) => d && santierDeviz(d));
+        if (legat)
+            return santierDeviz(legat);
+        return (santierulUnic(i.clientId) || {}).id || null;
+    };
+    const munca = muncaNefacturata({ rapoarte, santiere: S, devize: dv, pozitiiSantier, materialeListaSantier, pana: A });
+    const muncaPe = new Map(munca.map((m) => [m.santier.id, m]));
+    const randuri = [];
+    /* grupul de bani al unei lucrări (șantier sau client fără șantier) */
+    const socoteste = (devizeL, facturiL) => {
+        let devizRest = 0, devizeFaraFactura = 0, primaDataDeviz = '';
+        /* facturile clientului nelegate de niciun deviz acoperă devizele lui (așa s-a lucrat la ELRON) */
+        let neleg = rotunjLei(facturiL.filter((i) => !(Array.isArray(i.devizeIds) && i.devizeIds.length)).reduce((a, i) => a + calcSubtotal(i.items || []), 0));
+        let potrivitPeClient = false;
+        devizeL.filter((d) => d.status !== 'Ciornă' && !baniInEur(d)).sort((a, b) => String(a.data || '').localeCompare(String(b.data || ''))).forEach((d) => {
+            let rest = rotunjLei(calcSubtotal(d.items || []) - facturatDinDeviz(d, facturi, dv));
+            if (rest > 0.005 && neleg > 0.005) {
+                const ia = Math.min(rest, neleg);
+                rest = rotunjLei(rest - ia);
+                neleg = rotunjLei(neleg - ia);
+                potrivitPeClient = true;
+            }
+            if (rest > 0.005) {
+                devizRest += rest;
+                devizeFaraFactura++;
+                if (!primaDataDeviz || String(d.data || '') < primaDataDeviz)
+                    primaDataDeviz = String(d.data || '');
+            }
+        });
+        const deIncasat = rotunjLei(facturiL.reduce((a, i) => a + restFactura(i), 0));
+        const restante = facturiL.filter((i) => restFactura(i) > 0 && i.scadenta && String(i.scadenta) < A);
+        const incasat = rotunjLei(facturiL.reduce((a, i) => a + incasatFactura(i), 0));
+        const semne = [];
+        facturiL.forEach((i) => baniSemneSmartBill(i).forEach((x) => semne.push((numarDoc(i) || 'factura') + ': ' + x)));
+        if (potrivitPeClient)
+            semne.push('facturi nelegate de deviz, potrivite pe client');
+        if (devizeFaraFactura)
+            semne.push(devizeFaraFactura === 1 ? 'un deviz fără factură în aplicație' : devizeFaraFactura + ' devize fără factură în aplicație');
+        const neplatite = facturiL.filter((i) => restFactura(i) > 0).map((i) => String(i.data || '')).sort();
+        const platite = facturiL.map((i) => { const p = incasariFactura(i).map((x) => String(x.data || '')).sort(); return p.length ? p[p.length - 1] : String(i.data || ''); }).sort();
+        return { devizRest: rotunjLei(devizRest), primaDataDeviz, deIncasat, restante: restante.length, incasat, semne,
+            primaNeplatita: neplatite[0] || '', ultimaPlata: platite[platite.length - 1] || '', nrFacturi: facturiL.length };
+    };
+    const folositeDev = new Set(), folositeFact = new Set();
+    S.forEach((s) => {
+        const devS = dv.filter((d) => santierDeviz(d) === s.id);
+        const facS = facturi.filter((i) => santierFactura(i) === s.id);
+        devS.forEach((d) => folositeDev.add(d.id));
+        facS.forEach((i) => folositeFact.add(i.id));
+        const b = socoteste(devS, facS);
+        const m = muncaPe.get(s.id) || null;
+        const asteapta = baniAsteaptaPreturi(s);
+        /* lucrările mici se plătesc cash, la predare, fără factură → nu intră la „De facturat” */
+        const cash = E_LUCRARE_MICA(s) && !b.nrFacturi && !(b.devizRest > 0);
+        const cashIncasat = cash ? rotunjLei(incasariSantier(s).filter((x) => !x.facturaId).reduce((a, x) => a + (Number(x.suma) || 0), 0)) : 0;
+        const muncaVal = m && m.sigur ? rotunjLei(m.valoare) : 0;
+        const faraValoare = !!(m && !m.sigur) && !cash;
+        const deFacturat = asteapta || cash ? 0 : rotunjLei(muncaVal + b.devizRest);
+        const pvS = (proceseVerbale || []).filter((p) => p && p.santierId === s.id && !p.sters).sort((a, b2) => String(b2.data || '').localeCompare(String(a.data || '')));
+        const pv = pvS[0] || null;
+        const pvSemnat = !!(pv && (pv.semnatura || pv.semnatLa));
+        const ofS = (offers || []).filter((o) => o && o.santierId === s.id && o.status !== 'Respinsă');
+        const areRapoarte = !!m || (rapoarte || []).some((r) => r && r.santierId === s.id);
+        let etapa, deCand = '', valoare = null;
+        if (cash) {
+            etapa = s.status === 'Finalizat' ? 'incasat' : 'lucru';
+            valoare = cashIncasat > 0 ? cashIncasat : null;
+            deCand = s.status === 'Finalizat' ? String(s.statusSchimbatLa || (m && m.ultimaZi) || '') : (m ? m.deLa : String(s.dataCreare || '').slice(0, 10));
+        }
+        else if (asteapta && (m || b.devizRest > 0)) {
+            etapa = 'lucru';
+            deCand = m ? m.deLa : b.primaDataDeviz;
+        }
+        else if (deFacturat > 0 || faraValoare) {
+            valoare = faraValoare && !deFacturat ? null : deFacturat;
+            const pvDupaMunca = pv && (!m || String(pv.data || '') >= String(m.ultimaZi || ''));
+            if (pvSemnat && pvDupaMunca) {
+                etapa = 'defacturat';
+                deCand = typeof pv.semnatLa === 'number' ? dataLocala(new Date(pv.semnatLa)) : String(pv.semnatLa || pv.data || '').slice(0, 10);
+            }
+            else if (pv && !pvSemnat && pvDupaMunca) {
+                etapa = 'pv';
+                deCand = String(pv.trimisLa || pv.data || '');
+            }
+            else if (s.status === 'Finalizat' || (!m && b.devizRest > 0)) {
+                etapa = 'defacturat';
+                deCand = s.status === 'Finalizat' && m ? String(s.statusSchimbatLa || m.ultimaZi || '') : (b.primaDataDeviz || (m && m.ultimaZi) || '');
+            }
+            else {
+                etapa = 'lucru';
+                deCand = m ? m.deLa : b.primaDataDeviz;
+            }
+        }
+        else if (b.deIncasat > 0) {
+            etapa = 'facturat';
+            valoare = b.deIncasat;
+            deCand = b.primaNeplatita;
+        }
+        else if (b.nrFacturi) {
+            etapa = 'incasat';
+            valoare = b.incasat;
+            deCand = b.ultimaPlata;
+        }
+        else if (!areRapoarte && ofS.some((o) => o.status === 'Acceptată')) {
+            etapa = 'avans';
+            const o = ofS.find((x) => x.status === 'Acceptată');
+            valoare = baniInEur(o) ? null : rotunjLei(calcSubtotal(o.items || []));
+            deCand = String(o.dataAcceptare || o.data || '');
+        }
+        else if (!areRapoarte && ofS.length) {
+            etapa = 'oferta';
+            valoare = baniInEur(ofS[0]) ? null : rotunjLei(calcSubtotal(ofS[0].items || []));
+            deCand = String(ofS[0].dataTrimisa || ofS[0].data || '');
+        }
+        else if (!areRapoarte) {
+            etapa = 'cerere';
+            deCand = String(s.dataCreare || '').slice(0, 10);
+        }
+        else {
+            /* are rapoarte, dar totul e devizat și nu există facturi în aplicație */
+            etapa = s.status === 'Finalizat' ? 'incasat' : 'lucru';
+            deCand = m ? m.deLa : String(s.statusSchimbatLa || '');
+        }
+        randuri.push({
+            cheie: 's-' + s.id, santierId: s.id, client: String(s.benefNume || numeClient(s.benefClientId) || '').trim(), lucrare: String(s.nume || '').trim() || '—',
+            status: s.status || '', etapa, valoare, zile: deCand ? Math.max(0, zileDeLa(String(deCand).slice(0, 10), A)) : null,
+            deFacturat, faraValoare: faraValoare && !asteapta, asteapta, deIncasat: b.deIncasat, restante: b.restante,
+            ore: m ? m.ore : 0, semne: b.semne, tarif: Number(s.tarifOrar) || 0, cash,
+        });
+    });
+    /* clienții cu devize / facturi fără șantier (de ex. lucrări facturate direct) */
+    const peClient = new Map();
+    dv.filter((d) => !folositeDev.has(d.id)).forEach((d) => { const k = d.clientId || '-'; if (!peClient.has(k)) peClient.set(k, { dev: [], fac: [] }); peClient.get(k).dev.push(d); });
+    facturi.filter((i) => !folositeFact.has(i.id)).forEach((i) => { const k = i.clientId || '-'; if (!peClient.has(k)) peClient.set(k, { dev: [], fac: [] }); peClient.get(k).fac.push(i); });
+    peClient.forEach((g, cid) => {
+        const b = socoteste(g.dev, g.fac);
+        let etapa, valoare, deCand;
+        if (b.devizRest > 0) {
+            etapa = 'defacturat';
+            valoare = b.devizRest;
+            deCand = b.primaDataDeviz;
+        }
+        else if (b.deIncasat > 0) {
+            etapa = 'facturat';
+            valoare = b.deIncasat;
+            deCand = b.primaNeplatita;
+        }
+        else if (b.nrFacturi) {
+            etapa = 'incasat';
+            valoare = b.incasat;
+            deCand = b.ultimaPlata;
+        }
+        else
+            return;
+        const lucr = (g.dev[0] && g.dev[0].lucrare) || (g.fac[0] && g.fac[0].lucrare) || '';
+        randuri.push({ cheie: 'c-' + cid, clientId: cid === '-' ? '' : cid, client: numeClient(cid) || '(fără client)', lucrare: lucr ? String(lucr) : '(fără șantier)',
+            etapa, valoare, zile: deCand ? Math.max(0, zileDeLa(String(deCand).slice(0, 10), A)) : null,
+            deFacturat: b.devizRest, faraValoare: false, asteapta: false, deIncasat: b.deIncasat, restante: b.restante, ore: 0, semne: b.semne, faraSantier: true });
+    });
+    /* ofertele fără șantier: Ofertă (ciornă/trimisă) sau Avans (acceptată), câte un rând pe client + lucrare.
+       Oferta acceptată a unui client care are deja șantier e socotită lucrarea acelui șantier → nu se repetă. */
+    const santiereCuClient = new Set(S.map((s) => s.benefClientId).filter(Boolean));
+    const ofGrup = new Map();
+    (offers || []).filter((o) => o && !o.santierId && o.status !== 'Respinsă' && !(o.status === 'Acceptată' && santiereCuClient.has(o.clientId))).forEach((o) => {
+        const k = (o.clientId || '-') + '|' + (o.grupVariante || String(o.lucrare || '').trim().toLowerCase());
+        const x = ofGrup.get(k);
+        /* din variante, rămâne cea acceptată, apoi cea trimisă */
+        const rang = (st) => st === 'Acceptată' ? 3 : st === 'Trimisă' ? 2 : 1;
+        if (!x || rang(o.status) > rang(x.status))
+            ofGrup.set(k, o);
+    });
+    ofGrup.forEach((o) => {
+        const eur = baniInEur(o);
+        const deCand = String((o.status === 'Acceptată' ? o.dataAcceptare : o.dataTrimisa) || o.data || '');
+        randuri.push({ cheie: 'o-' + o.id, ofertaId: o.id, client: numeClient(o.clientId) || '(fără client)', lucrare: String(o.lucrare || '').replace(/^\s*\[EUR\]\s*/i, '') || ('Oferta ' + (o.numar || '')),
+            etapa: o.status === 'Acceptată' ? 'avans' : 'oferta', valoare: eur ? null : rotunjLei(calcSubtotal(o.items || [])), eur,
+            zile: deCand ? Math.max(0, zileDeLa(deCand.slice(0, 10), A)) : null, deFacturat: 0, deIncasat: 0, restante: 0, semne: [], faraValoare: false, asteapta: false });
+    });
+    /* CELE 3 CIFRE */
+    const deFacturat = rotunjLei(randuri.reduce((a, r) => a + (r.deFacturat || 0), 0));
+    const deIncasatFacturi = facturi.filter((i) => restFactura(i) > 0);
+    const deIncasat = rotunjLei(deIncasatFacturi.reduce((a, i) => a + restFactura(i), 0));
+    const restant = rotunjLei(deIncasatFacturi.filter((i) => i.scadenta && String(i.scadenta) < A).reduce((a, i) => a + restFactura(i), 0));
+    const semneFacturi = facturi.filter((i) => baniSemneSmartBill(i).length);
+    const luna = A.slice(0, 7);
+    let lunar = null;
+    try {
+        lunar = construiesteRaportLunar(luna, { invoices, offers, cheltuieliFirma, santiere: S, devize: dv, rapoarte, stockMoves: [], materials: [], concedii: [], company, clients, salarii });
+    }
+    catch (_) {
+        lunar = null;
+    }
+    const areCheltuieli = (cheltuieliFirma || []).length > 0 || (salarii || []).length > 0;
+    const cheltuit = lunar && areCheltuieli ? rotunjLei(lunar.cheltuieli + (company && company.salariiInCheltuieli ? 0 : lunar.salariiTotal)) : null;
+    const semneLuna = facturi.filter((i) => String(i.data || '').slice(0, 7) === luna && baniSemneSmartBill(i).length).length;
+    return {
+        randuri, azi: A,
+        cifre: {
+            deFacturat, nrDeFacturat: randuri.filter((r) => r.deFacturat > 0).length,
+            faraValoare: randuri.filter((r) => r.faraValoare).length,
+            asteapta: randuri.filter((r) => r.asteapta).length,
+            devizeNeverificate: randuri.filter((r) => r.semne.some((x) => /deviz/.test(x))).length,
+            deIncasat, restant, nrDeIncasat: deIncasatFacturi.length, semneFacturi: semneFacturi.length,
+            facturatLuna: lunar ? lunar.facturatFaraTva : null, incasatLuna: lunar ? lunar.incasat : null, cheltuitLuna: cheltuit,
+            ramasLuna: lunar && cheltuit != null ? rotunjLei(lunar.incasat - cheltuit) : null, semneLuna,
+        },
+    };
+}
+function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company, setTab, setPendingSiteNav, onFiltruClient }) {
+    const [filtru, setFiltru] = useState('toate');
+    const [cauta, setCauta] = useState('');
+    const [reguli, setReguli] = useState(false);
+    const B = useMemo(() => calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company }),
+        [santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company]);
+    const C = B.cifre;
+    const ordine = (id) => BANI_ETAPE.findIndex((e) => e.id === id);
+    const q = cautNorm(cauta);
+    const vizibile = B.randuri.filter((r) => {
+        if (filtru === 'defacturat' && !(r.deFacturat > 0 || r.faraValoare))
+            return false;
+        if (filtru === 'deincasat' && !(r.deIncasat > 0))
+            return false;
+        if (filtru === 'lucru' && r.etapa !== 'lucru')
+            return false;
+        if (filtru === 'toate' && r.etapa === 'incasat' && (r.zile == null || r.zile > 60) && !q)
+            return false;
+        return !q || cautNorm(r.client + ' ' + r.lucrare).includes(q);
+    }).sort((a, b) => {
+        /* întâi ce cere ceva de la tine: de facturat, apoi de încasat, apoi restul în ordinea etapelor */
+        const pr = (r) => r.etapa === 'defacturat' ? 0 : (r.deIncasat > 0 ? 1 : 2);
+        return pr(a) - pr(b) || ordine(a.etapa) - ordine(b.etapa) || (b.zile || 0) - (a.zile || 0);
+    });
+    const ascunseIncasate = filtru === 'toate' && !q ? B.randuri.filter((r) => r.etapa === 'incasat' && (r.zile == null || r.zile > 60)).length : 0;
+    const deschide = (r) => {
+        if (r.santierId) {
+            setPendingSiteNav({ santierId: r.santierId, origine: { tab: 'bani', pagina: null, eticheta: 'Clienți & bani' } });
+            setTab('santiere');
+        }
+        else if (r.ofertaId)
+            setTab('oferte');
+        else {
+            if (onFiltruClient && r.clientId)
+                onFiltruClient(r.clientId);
+            else
+                setTab('facturi');
+        }
+    };
+    const insigna = (text, titlu) => React.createElement("span", { title: titlu || '', className: "inline-block text-[11px] font-semibold px-2 py-0.5 rounded-md", style: { color: '#E9A23B', background: 'rgba(233,162,59,.14)', border: '1px solid rgba(233,162,59,.4)' } }, text);
+    const cifra = (titlu, valoare, sub, culoare, onClick, extra) => React.createElement("button", { type: "button", onClick, className: "text-left rounded-2xl p-4 w-full", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+        React.createElement("div", { className: "text-[13px] font-semibold", style: { color: 'var(--muted)' } }, titlu),
+        React.createElement("div", { className: "cifre", style: { fontSize: 32, lineHeight: 1.15, fontWeight: 800, color: culoare || 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, valoare),
+        sub && React.createElement("div", { className: "text-[12.5px] mt-1", style: { color: 'var(--muted2)', lineHeight: 1.45 } }, sub),
+        extra && React.createElement("div", { className: "mt-2 flex flex-wrap gap-1.5" }, extra));
+    const pesteprag = C.facturatLuna != null && C.facturatLuna >= BANI_PRAG_LUNAR;
+    const pctPrag = C.facturatLuna != null ? Math.min(100, Math.round(C.facturatLuna / BANI_PRAG_LUNAR * 100)) : 0;
+    const etapaInfo = (id) => BANI_ETAPE.find((e) => e.id === id) || BANI_ETAPE[0];
+    const chip = (r) => {
+        const e = etapaInfo(r.etapa);
+        let label = e.label, culoare = e.culoare;
+        if (r.asteapta) {
+            label = 'Așteaptă prețuri';
+            culoare = 'var(--muted)';
+        }
+        else if (r.cash) {
+            label = r.etapa === 'incasat' ? (r.valoare ? 'Cash · încasat' : 'Cash · predat') : 'Cash · în lucru';
+            culoare = r.etapa === 'incasat' && r.valoare ? 'var(--acc2)' : 'var(--muted1)';
+        }
+        else if (r.etapa === 'defacturat' && r.zile != null) {
+            /* ceasul de 48 h: verde sub o zi, galben 1–2 zile, roșu peste 2 zile */
+            culoare = r.zile < 1 ? 'var(--acc2)' : r.zile <= 2 ? 'var(--acc3)' : 'var(--acc4)';
+        }
+        else if (r.etapa === 'facturat' && r.restante)
+            label = 'Facturat · restant';
+        return React.createElement("span", { className: "inline-block text-[11.5px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap", style: { color: culoare, border: '1px solid currentColor', background: 'var(--panel2)' } }, label);
+    };
+    const butonFiltru = (id, text, nr) => React.createElement("button", { key: id, type: "button", onClick: () => setFiltru(id), className: "text-[13px] font-semibold px-2.5 py-2 rounded-full whitespace-nowrap",
+        style: { color: filtru === id ? '#14181C' : 'var(--muted1)', background: filtru === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, text, nr != null ? ' · ' + nr : '');
+    return React.createElement("div", { "data-ecran": "clienti-bani", style: { maxWidth: 760, margin: '0 auto' } },
+        React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" },
+            React.createElement("h2", { className: "titluPagina text-xl font-semibold", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "💰 Clienți & bani"),
+            React.createElement("button", { type: "button", onClick: () => setReguli(!reguli), className: "btnSec text-xs" }, reguli ? 'Închide regulile' : 'ℹ Regulile banilor')),
+        React.createElement("div", { className: "text-[12px] mb-3", style: { color: 'var(--muted2)' } }, "Doar citire — din datele aplicației, la ", fmtData(B.azi), ". SmartBill rămâne sursa oficială pentru facturi și încasări."),
+        reguli && React.createElement("div", { "data-reguli": "1", className: "rounded-xl p-3.5 mb-3 text-[13px]", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)', lineHeight: 1.6 } },
+            React.createElement("div", null, "• ", React.createElement("b", null, "Avans 40%"), " la lucrările peste 600 lei, înainte de start. Sub 600 lei și la urgențe: plata la predare."),
+            React.createElement("div", null, "• ", React.createElement("b", null, "Factura în 48 h după PV."), " Ceasul: verde sub 24 h, galben 24–48 h, roșu peste 48 h. Lucrările Skyline fără prețuri apar „Așteaptă prețuri”, nu roșu, și nu intră în „De facturat”."),
+            React.createElement("div", null, "• ", React.createElement("b", null, "Tarif"), ": persoane fizice 100 lei/h de la 01.11.2026, firme 90–95 lei/h. Costul nostru: 76 lei/h."),
+            React.createElement("div", null, "• ", React.createElement("b", null, "Pragul lunar"), ": ≈ 64.000 lei facturat fără TVA (estimare Metis), ca să acoperim costurile."),
+            React.createElement("div", { className: "mt-1.5 text-[12px]", style: { color: 'var(--muted2)' } }, "„De facturat” = orele din rapoarte × tariful șantierului (sau poz.×preț) după ultimul deviz + devizele emise fără factură. „⚠ de verificat cu SmartBill” apare unde aplicația nu are factura cu număr SBK sau plata scrisă: ce s-a facturat direct în SmartBill nu se vede aici.")),
+        React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3" },
+            cifra('De facturat acum', baniLei(C.deFacturat),
+                (C.nrDeFacturat ? C.nrDeFacturat + (C.nrDeFacturat === 1 ? ' lucrare' : ' lucrări') + ' cu muncă sau devize nefacturate' : 'Nimic de facturat') +
+                    (C.faraValoare ? ' · ' + C.faraValoare + ' fără valoare (—)' : '') + (C.asteapta ? ' · ' + C.asteapta + ' așteaptă prețuri (nu intră)' : ''),
+                C.deFacturat > 0 ? 'var(--acc4)' : 'var(--acc2)', () => setFiltru('defacturat'),
+                C.devizeNeverificate || C.deFacturat > 0 ? insigna('⚠ de verificat cu SmartBill', 'Facturile emise direct în SmartBill nu sunt în aplicație — o parte din sumă poate fi deja facturată.') : null),
+            cifra('De încasat', baniLei(C.deIncasat),
+                (C.nrDeIncasat ? C.nrDeIncasat + (C.nrDeIncasat === 1 ? ' factură' : ' facturi') + ' cu TVA' : 'Toate facturile din aplicație apar încasate') + (C.restant > 0 ? ' · restant ' + baniLei(C.restant) : ''),
+                C.restant > 0 ? 'var(--acc4)' : 'var(--text)', () => setFiltru('deincasat'),
+                C.semneFacturi ? insigna('⚠ de verificat cu SmartBill (' + C.semneFacturi + ')', 'Facturi fără număr SmartBill sau bifate „Încasată” de mână, fără plată scrisă. În SmartBill pot fi încă neplătite.') : null),
+            cifra('Luna asta', C.facturatLuna == null ? '—' : baniLei(C.facturatLuna),
+                React.createElement(React.Fragment, null,
+                    'facturat fără TVA din ', baniLei(BANI_PRAG_LUNAR), ' prag',
+                    React.createElement("div", { className: "rounded-full mt-1.5 mb-1.5", style: { height: 8, background: 'var(--panel2)', overflow: 'hidden' } },
+                        React.createElement("div", { style: { width: pctPrag + '%', height: '100%', background: pesteprag ? 'var(--acc2)' : 'var(--acc4)' } })),
+                    'Încasat: ', baniLei(C.incasatLuna), ' · Cheltuit: ', C.cheltuitLuna == null ? '— (nu sunt trecute în aplicație)' : baniLei(C.cheltuitLuna),
+                    C.ramasLuna != null ? ' · Rămas: ' + baniLei(C.ramasLuna) : ''),
+                C.facturatLuna == null ? 'var(--muted)' : (pesteprag ? 'var(--acc2)' : 'var(--acc4)'), () => setTab('raportlunar'),
+                C.semneLuna ? insigna('⚠ de verificat cu SmartBill (' + C.semneLuna + ')', 'Facturi din luna asta fără număr SmartBill sau încasate fără plată scrisă.') : null)),
+        React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" },
+            butonFiltru('toate', 'Toate'),
+            butonFiltru('defacturat', 'De facturat', B.randuri.filter((r) => r.deFacturat > 0 || r.faraValoare).length),
+            butonFiltru('deincasat', 'De încasat', B.randuri.filter((r) => r.deIncasat > 0).length),
+            butonFiltru('lucru', 'În lucru', B.randuri.filter((r) => r.etapa === 'lucru').length)),
+        React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔎 Caută client sau șantier…", className: "w-full rounded-xl px-3.5 py-2.5 mb-2.5 outline-none", style: { fontSize: 16, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
+        React.createElement("div", { className: "flex flex-col gap-1.5" },
+            !vizibile.length && React.createElement("div", { className: "text-sm px-1 py-4 text-center", style: { color: 'var(--muted2)' } }, "Nicio lucrare aici."),
+            vizibile.map((r) => React.createElement("button", { key: r.cheie, type: "button", "data-rand-bani": r.cheie, onClick: () => deschide(r), className: "text-left rounded-xl px-3.5 py-3 w-full", style: { background: 'var(--panel)', border: '1px solid ' + (r.etapa === 'defacturat' && r.zile > 2 && !r.asteapta ? 'rgba(224,82,82,.55)' : 'var(--border)') } },
+                React.createElement("div", { className: "flex items-start justify-between gap-2" },
+                    React.createElement("div", { className: "min-w-0 flex-1" },
+                        React.createElement("div", { className: "text-[15px] font-semibold truncate", style: { color: 'var(--text)' } }, r.lucrare),
+                        React.createElement("div", { className: "text-[12.5px] truncate", style: { color: 'var(--muted2)' } }, r.client || '—', r.faraSantier ? ' · fără șantier' : '')),
+                    React.createElement("div", { className: "text-right shrink-0" },
+                        React.createElement("div", { className: "cifre text-[15px] font-bold", style: { color: 'var(--text)' } }, r.eur ? '€ —' : baniLei(r.valoare)),
+                        React.createElement("div", { className: "text-[11.5px]", style: { color: 'var(--muted2)' } }, r.zile == null ? '—' : (r.zile === 0 ? 'azi' : r.zile === 1 ? 'de o zi' : 'de ' + r.zile + ' zile')))),
+                React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mt-1.5" },
+                    chip(r),
+                    r.deIncasat > 0 && r.etapa !== 'facturat' ? React.createElement("span", { className: "text-[11.5px]", style: { color: 'var(--muted1)' } }, 'de încasat ' + baniLei(r.deIncasat)) : null,
+                    r.faraValoare ? React.createElement("span", { className: "text-[11.5px]", style: { color: 'var(--muted1)' } }, oreRo(r.ore) + ' h fără preț') : null,
+                    r.etapa === 'avans' && r.valoare > 600 ? React.createElement("span", { className: "text-[11.5px]", style: { color: 'var(--acc3)' } }, 'avans 40% = ' + baniLei(r.valoare * 0.4) + ' + TVA') : null,
+                    r.semne.length ? insigna('⚠ de verificat cu SmartBill', r.semne.join(' · ')) : null)))),
+        ascunseIncasate > 0 && React.createElement("div", { className: "text-[12px] text-center mt-2", style: { color: 'var(--muted2)' } }, ascunseIncasate, ' lucrări încasate de peste 60 de zile sunt ascunse — le găsești cu căutarea.'),
+        React.createElement("div", { className: "flex flex-wrap gap-1 mt-4 mb-2 text-[11px]", style: { color: 'var(--muted2)' } },
+            'Etapele: ', BANI_ETAPE.map((e, k) => React.createElement("span", { key: e.id }, e.label, k < BANI_ETAPE.length - 1 ? ' → ' : ''))));
+}
+
 function ScadentarTab({ invoices, clients, company, currentUser, onIncasari }) {
     const azi = dataLocala(new Date());
     const [incasareId, setIncasareId] = useState(null);
@@ -35145,6 +35529,7 @@ function App() {
             ]],
     ];
     const RANDURI_FIXE_MENIU = [
+        ...(eManagerMeniu ? [{ id: 'bani', label: '💰 Clienți & bani', grup: '', sin: 'bani facturat incasat de facturat de incasat restante clienti lucrari etape avans pv' }] : []),
         ...(eManagerMeniu ? [{ id: null, label: '🏠 Dashboard', grup: '', sin: 'acasa panou start situatie' }] : []),
         { id: 'activitate', label: eManagerMeniu ? '⚡ Activitatea mea' : '🏠 Activitatea mea', grup: '', sin: 'ce am de facut azi treaba mea' },
         { id: 'santiere', label: '🏗 Șantiere', grup: '', sin: 'lucrari puncte de lucru rapoarte proces verbal timpi morti' },
@@ -35263,6 +35648,7 @@ function App() {
                             r.grup ? React.createElement("div", { className: "px-3 pb-1 text-[10px]", style: { color: 'var(--muted2)', marginTop: -4 } },
                                 "\u00EEn ",
                                 r.grup) : null))))) : (React.createElement(React.Fragment, null,
+                        effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: "bani", label: "\uD83D\uDCB0 Clien\u021Bi & bani" }),
                         effectiveUser.rol === 'Manager' && React.createElement(NavItem, { id: null, label: "\uD83C\uDFE0 Dashboard" }),
                         React.createElement(NavItem, { id: "activitate", label: effectiveUser.rol === 'Manager' ? '⚡ Activitatea mea' : '🏠 Activitatea mea' }),
                         React.createElement("div", { style: { height: 1, background: 'var(--border)', margin: '4px 4px 8px' } }),
@@ -35452,6 +35838,7 @@ function App() {
                             tab === 'utilizatori' && effectiveUser.rol === 'Manager' && React.createElement(UsersTab, { currentUser: effectiveUser }),
                             tab === 'cheltuieli' && effectiveUser.rol === 'Manager' && React.createElement(CheltuieliTab, { cheltuieliFirma: cheltuieliFirma, setCheltuieliFirma: setCheltuieliFirma, persist: persist }),
                             tab === 'cashflow30' && effectiveUser.rol === 'Manager' && React.createElement(Cashflow30Tab, { invoices: invoices, clients: clients, cheltuieliFirma: cheltuieliFirma, company: company, setCompany: setCompany, persist: persist, setTab: setTab }),
+                            tab === 'bani' && effectiveUser.rol === 'Manager' && React.createElement(ClientiBaniTab, { santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, clients: clients, proceseVerbale: proceseVerbale, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, cheltuieliFirma: cheltuieliFirma, salarii: salarii, company: company, setTab: setTab, setPendingSiteNav: setPendingSiteNav, onFiltruClient: (clientId) => { setFiltruClient({ clientId, cheie: 'facturi' }); setTab('facturi'); } }),
                             tab === 'raportlunar' && effectiveUser.rol === 'Manager' && React.createElement(RaportLunarTab, { invoices: invoices, offers: offers, cheltuieliFirma: cheltuieliFirma, santiere: santiere, devize: devize, rapoarte: rapoarte, stockMoves: stockMoves, materials: materials, concedii: concedii, company: company, clients: clients, setTab: setTab, salarii: salarii }),
                             tab === 'scadentar' && effectiveUser.rol === 'Manager' && React.createElement(ScadentarTab, { invoices: invoices, clients: clients, company: company, currentUser: effectiveUser, onIncasari: scrieIncasariFactura }),
                             tab === 'devizrealizat' && effectiveUser.rol === 'Manager' && React.createElement(DevizRealizatTab, { devize: devize, rapoarte: rapoarte, santiere: santiere, company: company, stockMoves: stockMoves, materials: materials }),
