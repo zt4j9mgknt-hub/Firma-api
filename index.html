@@ -30807,7 +30807,7 @@ function baniSemneSmartBill(i) {
 function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company, azi }) {
     const A = azi || dataLocala(new Date());
     const facturi = (invoices || []).filter((i) => i && normStatusFactura(i.status) !== 'Anulată');
-    const dv = (devize || []).filter((d) => d && !d.sters);
+    const dv = (devize || []).filter((d) => d && !d.sters && d.status !== 'Anulat');
     const S = (santiere || []).filter((s) => s && !s.sters);
     const numeClient = (id) => ((clients || []).find((c) => c.id === id) || {}).nume || '';
     const santierePeClient = (cid) => S.filter((s) => s.benefClientId && s.benefClientId === cid);
@@ -30823,13 +30823,16 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
             return santierDeviz(legat);
         return (santierulUnic(i.clientId) || {}).id || null;
     };
-    const munca = muncaNefacturata({ rapoarte, santiere: S, devize: dv, pozitiiSantier, materialeListaSantier, pana: A });
+    /* orele se socotesc după ultimul deviz EMIS al șantierului: devizul legat doar de client primește șantierul
+       lui unic, iar ciornele și devizele în EUR nu „taie” orele (altfel munca ar dispărea fără urmă) */
+    const devizeCareTaie = dv.filter((d) => d.status !== 'Ciornă' && !baniInEur(d)).map((d) => d.santierId ? d : { ...d, santierId: santierDeviz(d) });
+    const munca = muncaNefacturata({ rapoarte, santiere: S, devize: devizeCareTaie, pozitiiSantier, materialeListaSantier, pana: A });
     const muncaPe = new Map(munca.map((m) => [m.santier.id, m]));
     const randuri = [];
     /* grupul de bani al unei lucrări (șantier sau client fără șantier) */
     const socoteste = (devizeL, facturiL) => {
         let devizRest = 0, devizeFaraFactura = 0, primaDataDeviz = '';
-        /* facturile clientului nelegate de niciun deviz acoperă devizele lui (așa s-a lucrat la ELRON) */
+        /* facturile clientului nelegate de niciun deviz acoperă devizele lui (facturi emise pe situații de lucrări) */
         let neleg = rotunjLei(facturiL.filter((i) => !(Array.isArray(i.devizeIds) && i.devizeIds.length)).reduce((a, i) => a + calcSubtotal(i.items || []), 0));
         let potrivitPeClient = false;
         devizeL.filter((d) => d.status !== 'Ciornă' && !baniInEur(d)).sort((a, b) => String(a.data || '').localeCompare(String(b.data || ''))).forEach((d) => {
@@ -30856,6 +30859,11 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
             semne.push('facturi nelegate de deviz, potrivite pe client');
         if (devizeFaraFactura)
             semne.push(devizeFaraFactura === 1 ? 'un deviz fără factură în aplicație' : devizeFaraFactura + ' devize fără factură în aplicație');
+        const ciorne = devizeL.filter((d) => d.status === 'Ciornă');
+        if (ciorne.length)
+            semne.push((ciorne.length === 1 ? 'deviz ciornă (neemis) ' : ciorne.length + ' devize ciornă (neemise) ') + baniLei(ciorne.reduce((a, d) => a + calcSubtotal(d.items || []), 0)) + (ciorne.some(baniInEur) ? ' / EUR' : ''));
+        if (neleg > 0.005)
+            semne.push('factură fără deviz ' + baniLei(neleg) + ' — orele facturate astfel nu sunt scăzute');
         const neplatite = facturiL.filter((i) => restFactura(i) > 0).map((i) => String(i.data || '')).sort();
         const platite = facturiL.map((i) => { const p = incasariFactura(i).map((x) => String(x.data || '')).sort(); return p.length ? p[p.length - 1] : String(i.data || ''); }).sort();
         return { devizRest: rotunjLei(devizRest), primaDataDeviz, deIncasat, restante: restante.length, incasat, semne,
@@ -31002,7 +31010,19 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
     const deIncasat = rotunjLei(deIncasatFacturi.reduce((a, i) => a + restFactura(i), 0));
     const restant = rotunjLei(deIncasatFacturi.filter((i) => i.scadenta && String(i.scadenta) < A).reduce((a, i) => a + restFactura(i), 0));
     const semneFacturi = facturi.filter((i) => baniSemneSmartBill(i).length);
+    /* facturile bifate „Încasată” fără nicio plată scrisă: nu știm dacă banii au venit → cifra mare devine „—” */
+    const manuale = facturi.filter((i) => eIncasata(i) && !incasariFactura(i).length);
+    const neconfirmat = rotunjLei(manuale.reduce((a, i) => a + totalFactura(i), 0));
     const luna = A.slice(0, 7);
+    const inLuna = (d) => String(d || '').slice(0, 7) === luna;
+    const cuSbk = (i) => !baniSemneSmartBill(i).includes('fără număr SmartBill');
+    /* LUNA ASTA: doar facturile cu număr SmartBill (SBK), fără TVA; cele fără număr se arată separat */
+    const fLuna = facturi.filter((i) => inLuna(i.data));
+    const facturatLuna = rotunjLei(fLuna.filter(cuSbk).reduce((a, i) => a + calcSubtotal(i.items || []), 0));
+    const faraSbkLuna = rotunjLei(fLuna.filter((i) => !cuSbk(i)).reduce((a, i) => a + calcSubtotal(i.items || []), 0));
+    /* încasat în lună = plățile scrise (cu dată) + banii trecuți direct pe șantier; bifatele de mână nu au dată sigură */
+    const incasatLuna = rotunjLei(facturi.reduce((a, i) => a + incasariFactura(i).filter((x) => inLuna(x.data)).reduce((s, x) => s + (Number(x.suma) || 0), 0), 0)
+        + S.reduce((a, s) => a + incasariSantier(s).filter((x) => !x.facturaId && inLuna(x.data)).reduce((q, x) => q + (Number(x.suma) || 0), 0), 0));
     let lunar = null;
     try {
         lunar = construiesteRaportLunar(luna, { invoices, offers, cheltuieliFirma, santiere: S, devize: dv, rapoarte, stockMoves: [], materials: [], concedii: [], company, clients, salarii });
@@ -31012,17 +31032,18 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
     }
     const areCheltuieli = (cheltuieliFirma || []).length > 0 || (salarii || []).length > 0;
     const cheltuit = lunar && areCheltuieli ? rotunjLei(lunar.cheltuieli + (company && company.salariiInCheltuieli ? 0 : lunar.salariiTotal)) : null;
-    const semneLuna = facturi.filter((i) => String(i.data || '').slice(0, 7) === luna && baniSemneSmartBill(i).length).length;
+    const semneLuna = fLuna.filter((i) => baniSemneSmartBill(i).length).length;
     return {
         randuri, azi: A,
         cifre: {
             deFacturat, nrDeFacturat: randuri.filter((r) => r.deFacturat > 0).length,
             faraValoare: randuri.filter((r) => r.faraValoare).length,
             asteapta: randuri.filter((r) => r.asteapta).length,
-            devizeNeverificate: randuri.filter((r) => r.semne.some((x) => /deviz/.test(x))).length,
-            deIncasat, restant, nrDeIncasat: deIncasatFacturi.length, semneFacturi: semneFacturi.length,
-            facturatLuna: lunar ? lunar.facturatFaraTva : null, incasatLuna: lunar ? lunar.incasat : null, cheltuitLuna: cheltuit,
-            ramasLuna: lunar && cheltuit != null ? rotunjLei(lunar.incasat - cheltuit) : null, semneLuna,
+            deFacturatDeVerificat: randuri.filter((r) => r.deFacturat > 0 && r.semne.length).length,
+            deIncasat: manuale.length ? null : deIncasat, deIncasatInApp: deIncasat, neconfirmat, nrManuale: manuale.length,
+            restant, nrDeIncasat: deIncasatFacturi.length, semneFacturi: semneFacturi.length,
+            facturatLuna, faraSbkLuna, incasatLuna, cheltuitLuna: cheltuit,
+            ramasLuna: cheltuit != null ? rotunjLei(incasatLuna - cheltuit) : null, semneLuna,
         },
     };
 }
@@ -31071,7 +31092,7 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
         React.createElement("div", { className: "cifre", style: { fontSize: 32, lineHeight: 1.15, fontWeight: 800, color: culoare || 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, valoare),
         sub && React.createElement("div", { className: "text-[12.5px] mt-1", style: { color: 'var(--muted2)', lineHeight: 1.45 } }, sub),
         extra && React.createElement("div", { className: "mt-2 flex flex-wrap gap-1.5" }, extra));
-    const pesteprag = C.facturatLuna != null && C.facturatLuna >= BANI_PRAG_LUNAR;
+    const pesteprag = C.facturatLuna >= BANI_PRAG_LUNAR;
     const pctPrag = C.facturatLuna != null ? Math.min(100, Math.round(C.facturatLuna / BANI_PRAG_LUNAR * 100)) : 0;
     const etapaInfo = (id) => BANI_ETAPE.find((e) => e.id === id) || BANI_ETAPE[0];
     const chip = (r) => {
@@ -31102,29 +31123,32 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
         React.createElement("div", { className: "text-[12px] mb-3", style: { color: 'var(--muted2)' } }, "Doar citire — din datele aplicației, la ", fmtData(B.azi), ". SmartBill rămâne sursa oficială pentru facturi și încasări."),
         reguli && React.createElement("div", { "data-reguli": "1", className: "rounded-xl p-3.5 mb-3 text-[13px]", style: { background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)', lineHeight: 1.6 } },
             React.createElement("div", null, "• ", React.createElement("b", null, "Avans 40%"), " la lucrările peste 600 lei, înainte de start. Sub 600 lei și la urgențe: plata la predare."),
-            React.createElement("div", null, "• ", React.createElement("b", null, "Factura în 48 h după PV."), " Ceasul: verde sub 24 h, galben 24–48 h, roșu peste 48 h. Lucrările Skyline fără prețuri apar „Așteaptă prețuri”, nu roșu, și nu intră în „De facturat”."),
+            React.createElement("div", null, "• ", React.createElement("b", null, "Factura în 48 h după PV."), " Ceasul (socotit pe zile, de la semnarea PV): verde în ziua semnării, galben ~1–2 zile, roșu peste 2 zile. Lucrările Skyline fără prețuri apar „Așteaptă prețuri”, nu roșu, și nu intră în „De facturat”."),
             React.createElement("div", null, "• ", React.createElement("b", null, "Tarif"), ": persoane fizice 100 lei/h de la 01.11.2026, firme 90–95 lei/h. Costul nostru: 76 lei/h."),
             React.createElement("div", null, "• ", React.createElement("b", null, "Pragul lunar"), ": ≈ 64.000 lei facturat fără TVA (estimare Metis), ca să acoperim costurile."),
-            React.createElement("div", { className: "mt-1.5 text-[12px]", style: { color: 'var(--muted2)' } }, "„De facturat” = orele din rapoarte × tariful șantierului (sau poz.×preț) după ultimul deviz + devizele emise fără factură. „⚠ de verificat cu SmartBill” apare unde aplicația nu are factura cu număr SBK sau plata scrisă: ce s-a facturat direct în SmartBill nu se vede aici.")),
+            React.createElement("div", { className: "mt-1.5 text-[12px]", style: { color: 'var(--muted2)' } }, "„De facturat” = orele din rapoarte × tariful șantierului (sau poz.×preț) după ultimul deviz emis + devizele emise fără factură. „Luna asta” numără doar facturile cu număr SBK. „⚠ de verificat cu SmartBill” apare unde aplicația nu are factura cu număr SBK sau plata scrisă: ce s-a facturat direct în SmartBill nu se vede aici.")),
         React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-3" },
             cifra('De facturat acum', baniLei(C.deFacturat),
-                (C.nrDeFacturat ? C.nrDeFacturat + (C.nrDeFacturat === 1 ? ' lucrare' : ' lucrări') + ' cu muncă sau devize nefacturate' : 'Nimic de facturat') +
-                    (C.faraValoare ? ' · ' + C.faraValoare + ' fără valoare (—)' : '') + (C.asteapta ? ' · ' + C.asteapta + ' așteaptă prețuri (nu intră)' : ''),
+                (C.nrDeFacturat ? C.nrDeFacturat + (C.nrDeFacturat === 1 ? ' lucrare' : ' lucrări') + ' cu muncă sau devize nefacturate (fără TVA)' : 'Nimic de facturat') +
+                    (C.faraValoare ? ' · ' + C.faraValoare + ' cu ore fără preț (—)' : '') + (C.asteapta ? ' · ' + C.asteapta + ' așteaptă prețuri (nu intră)' : ''),
                 C.deFacturat > 0 ? 'var(--acc4)' : 'var(--acc2)', () => setFiltru('defacturat'),
-                C.devizeNeverificate || C.deFacturat > 0 ? insigna('⚠ de verificat cu SmartBill', 'Facturile emise direct în SmartBill nu sunt în aplicație — o parte din sumă poate fi deja facturată.') : null),
-            cifra('De încasat', baniLei(C.deIncasat),
-                (C.nrDeIncasat ? C.nrDeIncasat + (C.nrDeIncasat === 1 ? ' factură' : ' facturi') + ' cu TVA' : 'Toate facturile din aplicație apar încasate') + (C.restant > 0 ? ' · restant ' + baniLei(C.restant) : ''),
-                C.restant > 0 ? 'var(--acc4)' : 'var(--text)', () => setFiltru('deincasat'),
+                C.deFacturatDeVerificat ? insigna('⚠ de verificat cu SmartBill (' + C.deFacturatDeVerificat + ')', 'Lucrări cu devize fără factură în aplicație sau facturi fără număr SBK: o parte poate fi deja facturată direct în SmartBill.') : null),
+            cifra('De încasat', C.deIncasat == null ? '—' : baniLei(C.deIncasat),
+                C.deIncasat == null
+                    ? 'În aplicație: ' + baniLei(C.deIncasatInApp) + '. ' + C.nrManuale + (C.nrManuale === 1 ? ' factură bifată' : ' facturi bifate') + ' „Încasată” fără plată scrisă (' + baniLei(C.neconfirmat) + ' cu TVA) — nu știm dacă banii au venit.'
+                    : (C.nrDeIncasat ? C.nrDeIncasat + (C.nrDeIncasat === 1 ? ' factură' : ' facturi') + ', cu TVA' : 'Nicio factură neîncasată în aplicație') + (C.restant > 0 ? ' · restant ' + baniLei(C.restant) : ''),
+                C.deIncasat == null ? 'var(--muted)' : (C.restant > 0 ? 'var(--acc4)' : 'var(--text)'), () => setFiltru('deincasat'),
                 C.semneFacturi ? insigna('⚠ de verificat cu SmartBill (' + C.semneFacturi + ')', 'Facturi fără număr SmartBill sau bifate „Încasată” de mână, fără plată scrisă. În SmartBill pot fi încă neplătite.') : null),
-            cifra('Luna asta', C.facturatLuna == null ? '—' : baniLei(C.facturatLuna),
+            cifra('Luna asta', baniLei(C.facturatLuna),
                 React.createElement(React.Fragment, null,
-                    'facturat fără TVA din ', baniLei(BANI_PRAG_LUNAR), ' prag',
+                    'facturat cu număr SBK, fără TVA · prag ', baniLei(BANI_PRAG_LUNAR),
                     React.createElement("div", { className: "rounded-full mt-1.5 mb-1.5", style: { height: 8, background: 'var(--panel2)', overflow: 'hidden' } },
                         React.createElement("div", { style: { width: pctPrag + '%', height: '100%', background: pesteprag ? 'var(--acc2)' : 'var(--acc4)' } })),
-                    'Încasat: ', baniLei(C.incasatLuna), ' · Cheltuit: ', C.cheltuitLuna == null ? '— (nu sunt trecute în aplicație)' : baniLei(C.cheltuitLuna),
-                    C.ramasLuna != null ? ' · Rămas: ' + baniLei(C.ramasLuna) : ''),
-                C.facturatLuna == null ? 'var(--muted)' : (pesteprag ? 'var(--acc2)' : 'var(--acc4)'), () => setTab('raportlunar'),
-                C.semneLuna ? insigna('⚠ de verificat cu SmartBill (' + C.semneLuna + ')', 'Facturi din luna asta fără număr SmartBill sau încasate fără plată scrisă.') : null)),
+                    C.faraSbkLuna > 0 ? React.createElement("div", null, '+ ', baniLei(C.faraSbkLuna), ' în facturi fără număr SBK (nenumărate)') : null,
+                    'Încasat (plăți scrise, cu TVA): ', baniLei(C.incasatLuna), ' · Cheltuit: ', C.cheltuitLuna == null ? '— (nu sunt trecute în aplicație)' : baniLei(C.cheltuitLuna),
+                    C.ramasLuna != null ? ' · Rămas (încasat − cheltuit): ' + baniLei(C.ramasLuna) : ''),
+                pesteprag ? 'var(--acc2)' : 'var(--acc4)', () => setTab('raportlunar'),
+                C.semneLuna ? insigna('⚠ de verificat cu SmartBill (' + C.semneLuna + ')', 'Facturi din luna asta fără număr SmartBill sau încasate fără plată scrisă. Facturile emise direct în SmartBill nu apar aici.') : null)),
         React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" },
             butonFiltru('toate', 'Toate'),
             butonFiltru('defacturat', 'De facturat', B.randuri.filter((r) => r.deFacturat > 0 || r.faraValoare).length),
