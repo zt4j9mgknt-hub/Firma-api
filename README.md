@@ -1,11 +1,13 @@
 # Firma-api
 ## Olimp – integrare zei
 
-Secțiunea **⚡ Olimp** din meniu (doar Manager): *De aprobat* (planul de implementare, DA / NU / MODIFIC cu comentariu, data, ora și cine a decis), *Întrebări* (ce așteaptă zeii de la Sebastian, adunate de Ananke: variante cu una recomandată, răspuns liber, ora răspunsului), *Rapoarte* (rapoartele zilnice ale zeilor, cu verdictul Argus) și *Harta* (`/olimp/`). Insigna roșie din meniu arată câte puncte sunt încă de decis plus câte întrebări așteaptă răspuns.
+Secțiunea **⚡ Olimp** din meniu (doar Manager): *De aprobat* (planul de implementare, DA / NU / MODIFIC cu comentariu, data, ora și cine a decis), *Întrebări* (ce așteaptă zeii de la Sebastian, adunate de Ananke: variante cu una recomandată, răspuns liber, ora răspunsului), *Rapoarte* (rapoartele zilnice ale zeilor, cu verdictul Argus) și *Harta* (`/olimp/`). Insigna roșie din meniu arată câte puncte îi cer decizia (grupa B nedecise + cele neclasificate) plus câte întrebări așteaptă răspuns.
+
+*De aprobat* e compact (v04.50): sus **🎯 Decizia ta** (doar grupa B nedecisă, câte un card pe întrebare, cu DA / NU / MODIFIC și răspunsul recomandat marcat ⭐), apoi secțiuni pliate: **🟢 Sigure** (grupa A, „Aprob toate sigurele” cu confirmare în pagină → DA cu comentariul „aprobat în bloc”), **🔵 Pentru contabilă/avocat** (grupa C, doar citire + „Copiază lista”), **⚪ Neclasificate** (dacă există) și **✅ Decise**; în fiecare, sub-secțiuni pe arii (Juridic, Conformitate, Contabilitate, Bani & prețuri, Creștere, Zei) cu rânduri scurte (cod, titlu, termen), detaliile la atingere. *Întrebări*: cele deschise sus, cele răspunse / închise pliate.
 
 Datele stau în magazinul general `/api/data`. Toate cheile care încep cu `olimp` sunt **doar pentru Manager** (citire și scriere, verificat pe server):
 
-- `olimpPlan` – punctele planului (`cod`, `titlu`, `problema`, `solutie`, `cine`, `efort`, `termen`, `urgent`) și decizia (`decizie`: `DA` | `NU` | `MOD`, `comentariu`, `deciziaLa`, `deciziaDe`, `istoric`).
+- `olimpPlan` – punctele planului (`cod`, `titlu`, `problema`, `solutie`, `cine`, `efort`, `termen`, `urgent`), clasificarea lui Ananke (`grup`: `A` = sigur, aprobat în bloc | `B` = cere decizia lui Sebastian | `C` = pentru contabilă/avocat, doar citire; `recomandare`: `DA` | `NU` | `MOD`, doar evidențiată cu ⭐, nu se salvează; `notaGrup`: o frază; `pentru`: `contabilă` | `avocat` la grupa C; `pachet` + `pachetTitlu`: punctele B care țin de aceeași întrebare, ex. `B4`, apar ca un singur card și decizia se salvează pe fiecare) și decizia (`decizie`: `DA` | `NU` | `MOD`, `comentariu`, `deciziaLa`, `deciziaDe`, `istoric`).
 - `olimpIntrebari` – întrebările (`cod` Q#, `zeu`, `intrebare`, `deCe`, `termen`, `urgent`, `variante`, `status`) și răspunsul (`raspuns`, `raspunsLa`, `raspunsDe`, `istoric`).
 - `olimpRapoarte-AAAA-LL` – lista rapoartelor lunii, fără text (`id`, `zeu`, `emoji`, `data`, `titlu`, `verdict`, `la`).
 - `olimpRaport-<id>` – textul unui raport (`{ id, text }`, markdown simplu, max. 60.000 caractere).
@@ -37,6 +39,8 @@ await window.olimpCitesteRaspunsuri();      // întrebările cu răspuns, încă
 
 // importă / actualizează punctele planului (deciziile deja luate rămân neatinse)
 await window.olimpImportaPlan([{ cod: 'D1', titlu: '...', problema: '...', solutie: '...', cine: '...', efort: '...', termen: '...', urgent: true }]);
+// Ananke: doar clasificarea (restul câmpurilor și deciziile rămân cum sunt)
+await window.olimpImportaPlan([{ cod: 'D1', grup: 'B', recomandare: 'DA', notaGrup: 'termen de prescripție' }]);
 ```
 
 Dacă funcțiile lipsesc (`typeof window.olimpSalveazaRaport !== 'function'`), tab-ul nu e logat ca Manager sau sesiunea a expirat: zeul se oprește și raportează lui Zeus. Un punct aprobat (DA) devine treabă doar în limitele sigure ale zeului; orice e ireversibil (trimiteri, facturi, plăți, ștergeri) cere în continuare confirmarea explicită în chat.
