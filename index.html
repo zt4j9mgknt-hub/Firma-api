@@ -3123,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.55-pv-48h';
+const APP_VERSION = 'v04.56-rapoarte-bune';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -13499,6 +13499,19 @@ function SantiereTab({ onOrigine, inapoiLaListaSantiere, proceseVerbale, setProc
     };
     const saveReport = (r) => {
         const santier = santiere.find((s) => s.id === selected);
+        /* etapa 5: raportul trebuie să fie „bun de facturat” */
+        try {
+            const pr = problemeRaport({ ...r, santierId: selected }, rapoarte, santier);
+            const bl = pr.filter((p) => p.grav === 'blocant');
+            if (bl.length) {
+                window.alert('⛔ Raportul NU s-a trimis:\n\n' + bl.map((p) => '• ' + p.text).join('\n') + '\n\nCorectează orele și trimite din nou.');
+                return;
+            }
+            const at = pr.filter((p) => p.grav === 'atentie');
+            if (at.length && !window.confirm('⚠ Verifică raportul:\n\n' + at.map((p) => '• ' + p.text).join('\n') + '\n\nTrimiți oricum?'))
+                return;
+        }
+        catch (_) { }
         const esteNou = !rapoarte.some((x) => x.id === r.id);
         /* la editare păstrăm ce nu e în formular (cine l-a trimis și când, observația managerului) */
         const vechi = esteNou ? null : rapoarte.find((x) => x.id === r.id);
@@ -20976,7 +20989,12 @@ function Dashboard({ company, devize, offers, invoices, santiere, materials, cer
     const verificaToateIeri = () => {
         if (!setRapoarte || !persist || !rapIeriNeverif.length)
             return;
-        const ids = rapIeriNeverif.map((r) => r.id);
+        /* etapa 5: doar rapoartele fără probleme; cele cu probleme se verifică pe rând */
+        const ids = rapIeriNeverif.filter((r) => !problemeRaport(r, rapoarte, (santiere || []).find((s) => s.id === r.santierId)).length).map((r) => r.id);
+        if (!ids.length) {
+            window.alert('Toate rapoartele de verificat au probleme (ore suprapuse, peste 12 h sau fără cantități) — deschide-le pe rând.');
+            return;
+        }
         marcheazaVerificat(ids, { rapoarte, getRapoarte, setRapoarte, persist, currentUser, santiere });
         arataAnulare(`✓ ${ids.length} ${ids.length === 1 ? 'raport verificat' : 'rapoarte verificate'}`, () => {
             /* ca la observație: uit bifa din zbor, altfel plasa ar pune-o la loc */
@@ -31071,7 +31089,7 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
     const semneLuna = fLuna.filter((i) => baniSemneSmartBill(i).length).length;
     return {
         randuri, azi: A,
-        propuneri: propuneriCorectare({ randuri, facturi, devize: dv, santiere: S }),
+        propuneri: propuneriCorectare({ randuri, facturi, devize: dv, santiere: S, rapoarte }),
         cifre: {
             deFacturat, nrDeFacturat: randuri.filter((r) => r.deFacturat > 0).length,
             faraValoare: randuri.filter((r) => r.faraValoare).length,
@@ -31279,11 +31297,68 @@ function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, docume
             style: { color: fila === f.id ? '#14181C' : 'var(--muted1)', background: fila === f.id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, f.label))),
         React.createElement("div", { "data-fila": fila, className: "rounded-2xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, continut()));
 }
+/* ═══ RAPOARTE BUNE DE FACTURAT — etapa 5 ═══
+   Verificări pe raportul zilnic. BLOCANT doar ce e sigur greșit: același om, aceeași zi, intervale care se
+   suprapun (nu poate fi în două locuri deodată). ATENȚIE (se poate trimite totuși): peste 12 h pe zi,
+   poziții fără cantitate, raport fără nicio descriere. Rapoartele vechi NU se schimbă: problemele lor apar
+   la „De corectat (propuneri)”. */
+const RAP_MAX_ORE_ZI = 12;
+const minDinOra = (h) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(h || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+function intervalOm(r, p) {
+    const a = minDinOra((p && p.oraInceput) || (r && r.oraInceput)), b = minDinOra((p && p.oraSfarsit) || (r && r.oraSfarsit));
+    if (a == null || b == null)
+        return null;
+    return { de: a, la: b > a ? b : b + 24 * 60 };
+}
+const numeOm = (p) => String((p && p.nume) || '').trim();
+function problemeRaport(r, toateRapoartele, santier) {
+    const out = [];
+    if (!r)
+        return out;
+    const altele = (toateRapoartele || []).filter((x) => x && x.id !== r.id && !(Array.isArray(r._idUnite) && r._idUnite.includes(x.id)) && String(x.data) === String(r.data));
+    const pers = (r.persoane || []).filter((p) => numeOm(p));
+    pers.forEach((p) => {
+        const iv = intervalOm(r, p);
+        if (!iv)
+            return;
+        const n = numeOm(p).toLowerCase();
+        let total = minuteLucrate(p) || (iv.la - iv.de);
+        altele.forEach((x) => (x.persoane || []).forEach((q) => {
+            if (numeOm(q).toLowerCase() !== n)
+                return;
+            const jv = intervalOm(x, q);
+            if (!jv)
+                return;
+            total += minuteLucrate(q) || (jv.la - jv.de);
+            const suprap = Math.min(iv.la, jv.la) - Math.max(iv.de, jv.de);
+            if (suprap > 15)
+                out.push({ grav: 'blocant', text: numeOm(p) + ' are deja ' + String(q.oraInceput || x.oraInceput) + '–' + String(q.oraSfarsit || x.oraSfarsit) + ' pe ' + fmtData(x.data) + ' (alt raport) — orele se suprapun.' });
+        }));
+        if (total > RAP_MAX_ORE_ZI * 60)
+            out.push({ grav: 'atentie', text: numeOm(p) + ': ' + oreRo(total / 60) + ' h în ' + fmtData(r.data) + ' (peste ' + RAP_MAX_ORE_ZI + ' h).' });
+    });
+    if (santier && !SANTIER_ORAR(santier) && !E_LUCRARE_MICA(santier)) {
+        let faraCant = 0;
+        (r.lucrariApartamente || []).forEach((l) => { try {
+            lucrariDinRand(l).forEach((w) => { if (String(w.denumire || '').trim() && !(Number(w.cantitate) > 0))
+                faraCant++; });
+        }
+        catch (_) { } });
+        (r.pozitiiExecutate || []).forEach((p) => { if (String(p.denumire || '').trim() && !(Number(p.cantitate) > 0))
+            faraCant++; });
+        if (faraCant)
+            out.push({ grav: 'atentie', text: faraCant + (faraCant === 1 ? ' poziție fără cantitate' : ' poziții fără cantitate') + ' — la lucrările pe poziții, cantitatea e ce se facturează.' });
+    }
+    const areText = (Array.isArray(r.tipuriLucrari) ? r.tipuriLucrari.length : !!r.tipuriLucrari) || String(r.explicatii || '').trim() || (r.lucrariApartamente || []).length || (r.pozitiiExecutate || []).length;
+    if (pers.length && !areText)
+        out.push({ grav: 'atentie', text: 'Raportul nu spune ce s-a lucrat.' });
+    return out;
+}
 /* ═══ DE CORECTAT (PROPUNERI) — etapa 3 ═══
    Lista a ce nu se potrivește în datele aplicației, cu ce propunem. NU corectează nimic singură:
    fiecare corectură o face omul, în ecranul ei, după ce verifică în SmartBill (sursa oficială). */
 const COTE_TVA_CUNOSCUTE = [21, 11, 0, 19, 9, 5]; // 21/11 de la 01.08.2025; 19/9/5 pe facturile mai vechi
-function propuneriCorectare({ randuri, facturi, devize, santiere }) {
+function propuneriCorectare({ randuri, facturi, devize, santiere, rapoarte }) {
     const out = [];
     const adauga = (cheie, grav, titlu, detaliu, propunere, deschide) => out.push({ cheie, grav, titlu, detaliu, propunere, deschide });
     (facturi || []).forEach((i) => {
@@ -31319,6 +31394,19 @@ function propuneriCorectare({ randuri, facturi, devize, santiere }) {
         if ((r.semne || []).some((x) => /deviz fără factură|devize fără factură/.test(x)))
             adauga('r-dev-' + r.cheie, 'medie', r.lucrare + ': deviz emis fără factură în aplicație', r.client || '',
                 'Verifică în SmartBill. Dacă e facturat acolo, adaugă factura cu numărul SBK în aplicație și leag-o de deviz; altfel facturează.', r.santierId ? { santierId: r.santierId, siteView: 'deviz' } : { tab: 'devize' });
+    });
+    /* etapa 5: rapoarte existente cu ore suprapuse / peste 12 h (nu le schimbăm — doar le arătăm) */
+    const vazute = new Set();
+    (rapoarte || []).forEach((r) => {
+        const s = (santiere || []).find((x) => x.id === r.santierId);
+        problemeRaport(r, rapoarte, null).filter((p) => p.grav === 'blocant' || /peste 12 h/.test(p.text)).forEach((p) => {
+            const cheie = String(r.data) + '|' + p.text.split(':')[0].split(' are ')[0];
+            if (vazute.has(cheie))
+                return;
+            vazute.add(cheie);
+            adauga('rap-' + r.id + '-' + vazute.size, p.grav === 'blocant' ? 'medie' : 'mica', 'Raport ' + fmtData(r.data) + (s ? ' · ' + String(s.nume || '').trim() : ' · șantier șters'), p.text,
+                'Verifică orele cu omul și corectează raportul greșit (orele umflate intră la facturare și la pontaj).', s ? { santierId: s.id, siteView: 'rapoarte' } : null);
+        });
     });
     const ord = { mare: 0, medie: 1, mica: 2 };
     return out.sort((a, b) => ord[a.grav] - ord[b.grav]);
