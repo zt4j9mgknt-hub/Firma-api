@@ -3123,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.53-fisa-lucrarii';
+const APP_VERSION = 'v04.54-de-corectat';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -31046,6 +31046,7 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
     const semneLuna = fLuna.filter((i) => baniSemneSmartBill(i).length).length;
     return {
         randuri, azi: A,
+        propuneri: propuneriCorectare({ randuri, facturi, devize: dv, santiere: S }),
         cifre: {
             deFacturat, nrDeFacturat: randuri.filter((r) => r.deFacturat > 0).length,
             faraValoare: randuri.filter((r) => r.faraValoare).length,
@@ -31253,6 +31254,51 @@ function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, docume
             style: { color: fila === f.id ? '#14181C' : 'var(--muted1)', background: fila === f.id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, f.label))),
         React.createElement("div", { "data-fila": fila, className: "rounded-2xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, continut()));
 }
+/* ═══ DE CORECTAT (PROPUNERI) — etapa 3 ═══
+   Lista a ce nu se potrivește în datele aplicației, cu ce propunem. NU corectează nimic singură:
+   fiecare corectură o face omul, în ecranul ei, după ce verifică în SmartBill (sursa oficială). */
+const COTE_TVA_CUNOSCUTE = [21, 11, 0, 19, 9, 5]; // 21/11 de la 01.08.2025; 19/9/5 pe facturile mai vechi
+function propuneriCorectare({ randuri, facturi, devize, santiere }) {
+    const out = [];
+    const adauga = (cheie, grav, titlu, detaliu, propunere, deschide) => out.push({ cheie, grav, titlu, detaliu, propunere, deschide });
+    (facturi || []).forEach((i) => {
+        const nr = numarDoc(i) || 'factura';
+        const semne = baniSemneSmartBill(i);
+        if (semne.includes('fără număr SmartBill'))
+            adauga('f-sbk-' + i.id, 'mare', nr + ': nu are număr SmartBill', fmtData(i.data) + ' · ' + baniLei(totalFactura(i)) + ' cu TVA',
+                'Caută factura în SmartBill. Dacă există, scrie-i numărul SBK („am emis-o deja în SmartBill”). Dacă nu există, marcheaz-o „Anulată” — nu o șterge.', { tab: 'facturi', clientId: i.clientId });
+        if (semne.includes('„Încasată” bifat de mână'))
+            adauga('f-inc-' + i.id, 'mare', nr + ': „Încasată” fără plată scrisă', baniLei(totalFactura(i)) + ' cu TVA · ' + fmtData(i.data),
+                'Verifică în SmartBill dacă banii au intrat. Dacă da, scrie plata cu data ei; dacă nu, trece factura înapoi pe „Restantă”.', { tab: 'facturi', clientId: i.clientId });
+        const cota = Number(i.tva);
+        if (!isNaN(cota) && !COTE_TVA_CUNOSCUTE.includes(cota))
+            adauga('f-tva-' + i.id, 'mica', nr + ': cotă TVA ' + cota + '%', 'cotă neobișnuită', 'Confirmă cota cu contabila.', { tab: 'facturi', clientId: i.clientId });
+        else if (cota === 19 && String(i.data || '') >= '2025-08-01')
+            adauga('f-tva19-' + i.id, 'mica', nr + ': TVA 19% după 01.08.2025', fmtData(i.data), 'Cota standard e 21% de la 01.08.2025 (Legea 141/2025). 19% poate fi corect (ex. avans sau lucrare începută înainte) — confirmă cu contabila.', { tab: 'facturi', clientId: i.clientId });
+        if (i.scadenta && String(i.scadenta) === String(i.data) && restFactura(i) > 0)
+            adauga('f-scad-' + i.id, 'mica', nr + ': scadența = data facturii', fmtData(i.data), 'Pune scadența din contract, ca restanțele să se socotească bine.', { tab: 'facturi', clientId: i.clientId });
+    });
+    (santiere || []).forEach((s) => {
+        /* doar devizele de MANOPERĂ cu perioadă scrisă (cele fără perioadă ar lua data devizului și ar da alarme false) */
+        const p = perioadeDevizate(devize, s.id).filter((x) => { const d = (devize || []).find((y) => y.id === x.id); return d && d.status !== 'Ciornă' && d.perioada && d.perioada.de && d.perioada.la && !(d.items || []).every((it) => String(it.sectiune || '') === 'materiale'); });
+        for (let a = 0; a < p.length; a++)
+            for (let b = a + 1; b < p.length; b++)
+                if (p[a].de < p[b].la && p[b].de < p[a].la)
+                    adauga('d-supr-' + p[a].id + p[b].id, 'mare', (s.nume || '').trim() + ': devizele ' + (p[a].numar || '') + ' și ' + (p[b].numar || '') + ' se suprapun',
+                        fmtData(p[a].de) + '–' + fmtData(p[a].la) + ' și ' + fmtData(p[b].de) + '–' + fmtData(p[b].la),
+                        'Aceleași zile pot fi facturate de două ori. Verifică și, dacă e dublură, anulează devizul în plus (nu îl șterge).', { santierId: s.id, siteView: 'deviz' });
+    });
+    (randuri || []).forEach((r) => {
+        if (r.santierId && r.status === 'Finalizat' && r.deFacturat > 0 && !r.asteapta)
+            adauga('s-fin-' + r.santierId, 'mare', r.lucrare + ': finalizat, nefacturat', baniLei(r.deFacturat) + ' fără TVA' + (r.zile != null ? ' · de ' + r.zile + ' zile' : ''),
+                'Fă devizul și factura (regula: în 48 h după PV). Dacă s-a facturat pe alt nume, leagă factura de șantier.', { santierId: r.santierId, siteView: 'deviz' });
+        if (!r.asteapta && (r.semne || []).some((x) => /deviz fără factură|devize fără factură/.test(x)))
+            adauga('r-dev-' + r.cheie, 'medie', r.lucrare + ': deviz emis fără factură în aplicație', r.client || '',
+                'Verifică în SmartBill. Dacă e facturat acolo, adaugă factura cu numărul SBK în aplicație și leag-o de deviz; altfel facturează.', r.santierId ? { santierId: r.santierId, siteView: 'deviz' } : { tab: 'devize' });
+    });
+    const ord = { mare: 0, medie: 1, mica: 2 };
+    return out.sort((a, b) => ord[a.grav] - ord[b.grav]);
+}
 function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company, setTab, setPendingSiteNav, onFiltruClient, documenteSemnat, proiecteFisiere, planseSantier, mediaSantier }) {
     const [filtru, setFiltru] = useState('toate');
     const [fisaCheie, setFisaCheie] = useState(null);
@@ -31282,6 +31328,35 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
         const pr = (r) => r.etapa === 'defacturat' ? 0 : (r.deIncasat > 0 ? 1 : 2);
         return pr(a) - pr(b) || ordine(a.etapa) - ordine(b.etapa) || (b.zile || 0) - (a.zile || 0);
     });
+    const [corecturiDeschise, setCorecturiDeschise] = useState(false);
+    const mergiLa = (d) => {
+        if (!d)
+            return;
+        if (d.santierId) {
+            setPendingSiteNav({ santierId: d.santierId, siteView: d.siteView || '__closed__', origine: { tab: 'bani', pagina: null, eticheta: 'Clienți & bani' } });
+            setTab('santiere');
+        }
+        else if (d.tab === 'facturi' && d.clientId && onFiltruClient)
+            onFiltruClient(d.clientId);
+        else if (d.tab)
+            setTab(d.tab);
+    };
+    const panouCorecturi = () => {
+        const P = B.propuneri || [];
+        const culoare = { mare: 'var(--acc4)', medie: '#E9A23B', mica: 'var(--muted1)' };
+        return React.createElement("div", { "data-de-corectat": P.length, className: "rounded-2xl mt-4 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("button", { type: "button", onClick: () => setCorecturiDeschise(!corecturiDeschise), className: "w-full text-left px-4 py-3 flex items-center justify-between gap-2" },
+                React.createElement("span", { className: "text-[15px] font-semibold", style: { color: 'var(--text)' } }, '🛠 De corectat (propuneri) · ', P.length),
+                React.createElement("span", { style: { color: 'var(--muted2)' } }, corecturiDeschise ? '▲' : '▼')),
+            corecturiDeschise && React.createElement("div", { className: "px-3 pb-3" },
+                React.createElement("div", { className: "text-[12px] mb-2 px-1", style: { color: 'var(--muted2)', lineHeight: 1.5 } }, 'Aplicația doar propune — nu schimbă nimic singură. Verifici în SmartBill, apoi corectezi în ecranul respectiv. Facturile nu se șterg: se anulează.'),
+                !P.length && React.createElement("div", { className: "text-sm px-1 py-2", style: { color: 'var(--acc2)' } }, 'Nimic de corectat.'),
+                P.map((p) => React.createElement("div", { key: p.cheie, className: "rounded-xl px-3 py-2.5 mb-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)', borderLeft: '4px solid ' + culoare[p.grav] } },
+                    React.createElement("div", { className: "text-[14px] font-semibold", style: { color: 'var(--text)' } }, p.titlu),
+                    p.detaliu ? React.createElement("div", { className: "text-[12px]", style: { color: 'var(--muted2)' } }, p.detaliu) : null,
+                    React.createElement("div", { className: "text-[12.5px] mt-1", style: { color: 'var(--muted1)', lineHeight: 1.5 } }, '→ ', p.propunere),
+                    p.deschide ? React.createElement("button", { type: "button", onClick: () => mergiLa(p.deschide), className: "btnSec text-xs mt-1.5" }, 'Deschide') : null))));
+    };
     const ascunseIncasate = filtru === 'toate' && !q ? B.randuri.filter((r) => r.etapa === 'incasat' && (r.zile == null || r.zile > 60)).length : 0;
     const insigna = (text, titlu) => React.createElement("span", { title: titlu || '', className: "inline-block text-[11px] font-semibold px-2 py-0.5 rounded-md", style: { color: '#E9A23B', background: 'rgba(233,162,59,.14)', border: '1px solid rgba(233,162,59,.4)' } }, text);
     const cifra = (titlu, valoare, sub, culoare, onClick, extra) => React.createElement("button", { type: "button", onClick, className: "text-left rounded-2xl p-4 w-full", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
@@ -31374,7 +31449,8 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
                     r.semne.length ? insigna('⚠ de verificat cu SmartBill', r.semne.join(' · ')) : null)))),
         ascunseIncasate > 0 && React.createElement("div", { className: "text-[12px] text-center mt-2", style: { color: 'var(--muted2)' } }, ascunseIncasate, ' lucrări încasate de peste 60 de zile sunt ascunse — le găsești cu căutarea.'),
         React.createElement("div", { className: "flex flex-wrap gap-1 mt-4 mb-2 text-[11px]", style: { color: 'var(--muted2)' } },
-            'Etapele: ', BANI_ETAPE.map((e, k) => React.createElement("span", { key: e.id }, e.label, k < BANI_ETAPE.length - 1 ? ' → ' : ''))));
+            'Etapele: ', BANI_ETAPE.map((e, k) => React.createElement("span", { key: e.id }, e.label, k < BANI_ETAPE.length - 1 ? ' → ' : ''))),
+        panouCorecturi());
 }
 
 function ScadentarTab({ invoices, clients, company, currentUser, onIncasari }) {
