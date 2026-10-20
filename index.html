@@ -31315,27 +31315,47 @@ function problemeRaport(r, toateRapoartele, santier) {
     const out = [];
     if (!r)
         return out;
+    /* aceeași zi, alte rapoarte (nu raportul însuși și nici bucățile lui unite) */
     const altele = (toateRapoartele || []).filter((x) => x && x.id !== r.id && !(Array.isArray(r._idUnite) && r._idUnite.includes(x.id)) && String(x.data) === String(r.data));
     const pers = (r.persoane || []).filter((p) => numeOm(p));
+    const cheieOm = (p) => numeCheieCO(numeOm(p));
     pers.forEach((p) => {
         const iv = intervalOm(r, p);
         if (!iv)
             return;
-        const n = numeOm(p).toLowerCase();
-        let total = minuteLucrate(p) || (iv.la - iv.de);
+        const k = cheieOm(p);
+        const toate = [iv];
         altele.forEach((x) => (x.persoane || []).forEach((q) => {
-            if (numeOm(q).toLowerCase() !== n)
+            if (cheieOm(q) !== k)
                 return;
             const jv = intervalOm(x, q);
             if (!jv)
                 return;
-            total += minuteLucrate(q) || (jv.la - jv.de);
+            toate.push(jv);
             const suprap = Math.min(iv.la, jv.la) - Math.max(iv.de, jv.de);
-            if (suprap > 15)
-                out.push({ grav: 'blocant', text: numeOm(p) + ' are deja ' + String(q.oraInceput || x.oraInceput) + '–' + String(q.oraSfarsit || x.oraSfarsit) + ' pe ' + fmtData(x.data) + ' (alt raport) — orele se suprapun.' });
+            if (suprap <= 15)
+                return;
+            /* BLOCANT doar între șantiere DIFERITE (nu poate fi în două locuri deodată). Pe același șantier,
+               aplicația unește rapoartele aceleiași zile (doi oameni pot raporta aceeași echipă) → doar atenție. */
+            const acelasi = String(x.santierId || '') === String(r.santierId || '');
+            out.push({ grav: acelasi ? 'atentie' : 'blocant', text: numeOm(p) + ' are deja ' + String(q.oraInceput || x.oraInceput) + '–' + String(q.oraSfarsit || x.oraSfarsit) + ' pe ' + fmtData(x.data) + (acelasi ? ' într-un alt raport pe același șantier (se vor uni)' : ' pe alt șantier') + ' — orele se suprapun.' });
         }));
+        /* totalul zilei pe intervale UNITE (orele care se suprapun nu se numără de două ori) */
+        const sortate = toate.slice().sort((x, y) => x.de - y.de);
+        let total = 0, cur = null;
+        sortate.forEach((v) => {
+            if (!cur || v.de > cur.la) {
+                if (cur)
+                    total += cur.la - cur.de;
+                cur = { de: v.de, la: v.la };
+            }
+            else
+                cur.la = Math.max(cur.la, v.la);
+        });
+        if (cur)
+            total += cur.la - cur.de;
         if (total > RAP_MAX_ORE_ZI * 60)
-            out.push({ grav: 'atentie', text: numeOm(p) + ': ' + oreRo(total / 60) + ' h în ' + fmtData(r.data) + ' (peste ' + RAP_MAX_ORE_ZI + ' h).' });
+            out.push({ grav: 'atentie', text: numeOm(p) + ': ' + oreRo(total / 60) + ' h în ' + fmtData(r.data) + ' (peste ' + RAP_MAX_ORE_ZI + ' h, fără pauză scăzută).' });
     });
     if (santier && !SANTIER_ORAR(santier) && !E_LUCRARE_MICA(santier)) {
         let faraCant = 0;
@@ -31398,9 +31418,12 @@ function propuneriCorectare({ randuri, facturi, devize, santiere, rapoarte }) {
     });
     /* etapa 5: rapoarte existente cu ore suprapuse / peste 12 h (nu le schimbăm — doar le arătăm) */
     const vazute = new Set();
+    /* pe zile, ca să nu compar fiecare raport cu toate */
+    const peZi = new Map();
+    (rapoarte || []).forEach((r) => { const k = String(r && r.data || ''); if (!peZi.has(k)) peZi.set(k, []); peZi.get(k).push(r); });
     (rapoarte || []).forEach((r) => {
         const s = (santiere || []).find((x) => x.id === r.santierId);
-        problemeRaport(r, rapoarte, null).filter((p) => p.grav === 'blocant' || /peste 12 h/.test(p.text)).forEach((p) => {
+        problemeRaport(r, peZi.get(String(r && r.data || '')) || [], null).filter((p) => p.grav === 'blocant' || /peste 12 h|se suprapun/.test(p.text)).forEach((p) => {
             const cheie = String(r.data) + '|' + p.text.split(':')[0].split(' are ')[0];
             if (vazute.has(cheie))
                 return;
