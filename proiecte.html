@@ -659,6 +659,7 @@ async function cloudGet(e){ let txt = ""; for (let k = 0; k < e.parts; k++) { to
 async function renderCloud(){ const box = document.getElementById("cloud"); if (!CLOUD) { box.innerHTML = ""; return; }
   box.innerHTML = `<div class="card"><h2>☁ Proiecte pe șantiere</h2><p class="muted">Se încarcă…</p></div>`;
   try { await cloudLoad(); } catch (e) { box.innerHTML = `<div class="card"><h2>☁ Proiecte pe șantiere</h2><p class="muted">${e.message}</p></div>`; return; }
+  cloudSync();
   const vs = santVizibile(), f = CLOUD.santier;
   const list = CLOUD.index.filter(x => (eMgr() || vs.some(s => String(s.id) === String(x.santierId))) && (!f || String(x.santierId) === String(f))).sort((a, b) => String(b.actualizat).localeCompare(String(a.actualizat)));
   box.innerHTML = `<div class="card"><h2>☁ Proiecte pe șantiere${f ? " · " + santNume(f) : ""}</h2>
@@ -673,6 +674,17 @@ async function renderCloud(){ const box = document.getElementById("cloud"); if (
       if (b.dataset.c === "del") { if (!confirm(`Ștergi definitiv proiectul „${e.nume}” de pe server? Copia din acest dispozitiv rămâne.`)) return;
         const ix = ((await capi("instalatii")) || []).filter(x => x.id !== e.id); await capi("instalatii", ix); for (let k = 0; k < e.parts; k++) await capi(`instalatie_${e.id}_${k}`, null); toast("Șters de pe server"); renderCloud(); }
     } catch (er) { alert(er.message || er); } }); }
+/* De ce: proiectele puse pe șantier (ex. Casa Todea) trebuie să apară în lista de mai jos, ca Casa Tuduce, pe orice telefon,
+   fără să le cauți în cardul „☁”. Le aducem o dată în telefon; o copie cu modificări locale neurcate NU se suprascrie. */
+let syncing = false;
+async function cloudSync(){ if (!CLOUD || syncing) return; syncing = true; let n = 0;
+  try { const loc = await all(), vs = santVizibile();
+    for (const e of CLOUD.index) { if (!e || !e.id || !(e.parts > 0)) continue;
+      if (!(eMgr() || vs.some(s => String(s.id) === String(e.santierId)))) continue;
+      const p0 = loc.find(x => x.id === e.id);
+      if (p0 && (!p0.srvAt || String(p0.srvAt) >= String(e.actualizat) || (p0.editat && p0.editat > p0.srvAt))) continue;
+      try { const p = await cloudGet(e); p.santierId = e.santierId; p.srvAt = e.actualizat; await put(p); n++; } catch (err) {} }
+  } catch (err) {} syncing = false; if (n) { await render(); toast(n === 1 ? "Un proiect adus de pe server" : n + " proiecte aduse de pe server"); } }
 async function alegeSantier(id){ const p = await get(id); if (!p) return; try { if (!CLOUD.santiere.length) await cloudLoad(); } catch (e) { alert(e.message); return; }
   const vs = santVizibile(); if (!vs.length) { alert("Nu ai niciun șantier în aplicație."); return; }
   const d = document.createElement("div"); d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:30;padding:16px";
