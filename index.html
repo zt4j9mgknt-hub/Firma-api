@@ -3123,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.52-clienti-bani';
+const APP_VERSION = 'v04.53-bara-ios';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -22598,7 +22598,7 @@ function PrezentaTab({ setTab }) {
                 e && React.createElement("div", { className: "mt-2", "data-timeline": u.id }, st.randuri.map(randTimeline)));
         }))));
 }
-function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRapoarte, getRapoarte, persist, concedii, cereriAlocare, mementouri, problemeSantier, restanteSantier, setRestanteSantier, pontajCorectii, setPontajCorectii, setTab, setPendingSiteNav, goQA, currentUser, company }) {
+function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRapoarte, getRapoarte, persist, concedii, cereriAlocare, mementouri, problemeSantier, restanteSantier, setRestanteSantier, pontajCorectii, setPontajCorectii, setTab, setPendingSiteNav, goQA, currentUser, company, vedeCa }) {
     const goToSite = (santierId, siteView, raportData) => {
         const v = (currentUser?.rol === 'Manager' && (!siteView || siteView === 'rapoarte')) ? '__closed__' : (siteView || 'rapoarte');
         setPendingSiteNav({ santierId, siteView: v, raportData: raportData || null });
@@ -22609,14 +22609,18 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
         setTab('santiere');
     };
     /* 🧤 MOD MĂNUȘI: sus doar dalele zilei; restul paginii stă strâns sub „Arată tot" */
-    const [modManusi, setModManusi] = useState(() => currentUser?.rol !== 'Manager' && citesteModManusi(currentUser));
+    /* NU ÎN „VEZI CA". Patronul (21.10.2026): „de ce nu apare nimic la Activitatea mea?".
+       Era în „🧪 Vezi ca" pe un electrician: pagina îl socotea electrician și strângea totul
+       sub „Arată tot", dar dalele (GrilaManusi) citesc contul REAL — manager — și nu se
+       desenau. Rămânea doar butonul, pe un ecran gol. În „Vezi ca" arătăm pagina întreagă. */
+    const [modManusi, setModManusi] = useState(() => !vedeCa && currentUser?.rol !== 'Manager' && citesteModManusi(currentUser));
     const [aratTotManusi, setAratTotManusi] = useState(false);
     useEffect(() => {
-        const laSchimbare = () => setModManusi(currentUser?.rol !== 'Manager' && citesteModManusi(currentUser));
+        const laSchimbare = () => setModManusi(!vedeCa && currentUser?.rol !== 'Manager' && citesteModManusi(currentUser));
         laSchimbare();
         window.addEventListener('modManusiSchimbat', laSchimbare);
         return () => window.removeEventListener('modManusiSchimbat', laSchimbare);
-    }, [currentUser?.id, currentUser?.rol]);
+    }, [currentUser?.id, currentUser?.rol, vedeCa]);
     const materialeSubStoc = materials.filter((m) => !m.arhivat && Number(m.stoc) < Number(m.stocMinim));
     const cereriInAsteptare = cereriSantier.filter((c) => c.status === 'Cerută');
     const cereriInAsteptarePeSantier = Object.values(cereriInAsteptare.reduce((acc, c) => {
@@ -23354,7 +23358,7 @@ function ActivitateaMeaTab({ santiere, materials, cereriSantier, rapoarte, setRa
                         alocariInAsteptare.length === 1 ? 'cerere' : 'cereri',
                         " de alocare pe \u0219antier \u2014 de aprobat"),
                     React.createElement("span", { style: { color: 'var(--acc3)' } }, "\u2192")))))),
-        nimicDeFacut && (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "\u2705 Nimic de f\u0103cut acum.")))));
+        nimicDeFacut && (React.createElement("div", { className: "text-center py-12 text-sm", style: { color: 'var(--muted)' } }, "\u2705 Nu ai nimic de rezolvat acum.")))));
 }
 const norm4 = (x) => String(x == null ? '' : x).toLowerCase().normalize('NFD')
     .replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -32957,6 +32961,59 @@ function App() {
     const effectiveUser = (currentUser?.rol === 'Manager' && viewAsUserId)
         ? (allAppUsers.find((u) => u.id === viewAsUserId) || currentUser)
         : currentUser;
+    /* BARA DE JOS „PLUTEA" LA MIJLOCUL ECRANULUI PE iPHONE (patronul, 21.10.2026).
+       Nu e greșeala noastră de CSS — .baraJos e position:fixed; bottom:0 direct sub corpul
+       paginii, fără vreun părinte cu transform. E un defect WebKit din iOS 26 (bugs.webkit.org
+       297779, forumurile Apple 800125/801028): după derulare, după ce se ascunde bara Safari
+       sau după ce se închide tastatura, elementele fixe rămân poziționate după un ecran vechi
+       și stau „în aer", cu pagina continuând sub ele. Remediul: la fiecare din momentele astea
+       îi cerem browserului să recalculeze bara (o scoatem și o punem la loc în același cadru —
+       nu se vede nicio pâlpâire), iar la închiderea tastaturii readucem pagina în poziția ei. */
+    useEffect(() => {
+        const ua = navigator.userAgent || '';
+        const eIos = /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        if (!eIos)
+            return;
+        let t = 0;
+        const reancoreaza = () => {
+            const bara = document.querySelector('nav.baraJos');
+            if (!bara)
+                return;
+            bara.style.display = 'none';
+            void bara.offsetHeight;
+            bara.style.display = '';
+        };
+        const amanat = () => { clearTimeout(t); t = setTimeout(reancoreaza, 120); };
+        const laIesireDinCamp = (e) => {
+            const el = e.target;
+            if (!el || !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))
+                return;
+            setTimeout(() => { try {
+                window.scrollTo(window.scrollX, window.scrollY);
+            }
+            catch (_) { } reancoreaza(); }, 60);
+        };
+        const vv = window.visualViewport;
+        window.addEventListener('scroll', amanat, { passive: true });
+        window.addEventListener('orientationchange', amanat);
+        window.addEventListener('pageshow', amanat);
+        document.addEventListener('focusout', laIesireDinCamp, true);
+        if (vv) {
+            vv.addEventListener('resize', amanat);
+            vv.addEventListener('scroll', amanat);
+        }
+        return () => {
+            clearTimeout(t);
+            window.removeEventListener('scroll', amanat);
+            window.removeEventListener('orientationchange', amanat);
+            window.removeEventListener('pageshow', amanat);
+            document.removeEventListener('focusout', laIesireDinCamp, true);
+            if (vv) {
+                vv.removeEventListener('resize', amanat);
+                vv.removeEventListener('scroll', amanat);
+            }
+        };
+    }, []);
     const accesLimitat = PERIOADA_TEST && effectiveUser?.rol !== 'Manager';
     const TABURI_TEST = [null, 'activitate', 'santiere', 'tablouri', 'instalatii', 'asistent', 'calculator', 'normativ', 'profil', 'ghid'];
     const tabBlocatTest = accesLimitat && !!tab && !TABURI_TEST.includes(tab);
@@ -35609,6 +35666,13 @@ function App() {
         React.createElement("div", { className: "min-h-screen w-full", style: { background: 'transparent', position: 'relative', zIndex: 1, fontFamily: "'Inter', sans-serif" } },
             E_MEDIU_DE_PROBA && (React.createElement("div", { style: { background: '#7a4a00', color: '#ffe2b0', textAlign: 'center', padding: '7px 12px',
                     fontSize: '12.5px', fontWeight: 700, letterSpacing: '.02em', borderBottom: '2px solid #C9902B' } }, "\uD83E\uDDEA MEDIU DE PROB\u0102 \u2014 datele de aici NU sunt cele ale firmei. Ce faci aici nu ajunge nic\u0103ieri.")),
+            /* \u201eVEZI CA" SE VEDE \u0218I PE TELEFON. P\u00e2n\u0103 acum avertizarea st\u0103tea doar jos \u00een meniul
+               lateral; pe iPhone patronul vedea \u0219antierele \u0219i cardurile \u201e\u2705 Lucrezi" ale unui
+               electrician \u0219i credea c\u0103 sunt ale lui. Acum e o band\u0103 sus, cu ie\u0219ire dintr-o atingere. */
+            viewAsUserId && effectiveUser && (React.createElement("div", { "data-banda-vezi-ca": "1", className: "flex items-center justify-center gap-2 flex-wrap", style: { background: '#5a3d00', color: '#ffe2b0', textAlign: 'center', padding: '6px 12px',
+                    fontSize: '12.5px', fontWeight: 700, borderBottom: '2px solid #C9902B' } },
+                React.createElement("span", null, "\ud83e\uddea Vezi ca: ", effectiveUser.nume, " (", effectiveUser.rol, ") \u2014 nu e contul t\u0103u"),
+                React.createElement("button", { type: "button", onClick: () => { setViewAsUserId(null); setTab(null); }, style: { background: '#ffe2b0', color: '#3a2800', borderRadius: 8, padding: '4px 10px', fontWeight: 800, minHeight: 32 } }, "Ie\u0219i din \u201eVezi ca\u201d"))),
             bannerCeas,
             bannerVersiune,
             memoriePlina && (React.createElement("div", { style: { position: 'fixed', top: '8px', left: '12px', right: '12px', zIndex: 9998, textAlign: 'center' } },
@@ -35785,7 +35849,7 @@ function App() {
                             React.createElement("button", { onClick: () => { setError(null); loadAllData(false); }, className: "text-xs font-semibold px-2 py-1 rounded-lg shrink-0", style: { color: 'var(--acc4)', background: 'rgba(224,82,82,.18)', border: '1px solid rgba(224,82,82,.4)' } }, "\u21BB Re\u00EEncearc\u0103"))),
                         loading ? (React.createElement(EcranIncarcare, null)) : !tab ? (effectiveUser.rol === 'Manager'
                             ? React.createElement(Dashboard, { stockMoves: stockMoves, cheltuieliFirma: cheltuieliFirma, inapoiGlobal: mergiInapoi, potInapoiGlobal: potInapoiOriunde, onMarcheazaRevizie: marcheazaRevizie, company: company, devize: devize, offers: offers, invoices: invoices, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, concedii: concedii, setConcedii: setConcedii, persist: persist, problemeSantier: problemeSantier, goQA: goQA, cereriAlocare: cereriAlocare, clients: clients, restanteSantier: restanteSantier, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, setTab: setTab, setPendingSiteNav: setPendingSiteNav, currentUser: effectiveUser, paginaInit: dashCmd && dashCmd.pagina, paginaCheie: dashCmd && dashCmd.cheie, onPagina: setDashPaginaCurenta, onPaginaInitConsumata: () => setDashCmd(null) })
-                            : React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser })) : (typeof tab === 'string' && tab.startsWith('grup-')) ? ((() => {
+                            : React.createElement(ActivitateaMeaTab, { santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser, vedeCa: !!viewAsUserId })) : (typeof tab === 'string' && tab.startsWith('grup-')) ? ((() => {
                             const g = GRUPE_MENIU.find(([cheie]) => cheie === tab.slice(5));
                             if (!g || (g[4] && !eManagerMeniu))
                                 return React.createElement("div", { className: "text-sm", style: { color: 'var(--muted2)' } }, "Grupul \u0103sta nu-\u021Bi este disponibil.");
@@ -35855,7 +35919,7 @@ function App() {
                                 onAdeverinta: (u) => { setPendingAdeverinta({ userId: u.id, nume: u.nume }); setTab('adeverinte'); },
                                 onConcediuNou: (u) => { setPendingConcediuOm({ userId: u.id, nume: u.nume }); setTab('concedii'); } }),
                             tab === 'firma' && React.createElement(CompanyTab, { company: company, setCompany: setCompany, persist: persist, santiere: santiere, setSantiere: setSantiere, rapoarte: rapoarte, currentUser: effectiveUser, categoriiTimp: categoriiTimp, setCategoriiTimp: setCategoriiTimp, onBackup: descarcaBackup, backupStare: backupStare }),
-                            tab === 'activitate' && React.createElement(ActivitateaMeaTab, { company: company, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser }),
+                            tab === 'activitate' && React.createElement(ActivitateaMeaTab, { company: company, santiere: santiere, materials: materials, cereriSantier: cereriSantier, rapoarte: rapoarte, setRapoarte: setRapoarte, getRapoarte: iaRapoarte, persist: persist, concedii: concedii, cereriAlocare: cereriAlocare, mementouri: mementouri, problemeSantier: problemeSantier, restanteSantier: restanteSantier, setRestanteSantier: setRestanteSantier, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, setTab: setTab, setPendingSiteNav: setPendingSiteNav, goQA: goQA, currentUser: effectiveUser, vedeCa: !!viewAsUserId }),
                             tab === 'pontaj' && React.createElement(PontajTab, { rapoarte: rapoarte, santiere: santiere, currentUser: effectiveUser, pontajCorectii: pontajCorectii, setPontajCorectii: setPontajCorectii, persist: persist, company: company, concedii: concedii }),
                             tab === 'concedii' && React.createElement(ConcediiTab, { concedii: concedii, setConcedii: setConcedii, soldConcediu: soldConcediu, setSoldConcediu: setSoldConcediu, persist: persist, currentUser: effectiveUser, rapoarte: rapoarte, company: company, pentruOm: pendingConcediuOm, onPentruOmFolosit: () => setPendingConcediuOm(null) }),
                             tab === 'achizitii' && effectiveUser.rol === 'Manager' && React.createElement(AchizitiiTab, { achizitii: achizitii, setAchizitii: setAchizitii, persist: persist, materials: materials, onReceptie: receptioneazaAchizitie }),
