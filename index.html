@@ -3123,7 +3123,7 @@ const ROLES = [
     { id: 'Electrician', icon: '👷' },
 ];
 const PERIOADA_TEST = false;
-const APP_VERSION = 'v04.52-clienti-bani';
+const APP_VERSION = 'v04.53-fisa-lucrarii';
 const OFFER_STATUSES = ['Ciornă', 'Trimisă', 'Acceptată', 'Respinsă'];
 const EVIDENTA_DE_LA = '2026-07';
 const INVOICE_STATUSES = ['De încasat', 'Încasată parțial', 'Încasată', 'Restantă'];
@@ -30954,6 +30954,8 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
             status: s.status || '', etapa, valoare, zile: deCand ? Math.max(0, zileDeLa(String(deCand).slice(0, 10), A)) : null,
             deFacturat, faraValoare: faraValoare && !asteapta, asteapta, deIncasat: b.deIncasat, restante: b.restante,
             ore: m ? m.ore : 0, semne: b.semne, tarif: Number(s.tarifOrar) || 0, cash,
+            /* pentru fișa lucrării (etapa 2): documentele găsite pentru rândul ăsta */
+            dev: devS, fac: facS, munca: m, pvList: pvS, oferte: ofS, clientId: s.benefClientId || '', muncaVal, b,
         });
     });
     /* clienții cu devize / facturi fără șantier (de ex. lucrări facturate direct) */
@@ -30982,14 +30984,15 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
             /* doar devize ciornă: lucrarea există, dar nu are încă valoare emisă */
             etapa = 'lucru';
             valoare = null;
-            deCand = g.dev.map((d) => String(d.data || '')).sort()[0];
+            deCand = g.dev.map((d) => String(d.data || '')).filter(Boolean).sort()[0] || '';
         }
         else
             return;
         const lucr = (g.dev[0] && g.dev[0].lucrare) || (g.fac[0] && g.fac[0].lucrare) || '';
         randuri.push({ cheie: 'c-' + cid, clientId: cid === '-' ? '' : cid, client: numeClient(cid) || '(fără client)', lucrare: lucr ? String(lucr) : '(fără șantier)',
             etapa, valoare, zile: deCand ? Math.max(0, zileDeLa(String(deCand).slice(0, 10), A)) : null,
-            deFacturat: b.devizRest, faraValoare: false, asteapta: false, deIncasat: b.deIncasat, restante: b.restante, ore: 0, semne: b.semne, faraSantier: true });
+            deFacturat: b.devizRest, faraValoare: false, asteapta: false, deIncasat: b.deIncasat, restante: b.restante, ore: 0, semne: b.semne, faraSantier: true,
+            dev: g.dev, fac: g.fac, munca: null, pvList: [], oferte: (offers || []).filter((o) => o && cid !== '-' && o.clientId === cid && !o.santierId), muncaVal: 0, b });
     });
     /* ofertele fără șantier: Ofertă (ciornă/trimisă) sau Avans (acceptată), câte un rând pe client + lucrare.
        Oferta acceptată a unui client care are deja șantier e socotită lucrarea acelui șantier → nu se repetă. */
@@ -31008,7 +31011,8 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
         const deCand = String((o.status === 'Acceptată' ? o.dataAcceptare : o.dataTrimisa) || o.data || '');
         randuri.push({ cheie: 'o-' + o.id, ofertaId: o.id, client: numeClient(o.clientId) || '(fără client)', lucrare: String(o.lucrare || '').replace(/^\s*\[EUR\]\s*/i, '') || ('Oferta ' + (o.numar || '')),
             etapa: o.status === 'Acceptată' ? 'avans' : 'oferta', valoare: eur ? null : rotunjLei(calcSubtotal(o.items || [])), eur,
-            zile: deCand ? Math.max(0, zileDeLa(deCand.slice(0, 10), A)) : null, deFacturat: 0, deIncasat: 0, restante: 0, semne: [], faraValoare: false, asteapta: false });
+            zile: deCand ? Math.max(0, zileDeLa(deCand.slice(0, 10), A)) : null, deFacturat: 0, deIncasat: 0, restante: 0, semne: [], faraValoare: false, asteapta: false,
+            clientId: o.clientId || '', dev: [], fac: [], munca: null, pvList: [], oferte: [o], muncaVal: 0, b: null });
     });
     /* CELE 3 CIFRE */
     const deFacturat = rotunjLei(randuri.reduce((a, r) => a + (r.deFacturat || 0), 0));
@@ -31054,8 +31058,208 @@ function calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients,
         },
     };
 }
-function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company, setTab, setPendingSiteNav, onFiltruClient }) {
+/* ═══ FIȘA LUCRĂRII — etapa 2 (doar citire) ═══
+   O singură fișă pe lucrare, cu file: Bani · Ofertă & contract · Devize · Rapoarte · PV · Facturi · Proiect · Documente.
+   Adună ce e deja în aplicație (șantier, dosar, client, proiect); nu scrie nimic. Fiecare filă are butonul
+   spre ecranul existent, unde se lucrează ca până acum. */
+const FISA_FILE = [
+    { id: 'bani', label: '💰 Bani' },
+    { id: 'oferta', label: '📄 Ofertă & contract' },
+    { id: 'devize', label: '🧾 Devize' },
+    { id: 'rapoarte', label: '📋 Rapoarte' },
+    { id: 'pv', label: '✍ PV' },
+    { id: 'facturi', label: '💶 Facturi' },
+    { id: 'proiect', label: '📐 Proiect' },
+    { id: 'documente', label: '📁 Documente' },
+];
+const fisaNorm = (x) => String(x == null ? '' : x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const fisaTextRaport = (r) => {
+    const tip = Array.isArray(r && r.tipuriLucrari) ? r.tipuriLucrari.join(', ') : String((r && r.tipuriLucrari) || '');
+    const det = (Array.isArray(r && r.lucrariApartamente) ? r.lucrariApartamente : []).flatMap((l) => { try {
+        return lucrariDinRand(l).map((w) => String(w.denumire || '').trim() + (Number(w.cantitate) ? ' ' + w.cantitate + (w.um ? ' ' + w.um : '') : ''));
+    }
+    catch (_) {
+        return [];
+    } }).filter(Boolean).join('; ');
+    return [tip, det, String((r && r.explicatii) || '').trim()].filter(Boolean).join(' · ');
+};
+function FisaLucrare({ rand, santiere, rapoarte, clients, proceseVerbale, documenteSemnat, proiecteFisiere, planseSantier, mediaSantier, onInapoi, setTab, setPendingSiteNav, onFiltruClient, chip, insigna }) {
+    const [fila, setFila] = useState('bani');
+    const [proiecte, setProiecte] = useState(null);
+    const r = rand;
+    const s = r.santierId ? (santiere || []).find((x) => x.id === r.santierId) || null : null;
+    const client = (clients || []).find((c) => c.id === (r.clientId || (s && s.benefClientId))) || null;
+    const azi = dataLocala(new Date());
+    /* proiectele de instalații puse pe șantier: le citim (doar citire) din lista de pe server */
+    useEffect(() => {
+        if (!s || fila !== 'proiect' || proiecte)
+            return;
+        let viu = true;
+        authFetch('/api/data?key=instalatii').then((x) => x.ok ? x.json() : Promise.reject(new Error('HTTP ' + x.status))).then((d) => {
+            if (viu)
+                setProiecte(Array.isArray(d && d.value) ? d.value.filter((p) => p && String(p.santierId) === String(s.id)) : []);
+        }).catch(() => { if (viu)
+            setProiecte('eroare'); });
+        return () => { viu = false; };
+    }, [fila, s && s.id]);
+    const mergiSantier = (siteView) => {
+        setPendingSiteNav({ santierId: s.id, siteView: siteView || '__closed__', origine: { tab: 'bani', pagina: null, eticheta: 'Clienți & bani' } });
+        setTab('santiere');
+    };
+    const buton = (text, onClick) => React.createElement("button", { type: "button", onClick, className: "btnSec text-sm mt-3 w-full", style: { padding: '10px 12px' } }, text);
+    const gol = (text) => React.createElement("div", { className: "text-sm py-3", style: { color: 'var(--muted2)' } }, text);
+    const linie = (key, stanga, dreapta, sub, extra) => React.createElement("div", { key, className: "rounded-xl px-3 py-2.5 mb-1.5", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+        React.createElement("div", { className: "flex items-start justify-between gap-2" },
+            React.createElement("div", { className: "min-w-0 text-[14px] font-semibold", style: { color: 'var(--text)', overflowWrap: 'anywhere' } }, stanga),
+            React.createElement("div", { className: "cifre shrink-0 text-[14px] font-bold", style: { color: 'var(--text)' } }, dreapta)),
+        sub ? React.createElement("div", { className: "text-[12px] mt-0.5", style: { color: 'var(--muted2)', lineHeight: 1.45 } }, sub) : null,
+        extra || null);
+    const cifraMica = (eticheta, valoare, culoare) => React.createElement("div", { className: "rounded-xl p-3", style: { background: 'var(--panel2)', border: '1px solid var(--border)' } },
+        React.createElement("div", { className: "text-[11.5px]", style: { color: 'var(--muted)' } }, eticheta),
+        React.createElement("div", { className: "cifre text-[18px] font-bold", style: { color: culoare || 'var(--text)' } }, valoare));
+    const dev = r.dev || [], fac = r.fac || [], oferte = r.oferte || [];
+    const faraTva = (l) => rotunjLei(l.reduce((a, d) => a + calcSubtotal(d.items || []), 0));
+    const emise = dev.filter((d) => d.status !== 'Ciornă' && !baniInEur(d));
+    const acceptate = oferte.filter((o) => o.status === 'Acceptată' && !baniInEur(o));
+    const contractat = emise.length ? faraTva(emise) : (acceptate.length ? faraTva(acceptate) : null);
+    const facturatFara = fac.length ? faraTva(fac) : 0;
+    const incasat = rotunjLei(fac.reduce((a, i) => a + sumaPlati(incasariFactura(i)), 0) + (s ? incasariSantier(s).filter((x) => !x.facturaId).reduce((a, x) => a + (Number(x.suma) || 0), 0) : 0));
+    const neconfirmat = rotunjLei(fac.filter((i) => eIncasata(i) && !incasariFactura(i).length).reduce((a, i) => a + totalFactura(i), 0));
+    const rest = rotunjLei(fac.reduce((a, i) => a + restFactura(i), 0));
+    const rapS = s ? unificaRapoarte(rapoarte || []).filter((x) => x.santierId === s.id).sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))) : [];
+    const oreRaport = (x) => (x.persoane || []).reduce((a, p) => a + (String(p && p.nume || '').trim() ? minuteLucrate(p) : 0), 0) / 60;
+    const oreTotal = rapS.reduce((a, x) => a + oreRaport(x), 0);
+    /* potrivire pe CUVINTE ÎNTREGI, doar după numele clientului / beneficiarului (nu după numele șantierului,
+       care poate fi generic: „Casa”, „Bloc”) — și se scrie în fișă că e potrivire după nume */
+    const GENERICE = new Set(['srl', 's r l', 'sa', 'pfa', 'ii', 'casa', 'bloc', 'cluj', 'napoca', 'firma', 'societate', 'profesionala']);
+    const cheiCautare = [s && s.benefNume, client && client.nume].map(fisaNorm).filter((x) => x.length >= 4 && !GENERICE.has(x));
+    const areCuvinte = (text, cheie) => (' ' + fisaNorm(text) + ' ').includes(' ' + cheie + ' ');
+    const textParti = (d) => (Array.isArray(d.parti) ? d.parti : []).map((p) => (p && typeof p === 'object') ? [p.nume, p.denumire, p.firma, p.reprezentant].filter(Boolean).join(' ') : String(p || '')).join(' ');
+    const contracte = (documenteSemnat || []).filter((d) => d && d.id && cheiCautare.some((k) => areCuvinte((d.titlu || '') + ' ' + textParti(d), k)));
+    const idsDoc = new Set([...(s ? [s.id] : []), ...(client ? [client.id] : []), ...dev.map((d) => d.id), ...fac.map((i) => i.id)]);
+    const fisiere = (proiecteFisiere || []).filter((f) => f && idsDoc.has(f.scopeId));
+    const planse = s ? (planseSantier || []).filter((p) => p && p.santierId === s.id) : [];
+    const media = s ? (mediaSantier || []).filter((p) => p && p.santierId === s.id) : [];
+    const pvs = r.pvList || [];
+    const continut = () => {
+        if (fila === 'bani') {
+            const m = r.munca;
+            const ofertaAvans = acceptate[0] || oferte.find((o) => o.status === 'Trimisă' && !baniInEur(o)) || null;
+            const valAvans = acceptate.length ? faraTva(acceptate) : (ofertaAvans ? rotunjLei(calcSubtotal(ofertaAvans.items || [])) : null);
+            return React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "grid grid-cols-2 gap-1.5" },
+                    cifraMica('Contractat (fără TVA)', contractat == null ? '—' : baniLei(contractat)),
+                    cifraMica('Executat nefacturat', r.asteapta ? 'așteaptă prețuri' : (r.cash ? 'cash' : (r.faraValoare && !r.deFacturat ? '—' : baniLei(r.deFacturat))), r.deFacturat > 0 ? 'var(--acc4)' : null),
+                    cifraMica('Facturat (fără TVA)', fac.length ? baniLei(facturatFara) : '—'),
+                    cifraMica('Încasat (plăți scrise, cu TVA)', React.createElement(React.Fragment, null, fac.length || incasat ? baniLei(incasat) : '—', neconfirmat > 0 ? React.createElement("div", { className: "text-[11.5px] font-normal", style: { color: '#E9A23B' } }, '+ ' + baniLei(neconfirmat) + ' neconfirmat') : null), 'var(--acc2)'),
+                    cifraMica('Rest de încasat', fac.some((i) => eIncasata(i) && !incasariFactura(i).length) ? '— (neconfirmat)' : baniLei(rest), rest > 0 ? 'var(--acc4)' : null),
+                    cifraMica('Ore din rapoarte', s ? oreRo(oreTotal) + ' h' : '—')),
+                m ? linie('munca', 'Muncă după ultimul deviz', baniLei(r.muncaVal || 0), oreRo(m.ore) + ' h din ' + fmtData(m.deLa) + ' până ' + fmtData(m.ultimaZi) + (s && Number(s.tarifOrar) ? ' · tarif ' + s.tarifOrar + ' lei/h' : '') + (m.sigur ? '' : ' · fără preț pe poziții')) : null,
+                valAvans != null && valAvans > 600 ? linie('avans', 'Avans 40% (lucrare peste 600 lei)', baniLei(valAvans * 0.4) + ' + TVA', (acceptate.length > 1 ? 'din ' + acceptate.length + ' oferte acceptate' : 'din oferta ' + (ofertaAvans.numar || '')) + ' · ' + baniLei(valAvans) + ' fără TVA (pragul de 600 lei e socotit fără TVA)') : null,
+                valAvans != null && valAvans <= 600 ? linie('avans', 'Sub 600 lei: plata la predare', '', 'fără avans') : null,
+                (r.semne || []).length ? React.createElement("div", { className: "mt-2" },
+                    React.createElement("div", { className: "text-[12px] font-semibold mb-1", style: { color: '#E9A23B' } }, '⚠ De verificat cu SmartBill'),
+                    r.semne.map((x, k) => React.createElement("div", { key: k, className: "text-[12.5px]", style: { color: 'var(--muted1)', lineHeight: 1.5 } }, '• ', x))) : null,
+                s ? buton('💵 Deschide Încasări pe șantier', () => mergiSantier('incasari')) : null);
+        }
+        if (fila === 'oferta') {
+            return React.createElement(React.Fragment, null,
+                s && (s.contract || s.actAditional) ? linie('ctr', 'Contract' + (s.contract ? ': ' + s.contract : ''), '', s.actAditional ? 'Act adițional: ' + s.actAditional : '') : null,
+                !oferte.length && !(s && s.contract) ? gol('Nicio ofertă legată de lucrare.') : null,
+                oferte.map((o) => linie(o.id, 'Oferta ' + (o.numar || '') + ' · ' + (o.status || ''), baniInEur(o) ? '€' : baniLei(calcSubtotal(o.items || [])), fmtData(o.data) + (o.lucrare ? ' · ' + String(o.lucrare).replace(/^\s*\[EUR\]\s*/i, '') : '') + (o.grupVariante ? ' · variantă' : ''))),
+                contracte.length ? React.createElement("div", { className: "text-[12px] font-semibold mt-3 mb-1", style: { color: 'var(--muted)' } }, 'Contracte de semnat (potrivite după nume)') : null,
+                contracte.map((d) => linie('c' + d.id, (d.numar ? 'Nr. ' + d.numar + ' · ' : '') + (d.titlu || 'Contract'), '', (d.semnaturi && Object.keys(d.semnaturi).length ? 'are semnături' : 'nesemnat'))),
+                buton('📄 Deschide Oferte', () => setTab('oferte')));
+        }
+        if (fila === 'devize') {
+            return React.createElement(React.Fragment, null,
+                !dev.length ? gol('Niciun deviz pe lucrare.') : null,
+                dev.slice().sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))).map((d) => {
+                    const val = rotunjLei(calcSubtotal(d.items || []));
+                    const fct = facturatDinDeviz(d, fac, dev);
+                    return linie(d.id, 'Deviz ' + (d.numar || '') + ' · ' + (d.status || ''), baniInEur(d) ? '€' : baniLei(val),
+                        fmtData(d.data) + (d.perioada && d.perioada.de ? ' · perioada ' + fmtData(d.perioada.de) + '–' + fmtData(d.perioada.la) : '') + (d.status === 'Ciornă' ? ' · ciornă, nu intră la bani' : ' · facturat ' + baniLei(fct)));
+                }),
+                s ? buton('🧾 Deschide Deviz / facturare pe șantier', () => mergiSantier('deviz')) : buton('🧾 Deschide Devize', () => setTab('devize')));
+        }
+        if (fila === 'rapoarte') {
+            if (!s)
+                return gol('Rapoartele sunt pe șantiere; lucrarea asta nu are șantier.');
+            return React.createElement(React.Fragment, null,
+                linie('tot', rapS.length + (rapS.length === 1 ? ' zi raportată' : ' zile raportate'), oreRo(oreTotal) + ' h', rapS.length ? 'de la ' + fmtData(rapS[rapS.length - 1].data) + ' până la ' + fmtData(rapS[0].data) : ''),
+                rapS.slice(0, 12).map((x) => linie(x.id || x.data, fmtData(x.data) + ' · ' + ((n) => n === 1 ? '1 om' : n + ' oameni')((x.persoane || []).filter((p) => String(p && p.nume || '').trim()).length), oreRo(oreRaport(x)) + ' h',
+                    (fisaTextRaport(x) || 'fără descriere').slice(0, 160) + (x.verificat ? '' : ' · neverificat'))),
+                rapS.length > 12 ? gol('… și încă ' + (rapS.length - 12) + ' zile, în ecranul șantierului.') : null,
+                buton('📋 Deschide Rapoartele șantierului', () => mergiSantier('rapoarte')));
+        }
+        if (fila === 'pv') {
+            if (!s)
+                return gol('Procesele-verbale sunt pe șantiere; lucrarea asta nu are șantier.');
+            return React.createElement(React.Fragment, null,
+                !pvs.length ? gol('Niciun proces-verbal încă.') : null,
+                pvs.map((p) => {
+                    const semnat = !!(p.semnatura || p.semnatLa);
+                    const zile = semnat ? zileDeLa(String(typeof p.semnatLa === 'number' ? dataLocala(new Date(p.semnatLa)) : (p.semnatLa || p.data || '')).slice(0, 10), azi) : null;
+                    return linie(p.id, 'PV ' + (p.numar || '') + ' · ' + fmtData(p.data), semnat ? '✓ semnat' : 'nesemnat',
+                        (p.devizNumar ? 'deviz ' + p.devizNumar + ' · ' : '') + (semnat && r.deFacturat > 0 && p === pvs[0] && r.etapa === 'defacturat' ? 'de facturat în 48 h — au trecut ' + zile + (zile === 1 ? ' zi' : ' zile') : (p.perioada ? String(p.perioada) : '')));
+                }),
+                buton('✍ Deschide Procesul-verbal', () => mergiSantier('pv')));
+        }
+        if (fila === 'facturi') {
+            return React.createElement(React.Fragment, null,
+                !fac.length ? gol('Nicio factură în aplicație pentru lucrare.') : null,
+                fac.slice().sort((a, b) => String(b.data || '').localeCompare(String(a.data || ''))).map((i) => {
+                    const semne = baniSemneSmartBill(i);
+                    return linie(i.id, (numarDoc(i) || 'Factură') + ' · ' + normStatusFactura(i.status), baniLei(totalFactura(i)),
+                        fmtData(i.data) + (i.scadenta ? ' · scadență ' + fmtData(i.scadenta) : '') + ' · fără TVA ' + baniLei(calcSubtotal(i.items || [])) + (restFactura(i) > 0 ? ' · rest ' + baniLei(restFactura(i)) : ''),
+                        semne.length ? React.createElement("div", { className: "mt-1" }, insigna('⚠ ' + semne.join(' · '))) : null);
+                }),
+                React.createElement("div", { className: "text-[11.5px] mt-2", style: { color: 'var(--muted2)' } }, 'SmartBill rămâne sursa oficială. Facturile emise direct în SmartBill nu apar aici.'),
+                buton('💶 Deschide Facturi' + (client ? ' (' + client.nume + ')' : ''), () => { if (client && onFiltruClient)
+                    onFiltruClient(client.id);
+                else
+                    setTab('facturi'); }));
+        }
+        if (fila === 'proiect') {
+            if (!s)
+                return gol('Proiectele se pun pe șantier; lucrarea asta nu are șantier.');
+            return React.createElement(React.Fragment, null,
+                proiecte === null ? gol('Se caută proiectele…') : proiecte === 'eroare' ? gol('Nu am putut citi lista de proiecte (verifică internetul).') :
+                    (!proiecte.length ? gol('Niciun proiect de instalații pus pe acest șantier.') :
+                        proiecte.map((p) => linie(p.id, '📐 ' + (p.nume || 'Proiect'), '', (p.adresa ? p.adresa + ' · ' : '') + 'actualizat ' + fmtData(String(p.actualizat || '').slice(0, 10)) + (p.autor ? ' de ' + p.autor : '')))),
+                planse.length ? linie('planse', '🗺 Planșe pe șantier', String(planse.length), planse.slice(0, 3).map((p) => p.nume).join(', ')) : null,
+                buton('📐 Deschide Proiecte instalații (plan, 3D)', () => { window.__instalatiiSantier = s.id; setTab('instalatii'); }),
+                buton('🔌 Deschide Tablourile șantierului', () => { window.__tablouriSantier = s.id; setTab('tablouri'); }));
+        }
+        /* documente */
+        return React.createElement(React.Fragment, null,
+            !fisiere.length && !media.length && !planse.length ? gol('Niciun document încărcat pentru lucrare.') : null,
+            fisiere.map((f) => linie(f.id, '📎 ' + (f.nume || 'fișier'), '', fmtData(f.data) + ' · ' + ({ santier: 'șantier', client: 'client', deviz: 'deviz', factura: 'factură' }[f.scopeType] || f.scopeType || ''),
+                f.url ? React.createElement("a", { href: f.url, target: "_blank", rel: "noopener", className: "text-[12.5px] font-semibold", style: { color: 'var(--acc1)' } }, 'Deschide ↗') : null)),
+            media.length ? linie('media', '📷 Poze și fișiere pe șantier', String(media.length), 'în ecranul șantierului') : null,
+            buton('📁 Deschide Dosarele lucrărilor', () => setTab('proiecte')),
+            s ? buton('📷 Deschide pozele șantierului', () => mergiSantier('media')) : null);
+    };
+    return React.createElement("div", { "data-fisa-lucrare": r.cheie, style: { maxWidth: 760, margin: '0 auto' } },
+        React.createElement("button", { type: "button", onClick: onInapoi, className: "btn3d text-xs font-semibold px-3 py-2 mb-2", style: { color: 'var(--acc1)' } }, '← Clienți & bani'),
+        React.createElement("div", { className: "rounded-2xl p-4 mb-2", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
+            React.createElement("div", { className: "text-[19px] font-bold", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif", lineHeight: 1.25, overflowWrap: 'anywhere' } }, r.lucrare),
+            React.createElement("div", { className: "text-[13px] mt-0.5", style: { color: 'var(--muted2)' } }, r.client || '—', s && s.adresa ? ' · ' + s.adresa : '', s && s.status ? ' · ' + s.status : ''),
+            React.createElement("div", { className: "flex flex-wrap items-center gap-1.5 mt-2" }, chip(r),
+                React.createElement("span", { className: "text-[12px]", style: { color: 'var(--muted1)' } }, r.zile == null ? '' : (r.zile === 0 ? 'azi' : 'de ' + r.zile + (r.zile === 1 ? ' zi' : ' zile'))),
+                r.semne && r.semne.length ? insigna('⚠ de verificat cu SmartBill') : null),
+            s ? buton('🏗 Deschide șantierul', () => mergiSantier('__closed__')) : null),
+        React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2", role: "tablist" }, FISA_FILE.map((f) => React.createElement("button", { key: f.id, type: "button", role: "tab", "aria-selected": fila === f.id, onClick: () => setFila(f.id), className: "text-[13px] font-semibold px-2.5 py-2 rounded-full whitespace-nowrap",
+            style: { color: fila === f.id ? '#14181C' : 'var(--muted1)', background: fila === f.id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, f.label))),
+        React.createElement("div", { "data-fila": fila, className: "rounded-2xl p-3", style: { background: 'var(--panel)', border: '1px solid var(--border)' } }, continut()));
+}
+function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company, setTab, setPendingSiteNav, onFiltruClient, documenteSemnat, proiecteFisiere, planseSantier, mediaSantier }) {
     const [filtru, setFiltru] = useState('toate');
+    const [fisaCheie, setFisaCheie] = useState(null);
+    useEffect(() => { try {
+        window.scrollTo({ top: 0 });
+    }
+    catch (_) { } }, [fisaCheie]);
     const [cauta, setCauta] = useState('');
     const [reguli, setReguli] = useState(false);
     const B = useMemo(() => calculeazaBani({ santiere, rapoarte, devize, invoices, offers, clients, proceseVerbale, pozitiiSantier, materialeListaSantier, cheltuieliFirma, salarii, company }),
@@ -31079,20 +31283,6 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
         return pr(a) - pr(b) || ordine(a.etapa) - ordine(b.etapa) || (b.zile || 0) - (a.zile || 0);
     });
     const ascunseIncasate = filtru === 'toate' && !q ? B.randuri.filter((r) => r.etapa === 'incasat' && (r.zile == null || r.zile > 60)).length : 0;
-    const deschide = (r) => {
-        if (r.santierId) {
-            setPendingSiteNav({ santierId: r.santierId, origine: { tab: 'bani', pagina: null, eticheta: 'Clienți & bani' } });
-            setTab('santiere');
-        }
-        else if (r.ofertaId)
-            setTab('oferte');
-        else {
-            if (onFiltruClient && r.clientId)
-                onFiltruClient(r.clientId);
-            else
-                setTab('facturi');
-        }
-    };
     const insigna = (text, titlu) => React.createElement("span", { title: titlu || '', className: "inline-block text-[11px] font-semibold px-2 py-0.5 rounded-md", style: { color: '#E9A23B', background: 'rgba(233,162,59,.14)', border: '1px solid rgba(233,162,59,.4)' } }, text);
     const cifra = (titlu, valoare, sub, culoare, onClick, extra) => React.createElement("button", { type: "button", onClick, className: "text-left rounded-2xl p-4 w-full", style: { background: 'var(--panel)', border: '1px solid var(--border)' } },
         React.createElement("div", { className: "text-[13px] font-semibold", style: { color: 'var(--muted)' } }, titlu),
@@ -31123,6 +31313,9 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
     };
     const butonFiltru = (id, text, nr) => React.createElement("button", { key: id, type: "button", onClick: () => setFiltru(id), className: "text-[13px] font-semibold px-2.5 py-2 rounded-full whitespace-nowrap",
         style: { color: filtru === id ? '#14181C' : 'var(--muted1)', background: filtru === id ? 'var(--acc1)' : 'var(--panel2)', border: '1px solid var(--border)' } }, text, nr != null ? ' · ' + nr : '');
+    const randFisa = fisaCheie ? B.randuri.find((x) => x.cheie === fisaCheie) : null;
+    if (randFisa)
+        return React.createElement(FisaLucrare, { rand: randFisa, santiere, rapoarte, clients, proceseVerbale, documenteSemnat, proiecteFisiere, planseSantier, mediaSantier, onInapoi: () => setFisaCheie(null), setTab, setPendingSiteNav, onFiltruClient, chip, insigna });
     return React.createElement("div", { "data-ecran": "clienti-bani", style: { maxWidth: 760, margin: '0 auto' } },
         React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" },
             React.createElement("h2", { className: "titluPagina text-xl font-semibold", style: { color: 'var(--text)', fontFamily: "'Space Grotesk', sans-serif" } }, "💰 Clienți & bani"),
@@ -31165,7 +31358,7 @@ function ClientiBaniTab({ santiere, rapoarte, devize, invoices, offers, clients,
         React.createElement("input", { value: cauta, onChange: (e) => setCauta(e.target.value), placeholder: "🔎 Caută client sau șantier…", className: "w-full rounded-xl px-3.5 py-2.5 mb-2.5 outline-none", style: { fontSize: 16, background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--border)' } }),
         React.createElement("div", { className: "flex flex-col gap-1.5" },
             !vizibile.length && React.createElement("div", { className: "text-sm px-1 py-4 text-center", style: { color: 'var(--muted2)' } }, "Nicio lucrare aici."),
-            vizibile.map((r) => React.createElement("button", { key: r.cheie, type: "button", "data-rand-bani": r.cheie, onClick: () => deschide(r), className: "text-left rounded-xl px-3.5 py-3 w-full", style: { background: 'var(--panel)', border: '1px solid ' + (r.etapa === 'defacturat' && r.zile > 2 && !r.asteapta ? 'rgba(224,82,82,.55)' : 'var(--border)') } },
+            vizibile.map((r) => React.createElement("button", { key: r.cheie, type: "button", "data-rand-bani": r.cheie, onClick: () => setFisaCheie(r.cheie), className: "text-left rounded-xl px-3.5 py-3 w-full", style: { background: 'var(--panel)', border: '1px solid ' + (r.etapa === 'defacturat' && r.zile > 2 && !r.asteapta ? 'rgba(224,82,82,.55)' : 'var(--border)') } },
                 React.createElement("div", { className: "flex items-start justify-between gap-2" },
                     React.createElement("div", { className: "min-w-0 flex-1" },
                         React.createElement("div", { className: "text-[15px] font-semibold truncate", style: { color: 'var(--text)' } }, r.lucrare),
@@ -35870,7 +36063,7 @@ function App() {
                             tab === 'utilizatori' && effectiveUser.rol === 'Manager' && React.createElement(UsersTab, { currentUser: effectiveUser }),
                             tab === 'cheltuieli' && effectiveUser.rol === 'Manager' && React.createElement(CheltuieliTab, { cheltuieliFirma: cheltuieliFirma, setCheltuieliFirma: setCheltuieliFirma, persist: persist }),
                             tab === 'cashflow30' && effectiveUser.rol === 'Manager' && React.createElement(Cashflow30Tab, { invoices: invoices, clients: clients, cheltuieliFirma: cheltuieliFirma, company: company, setCompany: setCompany, persist: persist, setTab: setTab }),
-                            tab === 'bani' && effectiveUser.rol === 'Manager' && React.createElement(ClientiBaniTab, { santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, clients: clients, proceseVerbale: proceseVerbale, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, cheltuieliFirma: cheltuieliFirma, salarii: salarii, company: company, setTab: setTab, setPendingSiteNav: setPendingSiteNav, onFiltruClient: (clientId) => { setFiltruClient({ clientId, cheie: 'facturi' }); setTab('facturi'); } }),
+                            tab === 'bani' && effectiveUser.rol === 'Manager' && React.createElement(ClientiBaniTab, { santiere: santiere, rapoarte: rapoarte, devize: devize, invoices: invoices, offers: offers, clients: clients, proceseVerbale: proceseVerbale, pozitiiSantier: pozitiiSantier, materialeListaSantier: materialeListaSantier, cheltuieliFirma: cheltuieliFirma, salarii: salarii, company: company, setTab: setTab, setPendingSiteNav: setPendingSiteNav, onFiltruClient: (clientId) => { setFiltruClient({ clientId, cheie: 'facturi' }); setTab('facturi'); }, documenteSemnat: documenteSemnat, proiecteFisiere: proiecteFisiere, planseSantier: planseSantier, mediaSantier: mediaSantier }),
                             tab === 'raportlunar' && effectiveUser.rol === 'Manager' && React.createElement(RaportLunarTab, { invoices: invoices, offers: offers, cheltuieliFirma: cheltuieliFirma, santiere: santiere, devize: devize, rapoarte: rapoarte, stockMoves: stockMoves, materials: materials, concedii: concedii, company: company, clients: clients, setTab: setTab, salarii: salarii }),
                             tab === 'scadentar' && effectiveUser.rol === 'Manager' && React.createElement(ScadentarTab, { invoices: invoices, clients: clients, company: company, currentUser: effectiveUser, onIncasari: scrieIncasariFactura }),
                             tab === 'devizrealizat' && effectiveUser.rol === 'Manager' && React.createElement(DevizRealizatTab, { devize: devize, rapoarte: rapoarte, santiere: santiere, company: company, stockMoves: stockMoves, materials: materials }),
