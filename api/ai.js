@@ -331,6 +331,12 @@ async function cereGemini({ key, model, sistem, text, json, inAdresa, faraGandir
 export default async function handler(req, res) {
   // Verificare rapidă din aplicație: „merge AI-ul?", fără să consume nimic la Google.
   if (req.method === 'GET') {
+    /* v04.59: și GET-ul cere bilet valid (aceeași verificare HMAC ca POST) — altfel oricine afla
+       dacă cheia e pusă și ce model folosim. */
+    if (lipsaSecret(res)) return;
+    if (!autentifica(req)) {
+      return res.status(401).json({ error: 'Sesiune invalidă sau expirată — te rog reloghează-te.' });
+    }
     return res.status(200).json({
       ok: !!process.env.GEMINI_API_KEY,
       model: process.env.GEMINI_MODEL || MODEL_IMPLICIT,
