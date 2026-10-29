@@ -198,7 +198,7 @@ const ZEI = [
   {id:"demeter",nume:"Demeter",g:"🌾",grup:"aplicatii",rol:"Rețete, salon, frizerie",mit:"Zeița recoltei, a grânelor și a hranei.",face:["Ce mâncăm azi? — rețete după ingrediente","Style by VAJ — programări, fișe, stoc, mirese","Barber Station — barber-station-rho.vercel.app"]},
 ];
 /* zeii de dinainte de consolidarea din 26.10.2026 -> cine le-a preluat munca (stari.json îi păstrează; harta nu-i mai arată,
-   iar ce au lăsat în coada lui Zeus apare la zeul care i-a preluat) */
+   iar ce au lăsat în coada lui Zeus apare la zeul care i-a preluat; un zeu necunoscut apare cu numele lui, ca înainte) */
 const PRELUAT = {athena:"plutos",metis:"plutos",themis:"dike",eunomia:"dike",nike:"dike",angelia:"iris",hermes:"iris",mnemosyne:"hefaistos",
   kratos:"kronos",hebe:"kronos",asklepios:"kronos",artemis:"tyche",eos:"tyche",peitho:"tyche",apollo:"brontes",prometheus:"brontes",hera:"brontes",
   atlas:"hestia",afrodita:"demeter",dionysos:"demeter",ananke:"zeus"};
@@ -261,6 +261,28 @@ function ocoleste(){const N=720,a0=-Math.PI/2,fs=W<700?11:Math.round(Math.max(11
     EXT.forEach((z,i)=>UNGHI[z.id]=a0+m(K[i])*2*Math.PI/N);return;}
 }
 
+/* etichetele grupurilor (CONTROL, COMUNICARE...): fiecare se testează contra cutiilor zeilor (cerc + nume + rol), a lui Zeus
+   și a celorlalte etichete, ca în ocoleste(). Dacă locul de bază e ocupat, se încearcă alte raze și unghiuri în arcul grupului;
+   dacă nu încape nicăieri, eticheta nu se mai desenează (grupul se vede oricum după arc și culoare). */
+let LBL={};
+function cutieZeu(z){const a=UNGHI[z.id],ext=GRUPURI[z.grup]&&GRUPURI[z.grup].inel===1,x=CX+Math.cos(a)*(ext?RX2:RX1),y=CY+Math.sin(a)*(ext?RY2:RY1);
+  const r=NODE*1.12,fs=W<700?11:Math.round(Math.max(11.5,NODE*.5));ctx.font=`700 ${fs}px Cinzel, serif`;let w=ctx.measureText(z.nume.toUpperCase()).width;
+  if(!COMPACT){ctx.font="500 11px 'IBM Plex Sans',sans-serif";w=Math.max(w,ctx.measureText(z.rol).width);}
+  const h=Math.max(r,(w+14)/2);return[x-h,x+h,y-r-5,y+NODE+6+(COMPACT?fs+8:fs+20)+5];}   // ±5: plutirea zeilor (±4 px)
+function etichete(){LBL={};if(W<700)return;
+  const at=(p,q,m)=>p[0]<q[1]+m&&q[0]<p[1]+m&&p[2]<q[3]+m&&q[2]<p[3]+m;
+  const zr=NODE*1.7,ocup=ZEI.filter(z=>z.id!=="zeus").map(cutieZeu);ocup.push([CX-zr*1.6,CX+zr*1.6,CY-zr*1.6,CY+zr*1.55+26]);
+  const pas=2*Math.PI/Math.max(1,INT.length);ctx.font="600 10.5px 'IBM Plex Mono',monospace";
+  for(const k of Object.keys(GRUPURI)){const zs=INT.filter(z=>z.grup===k);if(!zs.length)continue;
+    const a0=UNGHI[zs[0].id]-pas*.42,a1=UNGHI[zs[zs.length-1].id]+pas*.42,am=(a0+a1)/2,hw=ctx.measureText(GRUPURI[k].label).width/2+4;
+    let gasit=null;
+    cauta:for(const f of [.62,.55,.70,.48,.76,.42,.36,.82])for(const d of [0,.25,-.25,.5,-.5,.75,-.75,1,-1]){
+      const a=am+d*(a1-a0)/2,x=CX+Math.cos(a)*RX1*f,y=CY+Math.sin(a)*RY1*f,b=[x-hw,x+hw,y-8,y+8];
+      if(b[0]<4||b[1]>W-4||b[2]<84||b[3]>H-4)continue;
+      if(!ocup.some(q=>at(b,q,6))){gasit={x,y};ocup.push(b);break cauta;}}
+    LBL[k]=gasit;}
+}
+
 const cv=$("#cosmos"), ctx=cv.getContext("2d");
 let COMPACT=false,W=0,H=0,CX=0,CY=0,RX1=0,RY1=0,RX2=0,RY2=0,NODE=24,stars=[],nebula=null,bolts=[],hits=[],mx=-1,my=-1;
 function rnd(seed){let s=seed;return()=>(s=(s*16807)%2147483647)/2147483647;}
@@ -284,6 +306,7 @@ function resize(){
     // dacă zeii de pe inelul interior nu încap (ecran scund), inelul interior se lărgește, până la 80% din cel exterior
     while(!mob&&inel(INT,RX1,RY1,lw,lh+8,0)<1&&RX1<RX2*.8)RX1+=RX2*.02;
     inel(INT,RX1,RY1,lw,lh,0);inel(EXT,RX2,RY2,lw,lh,.5);ocoleste();}
+  etichete();
   const r1=rnd(11);stars=[];for(let i=0;i<Math.round(W*H/2400);i++)stars.push({x:r1()*W,y:r1()*H,z:r1()*.9+.1,tw:r1()*6.28});
   nebula=document.createElement("canvas");nebula.width=Math.max(1,W);nebula.height=Math.max(1,H);const n=nebula.getContext("2d");
   for(const[bx,by,c] of [[.2,.3,"rgba(80,70,200,.15)"],[.8,.3,"rgba(30,140,170,.12)"],[.6,.85,"rgba(200,140,60,.09)"],[.15,.85,"rgba(150,60,170,.11)"]]){
@@ -324,8 +347,7 @@ function glyphs(P){
   for(const k of Object.keys(GRUPURI)){const zs=INT.filter(z=>z.grup===k);if(!zs.length)continue;const a0=UNGHI[zs[0].id]-pas*.42,a1=UNGHI[zs[zs.length-1].id]+pas*.42;
     ctx.save();ctx.strokeStyle=GRUPURI[k].hue;ctx.globalAlpha=.35;ctx.lineWidth=3;ctx.lineCap="round";
     ctx.beginPath();ctx.ellipse(CX,CY,RX1,RY1,0,a0,a1);ctx.stroke();ctx.restore();
-    const am=(a0+a1)/2,lx=CX+Math.cos(am)*RX1*.62,ly=CY+Math.sin(am)*RY1*.62;
-    if(W<700){continue}ctx.font="600 10.5px 'IBM Plex Mono',monospace";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillStyle=GRUPURI[k].hue;ctx.globalAlpha=.75;
+    const L=LBL[k];if(W<700||!L){continue}const lx=L.x,ly=L.y;ctx.font="600 10.5px 'IBM Plex Mono',monospace";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillStyle=GRUPURI[k].hue;ctx.globalAlpha=.75;
     ctx.fillText(GRUPURI[k].label,lx,ly);ctx.globalAlpha=1;}
   // eticheta inelului exterior
   ctx.font="600 11px 'IBM Plex Mono',monospace";ctx.textAlign="center";ctx.fillStyle=GRUPURI.aplicatii.hue;ctx.globalAlpha=.6;
@@ -457,7 +479,7 @@ resize();totul();requestAnimationFrame(frame);setInterval(totul,60000);
 /* date live: stările zeilor din /olimp/stari.json (le scrie Zeus), reîmprospătate la 20 de secunde */
 (function(){const live=$("#live");
   async function ia(){try{const r=await fetch("/olimp/stari.json?t="+Date.now(),{cache:"no-store"});if(!r.ok)throw 0;const d=await r.json();
-    stare=d.zei||{};coada=(d.coada||[]).map(q=>zeu(q.zeu)?q:PRELUAT[q.zeu]?{...q,zeu:PRELUAT[q.zeu],fost:q.zeu}:null).filter(Boolean).sort((a,b)=>String(b.creat).localeCompare(String(a.creat)));
+    stare=d.zei||{};coada=(d.coada||[]).map(q=>!zeu(q.zeu)&&PRELUAT[q.zeu]?{...q,zeu:PRELUAT[q.zeu],fost:q.zeu}:q).sort((a,b)=>String(b.creat).localeCompare(String(a.creat)));
     live.classList.add("on");live.querySelector("span").textContent="live";totul();}
   catch(e){live.classList.remove("on");live.querySelector("span").textContent="fără conexiune";}}
   ia();setInterval(ia,20000);document.addEventListener("visibilitychange",()=>{if(!document.hidden)ia()});
